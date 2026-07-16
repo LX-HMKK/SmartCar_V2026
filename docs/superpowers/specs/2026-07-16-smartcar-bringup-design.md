@@ -142,7 +142,7 @@ odom_combined -> base_footprint -> base_link -> {laser, camera, board_link, 四�
 约束：
 - LiDAR 仅作避障输入，**绝不进入定位 TF**；无 `map->odom`，无 SLAM。
 - 帧名统一 `laser`（非 `laser_frame`）；不使用 `ydlidar_launch_view.py`。
-- **TF 去重**：实现时核对 `origincar.urdf` 是否已定义 `base_footprint->base_link` 或 `base_link->laser`；若已定义，则与 `origincar_bringup` 内 3 个 `static_transform_publisher` 重复，会产生 TF 警告。处理路径：在 smartcar_bringup 实现阶段验证，若重复则在 vendor 的 `origincar_bringup.launch.py` 中注释冗余 static TF（作为 vendor 补丁，记录于 spec §11），目标 TF 重复发布零警告。
+- **TF 去重**：实现时核对 `origincar.urdf` 是否已定义 `base_footprint->base_link` 或 `base_link->laser`；若已定义，则与 `origincar_bringup` 内 3 个 `static_transform_publisher` 重复，会产生 TF 警告。**已验证（2026-07-16 实车启动）**：URDF 未定义这两条边，无 `TF_REPEATED` 警告，无需 vendor 补丁。
 
 ## 7. 配置文件管理
 
@@ -197,7 +197,7 @@ ros2 launch smartcar_bringup smartcar_bringup.launch.py use_nav:=false
 | `base_to_link` x=0.41,y=0.12 偏移 | **赛前实车标定复核 TODO**；暂保留官方值 |
 | `ydlidar_launch_view.py` laser_frame | 不使用；用 `ydlidar_launch.py` + `ydlidar.yaml`(frame_id=laser) |
 | `origincar_base` CMakeLists CATKIN 残留 | 标注；build 已通过，本期不改 |
-| TF 重复（URDF vs static_transform_publisher） | 实现阶段验证，若重复则 vendor 补丁注释冗余 static TF |
+| TF 重复（URDF vs static_transform_publisher） | **已验证（2026-07-16）**：启动 smartcar_bringup 全量，TF 无 `TF_REPEATED` 警告，URDF 未与 3 个 static_transform_publisher 冲突，**无需 vendor 补丁** |
 | 官方 `origincar_bringup` 空壳包 | 保留不动；smartcar_bringup 新建独立包 |
 
 ## 12. 部署与构建
