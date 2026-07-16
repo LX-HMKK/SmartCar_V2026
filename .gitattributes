@@ -1,5 +1,7 @@
-# 跨平台行尾统一：Windows checkout 时强制 LF，避免 CRLF 破坏 bash 解析
-# 与 Python 文件在 WSL/rsync 侧的一致性
+# 跨平台行尾统一：默认所有文本文件 LF，覆盖 .yaml/.xml/.urdf/.cpp/.msg/.rviz/.md 等
+# 避免 core.autocrlf 在工作区产生 CRLF 后经 rsync push 泄漏到 RDK（破坏 bash/解析）
+
+* text=auto eol=lf
 
 # Shell 脚本必须 LF（CRLF 会导致 /bin/bash: bad interpreter）
 *.sh     text eol=lf
@@ -12,3 +14,15 @@
 *.ps1    text eol=crlf
 *.bat    text eol=crlf
 *.cmd    text eol=crlf
+
+# 二进制文件不转换
+*.STL    binary
+*.stl    binary
+*.png    binary
+*.jpg    binary
+*.jpeg   binary
+*.bag    binary
+*.pdf    binary
+*.ico    binary
+*.dds    binary
+*.deb    binary

@@ -25,6 +25,9 @@ from pathlib import Path
 HOST = "root@192.168.128.10"
 REMOTE_WS = "/root/ros2_ws"
 REMOTE_VENDOR_ORIGINCAR = "/userdata/dev_ws/src/origincar"
+# obstacle_detector_2 在 RDK 仅 /root/ros2_ws/src/ 下有一份（无 /userdata 备份），
+# 首次 push --delete 后该原路径被删；故 init-vendor 为一次性操作，须在首次 push 前完成，
+# 之后本机 VCS 即为权威源，可经 push 恢复 RDK。
 REMOTE_VENDOR_OBSTACLE = "/root/ros2_ws/src/obstacle_detector_2"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,7 +47,9 @@ VENDOR_EXCLUDES = [
     "**/.git", "build/", "install/", "log/",
     "__pycache__/", "*.pyc",
     "*.deb",  # 预编译二进制包，不纳入源码 VCS
-    "YDLidar-SDK-master/",  # 非 ROS 的 C SDK，RDK 已装、驱动不依赖，不纳入 VCS
+    # ydlidar_ros2_driver 经 find_package(ydlidar_sdk) 链接系统已装库，不需 src 内 SDK 源码；
+    # 该 C SDK 约 20M、上游可得，不纳入 VCS（spec §7 已记录此偏离）
+    "YDLidar-SDK-master/",
 ]
 
 WSL_DISTRO_DEFAULT = "Ubuntu-22.04"
@@ -115,10 +120,19 @@ def build_exec_command(args, platform_name=None):
 
 
 def check_push_safety(path=None):
-    """push 前安全检查：src/origincar 必须存在，防止空同步清空 RDK。"""
-    if path is None:
-        path = LOCAL_VENDOR_ORIGINCAR
-    return path.is_dir()
+    """push 前安全检查：被 --delete 镜像的关键子树必须存在且非空，防止空/部分同步清空 RDK。
+
+    传 path 时仅校验该路径（单元测试用）；不传则校验全部被镜像子树。
+    """
+    if path is not None:
+        return path.is_dir() and any(path.iterdir())
+    required = [LOCAL_VENDOR_ORIGINCAR, LOCAL_OBSTACLE, LOCAL_CONFIG]
+    missing = [str(p) for p in required if not (p.is_dir() and any(p.iterdir()))]
+    if missing:
+        print(f"错误：关键子树缺失或为空：{missing}，拒绝 push --delete（防清空 RDK）。"
+              "请先运行 init-vendor。", file=sys.stderr)
+        return False
+    return True
 
 
 def ensure_local_dest_parent(dst):
@@ -202,8 +216,6 @@ def run_rsync(src, dst, delete=True, dry_run=False, excludes=None):
 def cmd_push(args):
     ensure_rsync_available()
     if not check_push_safety():
-        print("错误：本机 src/origincar 不存在，拒绝 push --delete（防清空 RDK）。"
-              "请先运行 init-vendor。", file=sys.stderr)
         sys.exit(1)
     for src, dst in push_targets():
         run_rsync(src, dst, delete=True, dry_run=args.dry_run)

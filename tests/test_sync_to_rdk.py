@@ -96,9 +96,29 @@ class TestPushSafety(unittest.TestCase):
     def test_returns_false_when_missing(self):
         self.assertFalse(sync.check_push_safety(Path("/nonexistent/xyz_abc")))
 
-    def test_returns_true_when_exists(self):
+    def test_returns_true_when_nonempty(self):
         with tempfile.TemporaryDirectory() as d:
+            Path(d, "marker").touch()
             self.assertTrue(sync.check_push_safety(Path(d)))
+
+    def test_returns_false_for_empty_dir(self):
+        with tempfile.TemporaryDirectory() as d:
+            self.assertFalse(sync.check_push_safety(Path(d)))
+
+    def test_default_path_checks_all_subtrees(self):
+        with tempfile.TemporaryDirectory() as ok1, \
+                tempfile.TemporaryDirectory() as ok2, \
+                tempfile.TemporaryDirectory() as empty:
+            Path(ok1, "pkg.xml").touch()
+            Path(ok2, "pkg.xml").touch()
+            # config 为空 -> 整体拒绝
+            with mock.patch.object(sync, "LOCAL_VENDOR_ORIGINCAR", Path(ok1)), \
+                    mock.patch.object(sync, "LOCAL_OBSTACLE", Path(ok2)), \
+                    mock.patch.object(sync, "LOCAL_CONFIG", Path(empty)):
+                self.assertFalse(sync.check_push_safety())
+            # 三者均非空 -> 通过
+            Path(empty, "cfg.yaml").touch()
+            self.assertTrue(sync.check_push_safety())
 
 
 class TestEnsureLocalDestParent(unittest.TestCase):
@@ -203,6 +223,39 @@ class TestCmdPull(unittest.TestCase):
             sync.main(["pull", "--delete"])
             argv = run.call_args[0][0]
             self.assertIn("--delete", argv)
+
+
+class TestCmdInitVendor(unittest.TestCase):
+    def test_init_vendor_runs_two_rsync_with_vendor_excludes(self):
+        ok = mock.Mock(returncode=0)
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch("subprocess.run", return_value=ok) as run:
+            sync.main(["init-vendor"])
+            self.assertEqual(run.call_count, 2)  # origincar + obstacle
+            for call in run.call_args_list:
+                argv = call[0][0]
+                self.assertIn("--exclude", argv)
+                self.assertTrue(
+                    any("YDLidar-SDK-master" in a or "*.deb" in a for a in argv),
+                    "VENDOR_EXCLUDES 未传给 rsync")
+
+    def test_init_vendor_exits_on_rsync_failure(self):
+        fail = mock.Mock(returncode=1)
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch("subprocess.run", return_value=fail):
+            with self.assertRaises(SystemExit):
+                sync.main(["init-vendor"])
+
+
+class TestRsyncFailure(unittest.TestCase):
+    def test_push_exits_on_rsync_failure(self):
+        fail = mock.Mock(returncode=23)
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch.object(sync, "check_push_safety", return_value=True), \
+             mock.patch("subprocess.run", return_value=fail):
+            with self.assertRaises(SystemExit) as cm:
+                sync.main(["push"])
+            self.assertEqual(cm.exception.code, 23)
 
 
 if __name__ == "__main__":
