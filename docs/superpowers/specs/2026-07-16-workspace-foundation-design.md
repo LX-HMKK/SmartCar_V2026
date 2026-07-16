@@ -147,7 +147,7 @@ Python 3，`subprocess` 调 rsync over ssh。默认目标 `root@192.168.128.10`�
 
 ### 安全护栏
 
-- `push --delete` 前检查本机 `src/origincar/` 存在，否则拒绝执行（防误空同步清空 RDK）。
+- `push --delete` 前检查本机被镜像的全部关键子树（`src/origincar/`、`src/third_party/obstacle_detector_2/`、`config/`）存在且**非空**，否则拒绝执行（防误空/部分同步清空 RDK）。
 - 提供 `--dry-run` 标志；首次或大改动建议先 dry-run。
 - 复用现有免密 SSH key，无需额外认证。
 - rsync 非零退出码捕获并打印 stderr；ssh 超时提示检查有线连接。
@@ -155,10 +155,12 @@ Python 3，`subprocess` 调 rsync over ssh。默认目标 `root@192.168.128.10`�
 ## 7. Vendor 回传流程（一次性，`init-vendor`）
 
 1. rsync 拉取 `root@192.168.128.10:/userdata/dev_ws/src/origincar/` -> 本机 `src/origincar/`
-   - 排除：`**/.git`、`build/`、`install/`、`log/`
+   - 排除：`**/.git`、`build/`、`install/`、`log/`、`__pycache__/`、`*.pyc`、`*.deb`、`YDLidar-SDK-master/`
    - 内容：修复后 `origincar_bringup.launch.py`、`config/ekf.yaml`、`config/imu.yaml`、URDF、`TminiPro.yaml` 等，全部进 VCS。
+   - **偏离说明**：`YDLidar-SDK-master/`（约 20M 的非 ROS C SDK）不纳入 VCS。`ydlidar_ros2_driver` 经 CMake `find_package(ydlidar_sdk)` 链接 RDK 系统已装库，不需 src 内 SDK 源码即可构建（已验证）；该 SDK 上游可得，纳入 VCS 仅徒增体积。`*.deb`（aurora930 预编译驱动包）同理排除。
 2. rsync 拉取 `root@192.168.128.10:/root/ros2_ws/src/obstacle_detector_2/` -> 本机 `src/third_party/obstacle_detector_2/`
-   - 排除：`.git`（完成 vendor 化）。
+   - 排除：`.git`（完成 vendor 化）、`build/`、`install/`、`log/`、`__pycache__/`、`*.pyc`。
+   - **注意**：obstacle_detector_2 在 RDK 仅此一份（无 `/userdata` 备份，异于 origincar），首次 `push --delete` 后该原路径被删；故 `init-vendor` 为一次性操作，须在首次 push 前完成，之后本机 VCS 即权威源。
 3. `git add src/ && git commit`。
 4. 此后 `push` 即把这些镜像到 `/root/ros2_ws/src/`。
 
