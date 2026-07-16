@@ -1,0 +1,22 @@
+# colcon 构建产物
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.pyc
+
+# 嵌套 git（vendor 包的 .git）
+**/.git/
+
+# 编辑器/IDE
+.vscode/
+.idea/
+
+# 本地工具目录
+.remember/
+
+# 备份
+*.bak
+*.orig
