@@ -51,6 +51,10 @@ class TestToWslPath(unittest.TestCase):
         self.assertEqual(sync.to_wsl_path("D:/StudyWorks/src/"),
                          "/mnt/d/StudyWorks/src/")
 
+    def test_lowercase_drive_translated(self):
+        self.assertEqual(sync.to_wsl_path("d:\\StudyWorks\\src"),
+                         "/mnt/d/StudyWorks/src")
+
     def test_remote_unchanged(self):
         r = "root@192.168.128.10:/root/ros2_ws/src/"
         self.assertEqual(sync.to_wsl_path(r), r)
@@ -90,6 +94,12 @@ class TestBuildExecCommand(unittest.TestCase):
         cmd = sync.build_exec_command(["-avz", "src/", "dst/"], platform_name="linux")
         self.assertEqual(cmd[0], "rsync")
         self.assertNotIn("wsl", cmd)
+
+    def test_cygwin_msys_route_via_wsl(self):
+        for plat in ("cygwin", "msys"):
+            cmd = sync.build_exec_command([r"D:\src/"], platform_name=plat)
+            self.assertEqual(cmd[0], "wsl")
+            self.assertIn("/mnt/d/src/", cmd)
 
 
 class TestPushSafety(unittest.TestCase):
