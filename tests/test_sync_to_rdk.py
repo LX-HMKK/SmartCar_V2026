@@ -101,6 +101,18 @@ class TestPushSafety(unittest.TestCase):
             self.assertTrue(sync.check_push_safety(Path(d)))
 
 
+class TestEnsureLocalDestParent(unittest.TestCase):
+    def test_creates_local_parent(self):
+        with tempfile.TemporaryDirectory() as d:
+            dst = str(Path(d) / "newparent" / "pkg") + "/"
+            sync.ensure_local_dest_parent(dst)
+            self.assertTrue((Path(d) / "newparent").is_dir())
+
+    def test_remote_noop(self):
+        # 远程路径不应触碰本地文件系统，无异常即通过
+        sync.ensure_local_dest_parent("root@192.168.128.10:/root/ros2_ws/src/")
+
+
 class TestRsyncAvailable(unittest.TestCase):
     def test_ensure_exits_when_missing(self):
         with mock.patch("shutil.which", return_value=None):

@@ -40,7 +40,12 @@ EXCLUDES = [
     "__pycache__/", "*.pyc", ".vscode/", ".idea/",
     "*.bak", "*.orig",
 ]
-VENDOR_EXCLUDES = ["**/.git", "build/", "install/", "log/"]
+VENDOR_EXCLUDES = [
+    "**/.git", "build/", "install/", "log/",
+    "__pycache__/", "*.pyc",
+    "*.deb",  # 预编译二进制包，不纳入源码 VCS
+    "YDLidar-SDK-master/",  # 非 ROS 的 C SDK，RDK 已装、驱动不依赖，不纳入 VCS
+]
 
 WSL_DISTRO_DEFAULT = "Ubuntu-22.04"
 
@@ -116,6 +121,13 @@ def check_push_safety(path=None):
     return path.is_dir()
 
 
+def ensure_local_dest_parent(dst):
+    """若 dst 为本地路径，确保其父目录存在（rsync 不创建中间父目录）。"""
+    if is_remote_path(dst):
+        return
+    Path(dst).parent.mkdir(parents=True, exist_ok=True)
+
+
 def ensure_rsync_available():
     """检查同步工具可用，不可用则报错退出。Windows 检查 wsl，其他平台检查 rsync。"""
     if sys.platform.startswith(("win", "cygwin", "msys")):
@@ -176,6 +188,8 @@ def build_parser():
 
 def run_rsync(src, dst, delete=True, dry_run=False, excludes=None):
     """执行 rsync over ssh（Windows 下经 WSL）。"""
+    if not dry_run:
+        ensure_local_dest_parent(dst)
     args = build_rsync_args(src, dst, delete=delete, dry_run=dry_run, excludes=excludes)
     cmd = build_exec_command(args)
     print("$ " + " ".join(cmd))
