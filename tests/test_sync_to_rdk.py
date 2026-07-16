@@ -127,5 +127,21 @@ class TestCmdSetup(unittest.TestCase):
                 self.assertEqual(argv[0], "scp")
 
 
+class TestCmdPull(unittest.TestCase):
+    def test_pull_default_no_delete(self):
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run:
+            sync.main(["pull"])
+            argv = run.call_args[0][0]
+            self.assertNotIn("--delete", argv)
+
+    def test_pull_delete_opt_in(self):
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run:
+            sync.main(["pull", "--delete"])
+            argv = run.call_args[0][0]
+            self.assertIn("--delete", argv)
+
+
 if __name__ == "__main__":
     unittest.main()

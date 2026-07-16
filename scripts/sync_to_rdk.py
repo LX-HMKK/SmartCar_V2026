@@ -106,7 +106,7 @@ def build_parser():
 
     p = sub.add_parser("pull", help="RDK src/ -> 本机（反向，慎用）")
     p.add_argument("--dry-run", action="store_true")
-    p.add_argument("--no-delete", action="store_true", help="不删除本机多余文件")
+    p.add_argument("--delete", action="store_true", help="删除本机不在 RDK 上的文件（默认不删，本机为权威源）")
     p.set_defaults(func="pull")
 
     p = sub.add_parser("init-vendor", help="一次性回传官方包与第三方")
@@ -142,7 +142,7 @@ def cmd_push(args):
 
 def cmd_pull(args):
     ensure_rsync_available()
-    delete = not args.no_delete
+    delete = args.delete
     for src, dst in pull_targets():
         run_rsync(src, dst, delete=delete, dry_run=args.dry_run)
 
