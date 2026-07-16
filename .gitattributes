@@ -1,0 +1,14 @@
+# 跨平台行尾统一：Windows checkout 时强制 LF，避免 CRLF 破坏 bash 解析
+# 与 Python 文件在 WSL/rsync 侧的一致性
+
+# Shell 脚本必须 LF（CRLF 会导致 /bin/bash: bad interpreter）
+*.sh     text eol=lf
+*.bash   text eol=lf
+
+# Python 统一 LF
+*.py     text eol=lf
+
+# Windows 专用脚本保留 CRLF
+*.ps1    text eol=crlf
+*.bat    text eol=crlf
+*.cmd    text eol=crlf
