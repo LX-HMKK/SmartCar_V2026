@@ -1,0 +1,23 @@
+<!-- Reusable launch file for obstacle detection -->
+<launch> 
+  <node name="obstacle_publisher" pkg="obstacle_detector" exec="obstacle_publisher_node">
+    <param name="active"           value="true"/>
+    <param name="reset"            value="false"/>
+
+    <param name="fusion_example"   value="false"/>
+    <param name="fission_example"  value="false"/>
+
+    <param name="loop_rate"        value="10.0"/>
+    <param name="radius_margin"    value="0.25"/>
+
+    <param name="x_vector" value="-3.0, -2.5, -2.5, -1.0, -1.0, -0.5, 2.5, 0.2, 2.0, 4.5, 4.0, 1.5" value-sep=","/>
+    <param name="y_vector" value="1.5, 0.0, -2.5, 3.0, 1.0, -4.0, -3.0, -0.9, 0.0, 0.0, 2.0, 2.0" value-sep=","/>
+    <param name="r_vector" value="0.5, 0.5, 1.5, 0.5, 0.7, 0.5, 1.5, 0.7, 0.7, 1.0, 0.5, 1.0" value-sep=","/>
+    <param name="vx_vector" value="0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0" value-sep=","/>
+    <param name="vy_vector" value="0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0" value-sep=","/>
+    
+    <param name="frame_id"         value="map"/>
+  </node>
+
+</launch>
+<!-- -->
