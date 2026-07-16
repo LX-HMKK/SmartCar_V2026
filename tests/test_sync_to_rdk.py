@@ -92,5 +92,40 @@ class TestParser(unittest.TestCase):
             sync.build_parser().parse_args([])
 
 
+class TestCmdPush(unittest.TestCase):
+    def test_push_blocks_without_origincar(self):
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch.object(sync, "check_push_safety", return_value=False), \
+             mock.patch("subprocess.run") as run:
+            with self.assertRaises(SystemExit):
+                sync.main(["push"])
+            run.assert_not_called()
+
+    def test_push_runs_rsync_when_safe(self):
+        ok = mock.Mock(returncode=0)
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch.object(sync, "check_push_safety", return_value=True), \
+             mock.patch("subprocess.run", return_value=ok) as run:
+            sync.main(["push", "--dry-run"])
+            self.assertGreaterEqual(run.call_count, 2)  # src + config
+
+
+class TestCmdSetup(unittest.TestCase):
+    def test_setup_missing_env_errors(self):
+        with mock.patch.object(sync, "LOCAL_SOURCE_ENV", Path("/nonexistent.sh")):
+            with self.assertRaises(SystemExit):
+                sync.main(["setup"])
+
+    def test_setup_calls_scp(self):
+        with tempfile.NamedTemporaryFile(suffix=".sh") as f:
+            ok = mock.Mock(returncode=0)
+            with mock.patch.object(sync, "LOCAL_SOURCE_ENV", Path(f.name)), \
+                 mock.patch("subprocess.run", return_value=ok) as run:
+                sync.main(["setup"])
+                self.assertTrue(run.called)
+                argv = run.call_args[0][0]
+                self.assertEqual(argv[0], "scp")
+
+
 if __name__ == "__main__":
     unittest.main()

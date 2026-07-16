@@ -117,3 +117,69 @@ def build_parser():
     p.set_defaults(func="setup")
 
     return parser
+
+
+def run_rsync(src, dst, delete=True, dry_run=False, excludes=None):
+    """执行 rsync over ssh。"""
+    args = ["rsync"] + build_rsync_args(
+        src, dst, delete=delete, dry_run=dry_run, excludes=excludes)
+    print("$ " + " ".join(args))
+    result = subprocess.run(args)
+    if result.returncode != 0:
+        print(f"rsync 失败（退出码 {result.returncode}）", file=sys.stderr)
+        sys.exit(result.returncode)
+
+
+def cmd_push(args):
+    ensure_rsync_available()
+    if not check_push_safety():
+        print("错误：本机 src/origincar 不存在，拒绝 push --delete（防清空 RDK）。"
+              "请先运行 init-vendor。", file=sys.stderr)
+        sys.exit(1)
+    for src, dst in push_targets():
+        run_rsync(src, dst, delete=True, dry_run=args.dry_run)
+
+
+def cmd_pull(args):
+    ensure_rsync_available()
+    delete = not args.no_delete
+    for src, dst in pull_targets():
+        run_rsync(src, dst, delete=delete, dry_run=args.dry_run)
+
+
+def cmd_init_vendor(args):
+    ensure_rsync_available()
+    for src, dst in init_vendor_targets():
+        run_rsync(src, dst, delete=False, dry_run=args.dry_run,
+                  excludes=VENDOR_EXCLUDES)
+    print("回传完成。请检查后 git add src/ && git commit。")
+
+
+def cmd_setup(args):
+    if not LOCAL_SOURCE_ENV.is_file():
+        print(f"错误：{LOCAL_SOURCE_ENV} 不存在", file=sys.stderr)
+        sys.exit(1)
+    cmd = ["scp", str(LOCAL_SOURCE_ENV), f"{HOST}:~/source_env.sh"]
+    print("$ " + " ".join(cmd))
+    result = subprocess.run(cmd)
+    if result.returncode != 0:
+        sys.exit(result.returncode)
+    print(f"已部署到 {HOST}:~/source_env.sh，RDK 上 source ~/source_env.sh 即可。")
+
+
+_DISPATCH = {
+    "push": cmd_push,
+    "pull": cmd_pull,
+    "init_vendor": cmd_init_vendor,
+    "setup": cmd_setup,
+}
+
+
+def main(argv=None):
+    parser = build_parser()
+    args = parser.parse_args(argv)
+    _DISPATCH[args.func](args)
+
+
+if __name__ == "__main__":
+    main()
