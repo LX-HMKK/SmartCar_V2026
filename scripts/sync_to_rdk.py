@@ -7,9 +7,15 @@
   init-vendor  一次性回传官方 origincar 与第三方 obstacle_detector_2 到本机
   setup        scp source_env.sh 到 RDK ~/
 
-环境：本机需 rsync（choco install rsync）+ 免密 ssh key 到 root@192.168.128.10。
+环境：
+  - 免密 ssh key 到 root@192.168.128.10。
+  - Linux/macOS：需本地 rsync。
+  - Windows：choco 的 rsync 无法处理盘符路径（D: 被当作 host:path），故经 WSL 运行
+    rsync，需已安装 WSL（默认 Ubuntu-22.04，可用 WSL_DISTRO 环境变量覆盖），
+    且 WSL 内已配置到 RDK 的免密 ssh key。
 """
 import argparse
+import os
 import shutil
 import subprocess
 import sys
@@ -36,6 +42,8 @@ EXCLUDES = [
 ]
 VENDOR_EXCLUDES = ["**/.git", "build/", "install/", "log/"]
 
+WSL_DISTRO_DEFAULT = "Ubuntu-22.04"
+
 
 def build_excludes(excludes=None):
     """返回 rsync --exclude 参数列表。"""
@@ -59,6 +67,48 @@ def build_rsync_args(src, dst, delete=True, dry_run=False, excludes=None):
     return args
 
 
+def is_remote_path(p):
+    """判断是否为 rsync 远程路径（host:path 或 user@host:path）。
+
+    冒号前为单字母（盘符 D:）视为本地；多字符且无路径分隔符视为远程主机。
+    """
+    if ":" not in p:
+        return False
+    head = p.split(":", 1)[0]
+    if len(head) == 1 and head.isalpha():
+        return False  # Windows 盘符
+    if head == "":
+        return False
+    return "/" not in head and "\\" not in head
+
+
+def to_wsl_path(p):
+    """将本地 Windows 路径转为 WSL /mnt/<drive>/ 形式。
+
+    远程路径与相对路径原样返回；D:\\a\\b 与 D:/a/b 均转为 /mnt/d/a/b。
+    """
+    if is_remote_path(p):
+        return p
+    if len(p) >= 2 and p[0].isalpha() and p[1] == ":":
+        drive = p[0].lower()
+        rest = p[2:].replace("\\", "/")
+        return f"/mnt/{drive}{rest}"
+    return p
+
+
+def build_exec_command(args, platform_name=None):
+    """构造实际执行的命令列表。
+
+    Windows 经 WSL 调用 rsync（本地路径转 /mnt/<drive>/）；其他平台直接 rsync。
+    """
+    platform_name = platform_name if platform_name is not None else sys.platform
+    if platform_name.startswith(("win", "cygwin", "msys")):
+        distro = os.environ.get("WSL_DISTRO", WSL_DISTRO_DEFAULT)
+        translated = [to_wsl_path(a) for a in args]
+        return ["wsl", "-d", distro, "--", "rsync"] + translated
+    return ["rsync"] + list(args)
+
+
 def check_push_safety(path=None):
     """push 前安全检查：src/origincar 必须存在，防止空同步清空 RDK。"""
     if path is None:
@@ -67,10 +117,15 @@ def check_push_safety(path=None):
 
 
 def ensure_rsync_available():
-    """检查 rsync 可用，不可用则报错退出。"""
+    """检查同步工具可用，不可用则报错退出。Windows 检查 wsl，其他平台检查 rsync。"""
+    if sys.platform.startswith(("win", "cygwin", "msys")):
+        if shutil.which("wsl") is None:
+            print("错误：未找到 wsl。Windows 上 rsync 经 WSL 运行，请启用 WSL。",
+                  file=sys.stderr)
+            sys.exit(2)
+        return
     if shutil.which("rsync") is None:
-        print("错误：未找到 rsync。Windows 请运行 choco install rsync（需管理员），"
-              "或使用 WSL 的 rsync。", file=sys.stderr)
+        print("错误：未找到 rsync。", file=sys.stderr)
         sys.exit(2)
 
 
@@ -120,11 +175,11 @@ def build_parser():
 
 
 def run_rsync(src, dst, delete=True, dry_run=False, excludes=None):
-    """执行 rsync over ssh。"""
-    args = ["rsync"] + build_rsync_args(
-        src, dst, delete=delete, dry_run=dry_run, excludes=excludes)
-    print("$ " + " ".join(args))
-    result = subprocess.run(args)
+    """执行 rsync over ssh（Windows 下经 WSL）。"""
+    args = build_rsync_args(src, dst, delete=delete, dry_run=dry_run, excludes=excludes)
+    cmd = build_exec_command(args)
+    print("$ " + " ".join(cmd))
+    result = subprocess.run(cmd)
     if result.returncode != 0:
         print(f"rsync 失败（退出码 {result.returncode}）", file=sys.stderr)
         sys.exit(result.returncode)

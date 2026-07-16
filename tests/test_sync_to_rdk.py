@@ -42,6 +42,56 @@ class TestBuildRsyncArgs(unittest.TestCase):
         self.assertIn("--dry-run", args)
 
 
+class TestToWslPath(unittest.TestCase):
+    def test_drive_backslash_translated(self):
+        self.assertEqual(sync.to_wsl_path(r"D:\StudyWorks\src"),
+                         "/mnt/d/StudyWorks/src")
+
+    def test_drive_slash_translated(self):
+        self.assertEqual(sync.to_wsl_path("D:/StudyWorks/src/"),
+                         "/mnt/d/StudyWorks/src/")
+
+    def test_remote_unchanged(self):
+        r = "root@192.168.128.10:/root/ros2_ws/src/"
+        self.assertEqual(sync.to_wsl_path(r), r)
+
+    def test_relative_unchanged(self):
+        self.assertEqual(sync.to_wsl_path("build/"), "build/")
+
+    def test_already_mnt_unchanged(self):
+        self.assertEqual(sync.to_wsl_path("/mnt/d/src/"), "/mnt/d/src/")
+
+    def test_is_remote_path(self):
+        self.assertTrue(sync.is_remote_path("root@192.168.128.10:/p/"))
+        self.assertTrue(sync.is_remote_path("myhost:/p/"))
+        self.assertFalse(sync.is_remote_path(r"D:\src"))
+        self.assertFalse(sync.is_remote_path("D:/src/"))
+        self.assertFalse(sync.is_remote_path("/mnt/d/src/"))
+        self.assertFalse(sync.is_remote_path("build/"))
+
+
+class TestBuildExecCommand(unittest.TestCase):
+    def test_windows_prepends_wsl_and_translates(self):
+        args = ["-avz", r"D:\src/", "root@192.168.128.10:/ws/src/"]
+        cmd = sync.build_exec_command(args, platform_name="win32")
+        self.assertEqual(cmd[0], "wsl")
+        self.assertIn("rsync", cmd)
+        self.assertIn("/mnt/d/src/", cmd)
+        self.assertIn("root@192.168.128.10:/ws/src/", cmd)
+        self.assertNotIn(r"D:\src/", cmd)
+
+    def test_windows_uses_env_distro(self):
+        with mock.patch.dict("os.environ", {"WSL_DISTRO": "MyDistro"}):
+            cmd = sync.build_exec_command([], platform_name="win32")
+        self.assertIn("MyDistro", cmd)
+        self.assertNotIn(sync.WSL_DISTRO_DEFAULT, cmd)
+
+    def test_linux_direct_rsync(self):
+        cmd = sync.build_exec_command(["-avz", "src/", "dst/"], platform_name="linux")
+        self.assertEqual(cmd[0], "rsync")
+        self.assertNotIn("wsl", cmd)
+
+
 class TestPushSafety(unittest.TestCase):
     def test_returns_false_when_missing(self):
         self.assertFalse(sync.check_push_safety(Path("/nonexistent/xyz_abc")))
