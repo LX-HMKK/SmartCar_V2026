@@ -45,14 +45,10 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/Position.msg"
  )
 if(BUILD_TESTING)
-  find_package(ament_lint_auto REQUIRED)
-  # the following line skips the linter which checks for copyrights
-  # uncomment the line when a copyright and license is not present in all source files
-  #set(ament_cmake_copyright_FOUND TRUE)
-  # the following line skips cpplint (only works in a git repo)
-  # uncomment the line when this package is not in a git repo
-  #set(ament_cmake_cpplint_FOUND TRUE)
-  ament_lint_auto_find_test_dependencies()
+  find_package(ament_cmake_gtest REQUIRED)
+
+  ament_add_gtest(test_command_watchdog test/test_command_watchdog.cpp)
+  target_include_directories(test_command_watchdog PRIVATE include)
 endif()
 
 include_directories(
@@ -69,7 +65,16 @@ ament_target_dependencies(origincar_base_node tf2_ros tf2 tf2_geometry_msgs rclc
 #add_executable(testNode src/test.cpp src/Quaternion_Solution.cpp)
 #ament_target_dependencies(testNode rclcpp std_msgs nav_msgs std_srvs sensor_msgs ackermann_msgs serial origincar_msg)
 
-install(PROGRAMS scripts/cmd_vel_to_ackermann_drive.py DESTINATION lib/${PROJECT_NAME})
+install(PROGRAMS
+  scripts/ackermann_math.py
+  scripts/cmd_vel_to_ackermann_drive.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
+install(
+  DIRECTORY include/
+  DESTINATION include
+)
 
 install(TARGETS
 origincar_base_node

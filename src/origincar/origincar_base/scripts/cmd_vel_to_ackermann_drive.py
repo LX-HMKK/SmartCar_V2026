@@ -1,33 +1,48 @@
 #!/usr/bin/env python3
 
-import math
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from ackermann_msgs.msg import AckermannDriveStamped
 from rclpy.qos import QoSProfile
 
+from ackermann_math import steering_angle
+
+
 class CmdVel2AckermannDriveNode(Node):
     def __init__(self):
         super().__init__('cmd_vel_to_ackermann_drive')
-        self.publisher = self.create_publisher(AckermannDriveStamped, '/ackermann_cmd', QoSProfile(depth=10))
-        self.subscription = self.create_subscription(Twist, 'cmd_vel', self.cmd_callback, QoSProfile(depth=10))
-        self.wheelbase = 0.143  #轮距
-        self.frame_id = 'odom_combined'
-        self.cmd_angle_instead_rotvel = False
+        self.wheelbase = self.declare_parameter('wheelbase', 0.189).value
+        self.max_steering_angle = self.declare_parameter(
+            'max_steering_angle', 0.45
+        ).value
+        input_topic = self.declare_parameter(
+            'input_topic', '/cmd_vel_safe'
+        ).value
+        output_topic = self.declare_parameter(
+            'output_topic', '/ackermann_cmd'
+        ).value
+        self.frame_id = self.declare_parameter(
+            'frame_id', 'odom_combined'
+        ).value
 
-    def convert_trans_rot_vel_to_steering_angle(self, vel, omega):
-        if omega == 0 or vel == 0:
-            return 0
-        radius = vel / omega
-        return math.atan(self.wheelbase / radius)
+        qos = QoSProfile(depth=10)
+        self.publisher = self.create_publisher(
+            AckermannDriveStamped, output_topic, qos
+        )
+        self.subscription = self.create_subscription(
+            Twist, input_topic, self.cmd_callback, qos
+        )
 
     def cmd_callback(self, data):
         vel = data.linear.x
-        if self.cmd_angle_instead_rotvel:
-            steering = data.angular.z
-        else:
-            steering = 1.0 * self.convert_trans_rot_vel_to_steering_angle(vel, data.angular.z)
+        steering = steering_angle(
+            vel,
+            data.angular.z,
+            self.wheelbase,
+            self.max_steering_angle,
+        )
 
         msg = AckermannDriveStamped()
         msg.header.stamp = self.get_clock().now().to_msg()
@@ -36,12 +51,19 @@ class CmdVel2AckermannDriveNode(Node):
         msg.drive.speed = vel
         self.publisher.publish(msg)
 
-def main():
-    rclpy.init()
+
+def main(args=None):
+    rclpy.init(args=args)
     node = CmdVel2AckermannDriveNode()
-    rclpy.spin(node)
-    node.destroy_node()
-    rclpy.shutdown()
+    try:
+        rclpy.spin(node)
+    except (KeyboardInterrupt, ExternalShutdownException):
+        pass
+    finally:
+        node.destroy_node()
+        if rclpy.ok():
+            rclpy.shutdown()
+
 
 if __name__ == '__main__':
     main()

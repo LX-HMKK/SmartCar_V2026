@@ -25,7 +25,7 @@ def generate_launch_description():
             
     origincar_base = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'base_serial.launch.py')),
-            launch_arguments={'akmcar': 'false'}.items(),
+            launch_arguments={'akmcar': 'true'}.items(),
     )
 
     choose_car = IncludeLaunchDescription(
@@ -92,4 +92,3 @@ def generate_launch_description():
     ld.add_action(link_to_laser)
 
     return ld
-

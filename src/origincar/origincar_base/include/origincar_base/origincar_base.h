@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 
 #include <serial/serial.h>
+#include "origincar_base/command_watchdog.hpp"
 #include <fcntl.h>
 #include <stdbool.h>
 #include <std_msgs/msg/string.hpp>
@@ -141,6 +142,8 @@ private:
 
 	void Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr twist_aux);
 	void Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDriveStamped::SharedPtr akm_ctl);
+	void Send_Stop_Command();
+	void Write_Command();
 
 	void Publish_ImuSensor();
 	void Publish_Voltage();
@@ -187,6 +190,9 @@ private:
 	string usart_port_name, robot_frame_id, gyro_frame_id, odom_frame_id, akm_cmd_vel, test;
 	std::string cmd_vel;
 	int serial_baud_rate;
+	int serial_read_timeout_ms;
+	double command_timeout_sec;
+	std::unique_ptr<CommandWatchdog> command_watchdog;
 	RECEIVE_DATA Receive_Data;
 	SEND_DATA Send_Data;
 

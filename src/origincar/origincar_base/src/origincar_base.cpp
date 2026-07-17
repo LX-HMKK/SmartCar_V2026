@@ -44,6 +44,8 @@ float origincar_base::Odom_Trans(uint8_t Data_High,uint8_t Data_Low)
 void origincar_base::Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDriveStamped::SharedPtr akm_ctl)
 {
     short  transition;
+
+    command_watchdog->mark_command(rclcpp::Node::now().seconds());
   
     Send_Data.tx[0]=FRAME_HEADER;
     Send_Data.tx[1] = 0;
@@ -54,6 +56,9 @@ void origincar_base::Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDr
     Send_Data.tx[4] = transition;
     Send_Data.tx[3] = transition>>8;
 
+    Send_Data.tx[5] = 0;
+    Send_Data.tx[6] = 0;
+
     transition=0;
     transition = akm_ctl->drive.steering_angle*1000/2;
     Send_Data.tx[8] = transition;
@@ -62,16 +67,15 @@ void origincar_base::Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDr
     Send_Data.tx[9]=Check_Sum(9,SEND_DATA_CHECK); 
     Send_Data.tx[10]=FRAME_TAIL;
 
-    try {
-      Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx));
-    } catch (serial::IOException& e) {
-        RCLCPP_ERROR(this->get_logger(),("Unable to send data through serial port"));
-    }
+    Write_Command();
 }
 
 void origincar_base::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr twist_aux)
 {
     short  transition;
+
+    command_watchdog->mark_command(rclcpp::Node::now().seconds());
+
     Send_Data.tx[0]=FRAME_HEADER;
     Send_Data.tx[1] = 0;
     Send_Data.tx[2] = 0; 
@@ -94,13 +98,31 @@ void origincar_base::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr
     Send_Data.tx[9]=Check_Sum(9,SEND_DATA_CHECK);
     Send_Data.tx[10]=FRAME_TAIL;
 
-    try {
-      if (akm_cmd_vel == "none") {
-        Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx));
-      } 
-    } catch (serial::IOException& e) {
-        RCLCPP_ERROR(this->get_logger(),("Unable to send data through serial port"));
+    if (akm_cmd_vel == "none") {
+      Write_Command();
     }
+}
+
+void origincar_base::Write_Command()
+{
+    try {
+      if (Stm32_Serial.isOpen()) {
+        Stm32_Serial.write(Send_Data.tx, sizeof(Send_Data.tx));
+      }
+    } catch (serial::IOException& e) {
+      RCLCPP_ERROR(this->get_logger(), "Unable to send data through serial port");
+    }
+}
+
+void origincar_base::Send_Stop_Command()
+{
+    Send_Data.tx[0] = FRAME_HEADER;
+    for (size_t i = 1; i < 9; ++i) {
+      Send_Data.tx[i] = 0;
+    }
+    Send_Data.tx[9] = Check_Sum(9, SEND_DATA_CHECK);
+    Send_Data.tx[10] = FRAME_TAIL;
+    Write_Command();
 }
 
 void origincar_base::Sign_Switch_Callback(const std_msgs::msg::Int32::SharedPtr sign_switch)
@@ -277,13 +299,19 @@ bool origincar_base::Get_Sensor_Data()
 
 void origincar_base::Control()
 {
-    rclcpp::Time current_time, last_time;
-    current_time = rclcpp::Node::now();
-    last_time = rclcpp::Node::now();
+    rclcpp::Time last_sensor_time = rclcpp::Node::now();
     while(rclcpp::ok()) {
-      current_time = rclcpp::Node::now();
-      Sampling_Time = (current_time - last_time).seconds();
+      rclcpp::spin_some(this->get_node_base_interface());
+
+      const rclcpp::Time command_time = rclcpp::Node::now();
+      if (command_watchdog->consume_stop(command_time.seconds())) {
+        Send_Stop_Command();
+        RCLCPP_WARN(this->get_logger(), "Command timeout; sent one stop command");
+      }
+
       if (true == Get_Sensor_Data()) {
+        const rclcpp::Time sensor_time = rclcpp::Node::now();
+        Sampling_Time = (sensor_time - last_sensor_time).seconds();
         Robot_Pos.X+=1.03*(Robot_Vel.X * cos(Robot_Pos.Z) - Robot_Vel.Y * sin(Robot_Pos.Z)) * Sampling_Time;
         Robot_Pos.Y+=1.125*(Robot_Vel.X * sin(Robot_Pos.Z) + Robot_Vel.Y * cos(Robot_Pos.Z)) * Sampling_Time;
         Robot_Pos.Z+=Robot_Vel.Z * Sampling_Time;
@@ -293,9 +321,8 @@ void origincar_base::Control()
         Publish_ImuSensor();
         Publish_Voltage();
         Publish_Odom();
-        rclcpp::spin_some(this->get_node_base_interface());
+        last_sensor_time = sensor_time;
       }
-      last_time = current_time;
     }
 }
 
@@ -308,14 +335,15 @@ origincar_base::origincar_base()
   memset(&Send_Data, 0, sizeof(Send_Data));
   memset(&Mpu6050_Data, 0, sizeof(Mpu6050_Data));
 
-  int serial_baud_rate = 115200;
-
   this->declare_parameter<std::string>("usart_port_name", "/dev/ttyCH343USB0");
   this->declare_parameter<std::string>("cmd_vel", "cmd_vel");
   this->declare_parameter<std::string>("akm_cmd_vel", "ackermann_cmd");
   this->declare_parameter<std::string>("odom_frame_id", "odom");
   this->declare_parameter<std::string>("robot_frame_id", "base_link");
   this->declare_parameter<std::string>("gyro_frame_id", "gyro_link");
+  this->declare_parameter<int>("serial_baud_rate", 115200);
+  this->declare_parameter<int>("serial_read_timeout_ms", 100);
+  this->declare_parameter<double>("command_timeout_sec", 0.35);
 
   this->get_parameter("serial_baud_rate", serial_baud_rate);
   this->get_parameter("usart_port_name", usart_port_name);
@@ -324,6 +352,17 @@ origincar_base::origincar_base()
   this->get_parameter("odom_frame_id", odom_frame_id);
   this->get_parameter("robot_frame_id", robot_frame_id);
   this->get_parameter("gyro_frame_id", gyro_frame_id);
+  this->get_parameter("serial_read_timeout_ms", serial_read_timeout_ms);
+  this->get_parameter("command_timeout_sec", command_timeout_sec);
+
+  if (serial_read_timeout_ms > 100) {
+    RCLCPP_WARN(this->get_logger(), "serial_read_timeout_ms capped at 100 ms");
+    serial_read_timeout_ms = 100;
+  } else if (serial_read_timeout_ms < 1) {
+    RCLCPP_WARN(this->get_logger(), "serial_read_timeout_ms raised to 1 ms");
+    serial_read_timeout_ms = 1;
+  }
+  command_watchdog = std::make_unique<CommandWatchdog>(command_timeout_sec);
 
   odom_publisher = create_publisher<nav_msgs::msg::Odometry>("odom", 10);
 
@@ -345,9 +384,9 @@ origincar_base::origincar_base()
   // Sign_Switch_Sub = create_subscription<std_msgs::msg::Int32>(
   //     "/sign4return", 1, std::bind(&origincar_base::Sign_Switch_Callback, this, _1));
   try  {
-    Stm32_Serial.setPort("/dev/ttyACM0");
+    Stm32_Serial.setPort(usart_port_name);
     Stm32_Serial.setBaudrate(serial_baud_rate);
-    serial::Timeout _time = serial::Timeout::simpleTimeout(2000);
+    serial::Timeout _time = serial::Timeout::simpleTimeout(serial_read_timeout_ms);
     Stm32_Serial.setTimeout(_time);
     Stm32_Serial.open();
   } catch (serial::IOException& e) {
@@ -366,7 +405,7 @@ void sigintHandler(int sig)
     serial::Serial Stm32_Serial;
     Stm32_Serial.setPort("/dev/ttyACM0");
     Stm32_Serial.setBaudrate(115200);
-    serial::Timeout _time = serial::Timeout::simpleTimeout(2000);
+    serial::Timeout _time = serial::Timeout::simpleTimeout(100);
     Stm32_Serial.setTimeout(_time);
     Stm32_Serial.open();                                       
     SEND_DATA Send_Data;
