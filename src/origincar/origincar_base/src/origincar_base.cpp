@@ -45,6 +45,10 @@ void origincar_base::Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDr
 {
     short  transition;
 
+    if (!accepts_command(command_mode, CommandType::kAckermann)) {
+      RCLCPP_WARN(this->get_logger(), "Ignored Ackermann command in Twist mode");
+      return;
+    }
     command_watchdog->mark_command(rclcpp::Node::now().seconds());
   
     Send_Data.tx[0]=FRAME_HEADER;
@@ -74,6 +78,10 @@ void origincar_base::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr
 {
     short  transition;
 
+    if (!accepts_command(command_mode, CommandType::kTwist)) {
+      RCLCPP_WARN(this->get_logger(), "Ignored Twist command in Ackermann mode");
+      return;
+    }
     command_watchdog->mark_command(rclcpp::Node::now().seconds());
 
     Send_Data.tx[0]=FRAME_HEADER;
@@ -327,7 +335,7 @@ void origincar_base::Control()
 }
 
 origincar_base::origincar_base()
-: rclcpp::Node ("origincar_base")
+: rclcpp::Node ("origincar_base"), command_mode(CommandMode::kAckermann)
 {
   memset(&Robot_Pos, 0, sizeof(Robot_Pos));
   memset(&Robot_Vel, 0, sizeof(Robot_Vel));
@@ -344,6 +352,7 @@ origincar_base::origincar_base()
   this->declare_parameter<int>("serial_baud_rate", 115200);
   this->declare_parameter<int>("serial_read_timeout_ms", 100);
   this->declare_parameter<double>("command_timeout_sec", 0.35);
+  this->declare_parameter<std::string>("command_mode", "ackermann");
 
   this->get_parameter("serial_baud_rate", serial_baud_rate);
   this->get_parameter("usart_port_name", usart_port_name);
@@ -354,6 +363,8 @@ origincar_base::origincar_base()
   this->get_parameter("gyro_frame_id", gyro_frame_id);
   this->get_parameter("serial_read_timeout_ms", serial_read_timeout_ms);
   this->get_parameter("command_timeout_sec", command_timeout_sec);
+  const std::string command_mode_name = this->get_parameter("command_mode").as_string();
+  command_mode = command_mode_from_string(command_mode_name);
 
   if (serial_read_timeout_ms > 100) {
     RCLCPP_WARN(this->get_logger(), "serial_read_timeout_ms capped at 100 ms");
@@ -376,10 +387,13 @@ origincar_base::origincar_base()
 
   tf_bro = std::make_shared<tf2_ros::TransformBroadcaster>(this);
 
-  Cmd_Vel_Sub = create_subscription<geometry_msgs::msg::Twist>(
-      cmd_vel, 1, std::bind(&origincar_base::Cmd_Vel_Callback, this, _1));
-  Akm_Cmd_Vel_Sub = create_subscription<ackermann_msgs::msg::AckermannDriveStamped>(
-      akm_cmd_vel, 1, std::bind(&origincar_base::Akm_Cmd_Vel_Callback, this, _1));
+  if (command_mode == CommandMode::kTwist) {
+    Cmd_Vel_Sub = create_subscription<geometry_msgs::msg::Twist>(
+        cmd_vel, 1, std::bind(&origincar_base::Cmd_Vel_Callback, this, _1));
+  } else {
+    Akm_Cmd_Vel_Sub = create_subscription<ackermann_msgs::msg::AckermannDriveStamped>(
+        akm_cmd_vel, 1, std::bind(&origincar_base::Akm_Cmd_Vel_Callback, this, _1));
+  }
 
   // Sign_Switch_Sub = create_subscription<std_msgs::msg::Int32>(
   //     "/sign4return", 1, std::bind(&origincar_base::Sign_Switch_Callback, this, _1));

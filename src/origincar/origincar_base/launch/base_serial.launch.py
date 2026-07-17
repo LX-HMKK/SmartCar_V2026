@@ -4,6 +4,7 @@ from launch.substitutions import LaunchConfiguration
 from launch.conditions import IfCondition, UnlessCondition
 import launch_ros.actions
 
+
 def generate_launch_description():
     akmcar = LaunchConfiguration('akmcar')
     wheelbase = LaunchConfiguration('wheelbase')
@@ -43,7 +44,8 @@ def generate_launch_description():
             package='origincar_base',
             executable='origincar_base_node',
             parameters=robot_parameters + [
-                {'cmd_vel': 'none', 'akm_cmd_vel': output_topic}
+                {'command_mode': 'ackermann',
+                 'akm_cmd_vel': output_topic}
             ],
         ),
 
@@ -66,7 +68,8 @@ def generate_launch_description():
             package='origincar_base',
             executable='origincar_base_node',
             parameters=robot_parameters + [
-                {'cmd_vel': input_topic, 'akm_cmd_vel': 'none'}
+                {'command_mode': 'twist',
+                 'cmd_vel': input_topic}
             ],
         )
     ])

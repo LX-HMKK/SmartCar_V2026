@@ -20,6 +20,7 @@
 #include <sys/stat.h>
 
 #include <serial/serial.h>
+#include "origincar_base/command_mode.hpp"
 #include "origincar_base/command_watchdog.hpp"
 #include <fcntl.h>
 #include <stdbool.h>
@@ -192,6 +193,7 @@ private:
 	int serial_baud_rate;
 	int serial_read_timeout_ms;
 	double command_timeout_sec;
+	CommandMode command_mode;
 	std::unique_ptr<CommandWatchdog> command_watchdog;
 	RECEIVE_DATA Receive_Data;
 	SEND_DATA Send_Data;
