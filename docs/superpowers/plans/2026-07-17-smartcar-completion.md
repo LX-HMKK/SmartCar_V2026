@@ -214,6 +214,56 @@ Expected: contract and launch tests pass.
 
 ---
 
+### Task 4.5: Localization, EKF, and Odometry Hardening
+
+**Files:**
+- Create: `src/origincar/origincar_base/include/origincar_base/sensor_calibration.hpp`
+- Create: `src/origincar/origincar_base/test/test_sensor_calibration.cpp`
+- Modify: `src/origincar/origincar_base/include/origincar_base/origincar_base.h`
+- Modify: `src/origincar/origincar_base/src/origincar_base.cpp`
+- Modify: `src/origincar/origincar_base/launch/base_serial.launch.py`
+- Modify: `src/origincar/origincar_base/config/ekf.yaml`
+- Modify: `src/origincar/origincar_base/CMakeLists.txt`
+- Modify: `src/smartcar_safety/smartcar_safety/guard.py`
+- Modify: `src/smartcar_safety/smartcar_safety/safety_node.py`
+- Modify: `src/smartcar_safety/config/safety.yaml`
+- Modify: `src/smartcar_safety/test/test_guard.py`
+- Create: `tests/test_localization_contracts.py`
+
+**Interfaces:**
+- EKF uses `two_d_mode=true`, `sensor_timeout=0.25`, and remains the sole publisher of `odom_combined -> base_footprint`.
+- Wheel odometry fuses only calibrated `vx` plus the Ackermann nonholonomic `vy=0` constraint. It does not fuse wheel-integrated pose or wheel-derived yaw rate; `odom0_differential=false`.
+- Raw IMU marks orientation unavailable with `orientation_covariance[0]=-1`; EKF fuses only calibrated `angular_velocity.z`, not the gyro-integrated yaw.
+- `/odom` pose/twist and `/imu/data_raw` covariance values are finite, nonzero, configurable, and conservative until measured calibration data replaces the defaults. Initial EKF covariance must not claim near-perfect certainty.
+- Chassis parameters expose finite calibration values for longitudinal/lateral/yaw velocity scale, gyro-z scale and bias, steering command scale and offset. The same calibrated velocity values are published and integrated.
+- The safety gate independently monitors raw `/odom` and fused `/odom_combined`; a continuing EKF prediction cannot hide a stale chassis sensor stream.
+- Competition initialization requires the vehicle at the P-zone origin with its nose aligned to `+X`. The later task reset adapter uses robot_localization `/set_pose` to restore `(x, y, yaw)=(0, 0, 0)` only after navigation has stopped.
+- Camera optical flow is not a release dependency. If later enabled, it is a separately timestamped `TwistWithCovarianceStamped` source and fuses velocity only; LiDAR remains excluded from localization.
+
+- [ ] **Step 1: Write failing localization and safety contracts**
+
+Parse `ekf.yaml` and assert the exact fusion vectors, timeout, frames, TF ownership, covariance bounds, and absence of correlated pose/yaw inputs. Add guard tests for missing and stale raw odometry. Add C++ tests for calibration, finite-parameter validation, covariance construction, and consistent integration inputs.
+
+- [ ] **Step 2: Verify RED**
+
+Run locally: `python -m unittest tests.test_localization_contracts -v`
+
+Run on RDK: `colcon test --packages-select origincar_base smartcar_safety`
+
+Expected: failures on the existing zero odometry covariance, raw IMU orientation, duplicated EKF inputs, two-second timeout, hard-coded scale factors, and missing raw-odometry safety heartbeat.
+
+- [ ] **Step 3: Implement calibrated sensor publication and EKF fusion**
+
+Apply calibration once when decoding a valid serial frame, fill ROS covariance arrays from validated parameters, publish raw IMU orientation as unavailable, and reduce EKF inputs to independent velocity measurements. Extend the safety guard and launch configuration with `require_raw_odom=true` and a default timeout no greater than `0.25 s`.
+
+- [ ] **Step 4: Verify GREEN and reset behavior**
+
+Run local pure/contract tests, then build and test `origincar_base`, `smartcar_safety`, and `smartcar_bringup` on the RDK. In an isolated ROS domain, launch only the EKF with synthetic zero `/odom` and `/imu/data_raw`, verify finite `/odom_combined`, call `/set_pose`, and confirm the filtered pose resets without starting the chassis node or publishing a velocity command.
+
+Expected: zero failed tests; all synthetic outputs are finite; stopping raw `/odom` leaves the safety guard blocked even if filtered odometry continues.
+
+---
+
 ### Task 5: QR and VLM Vision Services
 
 **Files:**
@@ -229,18 +279,22 @@ Expected: contract and launch tests pass.
 - Create: `src/smartcar_vision/launch/smartcar_vision.launch.py`
 - Create: `src/smartcar_vision/test/test_timed_sample.py`
 - Create: `src/smartcar_vision/test/test_vlm_backend.py`
+- Create: `src/smartcar_vision/test/test_vision_service.py`
+- Create: `tests/test_vision_launch_contracts.py`
 
 **Interfaces:**
-- Include optional `mipi_cam/launch/mipi_cam_640x480_bgr8.launch.py` and `zbar_ros/barcode_reader` remapped from `image` to `/image_raw`.
-- Subscribe `/barcode` (`std_msgs/String`) and `/image_raw` (`sensor_msgs/Image`).
+- Launch selector `camera_driver:=aurora|usb|mipi|none` defaults to the installed Aurora930 driver. Aurora enables only 15 FPS RGB and publishes `/aurora/rgb/image_raw`; optional USB and MIPI modes remain explicit deployment fallbacks.
+- Run `zbar_ros/barcode_reader` with `throttle_repeated_barcodes=0.0`, remap `image` from the configured image topic and `barcode` to `/barcode`. The default image topic is `/aurora/rgb/image_raw`.
+- Subscribe `/barcode` (`std_msgs/String`) and the configurable image topic (`sensor_msgs/Image`, sensor-data QoS).
 - Provide `/smartcar/vision/read_qr` and `/smartcar/vision/describe_scene` using Task 1 services.
-- `TimedSampleBuffer.wait_for(not_before_sec, timeout_sec)` returns only samples received at or after the requested time.
-- VLM backend modes are `command`, `static`, and `disabled`. `command` expands `{image}` and `{prompt}` placeholders without invoking a shell, captures stdout, and enforces the request timeout. `static` returns configured text for bench tests. `disabled` returns a backend-unavailable error.
+- `TimedSampleBuffer.wait_for(not_before_ns, timeout_sec)` uses callback receipt time in integer ROS nanoseconds, a `threading.Condition`, and a monotonic wait deadline; it returns only samples received at or after the requested time.
+- VLM backend modes are `command`, `static`, and `disabled`. `command` accepts an argv list, expands `{image}` and `{prompt}` per argument without invoking a shell, captures stdout, enforces the remaining request deadline, and terminates the process group on timeout. `static` returns configured text for bench tests. `disabled` returns a backend-unavailable error.
 - Any VLM timeout or error returns `success=true`, `fallback_used=true`, description `检测到人物立牌`, and a diagnostic status; absence of a fresh image returns `success=false`.
+- The whole DescribeScene operation has one finite deadline capped at 8 seconds, including fresh-image wait, JPEG encoding, and backend work. Temporary JPEG files use mode `0600` and are removed on every exit path.
 
 - [ ] **Step 1: Write failing sample-buffer and backend tests**
 
-Cover fresh/stale sample selection, wait timeout, command argument expansion, command timeout, static backend, disabled backend, and fallback selection.
+Cover fresh/stale/equal-time sample selection, concurrent wake-up, command argument expansion without shell interpretation, process-group timeout, static/disabled backends, one-deadline fallback selection, and temporary-file cleanup. Add launch contracts for the Aurora default, disabled depth streams, selected image topic, and zbar remaps.
 
 - [ ] **Step 2: Verify RED**
 
@@ -250,7 +304,7 @@ Expected: FAIL because vision modules do not exist.
 
 - [ ] **Step 3: Implement pure logic, ROS services, and launch**
 
-Use a `MultiThreadedExecutor` so service waits do not block barcode/image subscriptions. Convert the selected image to JPEG through `cv_bridge`; store it under a configurable runtime directory and remove it after backend completion.
+Use a `MultiThreadedExecutor` with at least three threads, reentrant subscription callbacks, and a mutually-exclusive service callback group so service waits do not block samples and two VLM requests cannot run concurrently. Convert the selected image to JPEG through `cv_bridge`; store it under a configurable runtime directory and remove it after backend completion.
 
 - [ ] **Step 4: Verify GREEN and RDK build**
 
@@ -282,6 +336,7 @@ Expected: tests and build pass; `ros2 service type` reports both custom services
 - Load semantic waypoints from the existing Nav2 YAML schema.
 - Execute `/follow_waypoints` with one pose per goal, waiting for action success before running that waypoint task.
 - Provide `/smartcar/task/start`, `/smartcar/task/stop`, and `/smartcar/task/reset` (`std_srvs/Trigger`).
+- `/smartcar/task/reset` is accepted only after navigation is stopped; it calls robot_localization `/set_pose` with the P-zone origin and zero yaw before returning to `IDLE`.
 - Publish `/smartcar/task/state`, `/smartcar/output/text`, and `/smartcar/output/speech` (`std_msgs/String`).
 - Mission states are `IDLE`, `WAITING_FOR_SERVERS`, `NAVIGATING`, `RUNNING_QR`, `RUNNING_VLM`, `COMPLETED`, `STOPPED`, `FAILED`.
 - Task policies: `start`, `corridor`, `loop`, and `return` require no vision call; `qr` calls ReadQr after a configurable 2 second settle delay and retries once; `vlm` calls DescribeScene with an 8 second timeout and publishes returned/fallback text.
@@ -298,7 +353,7 @@ Expected: FAIL because task modules do not exist.
 
 - [ ] **Step 3: Implement ports-and-adapters mission logic and ROS node**
 
-Pure mission logic depends on interfaces `Navigator.navigate(waypoint)`, `Vision.read_qr(not_before, timeout)`, `Vision.describe_scene(not_before, timeout, prompt)`, `Clock.now/sleep`, and `Output.publish`. The ROS node adapts Nav2 actions/services to those interfaces and runs the mission on a worker thread so service callbacks remain responsive.
+Pure mission logic depends on interfaces `Navigator.navigate(waypoint)`, `Vision.read_qr(not_before, timeout)`, `Vision.describe_scene(not_before, timeout, prompt)`, `Localization.reset_origin()`, `Clock.now/sleep`, and `Output.publish`. The ROS node adapts Nav2 actions/services to those interfaces and runs the mission on a worker thread so service callbacks remain responsive.
 
 - [ ] **Step 4: Verify GREEN and RDK build**
 
@@ -389,4 +444,3 @@ Launch with camera disabled and emergency stop asserted before Nav2 activation. 
 - [ ] **Step 5: Record the physical-test gate**
 
 The software milestone is ready for wheel-off-ground testing only after all automated checks pass. Ground motion remains gated on measured TF/extrinsics, steering calibration, a human-accessible emergency stop, and explicit operator approval.
-
