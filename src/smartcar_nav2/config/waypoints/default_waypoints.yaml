@@ -1,0 +1,40 @@
+# 默认航点序列：P 区 → 任务点 → 通道口 → C 环道 → 返回 P 区
+# 坐标单位为米，基于发车时 P 区中心为坐标原点
+# 注意：以下数值为占位符，需根据赛场实际测量后替换
+
+waypoints:
+  - frame_id: "odom_combined"
+    pose:
+      position: { x: 0.0, y: 0.0, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+    task: "start"   # P 区发车点
+
+  - frame_id: "odom_combined"
+    pose:
+      position: { x: 1.5, y: 0.0, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+    task: "qr"      # 任务点 1：二维码识别
+
+  - frame_id: "odom_combined"
+    pose:
+      position: { x: 3.0, y: 0.5, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+    task: "vlm"     # 任务点 2：VLM 图生文（人形立牌）
+
+  - frame_id: "odom_combined"
+    pose:
+      position: { x: 4.0, y: 1.0, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.707, w: 0.707 }
+    task: "corridor" # 通道口
+
+  - frame_id: "odom_combined"
+    pose:
+      position: { x: 4.0, y: 3.0, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 1.0, w: 0.0 }
+    task: "loop"    # C 环道终点
+
+  - frame_id: "odom_combined"
+    pose:
+      position: { x: 0.0, y: 0.0, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+    task: "return"  # 返回 P 区

@@ -60,6 +60,16 @@ cd /root/ros2_ws
 colcon build --symlink-install
 ```
 
+### 启动
+
+```bash
+# 底层 bringup（底盘 + LiDAR + 障碍物检测）
+ros2 launch smartcar_bringup smartcar_bringup.launch.py
+
+# 航点导航（需先启动 bringup）
+ros2 launch smartcar_nav2 smartcar_nav2.launch.py
+```
+
 ## 日常同步
 
 ```powershell
@@ -72,8 +82,10 @@ python scripts/sync_to_rdk.py pull           # RDK -> 本机（默认不删本�
 
 - ✅ 工作空间基础设施：单一 `/root/ros2_ws`，vendor 化官方包，本机↔RDK 双向同步
 - ✅ 单一工作空间构建：9 包 `colcon build --symlink-install` 从零通过
-- ✅ origincar bringup 回归：TF 树完整（`odom_combined→base_footprint→base_link→laser`），`/odom_combined` ~20Hz、`/imu/data` ~20Hz、`/scan` ~10Hz（LiDAR 需单独 `ros2 launch ydlidar_ros2_driver ydlidar_launch.py`）
-- ⏳ 待实现模块：`smartcar_bringup`、`smartcar_nav2`、`smartcar_vision`、`smartcar_task`
+- ✅ origincar bringup 回归：TF 树完整（`odom_combined→base_footprint→base_link→laser`），`/odom_combined` ~20Hz、`/imu/data` ~20Hz、`/scan` ~10Hz
+- ✅ smartcar_bringup：顶层 launch 组合器（底盘+LiDAR+障碍物检测一体化启动）
+- 🔄 smartcar_nav2：Nav2 参数 + RPP + Waypoint Follower + launch 已完成，RDK 构建通过，待实车启动验证
+- ⏳ 待实现模块：`smartcar_vision`、`smartcar_task`
 - ⏳ 待部署：端侧 VLM 图生文、VFH 备用避障
 - ⏳ 实车运动测试尚未进行
 

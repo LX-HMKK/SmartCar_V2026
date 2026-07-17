@@ -103,7 +103,7 @@ ros2 launch smartcar_bringup smartcar_bringup.launch.py use_lidar:=false use_obs
 |---|---|---|---|
 | 工作空间基础设施 | ✅ done | merged to main | sync_to_rdk.py, vendor 化, .gitattributes, README |
 | smartcar_bringup | ✅ done | merged to main | 顶层 launch 组合器，use_lidar/use_obstacle 开关，obstacle_detector launch 重写 |
-| smartcar_nav2 | 🔄 调研中 | feat/smartcar-nav2 | 纯配置型包（nav2_params.yaml + waypoint + launch），7 决策待拍板 |
+| smartcar_nav2 | 🔄 实现中 | feat/smartcar-nav2 | Nav2 参数 + RPP + Waypoint Follower + launch 已完成，RDK 构建通过，待实车启动验证 |
 | smartcar_vision | ⏳ 未开始 | — | zbar_ros QR + VLM 图生文 |
 | smartcar_task | ⏳ 未开始 | — | 五子任务状态机 |
 
