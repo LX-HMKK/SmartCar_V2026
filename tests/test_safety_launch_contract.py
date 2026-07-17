@@ -25,6 +25,14 @@ SMARTCAR_BRINGUP = (
     / "launch"
     / "smartcar_bringup.launch.py"
 )
+BASE_SERIAL = (
+    REPOSITORY_ROOT
+    / "src"
+    / "origincar"
+    / "origincar_base"
+    / "launch"
+    / "base_serial.launch.py"
+)
 
 
 def source_tree(path):
@@ -63,15 +71,12 @@ def chassis_input_expression_parts(tree):
 
 
 class SafetyLaunchContractTests(unittest.TestCase):
-    def test_vendor_bringup_exposes_and_forwards_input_topic(self):
-        tree = source_tree(ORIGINCAR_BRINGUP)
-        values = string_values(tree)
-        self.assertIn("input_topic", values)
+    def test_top_level_conditionally_starts_safety(self):
+        source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
+        self.assertIn("smartcar_safety.launch.py", source)
+        self.assertIn("condition=IfCondition(use_safety)", source)
 
-        source = ORIGINCAR_BRINGUP.read_text(encoding="utf-8")
-        self.assertIn("'input_topic': input_topic", source)
-
-    def test_safety_switch_routes_chassis_for_both_modes(self):
+    def test_top_level_routes_selected_topic_into_vendor_bringup(self):
         tree = source_tree(SMARTCAR_BRINGUP)
         values = string_values(tree)
         self.assertIn("use_safety", values)
@@ -83,6 +88,24 @@ class SafetyLaunchContractTests(unittest.TestCase):
 
         source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
         self.assertIn("'input_topic': chassis_input_topic", source)
+
+    def test_vendor_bringup_forwards_topic_into_base_serial(self):
+        tree = source_tree(ORIGINCAR_BRINGUP)
+        values = string_values(tree)
+        self.assertIn("input_topic", values)
+
+        source = ORIGINCAR_BRINGUP.read_text(encoding="utf-8")
+        self.assertIn("base_serial.launch.py", source)
+        self.assertIn("'input_topic': input_topic", source)
+
+    def test_base_serial_maps_adapter_and_driver_topics(self):
+        source = BASE_SERIAL.read_text(encoding="utf-8")
+        self.assertIn("'input_topic': input_topic", source)
+        self.assertIn("'output_topic': output_topic", source)
+        self.assertIn("'akm_cmd_vel': output_topic", source)
+        self.assertIn("'cmd_vel': input_topic", source)
+        self.assertIn("condition=IfCondition(akmcar)", source)
+        self.assertIn("condition=UnlessCondition(akmcar)", source)
 
 
 if __name__ == "__main__":

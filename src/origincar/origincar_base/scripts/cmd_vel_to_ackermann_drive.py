@@ -7,7 +7,7 @@ from geometry_msgs.msg import Twist
 from ackermann_msgs.msg import AckermannDriveStamped
 from rclpy.qos import QoSProfile
 
-from ackermann_math import steering_angle
+from ackermann_math import ackermann_command
 
 
 class CmdVel2AckermannDriveNode(Node):
@@ -36,9 +36,8 @@ class CmdVel2AckermannDriveNode(Node):
         )
 
     def cmd_callback(self, data):
-        vel = data.linear.x
-        steering = steering_angle(
-            vel,
+        speed, steering = ackermann_command(
+            data.linear.x,
             data.angular.z,
             self.wheelbase,
             self.max_steering_angle,
@@ -48,7 +47,7 @@ class CmdVel2AckermannDriveNode(Node):
         msg.header.stamp = self.get_clock().now().to_msg()
         msg.header.frame_id = self.frame_id
         msg.drive.steering_angle = steering
-        msg.drive.speed = vel
+        msg.drive.speed = speed
         self.publisher.publish(msg)
 
 

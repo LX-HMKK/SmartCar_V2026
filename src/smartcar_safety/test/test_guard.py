@@ -118,6 +118,44 @@ class SafetyGuardTests(unittest.TestCase):
                     with self.assertRaises(ValueError):
                         self.make_guard(**{field: timeout})
 
+    def test_zero_and_negative_timeouts_are_rejected(self):
+        for field in (
+            "command_timeout_sec",
+            "scan_timeout_sec",
+            "odom_timeout_sec",
+        ):
+            for timeout in (0.0, -0.01):
+                with self.subTest(field=field, timeout=timeout):
+                    with self.assertRaises(ValueError):
+                        self.make_guard(**{field: timeout})
+
+    def test_negative_minimum_voltage_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.make_guard(minimum_voltage=-0.01)
+
+    def test_zero_minimum_voltage_remains_disabled(self):
+        guard = self.make_guard(
+            minimum_voltage=0.0,
+            require_scan=False,
+            require_odom=False,
+        )
+        guard.mark_command(10.0)
+        self.assertEqual(guard.evaluate(10.1), {"allowed": True, "reason": "ok"})
+
+    def test_invalid_command_blocks_without_refreshing_last_valid_timestamp(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+        guard.mark_command_invalid()
+
+        self.assertEqual(guard.command_received_at, 10.0)
+        self.assertEqual(
+            guard.evaluate(10.1),
+            {"allowed": False, "reason": "command_invalid"},
+        )
+
+        guard.mark_command(10.2)
+        self.assertEqual(guard.evaluate(10.21), {"allowed": True, "reason": "ok"})
+
 
 if __name__ == "__main__":
     unittest.main()

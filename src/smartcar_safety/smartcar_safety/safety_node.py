@@ -7,18 +7,19 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
 
-from smartcar_safety.guard import SafetyGuard
+from smartcar_safety.guard import SafetyGuard, validate_publish_frequency
+from smartcar_safety.velocity import ZERO_TWIST_COMPONENTS, sanitize_twist_components
 
 
-def copy_twist(source):
-    """Return a fresh Twist message with all velocity fields copied."""
+def twist_from_components(components):
+    """Return a fresh Twist populated from six sanitized components."""
     result = Twist()
-    result.linear.x = source.linear.x
-    result.linear.y = source.linear.y
-    result.linear.z = source.linear.z
-    result.angular.x = source.angular.x
-    result.angular.y = source.angular.y
-    result.angular.z = source.angular.z
+    result.linear.x = components[0]
+    result.linear.y = components[1]
+    result.linear.z = components[2]
+    result.angular.x = components[3]
+    result.angular.y = components[4]
+    result.angular.z = components[5]
     return result
 
 
@@ -43,11 +44,10 @@ class SafetyNode(Node):
             require_scan=self.get_parameter("require_scan").value,
             require_odom=self.get_parameter("require_odom").value,
         )
-        frequency_hz = float(self.get_parameter("publish_frequency_hz").value)
-        if frequency_hz <= 0.0:
-            raise ValueError("publish_frequency_hz must be positive")
+        frequency_hz = validate_publish_frequency(
+            self.get_parameter("publish_frequency_hz").value)
 
-        self._last_command = None
+        self._last_command_components = None
         self._last_status_reason = None
         self._last_blocked_status_at = None
 
@@ -62,15 +62,30 @@ class SafetyNode(Node):
             SetBool, "/smartcar/safety/emergency_stop", self._on_emergency_stop)
         self.create_timer(1.0 / frequency_hz, self._on_timer)
 
-        self._publish_status_if_due(self._now_sec(), self.guard.evaluate(self._now_sec()), True)
+        now_sec = self._now_sec()
+        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
 
     def _now_sec(self):
         return self.get_clock().now().nanoseconds / 1_000_000_000.0
 
     def _on_command(self, message):
         now_sec = self._now_sec()
-        self._last_command = copy_twist(message)
-        self.guard.mark_command(now_sec)
+        valid, components = sanitize_twist_components((
+            message.linear.x,
+            message.linear.y,
+            message.linear.z,
+            message.angular.x,
+            message.angular.y,
+            message.angular.z,
+        ))
+        if valid:
+            self._last_command_components = components
+            self.guard.mark_command(now_sec)
+        else:
+            self._last_command_components = None
+            self.guard.mark_command_invalid()
+            self._safe_publisher.publish(
+                twist_from_components(ZERO_TWIST_COMPONENTS))
         self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
 
     def _on_scan(self, _message):
@@ -101,10 +116,10 @@ class SafetyNode(Node):
     def _on_timer(self):
         now_sec = self._now_sec()
         result = self.guard.evaluate(now_sec)
-        if result["allowed"] and self._last_command is not None:
-            command = copy_twist(self._last_command)
+        if result["allowed"] and self._last_command_components is not None:
+            command = twist_from_components(self._last_command_components)
         else:
-            command = Twist()
+            command = twist_from_components(ZERO_TWIST_COMPONENTS)
         self._safe_publisher.publish(command)
         self._publish_status_if_due(now_sec, result)
 
