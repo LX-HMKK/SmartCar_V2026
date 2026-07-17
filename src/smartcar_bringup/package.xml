@@ -19,6 +19,7 @@
   <exec_depend>robot_localization</exec_depend>
   <exec_depend>imu_filter_madgwick</exec_depend>
   <exec_depend>launch_ros</exec_depend>
+  <exec_depend>smartcar_safety</exec_depend>
 
   <test_depend>ament_cmake</test_depend>
 

@@ -5,6 +5,7 @@
   - origincar_base/origincar_bringup.launch.py  底盘+IMU+EKF+URDF+静态TF（无条件，底盘必需）
   - ydlidar_ros2_driver/ydlidar_launch.py       LiDAR（IfCondition use_lidar，默认 ydlidar.yaml frame_id=laser）
   - smartcar_bringup/obstacle_detector.launch.py 锥桶检测（IfCondition use_obstacle，重写参数）
+  - smartcar_safety/smartcar_safety.launch.py 命令安全门（默认启用）
 
 命名统一到 RDK 实际：/odom_combined 话题 + odom_combined 帧（见 spec §5）。
 端口/帧的深度参数化：use_lidar/use_obstacle/use_nav/odom_frame 经本 launch 暴露；
@@ -23,11 +24,15 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
     use_lidar = LaunchConfiguration('use_lidar')
     use_obstacle = LaunchConfiguration('use_obstacle')
+    use_safety = LaunchConfiguration('use_safety')
+    safety_require_scan = LaunchConfiguration('safety_require_scan')
+    safety_require_odom = LaunchConfiguration('safety_require_odom')
     odom_frame = LaunchConfiguration('odom_frame')
 
     origincar_dir = get_package_share_directory('origincar_base')
     ydlidar_dir = get_package_share_directory('ydlidar_ros2_driver')
     bringup_dir = get_package_share_directory('smartcar_bringup')
+    safety_dir = get_package_share_directory('smartcar_safety')
 
     origincar_bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -47,12 +52,28 @@ def generate_launch_description():
         condition=IfCondition(use_obstacle),
     )
 
+    safety = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(safety_dir, 'launch', 'smartcar_safety.launch.py')),
+        launch_arguments={
+            'require_scan': safety_require_scan,
+            'require_odom': safety_require_odom,
+        }.items(),
+        condition=IfCondition(use_safety),
+    )
+
     return LaunchDescription([
         # 功能开关
         DeclareLaunchArgument('use_lidar', default_value='true',
                               description='启动 LiDAR 驱动（/scan）'),
         DeclareLaunchArgument('use_obstacle', default_value='true',
                               description='启动 obstacle_detector（锥桶检测）'),
+        DeclareLaunchArgument('use_safety', default_value='true',
+                              description='启动 fail-closed /cmd_vel 到 /cmd_vel_safe 安全门'),
+        DeclareLaunchArgument('safety_require_scan', default_value='true',
+                              description='安全门要求新鲜 /scan'),
+        DeclareLaunchArgument('safety_require_odom', default_value='true',
+                              description='安全门要求新鲜 /odom_combined'),
         DeclareLaunchArgument('use_nav', default_value='false',
                               description='预留：启动 Nav2（本期不实现，smartcar_nav2 未就绪）'),
         DeclareLaunchArgument('use_sim_time', default_value='false',
@@ -68,4 +89,5 @@ def generate_launch_description():
         origincar_bringup,
         ydlidar,
         obstacle,
+        safety,
     ])

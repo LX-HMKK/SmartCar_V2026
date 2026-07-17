@@ -1,0 +1,43 @@
+"""Launch the fail-closed SmartCar velocity safety node."""
+import os
+
+from ament_index_python.packages import get_package_share_directory
+from launch import LaunchDescription
+from launch.actions import DeclareLaunchArgument
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
+
+def generate_launch_description():
+    package_dir = get_package_share_directory("smartcar_safety")
+    config_file = LaunchConfiguration("config_file")
+    require_scan = LaunchConfiguration("require_scan")
+    require_odom = LaunchConfiguration("require_odom")
+
+    return LaunchDescription([
+        DeclareLaunchArgument(
+            "config_file",
+            default_value=os.path.join(package_dir, "config", "safety.yaml"),
+            description="Safety node parameter file",
+        ),
+        DeclareLaunchArgument(
+            "require_scan",
+            default_value="true",
+            description="Require fresh /scan before forwarding velocity",
+        ),
+        DeclareLaunchArgument(
+            "require_odom",
+            default_value="true",
+            description="Require fresh /odom_combined before forwarding velocity",
+        ),
+        Node(
+            package="smartcar_safety",
+            executable="safety_node",
+            name="safety_node",
+            output="screen",
+            parameters=[
+                config_file,
+                {"require_scan": require_scan, "require_odom": require_odom},
+            ],
+        ),
+    ])

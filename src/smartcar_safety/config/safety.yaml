@@ -1,0 +1,9 @@
+safety_node:
+  ros__parameters:
+    command_timeout_sec: 0.30
+    scan_timeout_sec: 0.35
+    odom_timeout_sec: 0.35
+    minimum_voltage: 0.0
+    publish_frequency_hz: 20.0
+    require_scan: true
+    require_odom: true
