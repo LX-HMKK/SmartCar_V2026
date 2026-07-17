@@ -16,6 +16,7 @@ __pycache__/
 
 # 本地工具目录
 .remember/
+.superpowers/
 
 # 备份
 *.bak
