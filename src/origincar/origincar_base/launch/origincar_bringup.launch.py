@@ -21,11 +21,18 @@ def generate_launch_description():
 
     
     carto_slam = LaunchConfiguration('carto_slam', default='false')
+    input_topic = LaunchConfiguration('input_topic')
     carto_slam_dec = DeclareLaunchArgument('carto_slam',default_value='false')
+    input_topic_dec = DeclareLaunchArgument(
+        'input_topic', default_value='/cmd_vel_safe',
+        description='Twist input topic for the chassis command conversion')
             
     origincar_base = IncludeLaunchDescription(
             PythonLaunchDescriptionSource(os.path.join(launch_dir, 'base_serial.launch.py')),
-            launch_arguments={'akmcar': 'true'}.items(),
+            launch_arguments={
+                'akmcar': 'true',
+                'input_topic': input_topic,
+            }.items(),
     )
 
     choose_car = IncludeLaunchDescription(
@@ -82,6 +89,7 @@ def generate_launch_description():
     ld = LaunchDescription()
 
     ld.add_action(carto_slam_dec)
+    ld.add_action(input_topic_dec)
     ld.add_action(origincar_base)
     ld.add_action(base_to_link)
     ld.add_action(base_to_gyro)

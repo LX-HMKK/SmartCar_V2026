@@ -1,4 +1,5 @@
 """ROS-independent fail-closed velocity safety decisions."""
+import math
 
 
 class SafetyGuard:
@@ -13,10 +14,14 @@ class SafetyGuard:
         require_scan=True,
         require_odom=True,
     ):
-        self.command_timeout_sec = float(command_timeout_sec)
-        self.scan_timeout_sec = float(scan_timeout_sec)
-        self.odom_timeout_sec = float(odom_timeout_sec)
-        self.minimum_voltage = float(minimum_voltage)
+        self.command_timeout_sec = self._finite_parameter(
+            "command_timeout_sec", command_timeout_sec)
+        self.scan_timeout_sec = self._finite_parameter(
+            "scan_timeout_sec", scan_timeout_sec)
+        self.odom_timeout_sec = self._finite_parameter(
+            "odom_timeout_sec", odom_timeout_sec)
+        self.minimum_voltage = self._finite_parameter(
+            "minimum_voltage", minimum_voltage)
         self.require_scan = bool(require_scan)
         self.require_odom = bool(require_odom)
 
@@ -43,6 +48,13 @@ class SafetyGuard:
     def set_emergency_stop(self, enabled):
         """Latch a stop until a caller explicitly clears it with False."""
         self.emergency_stop = bool(enabled)
+
+    @staticmethod
+    def _finite_parameter(name, value):
+        value = float(value)
+        if not math.isfinite(value):
+            raise ValueError(f"{name} must be finite")
+        return value
 
     @staticmethod
     def _fresh(receipt_time_sec, now_sec, timeout_sec):
@@ -80,6 +92,8 @@ class SafetyGuard:
         if self.minimum_voltage > 0.0:
             if self.voltage is None:
                 return self._result(False, "voltage_missing")
+            if not math.isfinite(self.voltage):
+                return self._result(False, "voltage_invalid")
             if self.voltage < self.minimum_voltage:
                 return self._result(False, "voltage_low")
 

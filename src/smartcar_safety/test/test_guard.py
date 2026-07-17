@@ -1,4 +1,5 @@
 """Unit tests for the ROS-independent velocity safety decision logic."""
+import math
 from pathlib import Path
 import sys
 import unittest
@@ -89,6 +90,33 @@ class SafetyGuardTests(unittest.TestCase):
             guard.evaluate(10.10),
             {"allowed": False, "reason": "voltage_low"},
         )
+
+    def test_non_finite_voltage_blocks_motion_when_threshold_enabled(self):
+        for voltage in (math.nan, math.inf, -math.inf):
+            with self.subTest(voltage=voltage):
+                guard = self.make_guard(minimum_voltage=11.0)
+                self.make_healthy(guard, voltage=voltage)
+                self.assertEqual(
+                    guard.evaluate(10.10),
+                    {"allowed": False, "reason": "voltage_invalid"},
+                )
+
+    def test_non_finite_minimum_voltage_is_rejected(self):
+        for threshold in (math.nan, math.inf, -math.inf):
+            with self.subTest(threshold=threshold):
+                with self.assertRaises(ValueError):
+                    self.make_guard(minimum_voltage=threshold)
+
+    def test_non_finite_timeouts_are_rejected(self):
+        for field in (
+            "command_timeout_sec",
+            "scan_timeout_sec",
+            "odom_timeout_sec",
+        ):
+            for timeout in (math.nan, math.inf, -math.inf):
+                with self.subTest(field=field, timeout=timeout):
+                    with self.assertRaises(ValueError):
+                        self.make_guard(**{field: timeout})
 
 
 if __name__ == "__main__":

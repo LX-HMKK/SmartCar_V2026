@@ -17,7 +17,7 @@ from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration
+from launch.substitutions import LaunchConfiguration, PythonExpression
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -28,6 +28,10 @@ def generate_launch_description():
     safety_require_scan = LaunchConfiguration('safety_require_scan')
     safety_require_odom = LaunchConfiguration('safety_require_odom')
     odom_frame = LaunchConfiguration('odom_frame')
+    chassis_input_topic = PythonExpression([
+        "'/cmd_vel_safe' if '", use_safety,
+        "'.lower() in ('true', '1') else '/cmd_vel'",
+    ])
 
     origincar_dir = get_package_share_directory('origincar_base')
     ydlidar_dir = get_package_share_directory('ydlidar_ros2_driver')
@@ -37,6 +41,7 @@ def generate_launch_description():
     origincar_bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(origincar_dir, 'launch', 'origincar_bringup.launch.py')),
+        launch_arguments={'input_topic': chassis_input_topic}.items(),
     )
 
     ydlidar = IncludeLaunchDescription(
