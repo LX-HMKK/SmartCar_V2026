@@ -13,6 +13,8 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
     bt_xml_file = LaunchConfiguration('bt_xml_file')
+    bt_through_poses_xml_file = LaunchConfiguration(
+        'bt_through_poses_xml_file')
     waypoints_file = LaunchConfiguration('waypoints_file')
 
     declare_use_sim_time = DeclareLaunchArgument(
@@ -32,6 +34,13 @@ def generate_launch_description():
             'navigate_to_pose_w_replanning_and_recovery.xml'),
         description='Behavior tree XML file')
 
+    declare_bt_through_poses_xml_file = DeclareLaunchArgument(
+        'bt_through_poses_xml_file',
+        default_value=os.path.join(
+            pkg_dir, 'config', 'behavior_trees',
+            'navigate_through_poses_w_replanning_and_recovery.xml'),
+        description='NavigateThroughPoses behavior tree XML file')
+
     declare_waypoints_file = DeclareLaunchArgument(
         'waypoints_file',
         default_value=os.path.join(
@@ -45,12 +54,14 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'params_file': params_file,
             'bt_xml_file': bt_xml_file,
+            'bt_through_poses_xml_file': bt_through_poses_xml_file,
         }.items())
 
     return LaunchDescription([
         declare_use_sim_time,
         declare_params_file,
         declare_bt_xml_file,
+        declare_bt_through_poses_xml_file,
         declare_waypoints_file,
         nav2_bringup,
     ])

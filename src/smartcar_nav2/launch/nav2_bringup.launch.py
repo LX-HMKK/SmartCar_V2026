@@ -15,6 +15,8 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
     bt_xml_file = LaunchConfiguration('bt_xml_file')
+    bt_through_poses_xml_file = LaunchConfiguration(
+        'bt_through_poses_xml_file')
     autostart = LaunchConfiguration('autostart')
     use_composition = LaunchConfiguration('use_composition')
     use_respawn = LaunchConfiguration('use_respawn')
@@ -36,6 +38,13 @@ def generate_launch_description():
             'navigate_to_pose_w_replanning_and_recovery.xml'),
         description='Full path to the behavior tree XML file')
 
+    declare_bt_through_poses_xml_file = DeclareLaunchArgument(
+        'bt_through_poses_xml_file',
+        default_value=os.path.join(
+            pkg_dir, 'config', 'behavior_trees',
+            'navigate_through_poses_w_replanning_and_recovery.xml'),
+        description='Full path to the NavigateThroughPoses behavior tree XML file')
+
     declare_autostart = DeclareLaunchArgument(
         'autostart', default_value='true',
         description='Automatically startup the nav2 stack')
@@ -51,7 +60,10 @@ def generate_launch_description():
     # 在参数文件中注入实际的行为树 XML 路径
     params_file = ReplaceString(
         source_file=params_file,
-        replacements={'<bt_xml_file>': bt_xml_file})
+        replacements={
+            '<bt_xml_file>': bt_xml_file,
+            '<bt_through_poses_xml_file>': bt_through_poses_xml_file,
+        })
 
     # 纯惯导、无 SLAM：直接使用 navigation_launch.py，避免加载 map_server/AMCL
     nav2_launch = IncludeLaunchDescription(
@@ -69,6 +81,7 @@ def generate_launch_description():
         declare_use_sim_time,
         declare_params_file,
         declare_bt_xml_file,
+        declare_bt_through_poses_xml_file,
         declare_autostart,
         declare_use_composition,
         declare_use_respawn,

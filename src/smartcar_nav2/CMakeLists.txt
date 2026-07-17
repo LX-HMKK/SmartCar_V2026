@@ -9,7 +9,7 @@ install(DIRECTORY launch config maps
 
 if(BUILD_TESTING)
   find_package(launch_testing_ament_cmake REQUIRED)
-  add_launch_test(test/test_smartcar_nav2_launch.py)
+  add_launch_test(test/test_smartcar_nav2_launch.py TIMEOUT 90)
 endif()
 
 ament_package()

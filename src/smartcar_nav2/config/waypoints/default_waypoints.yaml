@@ -24,7 +24,7 @@ waypoints:
   - frame_id: "odom_combined"
     pose:
       position: { x: 4.0, y: 1.0, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.707, w: 0.707 }
+      orientation: { x: 0.0, y: 0.0, z: 0.70710678, w: 0.70710678 }
     task: "corridor" # 通道口
 
   - frame_id: "odom_combined"
