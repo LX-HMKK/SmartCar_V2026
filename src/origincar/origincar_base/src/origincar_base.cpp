@@ -43,71 +43,75 @@ float origincar_base::Odom_Trans(uint8_t Data_High,uint8_t Data_Low)
 
 void origincar_base::Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDriveStamped::SharedPtr akm_ctl)
 {
-    short  transition;
+    const bool dispatched = dispatch_command(
+      command_mode,
+      CommandType::kAckermann,
+      [this, akm_ctl]() {
+        short transition;
+        command_watchdog->mark_command(rclcpp::Node::now().seconds());
 
-    if (!accepts_command(command_mode, CommandType::kAckermann)) {
+        Send_Data.tx[0]=FRAME_HEADER;
+        Send_Data.tx[1] = 0;
+        Send_Data.tx[2] = 0;
+
+        transition=0;
+        transition = akm_ctl->drive.speed*1000;
+        Send_Data.tx[4] = transition;
+        Send_Data.tx[3] = transition>>8;
+
+        Send_Data.tx[5] = 0;
+        Send_Data.tx[6] = 0;
+
+        transition=0;
+        transition = akm_ctl->drive.steering_angle*1000/2;
+        Send_Data.tx[8] = transition;
+        Send_Data.tx[7] = transition>>8;
+
+        Send_Data.tx[9]=Check_Sum(9,SEND_DATA_CHECK);
+        Send_Data.tx[10]=FRAME_TAIL;
+      },
+      [this]() {Write_Command();});
+
+    if (!dispatched) {
       RCLCPP_WARN(this->get_logger(), "Ignored Ackermann command in Twist mode");
-      return;
     }
-    command_watchdog->mark_command(rclcpp::Node::now().seconds());
-  
-    Send_Data.tx[0]=FRAME_HEADER;
-    Send_Data.tx[1] = 0;
-    Send_Data.tx[2] = 0; 
-
-    transition=0;
-    transition = akm_ctl->drive.speed*1000;
-    Send_Data.tx[4] = transition;
-    Send_Data.tx[3] = transition>>8;
-
-    Send_Data.tx[5] = 0;
-    Send_Data.tx[6] = 0;
-
-    transition=0;
-    transition = akm_ctl->drive.steering_angle*1000/2;
-    Send_Data.tx[8] = transition;
-    Send_Data.tx[7] = transition>>8;
-
-    Send_Data.tx[9]=Check_Sum(9,SEND_DATA_CHECK); 
-    Send_Data.tx[10]=FRAME_TAIL;
-
-    Write_Command();
 }
 
 void origincar_base::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr twist_aux)
 {
-    short  transition;
+    const bool dispatched = dispatch_command(
+      command_mode,
+      CommandType::kTwist,
+      [this, twist_aux]() {
+        short transition;
+        command_watchdog->mark_command(rclcpp::Node::now().seconds());
 
-    if (!accepts_command(command_mode, CommandType::kTwist)) {
+        Send_Data.tx[0]=FRAME_HEADER;
+        Send_Data.tx[1] = 0;
+        Send_Data.tx[2] = 0;
+
+        transition=0;
+        transition = twist_aux->linear.x*1000;
+        Send_Data.tx[4] = transition;
+        Send_Data.tx[3] = transition>>8;
+
+        transition=0;
+        transition = twist_aux->linear.y*1000;
+        Send_Data.tx[6] = transition;
+        Send_Data.tx[5] = transition>>8;
+
+        transition=0;
+        transition = (twist_aux->angular.z)*1000;
+        Send_Data.tx[8] = transition;
+        Send_Data.tx[7] = transition>>8;
+
+        Send_Data.tx[9]=Check_Sum(9,SEND_DATA_CHECK);
+        Send_Data.tx[10]=FRAME_TAIL;
+      },
+      [this]() {Write_Command();});
+
+    if (!dispatched) {
       RCLCPP_WARN(this->get_logger(), "Ignored Twist command in Ackermann mode");
-      return;
-    }
-    command_watchdog->mark_command(rclcpp::Node::now().seconds());
-
-    Send_Data.tx[0]=FRAME_HEADER;
-    Send_Data.tx[1] = 0;
-    Send_Data.tx[2] = 0; 
-
-    transition=0;
-    transition = twist_aux->linear.x*1000;
-    Send_Data.tx[4] = transition;
-    Send_Data.tx[3] = transition>>8;
-
-    transition=0;
-    transition = twist_aux->linear.y*1000;
-    Send_Data.tx[6] = transition;
-    Send_Data.tx[5] = transition>>8;
-
-    transition=0;
-    transition = (twist_aux->angular.z)*1000;
-    Send_Data.tx[8] = transition;
-    Send_Data.tx[7] = transition>>8;
-
-    Send_Data.tx[9]=Check_Sum(9,SEND_DATA_CHECK);
-    Send_Data.tx[10]=FRAME_TAIL;
-
-    if (akm_cmd_vel == "none") {
-      Write_Command();
     }
 }
 

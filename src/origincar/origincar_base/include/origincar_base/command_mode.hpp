@@ -3,6 +3,7 @@
 
 #include <stdexcept>
 #include <string>
+#include <utility>
 
 enum class CommandMode
 {
@@ -32,6 +33,22 @@ inline bool accepts_command(CommandMode mode, CommandType type)
   return
     (mode == CommandMode::kTwist && type == CommandType::kTwist) ||
     (mode == CommandMode::kAckermann && type == CommandType::kAckermann);
+}
+
+template<typename SideEffect, typename Writer>
+inline bool dispatch_command(
+  CommandMode mode,
+  CommandType type,
+  SideEffect && side_effect,
+  Writer && writer)
+{
+  if (!accepts_command(mode, type)) {
+    return false;
+  }
+
+  std::forward<SideEffect>(side_effect)();
+  std::forward<Writer>(writer)();
+  return true;
 }
 
 #endif  // ORIGINCAR_BASE__COMMAND_MODE_HPP_
