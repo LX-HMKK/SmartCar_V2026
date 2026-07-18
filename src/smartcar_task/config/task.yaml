@@ -1,0 +1,24 @@
+task_node:
+  ros__parameters:
+    autostart_mission: false
+    waypoints_calibrated: false
+    extrinsics_calibrated: false
+    steering_calibrated: false
+    emergency_stop_ready: false
+    operator_approved: false
+    server_wait_timeout_sec: 5.0
+    navigation_timeout_sec: 120.0
+    goal_response_timeout_sec: 5.0
+    cancel_timeout_sec: 3.0
+    stop_timeout_sec: 5.0
+    navigation_retries: 1
+    navigation_retry_delay_sec: 0.25
+    qr_settle_sec: 2.0
+    qr_timeout_sec: 3.0
+    qr_retries: 1
+    qr_retry_delay_sec: 0.25
+    vlm_timeout_sec: 8.0
+    vlm_prompt: "请描述图中人物立牌的外观和动作。"
+    reset_timeout_sec: 5.0
+    origin_position_tolerance: 0.20
+    origin_yaw_tolerance: 0.20

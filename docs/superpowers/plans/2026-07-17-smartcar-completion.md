@@ -344,21 +344,21 @@ Expected: tests and build pass; `ros2 service type` reports both custom services
 - Mission states are `IDLE`, `WAITING_FOR_SERVERS`, `NAVIGATING`, `RUNNING_QR`, `RUNNING_VLM`, `COMPLETED`, `STOPPED`, `FAILED`.
 - Task policies: `start`, `corridor`, `loop`, and `return` require no vision call; `qr` calls ReadQr after a configurable 2 second settle delay and retries once; `vlm` calls DescribeScene with an 8 second timeout and publishes returned/fallback text.
 
-- [ ] **Step 1: Write failing waypoint/parser and state-machine tests**
+- [x] **Step 1: Write failing waypoint/parser and state-machine tests**
 
 Cover malformed YAML, unknown task, non-normalized quaternion, success path, navigation retry, QR retry, VLM fallback, stop request, and reset after terminal state. Use fake ports, not ROS mocks.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest discover -s src/smartcar_task/test -v`
 
 Expected: FAIL because task modules do not exist.
 
-- [ ] **Step 3: Implement ports-and-adapters mission logic and ROS node**
+- [x] **Step 3: Implement ports-and-adapters mission logic and ROS node**
 
 Pure mission logic depends on interfaces `Navigator.navigate(waypoint)`, `Vision.read_qr(not_before, timeout)`, `Vision.describe_scene(not_before, timeout, prompt)`, `Localization.reset_origin()`, `Clock.now/sleep`, and `Output.publish`. The ROS localization adapter owns the ordered `/set_pose` -> newer finite `/odom_combined` -> safety localization-fault clear sequence. The ROS node adapts Nav2 actions/services to those interfaces and runs the mission on a worker thread so service callbacks remain responsive.
 
-- [ ] **Step 4: Verify GREEN and RDK build**
+- [x] **Step 4: Verify GREEN and RDK build**
 
 Run locally: `python -m unittest discover -s src/smartcar_task/test -v`
 
