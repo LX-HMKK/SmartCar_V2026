@@ -9,3 +9,4 @@ safety_node:
     require_scan: true
     require_odom: true
     require_raw_odom: true
+    emergency_stop_on_start: false

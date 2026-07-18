@@ -63,7 +63,7 @@ colcon test
 colcon test-result --all --verbose
 ```
 
-当前全工作区结果为 15 个包构建通过，`506 tests, 0 errors, 0 failures, 90 skipped`。`ydlidar_ros2_driver`、`origincar_bringup`、`origincar_description` 的继承源码全量 lint 为显式 opt-in；需要清理 vendor 风格债务时使用 `colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不影响默认功能测试。
+当前全工作区结果为 15 个包构建通过，`508 tests, 0 errors, 0 failures, 90 skipped`。`ydlidar_ros2_driver`、`origincar_bringup`、`origincar_description` 的继承源码全量 lint 为显式 opt-in；需要清理 vendor 风格债务时使用 `colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不影响默认功能测试。
 
 ## 无硬件 smoke
 
@@ -88,7 +88,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
   autostart_mission:=false
 ```
 
-常用开关：`use_base`、`use_lidar`、`use_obstacle`、`use_safety`、`use_nav`、`use_camera`、`use_vision`、`use_task`、`nav_autostart`、`use_sim_time`。关闭 `use_base` 时仍会保留 safety 节点，适合无硬件 bench；物理底盘开启时系统强制要求 `use_safety=true`。
+常用开关：`use_base`、`use_lidar`、`use_obstacle`、`use_safety`、`use_nav`、`use_camera`、`use_vision`、`use_task`、`nav_autostart`、`safety_emergency_stop_on_start`、`use_sim_time`。关闭 `use_base` 时仍会保留 safety 节点，适合无硬件 bench；物理底盘开启时系统强制要求 `use_safety=true`。
 
 真实相机默认使用 Aurora RGB；关闭相机但保留服务时需要提供合成或外部图像话题：
 

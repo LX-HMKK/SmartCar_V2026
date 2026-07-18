@@ -8,7 +8,7 @@
 
 **Tech Stack:** ROS2 Humble/TogetheROS, Python 3/rclpy, C++17/rclcpp, Nav2, robot_localization, zbar_ros, sensor_msgs, std_srvs, rosidl default generators, stdlib unittest, ament/colcon.
 
-**Software milestone status (2026-07-18):** Tasks 1-8 are implemented and verified. Local root contracts: 106 passed. RDK: 15 packages built; full `colcon test` result is 506 tests, 0 errors, 0 failures, 90 generated-code skips. The no-hardware smoke uses synthetic sensors, asserts emergency stop before Nav2 activation, and never publishes a nonzero velocity. Ground motion remains blocked by placeholder waypoints, unmeasured extrinsics/steering, undeployed VLM model, and the five explicit physical gates.
+**Software milestone status (2026-07-18):** Tasks 1-8 are implemented and verified. Local root contracts: 108 passed. RDK: 15 packages built; full `colcon test` result is 508 tests, 0 errors, 0 failures, 90 generated-code skips. The no-hardware smoke uses synthetic sensors, asserts emergency stop before Nav2 activation, and never publishes a nonzero velocity. Ground motion remains blocked by placeholder waypoints, unmeasured extrinsics/steering, undeployed VLM model, and the five explicit physical gates.
 
 ## Global Constraints
 

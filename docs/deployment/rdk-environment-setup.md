@@ -51,7 +51,7 @@ colcon test
 colcon test-result --all --verbose
 ```
 
-2026-07-18 验证结果：15 个包构建通过，`506 tests, 0 errors, 0 failures, 90 skipped`。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
+2026-07-18 验证结果：15 个包构建通过，`508 tests, 0 errors, 0 failures, 90 skipped`。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
 
 ```bash
 colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON
@@ -91,6 +91,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
   use_lidar:=false \
   use_obstacle:=false \
   use_safety:=true \
+  safety_emergency_stop_on_start:=true \
   use_nav:=false \
   nav_autostart:=false \
   use_camera:=false \
@@ -118,6 +119,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 | `use_lidar` | `true` | YDLIDAR `/scan` |
 | `use_obstacle` | `true` | obstacle detector |
 | `use_safety` | `true` | `/cmd_vel` 到 `/cmd_vel_safe` 安全门 |
+| `safety_emergency_stop_on_start` | `false` | 节点创建时立即锁存急停 |
 | `use_nav` | `true` | Nav2 |
 | `nav_autostart` | `true` | 自动激活 Nav2 lifecycle |
 | `use_camera` | `true` | 实体相机驱动 |

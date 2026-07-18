@@ -109,6 +109,18 @@ class SafetyLaunchContractTests(unittest.TestCase):
         source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
         self.assertIn('"require_raw_odom": require_raw_odom', source)
 
+    def test_safety_launch_exposes_startup_emergency_stop(self):
+        tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
+        self.assertEqual(
+            launch_argument_default(tree, "emergency_stop_on_start"),
+            "false",
+        )
+        source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
+        self.assertIn(
+            '"emergency_stop_on_start": emergency_stop_on_start',
+            source,
+        )
+
     def test_top_level_conditionally_starts_safety(self):
         source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
         self.assertIn("smartcar_safety.launch.py", source)

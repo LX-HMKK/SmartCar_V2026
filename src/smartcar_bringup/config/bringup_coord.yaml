@@ -19,9 +19,11 @@ topics:
   image: /aurora/rgb/image_raw
 
 toggles:
+  use_base: true
   use_lidar: true
   use_obstacle: true
   use_safety: true
+  safety_emergency_stop_on_start: false
   use_nav: true
   use_camera: true
   use_vision: true

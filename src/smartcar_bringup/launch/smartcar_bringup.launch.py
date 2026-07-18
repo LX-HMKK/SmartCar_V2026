@@ -18,6 +18,8 @@ def generate_launch_description():
     safety_require_scan = LaunchConfiguration('safety_require_scan')
     safety_require_odom = LaunchConfiguration('safety_require_odom')
     safety_require_raw_odom = LaunchConfiguration('safety_require_raw_odom')
+    safety_emergency_stop_on_start = LaunchConfiguration(
+        'safety_emergency_stop_on_start')
     odom_frame = LaunchConfiguration('odom_frame')
     laser_frame = LaunchConfiguration('laser_frame')
     chassis_input_topic = PythonExpression([
@@ -77,6 +79,7 @@ def generate_launch_description():
             'require_scan': safety_require_scan,
             'require_odom': safety_require_odom,
             'require_raw_odom': safety_require_raw_odom,
+            'emergency_stop_on_start': safety_emergency_stop_on_start,
             'use_sim_time': use_sim_time,
         }.items(),
         condition=IfCondition(use_safety),
@@ -91,6 +94,8 @@ def generate_launch_description():
         DeclareLaunchArgument('safety_require_odom', default_value='true'),
         DeclareLaunchArgument(
             'safety_require_raw_odom', default_value='true'),
+        DeclareLaunchArgument(
+            'safety_emergency_stop_on_start', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument('odom_frame', default_value='odom_combined'),
         DeclareLaunchArgument('laser_frame', default_value='laser'),

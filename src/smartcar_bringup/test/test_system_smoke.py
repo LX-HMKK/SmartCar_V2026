@@ -147,6 +147,7 @@ def generate_test_description():
                     "use_lidar": "false",
                     "use_obstacle": "false",
                     "use_safety": "true",
+                    "safety_emergency_stop_on_start": "true",
                     "use_nav": "true",
                     "nav_autostart": "false",
                     "use_camera": "false",
@@ -194,25 +195,35 @@ class TestSystemSmoke(unittest.TestCase):
 
     @classmethod
     def _assert_emergency_stop_before_nav_startup(cls):
+        statuses = []
+        status_subscription = cls.node.create_subscription(
+            String,
+            "/smartcar/safety/status",
+            lambda message: statuses.append(message.data),
+            10,
+        )
+        deadline = time.monotonic() + 20.0
+        try:
+            while (
+                "emergency_stop" not in statuses
+                and time.monotonic() < deadline
+            ):
+                rclpy.spin_once(cls.node, timeout_sec=0.10)
+        finally:
+            cls.node.destroy_subscription(status_subscription)
+        if "emergency_stop" not in statuses:
+            raise AssertionError("startup emergency stop was not observed")
+
         state_client = cls.node.create_client(
             GetState, "/controller_server/get_state"
         )
-        if not state_client.wait_for_service(timeout_sec=20.0):
+        if not state_client.wait_for_service(timeout_sec=30.0):
             raise AssertionError("controller lifecycle service unavailable")
-        state = cls._wait_future(state_client.call_async(GetState.Request()), 5.0)
+        state = cls._wait_future(
+            state_client.call_async(GetState.Request()), 15.0
+        )
         if state.current_state.id == State.PRIMARY_STATE_ACTIVE:
             raise AssertionError("Nav2 activated before emergency stop")
-
-        emergency_client = cls.node.create_client(
-            SetBool, "/smartcar/safety/emergency_stop"
-        )
-        if not emergency_client.wait_for_service(timeout_sec=20.0):
-            raise AssertionError("emergency-stop service unavailable")
-        request = SetBool.Request()
-        request.data = True
-        response = cls._wait_future(emergency_client.call_async(request), 5.0)
-        if not response.success:
-            raise AssertionError(response.message)
 
         lifecycle_client = cls.node.create_client(
             ManageLifecycleNodes,
@@ -285,6 +296,9 @@ class TestSystemSmoke(unittest.TestCase):
 
     def test_services_exist_and_task_remains_idle(self):
         clients = (
+            self.node.create_client(
+                SetBool, "/smartcar/safety/emergency_stop"
+            ),
             self.node.create_client(ReadQr, "/smartcar/vision/read_qr"),
             self.node.create_client(
                 DescribeScene, "/smartcar/vision/describe_scene"

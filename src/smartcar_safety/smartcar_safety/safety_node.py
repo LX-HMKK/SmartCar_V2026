@@ -63,6 +63,7 @@ class SafetyNode(Node):
         self.declare_parameter("require_scan", True)
         self.declare_parameter("require_odom", True)
         self.declare_parameter("require_raw_odom", True)
+        self.declare_parameter("emergency_stop_on_start", False)
 
         self.guard = SafetyGuard(
             command_timeout_sec=self.get_parameter("command_timeout_sec").value,
@@ -74,6 +75,8 @@ class SafetyNode(Node):
             require_odom=self.get_parameter("require_odom").value,
             require_raw_odom=self.get_parameter("require_raw_odom").value,
         )
+        if bool(self.get_parameter("emergency_stop_on_start").value):
+            self.guard.set_emergency_stop(True)
         frequency_hz = validate_publish_frequency(
             self.get_parameter("publish_frequency_hz").value)
 

@@ -75,6 +75,18 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             2,
         )
 
+    def test_startup_emergency_stop_is_explicit_and_fail_closed(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(
+            'self.declare_parameter("emergency_stop_on_start", False)',
+            source,
+        )
+        self.assertIn(
+            'self.get_parameter("emergency_stop_on_start").value',
+            source,
+        )
+        self.assertIn("self.guard.set_emergency_stop(True)", source)
+
 
 if __name__ == "__main__":
     unittest.main()

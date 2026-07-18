@@ -14,6 +14,7 @@ def generate_launch_description():
     require_scan = LaunchConfiguration("require_scan")
     require_odom = LaunchConfiguration("require_odom")
     require_raw_odom = LaunchConfiguration("require_raw_odom")
+    emergency_stop_on_start = LaunchConfiguration("emergency_stop_on_start")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     return LaunchDescription([
@@ -38,6 +39,11 @@ def generate_launch_description():
             description="Require fresh raw /odom before forwarding velocity",
         ),
         DeclareLaunchArgument(
+            "emergency_stop_on_start",
+            default_value="false",
+            description="Latch emergency stop before processing commands",
+        ),
+        DeclareLaunchArgument(
             "use_sim_time",
             default_value="false",
             description="Use the ROS simulation clock",
@@ -53,6 +59,7 @@ def generate_launch_description():
                     "require_scan": require_scan,
                     "require_odom": require_odom,
                     "require_raw_odom": require_raw_odom,
+                    "emergency_stop_on_start": emergency_stop_on_start,
                     "use_sim_time": use_sim_time,
                 },
             ],

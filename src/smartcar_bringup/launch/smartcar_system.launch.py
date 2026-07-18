@@ -164,6 +164,8 @@ def generate_launch_description():
                 "safety_require_odom"),
             "safety_require_raw_odom": LaunchConfiguration(
                 "safety_require_raw_odom"),
+            "safety_emergency_stop_on_start": LaunchConfiguration(
+                "safety_emergency_stop_on_start"),
             "laser_frame": LaunchConfiguration("laser_frame"),
             **{
                 name: LaunchConfiguration(name)
@@ -218,6 +220,8 @@ def generate_launch_description():
         DeclareLaunchArgument("safety_require_odom", default_value="true"),
         DeclareLaunchArgument(
             "safety_require_raw_odom", default_value="true"),
+        DeclareLaunchArgument(
+            "safety_emergency_stop_on_start", default_value="false"),
         DeclareLaunchArgument(
             "waypoints_file",
             default_value=PathJoinSubstitution([

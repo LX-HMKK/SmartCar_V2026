@@ -51,6 +51,7 @@ class SystemContractTests(unittest.TestCase):
             "autostart_mission": "false",
             "use_sim_time": "false",
             "nav_autostart": "true",
+            "safety_emergency_stop_on_start": "false",
         }
         for name, expected in expected_defaults.items():
             with self.subTest(name=name):
@@ -93,6 +94,12 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn(
             'raise RuntimeError("use_base requires use_safety")', source)
         self.assertIn('if _as_bool(context, "use_base")', source)
+
+    def test_startup_emergency_stop_is_explicit_and_defaults_false(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertIn('"safety_emergency_stop_on_start"', source)
+        self.assertIn(
+            '"safety_emergency_stop_on_start": LaunchConfiguration(', source)
 
     def test_base_and_laser_tf_are_parameterized_at_the_unique_vendor_owner(self):
         source = VENDOR.read_text(encoding="utf-8")
@@ -145,6 +152,7 @@ class SystemContractTests(unittest.TestCase):
 
     def test_coord_config_marks_unmeasured_extrinsics_and_placeholder_waypoints(self):
         config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
+        self.assertIs(config["toggles"]["use_base"], True)
         self.assertIs(config["extrinsics"]["base_to_link"]["measured"], False)
         self.assertIs(config["extrinsics"]["link_to_laser"]["measured"], False)
         self.assertIs(config["extrinsics"]["link_to_camera"]["measured"], False)
