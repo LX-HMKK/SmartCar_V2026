@@ -79,10 +79,14 @@ install(TARGETS
 install(DIRECTORY launch params startup config
     DESTINATION share/${PROJECT_NAME})
 
-if(BUILD_TESTING)
-    find_package(ament_lint_auto REQUIRED)
-    ament_lint_auto_find_test_dependencies()
+option(
+  SMARTCAR_ENABLE_VENDOR_LINT
+  "Run legacy lint checks across inherited vendor-only packages"
+  OFF
+)
+if(BUILD_TESTING AND SMARTCAR_ENABLE_VENDOR_LINT)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
 endif()
 
 ament_package()
-
