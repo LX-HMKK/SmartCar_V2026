@@ -141,6 +141,7 @@ class RosNavigator:
         self._goal_error = None
         self._poisoned = False
         self._cancel_error = None
+        self._terminal_generation = None
 
     def wait_ready(self, timeout_sec):
         with self._condition:
@@ -179,6 +180,7 @@ class RosNavigator:
             self._cancel_requested = False
             self._goal_error = None
             self._cancel_error = None
+            self._terminal_generation = None
             try:
                 future = self._client.send_goal_async(goal)
             except Exception as error:
@@ -301,22 +303,30 @@ class RosNavigator:
                 self._condition.notify_all()
                 return
             if self._cancel_requested:
-                self._request_cancel_locked()
+                self._request_cancel_locked(generation)
             self._condition.notify_all()
 
-    def _request_cancel_locked(self):
+    def _request_cancel_locked(self, generation=None):
         if self._goal_handle is None or self._cancel_future is not None:
             return
+        generation = (
+            self._goal_generation if generation is None else generation)
         try:
             self._cancel_future = self._goal_handle.cancel_goal_async()
-            self._cancel_future.add_done_callback(self._on_cancel_response)
+            self._cancel_future.add_done_callback(
+                lambda future: self._on_cancel_response(generation, future))
         except Exception as error:
             self._poisoned = True
             self._goal_error = (
                 f"navigation_cancel_error:{type(error).__name__}")
 
-    def _on_cancel_response(self, future):
+    def _on_cancel_response(self, generation, future):
         with self._condition:
+            if (
+                generation != self._goal_generation
+                or self._terminal_generation == generation
+            ):
+                return
             try:
                 response = future.result()
                 if response.return_code != 0 or not response.goals_canceling:
@@ -344,6 +354,7 @@ class RosNavigator:
                 return
             # A completed action result is a terminal proof, even when its
             # status is ABORTED or CANCELED; the mission may now retry safely.
+            self._terminal_generation = generation
             self._poisoned = False
             self._pending_goal_future = None
             self._goal_handle = None

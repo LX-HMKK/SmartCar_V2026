@@ -4,6 +4,7 @@ import sys
 import threading
 import time
 import unittest
+from types import SimpleNamespace
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
@@ -98,6 +99,19 @@ class RosAdapterTests(unittest.TestCase):
         self.assertTrue(navigator.wait_ready(1.0))
         success = navigator.navigate(item)
         self.assertTrue(success.success, success.status)
+
+        class LateCancelFuture:
+            @staticmethod
+            def result():
+                return SimpleNamespace(return_code=1, goals_canceling=[])
+
+        # A late rejection from the old CancelGoal service must not poison a
+        # generation whose GetResult already proved a terminal action state.
+        navigator._on_cancel_response(
+            navigator._goal_generation,
+            LateCancelFuture(),
+        )
+        self.assertFalse(navigator.is_active())
 
         outcome = []
         worker = threading.Thread(
