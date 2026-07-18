@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **实现状态（2026-07-18）**：本计划已完成并纳入 `main`。下方未勾选项是当时的历史执行模板，不代表当前仓库仍未实现；权威同步、构建和验证命令见 `README.md` 与 `docs/deployment/rdk-environment-setup.md`。
+
 **Goal:** 建立本机 <-> RDK X5 单一工作空间与 rsync 同步基础设施，回传官方包入 VCS，并通过回归验证复现已知的 TF/odom/IMU/scan 行为。
 
 **Architecture:** 本机 `src/` 为权威源（vendor 的官方 `origincar` 包 + `third_party` + 后续 `smartcar_*`），通过 rsync 镜像到 RDK `/root/ros2_ws/src/`（外加 `config/` -> `/root/ros2_ws/config/`）；RDK 只 source `tros humble` + `/root/ros2_ws`。`scripts/sync_to_rdk.py` 封装 rsync（push/pull/init-vendor/setup），`scripts/source_env.sh` 封装 source 链。

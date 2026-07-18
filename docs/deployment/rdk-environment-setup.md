@@ -47,7 +47,7 @@ colcon build --symlink-install
 
 ```bash
 colcon test-result --delete-yes
-colcon test
+colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 

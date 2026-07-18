@@ -2,6 +2,10 @@
 
 第二十一届全国大学生智能汽车竞赛地瓜机器人智慧医疗赛工程。
 
+## 软件里程碑
+
+2026-07-18 完整软件里程碑已合并到 `main`。本地根合同 108/108 通过；RDK X5 上 15 个包构建通过，完整测试结果为 `508 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。版本内容见 [`CHANGELOG.md`](CHANGELOG.md)。
+
 ## 当前边界
 
 软件代码已经覆盖底盘安全门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。自动化测试和 RDK 合成传感器 smoke 已通过。
@@ -59,7 +63,7 @@ source ~/source_env.sh
 cd /root/ros2_ws
 colcon build --symlink-install
 colcon test-result --delete-yes
-colcon test
+colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 

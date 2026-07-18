@@ -2,56 +2,93 @@
 
 本文件为 Codex（Codex.ai/code）提供本仓库的操作指导。
 
-## 项目背景
+## 项目背景与当前状态
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-当前仓库处于早期搭建阶段。仅 `docs/` 下有内容，`src/`、`config/`、`scripts/`、`tools/`、`assets/` 为占位目录。构建、测试、lint 命令尚未定义。
+截至 2026-07-18，`main` 已包含完整软件里程碑：底盘安全控制、轮速/IMU 标定接口、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。代码合同与无硬件 smoke 已通过，但实车标定、端侧模型部署和运动测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
 ## 高层架构
 
-系统架构详见 `docs/智慧医疗挑战赛_技术方案_本地部署版.md`，为分层 ROS2 栈：
-
-- **任务决策层**：五子任务状态机、二维码识别（`zbar_ros`）、人形立牌图生文（相机 → 端侧 VLM → 语音/屏幕输出）。
-- **导航层**：Nav2 Waypoint Follower + Regulated Pure Pursuit；航点序列为 P → 任务点 → 通道口 → C 环道 → 返回 P。
-- **避障感知层**：2D LiDAR 障碍物提取（如 `obstacle_detector_2`）、VFH 反应式紧急避障备用、YOLO 人形检测触发 VLM 图生文。
-- **定位层**：纯惯导，轮式里程计（STM32 编码器）+ IMU，经 `robot_localization` EKF 融合；无 SLAM。
-- **控制层**：OriginCar 官方阿克曼底盘驱动（舵机转角 + 电机速度）。
+- **任务决策层**：`smartcar_task` 管理五子任务、语义航点、`FollowWaypoints`、停止与复位。
+- **视觉层**：`smartcar_vision` 使用 `zbar_ros` 识别二维码；图生文请求包含图像等待、JPEG 编码和后端推理，统一受 8 秒硬期限约束并提供兜底文案。
+- **导航层**：Nav2 Waypoint Follower + Smac Hybrid（DUBIN）+ Regulated Pure Pursuit；禁止 Spin recovery 和原地旋转。
+- **避障感知层**：YDLIDAR `/scan` 进入 obstacle/inflation costmap 和 `obstacle_detector_2`。
+- **定位层**：STM32 轮式里程计 + IMU，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
+- **控制层**：`/cmd_vel` 经 fail-closed `smartcar_safety` 输出 `/cmd_vel_safe`，再转换为 OriginCar 阿克曼命令。
 
 核心约束：
 
-- LiDAR **仅用于避障**，不参与定位。
-- 锥桶仅依靠 LiDAR 避障，无需视觉。
-- 人形立牌由相机 + 端侧 VLM 完成图生文，设置 8 秒超时与兜底文案。
-- 发车时车模手动置于 P 区中心，代码假设该点为坐标原点。
+- LiDAR 仅用于避障，不参与定位；不要擅自改成 LiDAR SLAM/定位架构。
+- 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。
+- 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发和 TTS consumer 不是当前 release 依赖。
+- 发车时车辆手动置于 P 区原点，车头朝 `+X`；任务 reset 不能替代物理复位。
+- 未经用户明确授权，不得启动实体相机、发布非零速度或进行实车运动测试。
 
-## 仓库现状
+## 仓库结构
 
-- `README.md`、`CHANGLOG.md` 当前为空。
-- 尚无构建文件（如 `CMakeLists.txt`、`package.xml`、`pyproject.toml`、`Makefile`）。
-- 无 Cursor 规则（`.cursorrules`、`.cursor/rules/`）或 Copilot 指令（`.github/copilot-instructions.md`）。
-- 已有一份环境审查报告，记录 RDK 实际环境与方案的匹配度：见 `docs/review/rdk-environment-review.md`。
+```text
+src/origincar/                       vendor 底盘、IMU、EKF、YDLIDAR
+src/third_party/obstacle_detector_2/ LiDAR 障碍物提取
+src/smartcar_interfaces/             ReadQr、DescribeScene 接口
+src/smartcar_safety/                 速度安全门
+src/smartcar_nav2/                   Nav2 配置、行为树和航点
+src/smartcar_vision/                 QR 与 VLM 服务
+src/smartcar_task/                   五子任务状态机
+src/smartcar_bringup/                分层和完整系统 launch
+scripts/                             RDK 同步与环境脚本
+tests/                               仓库级合同测试
+```
 
-待源码包加入后，应补充具体构建、测试、运行命令。
+权威运行手册为 `docs/deployment/rdk-environment-setup.md`；软件完工证据见 `docs/superpowers/plans/2026-07-17-smartcar-completion.md`。早期设计/spec 保留决策过程，若与当前实现冲突，以代码、README 和部署手册为准。
 
-## 部署连接
+## 本地开发与同步
 
-RDK X5 当前为有线连接，可通过 `ssh root@192.168.128.10` 免密登录。详细连接方式、环境入口、已配置包与启动命令见 `docs/deployment/rdk-environment-setup.md`。
+Windows PowerShell：
 
-## 重要环境事实
+```powershell
+python -m unittest discover -s tests -v
+python -m unittest discover -s src/smartcar_safety/test -v
+python -m unittest discover -s src/smartcar_vision/test -v
+python -m unittest discover -s src/smartcar_task/test -v
+python scripts/sync_to_rdk.py push --dry-run
+python scripts/sync_to_rdk.py push
+```
 
-- RDK 上 ROS2 环境入口为 `/opt/tros/humble/setup.bash`，不是 `/opt/tros/setup.bash`。
-- OriginCar 官方工作空间位于 `/userdata/dev_ws`，自研/第三方包建议放在 `/root/ros2_ws`。
-- 硬件已确认：**YDLIDAR Tmini Plus**（`/dev/ttyUSB0`，230400）、**OriginCar 底盘**（`/dev/ttyACM0`，115200）。
-- 已修复 `origincar_bringup.launch.py` 中 `static_transform_publisher` 的 Humble 兼容性问题，启动后 TF 树完整。
-- 已验证：`/odom_combined`（~20 Hz）、`/imu/data`（~20 Hz）、`/scan`（~10 Hz）均正常输出。
-- Nav2、zbar-ros、`obstacle_detector_2`、YDLIDAR 驱动已可用；**端侧 VLM 模型**与**VFH 备用避障**尚未部署；**实车运动测试**尚未进行。
+本地仓库的 `src/` 和 `config/` 是权威源。日常使用 `push` 镜像到 RDK `/root/ros2_ws`；`init-vendor` 仅用于首次 bootstrap 或明确要求的 vendor 重建。
+
+## RDK 构建与验证
+
+RDK 当前通过有线网络免密连接：`ssh root@192.168.128.10`。ROS2 环境入口是 `/opt/tros/humble/setup.bash`，日常统一使用 `~/source_env.sh`，不要叠加 `/userdata/dev_ws` overlay。
+
+```bash
+source ~/source_env.sh
+cd /root/ros2_ws
+colcon build --symlink-install
+colcon test-result --delete-yes
+colcon test --return-code-on-test-failure
+colcon test-result --all --verbose
+```
+
+2026-07-18 最终证据：本地根合同 108/108；RDK 15 个包构建通过，`508 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。smoke 必须关闭底盘、LiDAR 驱动、障碍物驱动和实体相机，使用合成传感器，并在 Nav2 激活前锁存急停。
+
+vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不要把继承源码的历史格式债务混入默认功能测试。
+
+## 部署与实车门禁
+
+以下事项仍需现场完成：
+
+- 实测并替换 `src/smartcar_nav2/config/waypoints/default_waypoints.yaml` 占位航点。
+- 测量 `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参。
+- 完成转向、轮速和陀螺仪标定。
+- 部署端侧 VLM 模型，并将 command backend 配置为本地 argv。
+- 验证人工物理急停，再依次进行车轮离地、低速地面和完整赛道测试。
+
+五个运动门禁 `waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved` 默认均为 `false`。只有对应实测完成后才可显式开启。
 
 ## 提交规范
 
-提交信息采用 Angular 规范，**主题使用中文**。
-
-在 PowerShell 中，为避免 `@` 被解析为数组运算符，先用 here-string 写入临时文件再提交：
+提交信息采用 Angular 规范，主题使用中文。使用 PowerShell 时可通过 UTF-8 临时文件提交多行信息：
 
 ```powershell
 @'
@@ -65,4 +102,4 @@ git commit -F .git-msg
 Remove-Item .git-msg
 ```
 
-禁止在提交信息中添加 `Co-Authored-By` 尾注或任何协作者元数据。提交仅记录实际执行者。
+禁止添加 `Co-Authored-By` 或其他协作者元数据。提交只记录实际执行者。

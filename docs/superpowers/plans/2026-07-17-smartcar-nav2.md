@@ -2,6 +2,8 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
+> **实现状态（2026-07-18）**：本计划的初版 Navfn 方案已被后续阿克曼安全复审替换。当前实现为 SmacPlannerHybrid（DUBIN）+ Regulated Pure Pursuit，禁止 Spin 和原地旋转；权威参数见 `src/smartcar_nav2/config/nav2_params.yaml`，完整里程碑见 `docs/superpowers/plans/2026-07-17-smartcar-completion.md`。
+
 **Goal:** 创建纯配置型 ROS2 Humble 包 `smartcar_nav2`，为 OriginCar + RDK X5 提供基于 Nav2 的航点导航能力，适配纯惯导、LiDAR-only 避障、阿克曼底盘约束。
 
 **Architecture:** 以 `nav2_bringup` 为模板，通过 `IncludeLaunchDescription` 引入官方 bringup launch，替换为自定义 `nav2_params.yaml`、行为树 XML 与航点 YAML；局部控制器采用 `RegulatedPurePursuitController`，全局规划器采用 `NavfnPlanner`，代价地图仅订阅 `/scan`。
