@@ -23,7 +23,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
-from geometry_msgs.msg import TransformStamped
+from geometry_msgs.msg import TransformStamped, Twist
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 
 
@@ -44,6 +44,9 @@ class Nav2TestFixture:
         self.node = rclpy.create_node("smartcar_nav2_test_fixture")
         self.odom_publisher = self.node.create_publisher(
             Odometry, "/odom_combined", 10
+        )
+        self.raw_odom_publisher = self.node.create_publisher(
+            Odometry, "/odom", 10
         )
         self.scan_publisher = self.node.create_publisher(
             LaserScan, "/scan", qos_profile_sensor_data
@@ -68,6 +71,13 @@ class Nav2TestFixture:
         odometry.child_frame_id = "base_footprint"
         odometry.pose.pose.orientation.w = 1.0
         self.odom_publisher.publish(odometry)
+
+        raw_odometry = Odometry()
+        raw_odometry.header.stamp = odometry.header.stamp
+        raw_odometry.header.frame_id = "odom"
+        raw_odometry.child_frame_id = "base_footprint"
+        raw_odometry.pose.pose.orientation.w = 1.0
+        self.raw_odom_publisher.publish(raw_odometry)
 
     def _publish_scan(self):
         scan = LaserScan()
@@ -98,6 +108,7 @@ def run_fixture():
 
 def generate_test_description():
     package_dir = get_package_share_directory("smartcar_nav2")
+    safety_package_dir = get_package_share_directory("smartcar_safety")
     launch_file = os.path.join(
         package_dir, "launch", "smartcar_nav2.launch.py"
     )
@@ -105,6 +116,19 @@ def generate_test_description():
     fixture_process = ExecuteProcess(
         cmd=[sys.executable, os.path.abspath(__file__), FIXTURE_ARGUMENT],
         output="screen",
+    )
+    safety_launch = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(
+                safety_package_dir,
+                "launch",
+                "smartcar_safety.launch.py",
+            )
+        ),
+        launch_arguments={
+            "require_scan": "true",
+            "require_odom": "true",
+        }.items(),
     )
     delayed_nav2 = TimerAction(
         period=1.0,
@@ -119,6 +143,7 @@ def generate_test_description():
     return launch.LaunchDescription(
         [
             fixture_process,
+            safety_launch,
             delayed_nav2,
             launch_testing.actions.ReadyToTest(),
         ]
@@ -136,7 +161,7 @@ class TestSmartcarNav2Lifecycle(unittest.TestCase):
         cls.node.destroy_node()
         rclpy.shutdown()
 
-    def test_all_managed_nodes_become_active(self):
+    def _wait_for_managed_nodes_active(self):
         clients = {
             name: self.node.create_client(GetState, f"/{name}/get_state")
             for name in MANAGED_NODES
@@ -174,7 +199,130 @@ class TestSmartcarNav2Lifecycle(unittest.TestCase):
                 f"{name}={last_states[name]}" for name in sorted(pending)
             ),
         )
+
+    def _spin_until(self, predicate, timeout_sec):
+        deadline = time.monotonic() + timeout_sec
+        while time.monotonic() < deadline:
+            if predicate():
+                return True
+            rclpy.spin_once(self.node, timeout_sec=0.05)
+        return predicate()
+
+    @staticmethod
+    def _is_zero_twist(components):
+        return all(value == 0.0 for value in components)
+
+    def test_all_managed_nodes_become_active(self):
+        self._wait_for_managed_nodes_active()
         print("Nav2 lifecycle ACTIVE: " + ", ".join(MANAGED_NODES))
+
+    def test_cmd_vel_has_only_velocity_smoother_publisher(self):
+        self._wait_for_managed_nodes_active()
+        publishers = []
+
+        def graph_is_ready():
+            nonlocal publishers
+            publishers = self.node.get_publishers_info_by_topic("/cmd_vel")
+            return bool(publishers)
+
+        self.assertTrue(graph_is_ready() or self._spin_until(graph_is_ready, 5.0))
+        publisher_names = sorted(
+            f"{info.node_namespace.rstrip('/')}/{info.node_name}"
+            for info in publishers
+        )
+        self.assertEqual(publisher_names, ["/velocity_smoother"])
+
+    def test_upstream_dropout_reaches_and_holds_exact_safe_zero(self):
+        self._wait_for_managed_nodes_active()
+        safe_samples = []
+
+        def on_safe_command(message):
+            safe_samples.append((
+                time.monotonic(),
+                (
+                    message.linear.x,
+                    message.linear.y,
+                    message.linear.z,
+                    message.angular.x,
+                    message.angular.y,
+                    message.angular.z,
+                ),
+            ))
+
+        safe_subscription = self.node.create_subscription(
+            Twist, "/cmd_vel_safe", on_safe_command, 10
+        )
+        command_publisher = self.node.create_publisher(
+            Twist, "/cmd_vel_nav", 10
+        )
+        try:
+            self.assertTrue(
+                self._spin_until(
+                    lambda: command_publisher.get_subscription_count() > 0,
+                    5.0,
+                )
+            )
+            self._spin_until(lambda: bool(safe_samples), 1.0)
+            safe_samples.clear()
+
+            command = Twist()
+            command.linear.x = 0.30
+            publish_until = time.monotonic() + 0.40
+            last_publish_at = None
+            while time.monotonic() < publish_until:
+                command_publisher.publish(command)
+                last_publish_at = time.monotonic()
+                rclpy.spin_once(self.node, timeout_sec=0.02)
+                time.sleep(0.03)
+
+            self.assertIsNotNone(last_publish_at)
+            self.assertTrue(
+                self._spin_until(
+                    lambda: any(
+                        not self._is_zero_twist(components)
+                        for _, components in safe_samples
+                    ),
+                    1.0,
+                ),
+                "Safety output never forwarded a nonzero test command",
+            )
+
+            stop_observed_at = time.monotonic()
+            zero_sample = None
+            deadline = last_publish_at + 0.40
+            while time.monotonic() < deadline:
+                rclpy.spin_once(self.node, timeout_sec=0.02)
+                for sample in safe_samples:
+                    if (
+                        sample[0] >= stop_observed_at
+                        and self._is_zero_twist(sample[1])
+                    ):
+                        zero_sample = sample
+                        break
+                if zero_sample is not None:
+                    break
+
+            self.assertIsNotNone(
+                zero_sample,
+                "cmd_vel_safe did not reach exact zero within 0.40 seconds",
+            )
+            stop_delay = zero_sample[0] - last_publish_at
+            self.assertLessEqual(stop_delay, 0.40)
+
+            hold_until = zero_sample[0] + 0.20
+            while time.monotonic() < hold_until:
+                rclpy.spin_once(self.node, timeout_sec=0.02)
+            held_samples = [
+                components
+                for sample_time, components in safe_samples
+                if sample_time >= zero_sample[0]
+            ]
+            self.assertGreaterEqual(len(held_samples), 3)
+            self.assertTrue(all(map(self._is_zero_twist, held_samples)))
+            print(f"cmd_vel_safe exact-zero delay: {stop_delay:.3f}s")
+        finally:
+            self.node.destroy_publisher(command_publisher)
+            self.node.destroy_subscription(safe_subscription)
 
 
 if __name__ == "__main__" and FIXTURE_ARGUMENT in sys.argv:

@@ -10,7 +10,6 @@ from nav2_common.launch import ReplaceString
 
 def generate_launch_description():
     pkg_dir = get_package_share_directory('smartcar_nav2')
-    nav2_bringup_dir = get_package_share_directory('nav2_bringup')
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
@@ -68,7 +67,7 @@ def generate_launch_description():
     # 纯惯导、无 SLAM：直接使用 navigation_launch.py，避免加载 map_server/AMCL
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
-            os.path.join(nav2_bringup_dir, 'launch', 'navigation_launch.py')),
+            os.path.join(pkg_dir, 'launch', 'navigation_launch.py')),
         launch_arguments={
             'use_sim_time': use_sim_time,
             'params_file': params_file,

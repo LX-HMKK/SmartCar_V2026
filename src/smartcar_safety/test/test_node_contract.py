@@ -11,6 +11,14 @@ NODE_SOURCE = (
 
 
 class SafetyNodeCommandContractTests(unittest.TestCase):
+    def test_scan_subscription_uses_sensor_data_qos(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("from rclpy.qos import qos_profile_sensor_data", source)
+        self.assertIn(
+            'LaserScan, "/scan", self._on_scan, qos_profile_sensor_data',
+            source,
+        )
+
     def test_all_twist_fields_are_sanitized_before_caching(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
         for field in (

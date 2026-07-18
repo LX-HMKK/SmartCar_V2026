@@ -25,6 +25,9 @@ BT_THROUGH_POSES_FILE = (
 WAYPOINTS_FILE = (
     PACKAGE_ROOT / "config" / "waypoints" / "default_waypoints.yaml"
 )
+NAVIGATION_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "navigation_launch.py"
+NAV2_BRINGUP_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "nav2_bringup.launch.py"
+SAFE_OUTPUT_ZERO_DEADLINE_SEC = 0.40
 
 EXPECTED_FOOTPRINT = [
     [0.168, 0.112],
@@ -45,6 +48,38 @@ UNSUPPORTED_HUMBLE_RPP_KEYS = {
 
 def ros_parameters(config, node_name):
     return config[node_name]["ros__parameters"]
+
+
+def launch_calls_by_package(source):
+    calls = {}
+    for node in ast.walk(ast.parse(source)):
+        if not isinstance(node, ast.Call):
+            continue
+        function_name = getattr(node.func, "id", None) or getattr(
+            node.func, "attr", None
+        )
+        if function_name not in {"Node", "ComposableNode"}:
+            continue
+        keywords = {keyword.arg: keyword.value for keyword in node.keywords}
+        package = keywords.get("package")
+        if not isinstance(package, ast.Constant) or not isinstance(
+            package.value, str
+        ):
+            continue
+        remappings = set()
+        for candidate in ast.walk(keywords.get("remappings", ast.List())):
+            if not isinstance(candidate, ast.Tuple) or len(candidate.elts) != 2:
+                continue
+            values = []
+            for element in candidate.elts:
+                if isinstance(element, ast.Constant) and isinstance(
+                    element.value, str
+                ):
+                    values.append(element.value)
+            if len(values) == 2:
+                remappings.add(tuple(values))
+        calls.setdefault(package.value, []).append(remappings)
+    return calls
 
 
 class TestNav2Contracts(unittest.TestCase):
@@ -181,6 +216,39 @@ class TestNav2Contracts(unittest.TestCase):
             max_linear / minimum_turning_radius + 1.0e-9,
         )
 
+        longitudinal_deceleration = abs(smoother["max_decel"][0])
+        self.assertGreater(longitudinal_deceleration, 0.0)
+        stop_bound = (
+            smoother["velocity_timeout"]
+            + max_linear / longitudinal_deceleration
+            + 2.0 / smoother["smoothing_frequency"]
+        )
+        self.assertLessEqual(stop_bound, SAFE_OUTPUT_ZERO_DEADLINE_SEC)
+
+    def test_navigation_launch_has_one_smoothed_command_path(self):
+        source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
+        calls = launch_calls_by_package(source)
+        input_remapping = ("cmd_vel", "cmd_vel_nav")
+        output_remapping = ("cmd_vel_smoothed", "cmd_vel")
+
+        for package in ("nav2_controller", "nav2_behaviors"):
+            self.assertEqual(len(calls[package]), 2)
+            self.assertTrue(
+                all(input_remapping in remappings for remappings in calls[package])
+            )
+
+        self.assertEqual(len(calls["nav2_velocity_smoother"]), 2)
+        self.assertTrue(
+            all(
+                {input_remapping, output_remapping}.issubset(remappings)
+                for remappings in calls["nav2_velocity_smoother"]
+            )
+        )
+
+        wrapper_source = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
+        self.assertNotIn("nav2_bringup_dir", wrapper_source)
+        self.assertIn("'navigation_launch.py'", wrapper_source)
+
     def test_waypoints_are_valid_and_fit_the_rolling_global_costmap(self):
         global_costmap = self.params["global_costmap"]["global_costmap"][
             "ros__parameters"
@@ -225,8 +293,13 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertTrue(
             {
                 "nav2_behaviors",
+                "nav2_bt_navigator",
+                "nav2_controller",
+                "nav2_lifecycle_manager",
+                "nav2_planner",
                 "nav2_smac_planner",
                 "nav2_regulated_pure_pursuit_controller",
+                "nav2_smoother",
             }.issubset(exec_dependencies)
         )
         self.assertTrue(
@@ -238,6 +311,7 @@ class TestNav2Contracts(unittest.TestCase):
                 "sensor_msgs",
                 "geometry_msgs",
                 "tf2_ros",
+                "smartcar_safety",
             }.issubset(test_dependencies)
         )
 

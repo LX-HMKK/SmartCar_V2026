@@ -3,6 +3,7 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
+from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
@@ -55,7 +56,8 @@ class SafetyNode(Node):
         self._status_publisher = self.create_publisher(
             String, "/smartcar/safety/status", 10)
         self.create_subscription(Twist, "/cmd_vel", self._on_command, 10)
-        self.create_subscription(LaserScan, "/scan", self._on_scan, 10)
+        self.create_subscription(
+            LaserScan, "/scan", self._on_scan, qos_profile_sensor_data)
         self.create_subscription(Odometry, "/odom_combined", self._on_odom, 10)
         self.create_subscription(Float32, "/PowerVoltage", self._on_voltage, 10)
         self.create_service(
@@ -149,6 +151,9 @@ def main(args=None):
     node = SafetyNode()
     try:
         rclpy.spin(node)
+    except KeyboardInterrupt:
+        pass
     finally:
         node.destroy_node()
-        rclpy.shutdown()
+        if rclpy.ok():
+            rclpy.shutdown()
