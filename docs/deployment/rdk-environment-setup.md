@@ -1,119 +1,231 @@
-# RDK X5 环境配置状态
+# RDK X5 部署与运行手册
 
-> 更新时间：2026-07-15  
-> 目标板：`root@192.168.128.10`（有线免密 SSH）
+更新时间：2026-07-18
 
-## 环境入口
+目标板：`root@192.168.128.10`
 
-RDK 上实际 ROS2 环境路径为 `/opt/tros/humble/setup.bash`，不是 `/opt/tros/setup.bash`。官方 OriginCar 工作空间位于 `/userdata/dev_ws`。
+工作空间：`/root/ros2_ws`
 
-常用 source 顺序：
+## 1. 环境与连接
 
-```bash
-source /opt/tros/humble/setup.bash
-source /userdata/dev_ws/install/setup.bash
-source /root/ros2_ws/install/setup.bash   # obstacle_detector 等第三方包
-```
-
-## 已确认可用的硬件
-
-| 设备 | 接口/参数 | 状态 |
-|---|---|---|
-| YDLIDAR Tmini Plus | `/dev/ttyUSB0`，波特率 230400 | ✅ 已验证，`/scan` 约 10 Hz |
-| OriginCar 底盘 | `/dev/ttyACM0`，波特率 115200 | ✅ 已启动，`/odom`、`/odom_combined` 正常 |
-| MIPI 相机 | `/dev/video*` | ✅ 驱动已装 |
-| IMU | `gyro_link` | ✅ 已验证，`/imu/data` 约 20 Hz |
-
-## 已安装/编译的软件
-
-### apt 安装
-
-- `ros-humble-nav2-bringup`
-- `ros-humble-nav2-waypoint-follower`
-- `ros-humble-nav2-regulated-pure-pursuit-controller`
-- `ros-humble-nav2-dwb-controller`
-- `ros-humble-nav2-costmap-2d`
-- `ros-humble-nav2-rviz-plugins`
-- `ros-humble-zbar-ros`
-- `python3-colcon-common-extensions`
-- `python3-rosdep`
-- `ros-humble-robot-localization`（此前已装）
-
-### 源码编译
-
-- `/root/ros2_ws/src/obstacle_detector_2` → 编译为 `obstacle_detector`
-- rosdep 已通过（已修正 `nodelet`/`roslaunch` → 删除，`rviz` → `rviz2`）
-
-### OriginCar 官方工作空间
-
-- `/userdata/dev_ws/src/origincar/` 包含：
-  - `origincar_base`：底盘节点、launch、EKF/Madgwick 配置
-  - `origincar_bringup`：整车启动 launch
-  - `origincar_description`：URDF 与显示
-  - `origincar_msg`：自定义消息
-  - `ydlidar_ros2_driver`：YDLIDAR 驱动
-  - `YDLidar-SDK-master`
-
-## 关键启动命令
+RDK 的 ROS 2 环境入口是 `/opt/tros/humble/setup.bash`。仓库提供的 `~/source_env.sh` 会加载 TROS 和 `/root/ros2_ws/install`，日常只使用这一入口：
 
 ```bash
-# 1. 启动整车基础链路（底盘 + IMU + EKF + TF + LiDAR）
-source /opt/tros/humble/setup.bash
-source /userdata/dev_ws/install/setup.bash
-ros2 launch origincar_base origincar_bringup.launch.py
-
-# 2. 仅启动 LiDAR
-ros2 launch ydlidar_ros2_driver ydlidar_launch.py
-
-# 3. 仅启动底盘
-ros2 launch origincar_base base_serial.launch.py
-
-# 4. 启动 obstacle_detector（订阅 /scan 发布 /raw_obstacles）
-source /opt/tros/humble/setup.bash
-source /root/ros2_ws/install/setup.bash
-ros2 run obstacle_detector obstacle_extractor_node
+ssh root@192.168.128.10
+source ~/source_env.sh
 ```
 
-## 已验证的 TF 树
+不要再叠加 source `/userdata/dev_ws/install/setup.bash`。官方源码已经 vendor 化到本仓库，并统一在 `/root/ros2_ws` 构建，重复 overlay 可能加载旧包。
 
-启动 `origincar_bringup.launch.py` 后，TF 树为：
+已确认硬件：
 
-```
-odom_combined → base_footprint
-base_footprint → base_link
-base_footprint → gyro_link
-base_link → laser
-base_link → board_link
-base_link → camera
-base_link → up_left_Link / up_right_Link / down_left_Link / down_right_Link
-```
-
-> 修复记录：原 launch 中 `static_transform_publisher` 使用旧式空格参数，在 Humble 下解析失败。已改为显式 `--x/--y/--z/--roll/--pitch/--yaw/--frame-id/--child-frame-id` 命名参数，并重新编译 `origincar_base`。
-
-## 已验证的话题
-
-| 话题 | 类型 | 频率 | 状态 |
-|---|---|---|---|
-| `/odom_combined` | `nav_msgs/Odometry` | ~20 Hz | ✅ 正常 |
-| `/imu/data` | `sensor_msgs/Imu` | ~20 Hz | ✅ 正常 |
-| `/scan` | `sensor_msgs/LaserScan` | ~10 Hz | ✅ 正常 |
-| `/odom` | `nav_msgs/Odometry` | 由底盘发布 | ✅ 正常 |
-| `/cmd_vel` | `geometry_msgs/Twist` | 外部输入 | ✅ 话题存在 |
-
-## 仍待补齐
-
-| 项目 | 状态 | 说明 |
+| 设备 | 接口 | 已验证状态 |
 |---|---|---|
-| VFH 备用避障 | ⏸️ | `obstacle-avoider-ros2` 因 RDK 无法访问 GitHub 未获取；非关键路径，可后续补入 |
-| 端侧 VLM 模型文件 | ⏸️ | 未下载/转换 Gemma-3-4B-IT-QAT / Qwen2-VL；需单独部署并实测内存 |
-| Nav2 与底盘/雷达联调 | ⏸️ | 各组件单独可用，尚未做端到端导航/避障联调 |
-| 实车运动测试 | ⏸️ | 已验证 `/odom_combined` 静态输出，尚未发布 `/cmd_vel` 让车实际移动 |
+| OriginCar 底盘 | `/dev/ttyACM0`，115200 | 原始 `/odom`、`/imu/data_raw` 可用 |
+| YDLIDAR Tmini Plus | `/dev/ttyUSB0`，230400 | `/scan` 约 10 Hz |
+| Aurora/USB/MIPI 相机 | 驱动已安装 | 实体相机不得在无硬件 smoke 中启动 |
 
-## 注意事项
+## 2. 同步、构建与测试
 
-- RDK 实际内存为 6.9 GiB（非 8 GiB），无 Swap，运行 4B VLM 需实测内存余量。
-- RDK 当前无法访问 GitHub（443 超时），后续第三方包建议通过本地 PC 下载后 `scp` 上传。
-- `obstacle_detector_2` 原 `package.xml` 含 ROS1 依赖 `nodelet`/`roslaunch`，已清理；`rviz` 已改为 `rviz2`。
-- `origincar_bringup.launch.py` 中的 `static_transform_publisher` 已修复为 Humble 兼容写法。
-- EKF 配置：`odom_frame`/`world_frame` = `odom_combined`，`base_link_frame` = `base_footprint`，`two_d_mode: true`。
-- IMU Madgwick：`world_frame: enu`，`use_mag: false`，`publish_tf: false`。
+Windows PowerShell：
+
+```powershell
+python -m unittest discover -s tests -v
+python scripts/sync_to_rdk.py push --dry-run
+python scripts/sync_to_rdk.py push
+```
+
+RDK：
+
+```bash
+source ~/source_env.sh
+cd /root/ros2_ws
+colcon build --symlink-install
+```
+
+清除历史 xunit 后运行完整工作区测试：
+
+```bash
+colcon test-result --delete-yes
+colcon test
+colcon test-result --all --verbose
+```
+
+2026-07-18 验证结果：15 个包构建通过，`506 tests, 0 errors, 0 failures, 90 skipped`。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
+
+```bash
+colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON
+colcon test --packages-select \
+  origincar_bringup origincar_description ydlidar_ros2_driver
+```
+
+## 3. 无硬件完整 smoke
+
+首选方式是运行 `smartcar_bringup` 的 launch test。测试自动执行以下安全顺序：
+
+1. 使用独立 ROS 域和 localhost-only 通信。
+2. 关闭底盘、LiDAR、障碍物驱动和实体相机。
+3. 启动合成 `/scan`、`/odom`、`/odom_combined` 与静态 TF。
+4. 在 Nav2 lifecycle 激活前锁存急停。
+5. 验证七个 Nav2 节点 active、vision/task 服务存在、任务为 `IDLE`。
+6. 连续验证 `/cmd_vel_safe` 六个字段精确为零。
+7. 验证底盘、EKF、IMU、YDLIDAR、robot_state_publisher 和相机节点未启动。
+
+```bash
+source ~/source_env.sh
+cd /root/ros2_ws
+colcon test --packages-select smartcar_bringup
+colcon test-result --test-result-base build/smartcar_bringup --verbose
+```
+
+该测试不发布非零速度。安全门压制非零命令的逻辑由 `smartcar_safety` 单元测试覆盖。
+
+仅查看视觉和任务服务时可手工启动最小 bench：
+
+```bash
+export ROS_DOMAIN_ID=221
+export ROS_LOCALHOST_ONLY=1
+
+ros2 launch smartcar_bringup smartcar_system.launch.py \
+  use_base:=false \
+  use_lidar:=false \
+  use_obstacle:=false \
+  use_safety:=true \
+  use_nav:=false \
+  nav_autostart:=false \
+  use_camera:=false \
+  image_topic:=/smartcar/vision/image \
+  use_vision:=true \
+  use_task:=true \
+  autostart_mission:=false
+```
+
+## 4. 系统启动
+
+完整栈入口：
+
+```bash
+source ~/source_env.sh
+ros2 launch smartcar_bringup smartcar_system.launch.py \
+  autostart_mission:=false
+```
+
+默认开关：
+
+| 参数 | 默认值 | 作用 |
+|---|---:|---|
+| `use_base` | `true` | 底盘、IMU、EKF、URDF/TF |
+| `use_lidar` | `true` | YDLIDAR `/scan` |
+| `use_obstacle` | `true` | obstacle detector |
+| `use_safety` | `true` | `/cmd_vel` 到 `/cmd_vel_safe` 安全门 |
+| `use_nav` | `true` | Nav2 |
+| `nav_autostart` | `true` | 自动激活 Nav2 lifecycle |
+| `use_camera` | `true` | 实体相机驱动 |
+| `use_vision` | `true` | QR/VLM 服务与 zbar |
+| `use_task` | `true` | 任务状态机 |
+| `autostart_mission` | `false` | 不自动开始任务 |
+
+`smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
+
+## 5. 校准数据与运动门禁
+
+以下值均需实测：
+
+- `base_footprint -> base_link`：`base_x/base_y/base_z/base_roll/base_pitch/base_yaw`
+- `base_link -> laser`：`laser_x/laser_y/laser_z/laser_roll/laser_pitch/laser_yaw`
+- `base_link -> camera`：`camera_x/camera_y/camera_z/camera_roll/camera_pitch/camera_yaw`
+- 航点文件：`src/smartcar_nav2/config/waypoints/default_waypoints.yaml`
+- 转向、轮速、陀螺仪参数：`origincar_base` launch 参数
+
+`src/smartcar_bringup/config/bringup_coord.yaml` 当前只是协调和审计记录，不会自动写入 launch。运行时必须通过 launch 参数或后续实测参数文件提供真实值。
+
+五个门禁默认均为 `false`：
+
+```text
+waypoints_calibrated
+extrinsics_calibrated
+steering_calibrated
+emergency_stop_ready
+operator_approved
+```
+
+只有所有实测完成后，才可显式传入 `true`。`autostart_mission=true` 还要求 `use_base/use_safety/use_nav/use_vision/use_task/nav_autostart=true`。
+
+## 6. 任务、停止和复位
+
+```bash
+ros2 service call /smartcar/task/start std_srvs/srv/Trigger "{}"
+ros2 service call /smartcar/task/stop std_srvs/srv/Trigger "{}"
+ros2 service call /smartcar/task/reset std_srvs/srv/Trigger "{}"
+```
+
+任务状态：`IDLE`、`WAITING_FOR_SERVERS`、`NAVIGATING`、`RUNNING_QR`、`RUNNING_VLM`、`COMPLETED`、`STOPPED`、`FAILED`。
+
+`reset` 的前置条件和顺序：
+
+1. 导航 worker 与 FollowWaypoints action 已确认停止。
+2. 车辆物理位于 P 区原点，车头朝 `+X`。
+3. 调用 robot_localization `/set_pose`。
+4. 等待更新且有限的 `/odom_combined` 接近原点。
+5. 调用 `/smartcar/safety/clear_localization_fault`。
+
+不要直接调用 clear service 绕过 task reset。
+
+## 7. 急停与故障恢复
+
+锁存急停：
+
+```bash
+ros2 service call /smartcar/safety/emergency_stop \
+  std_srvs/srv/SetBool "{data: true}"
+```
+
+解除急停前必须确认车辆周围安全、导航目标已取消且 `/cmd_vel_safe` 为零：
+
+```bash
+ros2 service call /smartcar/safety/emergency_stop \
+  std_srvs/srv/SetBool "{data: false}"
+```
+
+`/smartcar/task/stop` 不等于急停。串口断线、无新鲜 `/scan`、无新鲜原始/融合里程计、非法速度或定位故障都会让安全门 fail-closed。底盘进程关闭时会复用当前串口发送一次零命令；仍必须准备人工可触达的物理急停。
+
+## 8. 视觉与端侧 VLM
+
+相机选择：`camera_driver:=aurora|usb|mipi`。默认 Aurora 只启用 15 FPS RGB，关闭 depth/IR/point cloud。
+
+`vision.yaml` 默认 `vlm_backend_mode: disabled`，因此未部署模型时 DescribeScene 返回兜底文案。部署本地模型后使用 `command` 模式和 argv 列表，不经过 shell；整个请求包含图像等待、JPEG 编码和后端推理，硬上限为 8 秒。
+
+VFH 备用避障和 YOLO 自动触发未纳入当前 release；人物描述由语义航点 `task: vlm` 调用。
+
+## 9. 录包与检查
+
+```bash
+mkdir -p /root/ros2_ws/bags
+ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
+  /scan /odom /odom_combined /imu/data_raw /imu/data \
+  /cmd_vel /cmd_vel_safe /ackermann_cmd /PowerVoltage \
+  /tf /tf_static /smartcar/safety/status /smartcar/task/state \
+  /barcode /smartcar/output/text /smartcar/output/speech
+```
+
+常用检查：
+
+```bash
+ros2 topic hz /scan
+ros2 topic hz /odom
+ros2 topic hz /odom_combined
+ros2 topic echo /smartcar/safety/status
+ros2 topic echo /smartcar/task/state
+ros2 service list | grep /smartcar
+ros2 action list | grep follow_waypoints
+```
+
+## 10. 物理测试顺序
+
+1. 自动化测试和无硬件 smoke 全部通过。
+2. 测量航点、外参和转向参数。
+3. 人工急停可用，车轮离地测试。
+4. 低速直线、低速转向、急停、串口断线分别验证。
+5. 最后才进行地面导航和任务联调。
+
+在上述步骤完成前，软件状态只能称为“代码合同完成、待物理标定与实车验证”。

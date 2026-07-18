@@ -8,6 +8,8 @@
 
 **Tech Stack:** ROS2 Humble/TogetheROS, Python 3/rclpy, C++17/rclcpp, Nav2, robot_localization, zbar_ros, sensor_msgs, std_srvs, rosidl default generators, stdlib unittest, ament/colcon.
 
+**Software milestone status (2026-07-18):** Tasks 1-8 are implemented and verified. Local root contracts: 106 passed. RDK: 15 packages built; full `colcon test` result is 506 tests, 0 errors, 0 failures, 90 generated-code skips. The no-hardware smoke uses synthetic sensors, asserts emergency stop before Nav2 activation, and never publishes a nonzero velocity. Ground motion remains blocked by placeholder waypoints, unmeasured extrinsics/steering, undeployed VLM model, and the five explicit physical gates.
+
 ## Global Constraints
 
 - Target hardware is OriginCar + RDK X5 8G running ROS2 Humble.
@@ -35,21 +37,21 @@
 - Produces service type `smartcar_interfaces/srv/ReadQr` with request fields `builtin_interfaces/Time not_before`, `float32 timeout_sec`; response fields `bool success`, `string content`, `string status`.
 - Produces service type `smartcar_interfaces/srv/DescribeScene` with request fields `builtin_interfaces/Time not_before`, `float32 timeout_sec`, `string prompt`; response fields `bool success`, `bool fallback_used`, `string description`, `string status`.
 
-- [ ] **Step 1: Add an interface contract test**
+- [x] **Step 1: Add an interface contract test**
 
 Create `tests/test_interface_contracts.py` that reads both `.srv` files and asserts the exact non-comment field sequence above.
 
-- [ ] **Step 2: Run the test and verify RED**
+- [x] **Step 2: Run the test and verify RED**
 
 Run: `python -m unittest tests.test_interface_contracts -v`
 
 Expected: FAIL because `src/smartcar_interfaces/srv/ReadQr.srv` does not exist.
 
-- [ ] **Step 3: Add the interface package**
+- [x] **Step 3: Add the interface package**
 
 Use `rosidl_generate_interfaces` with dependencies `builtin_interfaces`; export `rosidl_default_runtime` and membership in `rosidl_interface_packages`.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_interface_contracts -v`
 
@@ -81,41 +83,41 @@ Expected: package builds and generated interfaces are visible through `ros2 inte
 - `CommandWatchdog(timeout_sec)` exposes `mark_command(now_sec)` and `consume_stop(now_sec)`; `consume_stop` returns true once for each active-to-timed-out transition.
 - Launch defaults: `akmcar=true`, wheelbase `0.189`, maximum steering angle `0.45` rad, command timeout `0.35` s, chassis input topic `/cmd_vel_safe`.
 
-- [ ] **Step 1: Write failing Python conversion tests**
+- [x] **Step 1: Write failing Python conversion tests**
 
 Cover straight motion, left/right sign, saturation, reverse motion, and zero-linear-velocity behavior.
 
-- [ ] **Step 2: Verify Python RED**
+- [x] **Step 2: Verify Python RED**
 
 Run: `python -m unittest tests.test_ackermann_math -v`
 
 Expected: FAIL because `ackermann_math.py` does not exist.
 
-- [ ] **Step 3: Implement conversion and parameterize the ROS adapter**
+- [x] **Step 3: Implement conversion and parameterize the ROS adapter**
 
 The adapter declares `wheelbase`, `max_steering_angle`, `input_topic`, `output_topic`, and `frame_id`; it uses the pure conversion function and never emits an unclamped steering angle.
 
-- [ ] **Step 4: Verify Python GREEN**
+- [x] **Step 4: Verify Python GREEN**
 
 Run: `python -m unittest tests.test_ackermann_math -v`
 
 Expected: all conversion tests pass.
 
-- [ ] **Step 5: Write failing C++ watchdog tests**
+- [x] **Step 5: Write failing C++ watchdog tests**
 
 Cover no-command behavior, pre-timeout behavior, one-shot timeout, no repeated stop, and re-arming after a new command.
 
-- [ ] **Step 6: Verify C++ RED on RDK**
+- [x] **Step 6: Verify C++ RED on RDK**
 
 Run: `colcon build --packages-select origincar_base --cmake-args -DBUILD_TESTING=ON`
 
 Expected: FAIL because `command_watchdog.hpp` does not exist.
 
-- [ ] **Step 7: Implement the watchdog in the driver**
+- [x] **Step 7: Implement the watchdog in the driver**
 
 Both Twist and Ackermann callbacks call `mark_command`. The control loop processes callbacks before sensor reads, sends one zero command after timeout, uses a configurable serial read timeout no larger than 100 ms, and updates odometry integration time only after a valid sensor frame.
 
-- [ ] **Step 8: Verify C++ GREEN**
+- [x] **Step 8: Verify C++ GREEN**
 
 Run: `colcon build --packages-select origincar_base --symlink-install --cmake-args -DBUILD_TESTING=ON && colcon test --packages-select origincar_base && colcon test-result --verbose`
 
@@ -146,21 +148,21 @@ Expected: watchdog tests pass with zero failures.
 - Pure `SafetyGuard.evaluate(now_sec)` returns `{allowed, reason}` from configured command/sensor ages, voltage, and emergency-stop state.
 - Defaults: command timeout `0.30` s, scan timeout `0.35` s, odom timeout `0.35` s, minimum voltage disabled with `0.0`, publish frequency `20.0` Hz, `require_scan=true`, `require_odom=true`.
 
-- [ ] **Step 1: Write failing guard tests**
+- [x] **Step 1: Write failing guard tests**
 
 Cover startup fail-closed, healthy pass-through, stale command, stale scan, stale odom, emergency stop, optional sensor disable, and low voltage.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest discover -s src/smartcar_safety/test -v`
 
 Expected: FAIL because `smartcar_safety.guard` does not exist.
 
-- [ ] **Step 3: Implement pure guard logic and ROS wrapper**
+- [x] **Step 3: Implement pure guard logic and ROS wrapper**
 
 The wrapper copies a permitted Twist or emits an all-zero Twist. Emergency stop is latched until explicitly cleared. Status changes are published immediately and repeated at 1 Hz while blocked.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest discover -s src/smartcar_safety/test -v`
 
@@ -190,21 +192,21 @@ Expected: both packages build.
 - Waypoint pause duration is 100 ms because mission tasks own all semantic waits.
 - `stop_on_failure=true`; adjacent competition waypoints remain within the rolling global costmap.
 
-- [ ] **Step 1: Write failing static contract tests**
+- [x] **Step 1: Write failing static contract tests**
 
 Parse YAML/XML and assert the interfaces above, valid waypoint quaternions, and absence of `<Spin`.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_nav2_contracts -v`
 
 Expected: FAIL on the existing `recoveries_server`, `Spin`, and `use_rotate_to_heading=true` values.
 
-- [ ] **Step 3: Update Nav2 configuration and launch test**
+- [x] **Step 3: Update Nav2 configuration and launch test**
 
 The launch test must provide temporary static `odom_combined -> base_footprint`, a zero odometry publisher, and an empty LaserScan publisher, then assert all managed Nav2 lifecycle nodes reach `active` rather than matching a log string.
 
-- [ ] **Step 4: Verify GREEN locally and on RDK**
+- [x] **Step 4: Verify GREEN locally and on RDK**
 
 Run locally: `python -m unittest tests.test_nav2_contracts -v`
 
@@ -243,11 +245,11 @@ Expected: contract and launch tests pass.
 - Competition initialization requires the vehicle at the P-zone origin with its nose aligned to `+X`. The later task reset adapter uses robot_localization `/set_pose` to restore `(x, y, yaw)=(0, 0, 0)` only after navigation has stopped.
 - Camera optical flow is not a release dependency. If later enabled, it is a separately timestamped `TwistWithCovarianceStamped` source and fuses velocity only; LiDAR remains excluded from localization.
 
-- [ ] **Step 1: Write failing localization and safety contracts**
+- [x] **Step 1: Write failing localization and safety contracts**
 
 Parse `ekf.yaml` and assert the exact fusion vectors, timeout, frames, TF ownership, covariance bounds, and absence of correlated pose/yaw inputs. Add guard tests for missing and stale raw odometry. Add C++ tests for calibration, finite-parameter validation, covariance construction, and consistent integration inputs.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run locally: `python -m unittest tests.test_localization_contracts -v`
 
@@ -255,11 +257,11 @@ Run on RDK: `colcon test --packages-select origincar_base smartcar_safety`
 
 Expected: failures on the existing zero odometry covariance, raw IMU orientation, duplicated EKF inputs, two-second timeout, hard-coded scale factors, and missing raw-odometry safety heartbeat.
 
-- [ ] **Step 3: Implement calibrated sensor publication and EKF fusion**
+- [x] **Step 3: Implement calibrated sensor publication and EKF fusion**
 
 Apply calibration once when decoding a valid serial frame, fill ROS covariance arrays from validated parameters, publish raw IMU orientation as unavailable, and reduce EKF inputs to independent velocity measurements. Extend the safety guard and launch configuration with `require_raw_odom=true` and a default timeout no greater than `0.25 s`.
 
-- [ ] **Step 4: Verify GREEN and reset behavior**
+- [x] **Step 4: Verify GREEN and reset behavior**
 
 Run local pure/contract tests, then build and test `origincar_base`, `smartcar_safety`, and `smartcar_bringup` on the RDK. In an isolated ROS domain, launch only the EKF with synthetic zero `/odom` and `/imu/data_raw`, verify finite `/odom_combined`, call `/set_pose`, and confirm the filtered pose resets without starting the chassis node or publishing a velocity command.
 
@@ -386,21 +388,21 @@ Expected: tests and package build pass.
 - Default TF is `base_footprint -> base_link` identity; laser and camera offsets are explicit launch/config parameters rather than hidden constants.
 - The system does not autostart vehicle motion by default; a mission begins through `/smartcar/task/start` unless `autostart_mission=true` is explicitly supplied.
 
-- [ ] **Step 1: Write failing system contract tests**
+- [x] **Step 1: Write failing system contract tests**
 
 Assert package dependencies, launch switches, safe command topic wiring, identity base transform, and non-autostart default.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest tests.test_system_contracts -v`
 
 Expected: FAIL because `smartcar_system.launch.py` does not exist.
 
-- [ ] **Step 3: Implement launch composition and documentation**
+- [x] **Step 3: Implement launch composition and documentation**
 
 Document exact build, bench launch, full launch, start/stop/reset, emergency-stop, and bag-recording commands. Mark waypoint coordinates and measured sensor extrinsics as deployment calibration data, not code placeholders.
 
-- [ ] **Step 4: Verify GREEN**
+- [x] **Step 4: Verify GREEN**
 
 Run: `python -m unittest tests.test_system_contracts -v`
 
@@ -418,7 +420,7 @@ Expected: all system contract tests pass.
 - All packages build together in `/root/ros2_ws`.
 - Bench verification never publishes a nonzero velocity.
 
-- [ ] **Step 1: Run the complete local suite**
+- [x] **Step 1: Run the complete local suite**
 
 Run: `python -m unittest discover -s tests -v`
 
@@ -426,7 +428,7 @@ Run each package pure test directory with `python -m unittest discover`.
 
 Expected: zero failures.
 
-- [ ] **Step 2: Sync and build the complete RDK workspace**
+- [x] **Step 2: Sync and build the complete RDK workspace**
 
 Run locally: `python scripts/sync_to_rdk.py push`
 
@@ -434,16 +436,16 @@ Run on RDK: `source ~/source_env.sh && cd /root/ros2_ws && colcon build --symlin
 
 Expected: all packages build.
 
-- [ ] **Step 3: Run ROS tests**
+- [x] **Step 3: Run ROS tests**
 
 Run on RDK: `colcon test && colcon test-result --verbose`
 
 Expected: zero failed tests.
 
-- [ ] **Step 4: Run a no-motion system smoke test**
+- [x] **Step 4: Run a no-motion system smoke test**
 
 Launch with camera disabled and emergency stop asserted before Nav2 activation. Verify `/scan`, `/odom_combined`, `/cmd_vel_safe`, safety status, Nav2 lifecycle states, vision/task services, and that `/cmd_vel_safe` remains exactly zero.
 
-- [ ] **Step 5: Record the physical-test gate**
+- [x] **Step 5: Record the physical-test gate**
 
 The software milestone is ready for wheel-off-ground testing only after all automated checks pass. Ground motion remains gated on measured TF/extrinsics, steering calibration, a human-accessible emergency stop, and explicit operator approval.

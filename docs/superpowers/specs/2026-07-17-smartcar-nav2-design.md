@@ -5,6 +5,8 @@
 **对应模块**：`smartcar_nav2`（纯配置型 ROS2 包）  
 **前置调研**：[OSS 调研报告](./../research/2026-07-17-smartcar-nav2-oss-survey.md)
 
+> **实现修订（2026-07-18）**：本文件保留早期决策过程。当前实现使用 SmacPlannerHybrid（DUBIN）+ Regulated Pure Pursuit，无 Spin/原地旋转；Waypoint Follower 暂停 100 ms，语义等待由 `smartcar_task` 负责。权威运行参数见 `src/smartcar_nav2/config/nav2_params.yaml`。
+
 ---
 
 ## 1. 目标

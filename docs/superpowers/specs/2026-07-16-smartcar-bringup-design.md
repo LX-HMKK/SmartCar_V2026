@@ -4,6 +4,8 @@
 >
 > 依据：技术方案 §3 架构、§6 RViz；RDK 实测（bringup 回归 2026-07-16）；OSS 调研（OriginBot/HorizonRDK/DoveSmart/HUAT）；记忆 [[rdk-bringup-verified]]、[[odom-topic-discrepancy]]、[[reuse-oss-per-module]]。
 
+> **实现修订（2026-07-18）**：本文件记录早期设计。当前 `base_footprint -> base_link` 默认 identity，`0.41/0.12` 已删除；base/laser/camera 外参均通过 launch 参数显式提供并保持“未测量”门禁。系统入口为 `smartcar_system.launch.py`，支持 `use_base=false` 的无硬件 smoke。
+
 ## 0. 决策摘要
 
 | 决策项 | 取值 | 理由 |
