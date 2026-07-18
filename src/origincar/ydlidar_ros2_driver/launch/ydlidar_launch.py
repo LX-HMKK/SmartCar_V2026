@@ -24,6 +24,8 @@ import os
 def generate_launch_description():
     share_dir = get_package_share_directory('ydlidar_ros2_driver')
     parameter_file = LaunchConfiguration('params_file')
+    frame_id = LaunchConfiguration('frame_id')
+    use_sim_time = LaunchConfiguration('use_sim_time')
 
     # 声明外部参数路径参数（如果用户不指定，默认加载 share/ydlidar_ros2_driver/params/ydlidar.yaml）
     params_declare = DeclareLaunchArgument(
@@ -31,6 +33,12 @@ def generate_launch_description():
         default_value=os.path.join(share_dir, 'params', 'ydlidar.yaml'),
         description='Path to the ROS2 parameters file to use.'
     )
+    frame_declare = DeclareLaunchArgument(
+        'frame_id', default_value='laser',
+        description='LaserScan frame id')
+    use_sim_time_declare = DeclareLaunchArgument(
+        'use_sim_time', default_value='false',
+        description='Use the ROS simulation clock')
 
     # 雷达驱动节点
     # Humble 修复：将 node_executable 改为 executable，将 node_name 改为 name，node_namespace 改为 namespace
@@ -40,7 +48,10 @@ def generate_launch_description():
         name='ydlidar_ros2_driver_node',
         output='screen',
         emulate_tty=True,
-        parameters=[parameter_file],
+        parameters=[parameter_file, {
+            'frame_id': frame_id,
+            'use_sim_time': use_sim_time,
+        }],
         namespace='/'
     )
 
@@ -56,5 +67,7 @@ def generate_launch_description():
 #
     return LaunchDescription([
         params_declare,
+        frame_declare,
+        use_sim_time_declare,
         driver_node,
     ])

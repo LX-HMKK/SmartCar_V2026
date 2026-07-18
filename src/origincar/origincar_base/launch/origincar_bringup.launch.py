@@ -1,102 +1,131 @@
+"""Launch the OriginCar base, localization, description, and owned TF edges."""
 import os
 from pathlib import Path
-import launch
-from launch.actions import SetEnvironmentVariable
+
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import (DeclareLaunchArgument, GroupAction,
-                            IncludeLaunchDescription, SetEnvironmentVariable)
-from launch.launch_description_sources import PythonLaunchDescriptionSource
-from launch.substitutions import LaunchConfiguration, PythonExpression
-from launch_ros.actions import PushRosNamespace
-import launch_ros.actions
+from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import UnlessCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration
+from launch_ros.actions import Node
+
 
 def generate_launch_description():
-    # Get the launch directory
     bringup_dir = get_package_share_directory('origincar_base')
     launch_dir = os.path.join(bringup_dir, 'launch')
-    ekf_config = Path(get_package_share_directory('origincar_base'), 'config', 'ekf.yaml')
-    imu_config = Path(get_package_share_directory('origincar_base'), 'config', 'imu.yaml')
+    ekf_config = Path(bringup_dir, 'config', 'ekf.yaml')
+    imu_config = Path(bringup_dir, 'config', 'imu.yaml')
 
-    
-    carto_slam = LaunchConfiguration('carto_slam', default='false')
+    carto_slam = LaunchConfiguration('carto_slam')
     input_topic = LaunchConfiguration('input_topic')
-    carto_slam_dec = DeclareLaunchArgument('carto_slam',default_value='false')
-    input_topic_dec = DeclareLaunchArgument(
-        'input_topic', default_value='/cmd_vel_safe',
-        description='Twist input topic for the chassis command conversion')
-            
+    use_sim_time = LaunchConfiguration('use_sim_time')
+    laser_frame = LaunchConfiguration('laser_frame')
+    base_x = LaunchConfiguration('base_x')
+    base_y = LaunchConfiguration('base_y')
+    base_z = LaunchConfiguration('base_z')
+    base_roll = LaunchConfiguration('base_roll')
+    base_pitch = LaunchConfiguration('base_pitch')
+    base_yaw = LaunchConfiguration('base_yaw')
+    laser_x = LaunchConfiguration('laser_x')
+    laser_y = LaunchConfiguration('laser_y')
+    laser_z = LaunchConfiguration('laser_z')
+    laser_roll = LaunchConfiguration('laser_roll')
+    laser_pitch = LaunchConfiguration('laser_pitch')
+    laser_yaw = LaunchConfiguration('laser_yaw')
+
+    declarations = [
+        DeclareLaunchArgument('carto_slam', default_value='false'),
+        DeclareLaunchArgument(
+            'input_topic', default_value='/cmd_vel_safe',
+            description='Twist input topic for chassis conversion'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('laser_frame', default_value='laser'),
+        DeclareLaunchArgument('base_x', default_value='0.0'),
+        DeclareLaunchArgument('base_y', default_value='0.0'),
+        DeclareLaunchArgument('base_z', default_value='0.0'),
+        DeclareLaunchArgument('base_roll', default_value='0.0'),
+        DeclareLaunchArgument('base_pitch', default_value='0.0'),
+        DeclareLaunchArgument('base_yaw', default_value='0.0'),
+        DeclareLaunchArgument('laser_x', default_value='0.0'),
+        DeclareLaunchArgument('laser_y', default_value='0.0'),
+        DeclareLaunchArgument('laser_z', default_value='0.0'),
+        DeclareLaunchArgument('laser_roll', default_value='0.0'),
+        DeclareLaunchArgument('laser_pitch', default_value='0.0'),
+        DeclareLaunchArgument('laser_yaw', default_value='0.0'),
+    ]
+
     origincar_base = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'base_serial.launch.py')),
-            launch_arguments={
-                'akmcar': 'true',
-                'input_topic': input_topic,
-            }.items(),
+        PythonLaunchDescriptionSource(
+            os.path.join(launch_dir, 'base_serial.launch.py')),
+        launch_arguments={
+            'akmcar': 'true',
+            'input_topic': input_topic,
+            'use_sim_time': use_sim_time,
+        }.items(),
+    )
+    description = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(
+            os.path.join(launch_dir, 'robot_mode_description.launch.py')),
+        launch_arguments={'use_sim_time': use_sim_time}.items(),
     )
 
-    choose_car = IncludeLaunchDescription(
-            PythonLaunchDescriptionSource(os.path.join(launch_dir, 'robot_mode_description.launch.py')),
+    base_to_link = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_to_link',
+        arguments=[
+            '--x', base_x, '--y', base_y, '--z', base_z,
+            '--roll', base_roll, '--pitch', base_pitch, '--yaw', base_yaw,
+            '--frame-id', 'base_footprint', '--child-frame-id', 'base_link',
+        ],
     )
-
-    
-    base_to_link = launch_ros.actions.Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='base_to_link',
-            arguments=['--x', '0.41', '--y', '0.12', '--z', '0.0',
-                       '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0',
-                       '--frame-id', 'base_footprint', '--child-frame-id', 'base_link'],
+    base_to_gyro = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='base_to_gyro',
+        arguments=[
+            '--x', '0.0', '--y', '0.0', '--z', '0.0',
+            '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0',
+            '--frame-id', 'base_footprint', '--child-frame-id', 'gyro_link',
+        ],
     )
-    base_to_gyro = launch_ros.actions.Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='base_to_gyro',
-            arguments=['--x', '0.0', '--y', '0.0', '--z', '0.0',
-                       '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0',
-                       '--frame-id', 'base_footprint', '--child-frame-id', 'gyro_link'],
+    link_to_laser = Node(
+        package='tf2_ros',
+        executable='static_transform_publisher',
+        name='link_to_laser',
+        arguments=[
+            '--x', laser_x, '--y', laser_y, '--z', laser_z,
+            '--roll', laser_roll, '--pitch', laser_pitch, '--yaw', laser_yaw,
+            '--frame-id', 'base_link', '--child-frame-id', laser_frame,
+        ],
     )
-
-    link_to_laser = launch_ros.actions.Node(
-            package='tf2_ros',
-            executable='static_transform_publisher',
-            name='link_to_laser',
-            arguments=['--x', '0.0', '--y', '0.0', '--z', '0.0',
-                       '--roll', '0.0', '--pitch', '0.0', '--yaw', '0.0',
-                       '--frame-id', 'base_link', '--child-frame-id', 'laser'],
-    )
-
-    imu_filter_node =  launch_ros.actions.Node(
+    imu_filter = Node(
         package='imu_filter_madgwick',
         executable='imu_filter_madgwick_node',
-        parameters=[imu_config]
+        parameters=[imu_config, {'use_sim_time': use_sim_time}],
     )
-    
-    robot_ekf = launch_ros.actions.Node(
-            condition=UnlessCondition(carto_slam),
-            package='robot_localization', 
-            executable='ekf_node', 
-            parameters=[ekf_config],
-            remappings=[("odometry/filtered", "odom_combined")]
-            )
-                              
-    joint_state_publisher_node = launch_ros.actions.Node(
-            package='joint_state_publisher', 
-            executable='joint_state_publisher', 
-            name='joint_state_publisher',
+    robot_ekf = Node(
+        condition=UnlessCondition(carto_slam),
+        package='robot_localization',
+        executable='ekf_node',
+        parameters=[ekf_config, {'use_sim_time': use_sim_time}],
+        remappings=[('odometry/filtered', 'odom_combined')],
+    )
+    joint_state_publisher = Node(
+        package='joint_state_publisher',
+        executable='joint_state_publisher',
+        name='joint_state_publisher',
+        parameters=[{'use_sim_time': use_sim_time}],
     )
 
-    ld = LaunchDescription()
-
-    ld.add_action(carto_slam_dec)
-    ld.add_action(input_topic_dec)
-    ld.add_action(origincar_base)
-    ld.add_action(base_to_link)
-    ld.add_action(base_to_gyro)
-    ld.add_action(joint_state_publisher_node)
-    ld.add_action(choose_car)
-    ld.add_action(imu_filter_node)
-    ld.add_action(robot_ekf)
-    ld.add_action(link_to_laser)
-
-    return ld
+    return LaunchDescription(declarations + [
+        origincar_base,
+        base_to_link,
+        base_to_gyro,
+        joint_state_publisher,
+        description,
+        imu_filter,
+        robot_ekf,
+        link_to_laser,
+    ])

@@ -1,39 +1,66 @@
-# smartcar_bringup 协调层 config（参考约定）
-#
-# 说明：smartcar_bringup 是 launch 组合器，自身不启 Node，故本文件为协调层约定的
-# 单一事实来源（帧名/话题/开关默认值/设备端口），smartcar_bringup.launch.py 的
-# DeclareLaunchArgument 默认值与之对齐。各功能包自身 config（ekf.yaml/imu.yaml/
-# ydlidar.yaml）由 vendor 包持有，本文件不接管。
-#
-# 命名统一到 RDK 实际（见 spec §5）：/odom_combined 话题 + odom_combined 帧。
+# SmartCar full-system coordination defaults.
+# Distances are meters and rotations are radians. Values marked measured=false
+# are placeholders and must not be used for ground motion.
 
-# ---- 全局帧名约定 ----
 frames:
-  odom_frame: odom_combined      # EKF 全局里程计帧（方案 /odometry/filtered+odom 统一到此）
-  base_frame: base_footprint     # EKF base 帧
-  laser_frame: laser             # LiDAR 帧（对齐 bringup 静态 TF，非 laser_frame）
+  odom_frame: odom_combined
+  base_frame: base_footprint
+  chassis_frame: base_link
+  laser_frame: laser
 
-# ---- 基础话题 ----
 topics:
-  odom: /odom_combined           # nav_msgs/Odometry ~20Hz（EKF）
-  imu: /imu/data                 # sensor_msgs/Imu ~20Hz
-  scan: /scan                    # sensor_msgs/LaserScan ~10Hz（ydlidar）
-  cmd_vel: /cmd_vel              # geometry_msgs/Twist（Nav2 发布，底盘订阅）
-  robot_description: /robot_description
+  raw_odom: /odom
+  filtered_odom: /odom_combined
+  imu: /imu/data
+  scan: /scan
+  cmd_vel: /cmd_vel
+  cmd_vel_safe: /cmd_vel_safe
+  ackermann_cmd: /ackermann_cmd
+  image: /aurora/rgb/image_raw
 
-# ---- 功能开关默认值 ----
 toggles:
-  use_lidar: true                # 启动 LiDAR 驱动
-  use_obstacle: true             # 启动 obstacle_detector
-  use_nav: false                 # 预留：Nav2（smartcar_nav2 未就绪）
-  use_sim_time: false            # 实车不用仿真时间
+  use_lidar: true
+  use_obstacle: true
+  use_safety: true
+  use_nav: true
+  use_camera: true
+  use_vision: true
+  use_task: true
+  nav_autostart: true
+  autostart_mission: false
+  use_sim_time: false
 
-# ---- 设备端口（vendor config 持有，此处记录事实）----
+extrinsics:
+  base_to_link:
+    measured: false
+    parent: base_footprint
+    child: base_link
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+  link_to_laser:
+    measured: false
+    parent: base_link
+    child: laser
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+  link_to_camera:
+    measured: false
+    parent: base_link
+    child_by_driver:
+      aurora: rgb_camera_link
+      usb: default_usb_cam
+      mipi: default_cam
+    xyz: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 0.0]
+
+motion_gates:
+  waypoints_calibrated: false
+  extrinsics_calibrated: false
+  steering_calibrated: false
+  emergency_stop_ready: false
+  operator_approved: false
+
 hardware:
-  chassis_serial: /dev/ttyACM0   # OriginCar 底盘，115200
-  lidar_serial: /dev/ttyUSB0     # YDLIDAR Tmini Plus，230400
-
-# ---- 已知遗留（见 spec §11）----
-todo:
-  base_to_link_offset: "x=0.41,y=0.12 待赛前实车标定复核（base_footprint->base_link 通常应为 0,0,0）"
-  tf_dedup: "核对 origincar.urdf 与 3 个 static_transform_publisher 去重"
+  chassis_serial: /dev/ttyACM0
+  lidar_serial: /dev/ttyUSB0
+  camera_driver: aurora

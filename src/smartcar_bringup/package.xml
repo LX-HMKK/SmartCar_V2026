@@ -11,6 +11,8 @@
 
   <!-- 运行期依赖：被 include 的 vendor 包与底层组件 -->
   <exec_depend>origincar_base</exec_depend>
+  <exec_depend>ament_index_python</exec_depend>
+  <exec_depend>launch</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
   <exec_depend>obstacle_detector</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
@@ -20,8 +22,14 @@
   <exec_depend>imu_filter_madgwick</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>smartcar_safety</exec_depend>
+  <exec_depend>smartcar_nav2</exec_depend>
+  <exec_depend>smartcar_vision</exec_depend>
+  <exec_depend>smartcar_task</exec_depend>
 
   <test_depend>ament_cmake</test_depend>
+  <test_depend>ament_cmake_pytest</test_depend>
+  <test_depend>python3-pytest</test_depend>
+  <test_depend>python3-yaml</test_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

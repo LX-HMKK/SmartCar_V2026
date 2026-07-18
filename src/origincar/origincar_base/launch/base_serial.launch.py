@@ -15,6 +15,7 @@ def generate_launch_description():
     input_topic = LaunchConfiguration('input_topic')
     output_topic = LaunchConfiguration('output_topic')
     frame_id = LaunchConfiguration('frame_id')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     longitudinal_velocity_scale = LaunchConfiguration(
         'longitudinal_velocity_scale')
     lateral_velocity_scale = LaunchConfiguration('lateral_velocity_scale')
@@ -46,6 +47,7 @@ def generate_launch_description():
              max_calibrated_steering_command_rad,
          'product_number': 0}
     ]
+    robot_parameters[0]['use_sim_time'] = use_sim_time
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -61,6 +63,7 @@ def generate_launch_description():
         DeclareLaunchArgument('input_topic', default_value='/cmd_vel_safe'),
         DeclareLaunchArgument('output_topic', default_value='/ackermann_cmd'),
         DeclareLaunchArgument('frame_id', default_value='odom_combined'),
+        DeclareLaunchArgument('use_sim_time', default_value='false'),
         DeclareLaunchArgument(
             'longitudinal_velocity_scale', default_value='1.03'),
         DeclareLaunchArgument(
@@ -95,6 +98,7 @@ def generate_launch_description():
                 'input_topic': input_topic,
                 'output_topic': output_topic,
                 'frame_id': frame_id,
+                'use_sim_time': use_sim_time,
             }],
         ),
 

@@ -18,10 +18,14 @@ from launch_ros.actions import Node
 
 def generate_launch_description():
     odom_frame = LaunchConfiguration('odom_frame')
+    use_sim_time = LaunchConfiguration('use_sim_time')
     return LaunchDescription([
         DeclareLaunchArgument(
             'odom_frame', default_value='odom_combined',
             description='obstacle 输出帧，对齐 EKF 全局帧'),
+        DeclareLaunchArgument(
+            'use_sim_time', default_value='false',
+            description='使用 ROS 仿真时钟'),
         Node(
             package='obstacle_detector',
             executable='obstacle_extractor_node',
@@ -30,7 +34,7 @@ def generate_launch_description():
                 'active': True,
                 'use_scan': True,
                 'use_pcl': False,
-                'use_sim_time': False,
+                'use_sim_time': use_sim_time,
                 'use_split_and_merge': True,
                 'circles_from_visibles': True,
                 'discard_converted_segments': True,

@@ -16,6 +16,7 @@ def generate_launch_description():
     bt_through_poses_xml_file = LaunchConfiguration(
         'bt_through_poses_xml_file')
     waypoints_file = LaunchConfiguration('waypoints_file')
+    autostart = LaunchConfiguration('autostart')
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time',
@@ -46,6 +47,9 @@ def generate_launch_description():
         default_value=os.path.join(
             pkg_dir, 'config', 'waypoints', 'default_waypoints.yaml'),
         description='Waypoint sequence YAML file')
+    declare_autostart = DeclareLaunchArgument(
+        'autostart', default_value='true',
+        description='Automatically activate Nav2 lifecycle nodes')
 
     nav2_bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -55,6 +59,7 @@ def generate_launch_description():
             'params_file': params_file,
             'bt_xml_file': bt_xml_file,
             'bt_through_poses_xml_file': bt_through_poses_xml_file,
+            'autostart': autostart,
         }.items())
 
     return LaunchDescription([
@@ -63,5 +68,6 @@ def generate_launch_description():
         declare_bt_xml_file,
         declare_bt_through_poses_xml_file,
         declare_waypoints_file,
+        declare_autostart,
         nav2_bringup,
     ])

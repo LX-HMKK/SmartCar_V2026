@@ -14,6 +14,7 @@ def generate_launch_description():
     require_scan = LaunchConfiguration("require_scan")
     require_odom = LaunchConfiguration("require_odom")
     require_raw_odom = LaunchConfiguration("require_raw_odom")
+    use_sim_time = LaunchConfiguration("use_sim_time")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -36,6 +37,11 @@ def generate_launch_description():
             default_value="true",
             description="Require fresh raw /odom before forwarding velocity",
         ),
+        DeclareLaunchArgument(
+            "use_sim_time",
+            default_value="false",
+            description="Use the ROS simulation clock",
+        ),
         Node(
             package="smartcar_safety",
             executable="safety_node",
@@ -47,6 +53,7 @@ def generate_launch_description():
                     "require_scan": require_scan,
                     "require_odom": require_odom,
                     "require_raw_odom": require_raw_odom,
+                    "use_sim_time": use_sim_time,
                 },
             ],
         ),

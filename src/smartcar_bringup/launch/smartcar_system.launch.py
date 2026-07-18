@@ -1,0 +1,257 @@
+"""Compose the complete competition stack with explicit motion gates."""
+from launch import LaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+)
+from launch.conditions import IfCondition
+from launch.launch_description_sources import PythonLaunchDescriptionSource
+from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
+from launch_ros.actions import Node
+from launch_ros.substitutions import FindPackageShare
+
+
+CAMERA_FRAMES = {
+    "aurora": "rgb_camera_link",
+    "usb": "default_usb_cam",
+    "mipi": "default_cam",
+}
+VALID_CAMERA_DRIVERS = tuple(CAMERA_FRAMES)
+MOTION_GATES = (
+    "waypoints_calibrated",
+    "extrinsics_calibrated",
+    "steering_calibrated",
+    "emergency_stop_ready",
+    "operator_approved",
+)
+
+
+def _as_bool(context, name):
+    value = LaunchConfiguration(name).perform(context).strip().lower()
+    if value in ("true", "1"):
+        return True
+    if value in ("false", "0"):
+        return False
+    raise RuntimeError(f"{name} must be true or false")
+
+
+def _vision_and_camera_actions(context):
+    use_camera = _as_bool(context, "use_camera")
+    use_vision = _as_bool(context, "use_vision")
+    if not use_camera and not use_vision:
+        return []
+
+    camera_driver = LaunchConfiguration(
+        "camera_driver").perform(context).strip().lower()
+    if camera_driver not in VALID_CAMERA_DRIVERS:
+        raise RuntimeError("camera_driver must be aurora, usb, or mipi")
+    configured_topic = LaunchConfiguration(
+        "image_topic").perform(context).strip()
+    selected_driver = camera_driver if use_camera else "none"
+    selected_topic = (
+        configured_topic
+        if configured_topic
+        else (
+            ""
+            if use_camera
+            else "/smartcar/vision/image"
+        )
+    )
+
+    actions = [IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_vision"),
+            "launch",
+            "smartcar_vision.launch.py",
+        ])),
+        launch_arguments={
+            "camera_driver": selected_driver,
+            "image_topic": selected_topic,
+            "usb_video_device": LaunchConfiguration(
+                "usb_video_device").perform(context),
+            "use_camera": "true" if use_camera else "false",
+            "use_services": "true" if use_vision else "false",
+            "use_zbar": "true" if use_vision else "false",
+            "use_sim_time": LaunchConfiguration(
+                "use_sim_time").perform(context),
+        }.items(),
+    )]
+
+    if use_camera:
+        frame_override = LaunchConfiguration(
+            "camera_frame").perform(context).strip()
+        camera_frame = frame_override or CAMERA_FRAMES[camera_driver]
+        actions.append(Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="link_to_camera_sensor",
+            arguments=[
+                "--x", LaunchConfiguration("camera_x").perform(context),
+                "--y", LaunchConfiguration("camera_y").perform(context),
+                "--z", LaunchConfiguration("camera_z").perform(context),
+                "--roll", LaunchConfiguration("camera_roll").perform(context),
+                "--pitch", LaunchConfiguration("camera_pitch").perform(context),
+                "--yaw", LaunchConfiguration("camera_yaw").perform(context),
+                "--frame-id", "base_link",
+                "--child-frame-id", camera_frame,
+            ],
+        ))
+    return actions
+
+
+def _validate_configuration(context):
+    if not _as_bool(context, "autostart_mission"):
+        return []
+    required_components = (
+        "use_safety",
+        "use_nav",
+        "use_vision",
+        "use_task",
+        "nav_autostart",
+    )
+    missing = [
+        name for name in required_components
+        if not _as_bool(context, name)
+    ]
+    missing.extend(
+        name for name in MOTION_GATES
+        if not _as_bool(context, name)
+    )
+    if missing:
+        raise RuntimeError(
+            "autostart_mission requires: " + ",".join(missing))
+    return []
+
+
+def generate_launch_description():
+    use_lidar = LaunchConfiguration("use_lidar")
+    use_obstacle = LaunchConfiguration("use_obstacle")
+    use_safety = LaunchConfiguration("use_safety")
+    use_nav = LaunchConfiguration("use_nav")
+    use_task = LaunchConfiguration("use_task")
+    use_sim_time = LaunchConfiguration("use_sim_time")
+    nav_autostart = LaunchConfiguration("nav_autostart")
+    autostart_mission = LaunchConfiguration("autostart_mission")
+    waypoints_file = LaunchConfiguration("waypoints_file")
+
+    extrinsic_names = (
+        "base_x", "base_y", "base_z",
+        "base_roll", "base_pitch", "base_yaw",
+        "laser_x", "laser_y", "laser_z",
+        "laser_roll", "laser_pitch", "laser_yaw",
+    )
+
+    base = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_bringup"),
+            "launch",
+            "smartcar_bringup.launch.py",
+        ])),
+        launch_arguments={
+            "use_lidar": use_lidar,
+            "use_obstacle": use_obstacle,
+            "use_safety": use_safety,
+            "use_sim_time": use_sim_time,
+            "safety_require_scan": LaunchConfiguration(
+                "safety_require_scan"),
+            "safety_require_odom": LaunchConfiguration(
+                "safety_require_odom"),
+            "safety_require_raw_odom": LaunchConfiguration(
+                "safety_require_raw_odom"),
+            "laser_frame": LaunchConfiguration("laser_frame"),
+            **{
+                name: LaunchConfiguration(name)
+                for name in extrinsic_names
+            },
+        }.items(),
+    )
+    navigation = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_nav2"),
+            "launch",
+            "smartcar_nav2.launch.py",
+        ])),
+        launch_arguments={
+            "use_sim_time": use_sim_time,
+            "autostart": nav_autostart,
+            "waypoints_file": waypoints_file,
+        }.items(),
+        condition=IfCondition(use_nav),
+    )
+    task = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_task"),
+            "launch",
+            "smartcar_task.launch.py",
+        ])),
+        launch_arguments={
+            "use_sim_time": use_sim_time,
+            "waypoints_file": waypoints_file,
+            "autostart_mission": autostart_mission,
+            **{
+                name: LaunchConfiguration(name)
+                for name in MOTION_GATES
+            },
+        }.items(),
+        condition=IfCondition(use_task),
+    )
+
+    declarations = [
+        DeclareLaunchArgument("use_lidar", default_value="true"),
+        DeclareLaunchArgument("use_obstacle", default_value="true"),
+        DeclareLaunchArgument("use_safety", default_value="true"),
+        DeclareLaunchArgument("use_nav", default_value="true"),
+        DeclareLaunchArgument("use_camera", default_value="true"),
+        DeclareLaunchArgument("use_vision", default_value="true"),
+        DeclareLaunchArgument("use_task", default_value="true"),
+        DeclareLaunchArgument("autostart_mission", default_value="false"),
+        DeclareLaunchArgument("use_sim_time", default_value="false"),
+        DeclareLaunchArgument("nav_autostart", default_value="true"),
+        DeclareLaunchArgument("safety_require_scan", default_value="true"),
+        DeclareLaunchArgument("safety_require_odom", default_value="true"),
+        DeclareLaunchArgument(
+            "safety_require_raw_odom", default_value="true"),
+        DeclareLaunchArgument(
+            "waypoints_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_nav2"),
+                "config",
+                "waypoints",
+                "default_waypoints.yaml",
+            ]),
+        ),
+        DeclareLaunchArgument("camera_driver", default_value="aurora"),
+        DeclareLaunchArgument("image_topic", default_value=""),
+        DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
+        DeclareLaunchArgument("camera_frame", default_value=""),
+        DeclareLaunchArgument("laser_frame", default_value="laser"),
+        DeclareLaunchArgument(
+            "waypoints_calibrated", default_value="false"),
+        DeclareLaunchArgument(
+            "extrinsics_calibrated", default_value="false"),
+        DeclareLaunchArgument(
+            "steering_calibrated", default_value="false"),
+        DeclareLaunchArgument(
+            "emergency_stop_ready", default_value="false"),
+        DeclareLaunchArgument(
+            "operator_approved", default_value="false"),
+    ]
+    declarations.extend(
+        DeclareLaunchArgument(name, default_value="0.0")
+        for name in extrinsic_names
+    )
+    declarations.extend(
+        DeclareLaunchArgument(name, default_value="0.0")
+        for name in (
+            "camera_x", "camera_y", "camera_z",
+            "camera_roll", "camera_pitch", "camera_yaw",
+        )
+    )
+    return LaunchDescription(declarations + [
+        OpaqueFunction(function=_validate_configuration),
+        base,
+        navigation,
+        OpaqueFunction(function=_vision_and_camera_actions),
+        task,
+    ])
