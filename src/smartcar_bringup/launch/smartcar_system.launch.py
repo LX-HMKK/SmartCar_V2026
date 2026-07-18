@@ -101,9 +101,12 @@ def _vision_and_camera_actions(context):
 
 
 def _validate_configuration(context):
+    if _as_bool(context, "use_base") and not _as_bool(context, "use_safety"):
+        raise RuntimeError("use_base requires use_safety")
     if not _as_bool(context, "autostart_mission"):
         return []
     required_components = (
+        "use_base",
         "use_safety",
         "use_nav",
         "use_vision",
@@ -125,6 +128,7 @@ def _validate_configuration(context):
 
 
 def generate_launch_description():
+    use_base = LaunchConfiguration("use_base")
     use_lidar = LaunchConfiguration("use_lidar")
     use_obstacle = LaunchConfiguration("use_obstacle")
     use_safety = LaunchConfiguration("use_safety")
@@ -149,6 +153,7 @@ def generate_launch_description():
             "smartcar_bringup.launch.py",
         ])),
         launch_arguments={
+            "use_base": use_base,
             "use_lidar": use_lidar,
             "use_obstacle": use_obstacle,
             "use_safety": use_safety,
@@ -198,6 +203,7 @@ def generate_launch_description():
     )
 
     declarations = [
+        DeclareLaunchArgument("use_base", default_value="true"),
         DeclareLaunchArgument("use_lidar", default_value="true"),
         DeclareLaunchArgument("use_obstacle", default_value="true"),
         DeclareLaunchArgument("use_safety", default_value="true"),

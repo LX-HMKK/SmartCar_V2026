@@ -40,6 +40,7 @@ def launch_default(path, name):
 class SystemContractTests(unittest.TestCase):
     def test_system_exposes_all_switches_and_never_autostarts_motion(self):
         expected_defaults = {
+            "use_base": "true",
             "use_lidar": "true",
             "use_obstacle": "true",
             "use_safety": "true",
@@ -68,6 +69,30 @@ class SystemContractTests(unittest.TestCase):
         self.assertGreaterEqual(source.count('"waypoints_file": waypoints_file'), 2)
         self.assertIn('"autostart": nav_autostart', source)
         self.assertIn('"autostart_mission": autostart_mission', source)
+        self.assertIn('"use_base": use_base', source)
+
+    def test_base_switch_only_gates_vendor_chassis_include(self):
+        source = BRINGUP.read_text(encoding="utf-8")
+        self.assertIn(
+            "DeclareLaunchArgument('use_base', default_value='true')",
+            source,
+        )
+        self.assertIn("use_base = LaunchConfiguration('use_base')", source)
+        self.assertIn("condition=IfCondition(use_base)", source)
+        self.assertIn("safety = IncludeLaunchDescription", source)
+
+    def test_autostart_requires_a_real_base_chain(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        required_block = source.split("required_components = (", 1)[1].split(
+            ")", 1
+        )[0]
+        self.assertIn('"use_base"', required_block)
+
+    def test_physical_base_cannot_run_without_the_safety_gate(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertIn(
+            'raise RuntimeError("use_base requires use_safety")', source)
+        self.assertIn('if _as_bool(context, "use_base")', source)
 
     def test_base_and_laser_tf_are_parameterized_at_the_unique_vendor_owner(self):
         source = VENDOR.read_text(encoding="utf-8")

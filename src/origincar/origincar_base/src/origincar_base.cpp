@@ -5,18 +5,19 @@
 
 using std::placeholders::_1;
 using namespace std;
-void sigintHandler(int sig);
 sensor_msgs::msg::Imu Mpu6050;
-rclcpp::Node::SharedPtr node_handle = nullptr;
 
 
 int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
-    signal(SIGINT, sigintHandler);
-    origincar_base Robot_Control;
-    Robot_Control.Control();
-    rclcpp::shutdown();
+    {
+      origincar_base Robot_Control;
+      Robot_Control.Control();
+    }
+    if (rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
     return 0;
 }
 
@@ -141,8 +142,13 @@ void origincar_base::Write_Command()
       if (Stm32_Serial.isOpen()) {
         Stm32_Serial.write(Send_Data.tx, sizeof(Send_Data.tx));
       }
-    } catch (serial::IOException& e) {
-      RCLCPP_ERROR(this->get_logger(), "Unable to send data through serial port");
+    } catch (const serial::IOException & error) {
+      RCLCPP_ERROR(
+        this->get_logger(), "Unable to send data through serial port: %s",
+        error.what());
+      if (rclcpp::ok()) {
+        rclcpp::shutdown();
+      }
     }
 }
 
@@ -272,8 +278,19 @@ bool origincar_base::Get_Sensor_Data()
 {
     short transition_16 = 0;
     std::array<std::uint8_t, RECEIVE_DATA_SIZE> read_buffer{};
-    const size_t received_size = Stm32_Serial.read(
-      read_buffer.data(), read_buffer.size());
+    size_t received_size = 0;
+    try {
+      received_size = Stm32_Serial.read(
+        read_buffer.data(), read_buffer.size());
+    } catch (const serial::IOException & error) {
+      RCLCPP_ERROR(
+        this->get_logger(), "Unable to read sensor data: %s", error.what());
+      Send_Stop_Command();
+      if (rclcpp::ok()) {
+        rclcpp::shutdown();
+      }
+      return false;
+    }
     if (received_size > 0) {
       sensor_frame_parser_.append(read_buffer.data(), received_size);
     }
@@ -510,48 +527,8 @@ origincar_base::origincar_base()
 }
 
 
-void sigintHandler(int sig)
-{
-    sig = sig;
-      printf("OriginBot shutdown...\n");
-    serial::Serial Stm32_Serial;
-    Stm32_Serial.setPort("/dev/ttyACM0");
-    Stm32_Serial.setBaudrate(115200);
-    serial::Timeout _time = serial::Timeout::simpleTimeout(100);
-    Stm32_Serial.setTimeout(_time);
-    Stm32_Serial.open();                                       
-    SEND_DATA Send_Data;
-    if (Stm32_Serial.isOpen()) {
-    Send_Data.tx[0]=FRAME_HEADER;
-    Send_Data.tx[1] = 0;
-    Send_Data.tx[2] = 0;
-
-    Send_Data.tx[4] = 0;
-    Send_Data.tx[3] = 0;
-
-    Send_Data.tx[6] = 0;
-    Send_Data.tx[5] = 0;
-
-    Send_Data.tx[7] = 0;
-    Send_Data.tx[8] = 0;
-    int check_sum = 0;
-    for (int k = 0; k < 9; k++) {
-        check_sum = check_sum^Send_Data.tx[k];
-      }
-    Send_Data.tx[9]=check_sum;
-    Send_Data.tx[10]=FRAME_TAIL;
-
-    try {
-        Stm32_Serial.write(Send_Data.tx,sizeof (Send_Data.tx));
-    } catch (serial::IOException& e) {
-    }
-
-  }
-    // 关闭ROS2接口，清除资源
-    rclcpp::shutdown();
-}
-
 origincar_base::~origincar_base()
 {
-  RCLCPP_INFO(this->get_logger(),"Shutting down");
+  RCLCPP_INFO(this->get_logger(), "Shutting down");
+  Send_Stop_Command();
 }

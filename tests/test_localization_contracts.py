@@ -177,6 +177,15 @@ class BaseDriverContractTests(unittest.TestCase):
             r"orientation_covariance\[0\]\s*=\s*-1\.0",
         )
 
+    def test_shutdown_uses_existing_serial_and_read_failures_are_fail_closed(self):
+        source = BASE_SOURCE_FILE.read_text(encoding="utf-8")
+        self.assertNotIn("sigintHandler", source)
+        self.assertNotIn('setPort("/dev/ttyACM0")', source)
+        self.assertIn("origincar_base::~origincar_base()", source)
+        self.assertIn("Send_Stop_Command();", source)
+        self.assertIn("catch (const serial::IOException & error)", source)
+        self.assertIn("Unable to read sensor data", source)
+
 
 if __name__ == "__main__":
     unittest.main()

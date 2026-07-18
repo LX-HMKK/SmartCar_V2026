@@ -1,8 +1,10 @@
 """ROS-independent orchestration for QR and scene-description services."""
+import io
 import math
 import os
 from pathlib import Path
 import tempfile
+import threading
 import time
 from typing import NamedTuple
 
@@ -22,6 +24,14 @@ class DescribeOutcome(NamedTuple):
     fallback_used: bool
     description: str
     status: str
+
+
+class _MemoryJpegFile(io.BytesIO):
+    """File-like buffer used so encoding can be bounded before disk I/O."""
+
+    def __init__(self, name):
+        super().__init__()
+        self.name = str(name)
 
 
 class _Deadline:
@@ -110,6 +120,10 @@ class VisionServiceCore:
 
         image_path = None
         try:
+            encoded, encode_status = self._encode_jpeg(image, deadline)
+            if encode_status is not None:
+                return self._fallback(encode_status)
+
             try:
                 with tempfile.NamedTemporaryFile(
                     dir=self._runtime_dir,
@@ -120,7 +134,7 @@ class VisionServiceCore:
                     image_path = Path(temporary_file.name)
                     if hasattr(os, "fchmod"):
                         os.fchmod(temporary_file.fileno(), 0o600)
-                    self._jpeg_writer(image, temporary_file)
+                    temporary_file.write(encoded)
             except Exception as error:
                 return self._fallback(f"jpeg_error:{type(error).__name__}")
 
@@ -150,6 +164,34 @@ class VisionServiceCore:
                     image_path.unlink()
                 except FileNotFoundError:
                     pass
+
+    def _encode_jpeg(self, image, deadline):
+        """Run the potentially expensive encoder without exceeding the deadline."""
+        holder = {}
+        completed = threading.Event()
+        buffer = _MemoryJpegFile(self._runtime_dir / "pending-scene.jpg")
+
+        def encode():
+            try:
+                self._jpeg_writer(image, buffer)
+                holder["data"] = buffer.getvalue()
+            except Exception as error:  # encoder exceptions become fallback text
+                holder["error"] = error
+            finally:
+                completed.set()
+
+        threading.Thread(
+            target=encode,
+            name="smartcar-jpeg-encoder",
+            daemon=True,
+        ).start()
+        if not completed.wait(deadline.remaining_sec()):
+            return None, "vlm_timeout"
+        if "error" in holder:
+            return None, f"jpeg_error:{type(holder['error']).__name__}"
+        if deadline.expired():
+            return None, "vlm_timeout"
+        return holder.get("data", b""), None
 
     def _fallback(self, status):
         return DescribeOutcome(True, True, FALLBACK_TEXT, str(status))

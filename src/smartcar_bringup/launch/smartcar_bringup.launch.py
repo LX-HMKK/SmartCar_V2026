@@ -10,6 +10,7 @@ from launch.substitutions import LaunchConfiguration, PythonExpression
 
 
 def generate_launch_description():
+    use_base = LaunchConfiguration('use_base')
     use_lidar = LaunchConfiguration('use_lidar')
     use_obstacle = LaunchConfiguration('use_obstacle')
     use_safety = LaunchConfiguration('use_safety')
@@ -49,6 +50,7 @@ def generate_launch_description():
             'laser_frame': laser_frame,
             **extrinsics,
         }.items(),
+        condition=IfCondition(use_base),
     )
     ydlidar = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
@@ -81,6 +83,7 @@ def generate_launch_description():
     )
 
     declarations = [
+        DeclareLaunchArgument('use_base', default_value='true'),
         DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument('use_obstacle', default_value='true'),
         DeclareLaunchArgument('use_safety', default_value='true'),

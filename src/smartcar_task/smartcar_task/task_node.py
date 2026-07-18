@@ -394,7 +394,7 @@ class RosVision:
         request.timeout_sec = float(timeout_sec)
         future = self._read_qr_client.call_async(request)
         completed, response, error = _wait_future(
-            future, float(timeout_sec) + 1.0)
+            future, max(0.0, float(timeout_sec)))
         if not completed:
             _remove_pending(self._read_qr_client, future)
             return OperationResult(False, "read_qr_transport_timeout")
@@ -416,7 +416,7 @@ class RosVision:
         request.prompt = str(prompt)
         future = self._describe_client.call_async(request)
         completed, response, error = _wait_future(
-            future, float(timeout_sec) + 1.0)
+            future, max(0.0, float(timeout_sec)))
         if not completed:
             _remove_pending(self._describe_client, future)
             return OperationResult(False, "describe_scene_transport_timeout")

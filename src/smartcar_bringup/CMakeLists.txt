@@ -10,7 +10,9 @@ install(DIRECTORY launch config
 
 if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
+  find_package(launch_testing_ament_cmake REQUIRED)
   ament_add_pytest_test(system_contracts test/test_system_contracts.py)
+  add_launch_test(test/test_system_smoke.py TIMEOUT 120)
 endif()
 
 ament_package()

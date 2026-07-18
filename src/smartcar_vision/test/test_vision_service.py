@@ -4,6 +4,8 @@ from pathlib import Path
 import stat
 import sys
 import tempfile
+import threading
+import time
 import unittest
 
 
@@ -217,6 +219,33 @@ class VisionServiceCoreTests(unittest.TestCase):
             )
             self.assertEqual(len(image_path), 1)
             self.assertFalse(image_path[0].exists())
+
+    def test_blocking_jpeg_encoder_is_bounded_by_the_request_deadline(self):
+        started = threading.Event()
+        release = threading.Event()
+
+        def blocking_writer(_image, _file_object):
+            started.set()
+            release.wait(0.20)
+
+        with tempfile.TemporaryDirectory() as directory:
+            core = VisionServiceCore(
+                barcode_buffer=FakeBuffer(None),
+                image_buffer=FakeBuffer(b"image"),
+                backend=RecordingBackend(VlmResult(True, "unused", "ok")),
+                jpeg_writer=blocking_writer,
+                runtime_dir=directory,
+            )
+            started_at = time.monotonic()
+            outcome = core.describe_scene(0, 0.03, "describe")
+            elapsed = time.monotonic() - started_at
+            release.set()
+
+            self.assertEqual(
+                outcome,
+                (True, True, FALLBACK_TEXT, "vlm_timeout"),
+            )
+            self.assertTrue(elapsed < 0.18)
 
     def test_invalid_timeout_fails_without_waiting(self):
         with tempfile.TemporaryDirectory() as directory:

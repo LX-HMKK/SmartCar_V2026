@@ -6,7 +6,6 @@
 #include <inttypes.h>
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
-#include <csignal>
 #include <thread>
 
 #include <iostream>

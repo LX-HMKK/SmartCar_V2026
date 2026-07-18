@@ -82,6 +82,12 @@ class TaskLaunchContractTests(unittest.TestCase):
             'self.declare_parameter("waypoints_calibrated", False)', source)
         self.assertIn('"motion gates not satisfied: "', source)
 
+    def test_vision_transport_wait_uses_the_request_deadline(self):
+        source = NODE.read_text(encoding="utf-8")
+        self.assertNotIn("float(timeout_sec) + 1.0", source)
+        self.assertGreaterEqual(
+            source.count("future, max(0.0, float(timeout_sec))"), 2)
+
 
 if __name__ == "__main__":
     unittest.main()
