@@ -218,7 +218,9 @@ Expected: contract and launch tests pass.
 
 **Files:**
 - Create: `src/origincar/origincar_base/include/origincar_base/sensor_calibration.hpp`
+- Create: `src/origincar/origincar_base/include/origincar_base/serial_frame.hpp`
 - Create: `src/origincar/origincar_base/test/test_sensor_calibration.cpp`
+- Create: `src/origincar/origincar_base/test/test_serial_frame.cpp`
 - Modify: `src/origincar/origincar_base/include/origincar_base/origincar_base.h`
 - Modify: `src/origincar/origincar_base/src/origincar_base.cpp`
 - Modify: `src/origincar/origincar_base/launch/base_serial.launch.py`
@@ -236,7 +238,8 @@ Expected: contract and launch tests pass.
 - Raw IMU marks orientation unavailable with `orientation_covariance[0]=-1`; EKF fuses only calibrated `angular_velocity.z`, not the gyro-integrated yaw.
 - `/odom` pose/twist and `/imu/data_raw` covariance values are finite, nonzero, configurable, and conservative until measured calibration data replaces the defaults. Initial EKF covariance must not claim near-perfect certainty.
 - Chassis parameters expose finite calibration values for longitudinal/lateral/yaw velocity scale, gyro-z scale and bias, steering command scale and offset. The same calibrated velocity values are published and integrated.
-- The safety gate independently monitors raw `/odom` and fused `/odom_combined`; a continuing EKF prediction cannot hide a stale chassis sensor stream.
+- Chassis serial input is parsed as a persistent byte stream; partial reads, arbitrary read offsets, payload marker bytes, and corrupted frames cannot permanently desynchronize frame recovery.
+- The safety gate independently monitors finite raw `/odom` and fused `/odom_combined`; a continuing EKF prediction cannot hide a stale chassis sensor stream. A raw-odometry timeout latches a localization fault until the reset workflow verifies `/set_pose` through a newer finite filtered-odometry sample and explicitly clears the latch.
 - Competition initialization requires the vehicle at the P-zone origin with its nose aligned to `+X`. The later task reset adapter uses robot_localization `/set_pose` to restore `(x, y, yaw)=(0, 0, 0)` only after navigation has stopped.
 - Camera optical flow is not a release dependency. If later enabled, it is a separately timestamped `TwistWithCovarianceStamped` source and fuses velocity only; LiDAR remains excluded from localization.
 
@@ -336,7 +339,7 @@ Expected: tests and build pass; `ros2 service type` reports both custom services
 - Load semantic waypoints from the existing Nav2 YAML schema.
 - Execute `/follow_waypoints` with one pose per goal, waiting for action success before running that waypoint task.
 - Provide `/smartcar/task/start`, `/smartcar/task/stop`, and `/smartcar/task/reset` (`std_srvs/Trigger`).
-- `/smartcar/task/reset` is accepted only after navigation is stopped; it calls robot_localization `/set_pose` with the P-zone origin and zero yaw before returning to `IDLE`.
+- `/smartcar/task/reset` is accepted only after navigation is stopped; it calls robot_localization `/set_pose` with the P-zone origin and zero yaw, verifies a newer finite `/odom_combined`, then calls `/smartcar/safety/clear_localization_fault` before returning to `IDLE`.
 - Publish `/smartcar/task/state`, `/smartcar/output/text`, and `/smartcar/output/speech` (`std_msgs/String`).
 - Mission states are `IDLE`, `WAITING_FOR_SERVERS`, `NAVIGATING`, `RUNNING_QR`, `RUNNING_VLM`, `COMPLETED`, `STOPPED`, `FAILED`.
 - Task policies: `start`, `corridor`, `loop`, and `return` require no vision call; `qr` calls ReadQr after a configurable 2 second settle delay and retries once; `vlm` calls DescribeScene with an 8 second timeout and publishes returned/fallback text.
@@ -353,7 +356,7 @@ Expected: FAIL because task modules do not exist.
 
 - [ ] **Step 3: Implement ports-and-adapters mission logic and ROS node**
 
-Pure mission logic depends on interfaces `Navigator.navigate(waypoint)`, `Vision.read_qr(not_before, timeout)`, `Vision.describe_scene(not_before, timeout, prompt)`, `Localization.reset_origin()`, `Clock.now/sleep`, and `Output.publish`. The ROS node adapts Nav2 actions/services to those interfaces and runs the mission on a worker thread so service callbacks remain responsive.
+Pure mission logic depends on interfaces `Navigator.navigate(waypoint)`, `Vision.read_qr(not_before, timeout)`, `Vision.describe_scene(not_before, timeout, prompt)`, `Localization.reset_origin()`, `Clock.now/sleep`, and `Output.publish`. The ROS localization adapter owns the ordered `/set_pose` -> newer finite `/odom_combined` -> safety localization-fault clear sequence. The ROS node adapts Nav2 actions/services to those interfaces and runs the mission on a worker thread so service callbacks remain responsive.
 
 - [ ] **Step 4: Verify GREEN and RDK build**
 

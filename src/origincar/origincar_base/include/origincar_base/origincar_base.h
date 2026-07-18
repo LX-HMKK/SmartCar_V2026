@@ -22,6 +22,8 @@
 #include <serial/serial.h>
 #include "origincar_base/command_mode.hpp"
 #include "origincar_base/command_watchdog.hpp"
+#include "origincar_base/sensor_calibration.hpp"
+#include "origincar_base/serial_frame.hpp"
 #include <fcntl.h>
 #include <stdbool.h>
 #include <std_msgs/msg/string.hpp>
@@ -33,7 +35,6 @@
 #include "tf2_geometry_msgs/tf2_geometry_msgs.hpp"
 #include "tf2/LinearMath/Transform.h"
 #include "tf2/LinearMath/Quaternion.h"
-#include <tf2_ros/transform_broadcaster.h>
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp"
 #include "origincar_msg/msg/data.hpp"
 #include "origincar_msg/msg/sign.hpp"  // 匹配信号发送
@@ -56,39 +57,11 @@ using namespace std;
 
 extern sensor_msgs::msg::Imu Mpu6050;
 
-const double odom_pose_covariance[36]   = {1e-3,    0,    0,   0,   0,    0,
-										      0, 1e-3,    0,   0,   0,    0,
-										      0,    0,  1e6,   0,   0,    0,
-										      0,    0,    0, 1e6,   0,    0,
-										      0,    0,    0,   0, 1e6,    0,
-										      0,    0,    0,   0,   0,  1e3 };
-
-const double odom_pose_covariance2[36]  = {1e-9,    0,    0,   0,   0,    0,
-										      0, 1e-3, 1e-9,   0,   0,    0,
-										      0,    0,  1e6,   0,   0,    0,
-										      0,    0,    0, 1e6,   0,    0,
-										      0,    0,    0,   0, 1e6,    0,
-										      0,    0,    0,   0,   0, 1e-9 };
-
-const double odom_twist_covariance[36]  = {1e-3,    0,    0,   0,   0,    0,
-										      0, 1e-3,    0,   0,   0,    0,
-										      0,    0,  1e6,   0,   0,    0,
-										      0,    0,    0, 1e6,   0,    0,
-										      0,    0,    0,   0, 1e6,    0,
-										      0,    0,    0,   0,   0,  1e3 };
-
-const double odom_twist_covariance2[36] = {1e-9,    0,    0,   0,   0,    0,
-										      0, 1e-3, 1e-9,   0,   0,    0,
-										      0,    0,  1e6,   0,   0,    0,
-										      0,    0,    0, 1e6,   0,    0,
-										      0,    0,    0,   0, 1e6,    0,
-										      0,    0,    0,   0,   0, 1e-9} ;
-
 typedef struct __Vel_Pos_Data_
 {
-	float X;
-	float Y;
-	float Z;
+	double X;
+	double Y;
+	double Z;
 
 } Vel_Pos_Data;
 
@@ -131,7 +104,7 @@ public:
 	origincar_base();
 	~origincar_base();
 	void Control();
-	void Publish_Odom();
+	void Publish_Odom(const rclcpp::Time & sensor_time);
 
 public : 
 	serial::Serial Stm32_Serial;
@@ -146,7 +119,7 @@ private:
 	void Send_Stop_Command();
 	void Write_Command();
 
-	void Publish_ImuSensor();
+	void Publish_ImuSensor(const rclcpp::Time & sensor_time);
 	void Publish_Voltage();
 	auto createQuaternionMsgFromYaw(double yaw);
 
@@ -158,8 +131,6 @@ private:
 	void Sign_Switch_Callback(const std_msgs::msg::Int32::SharedPtr sign_switch);
 
 private:
-	rclcpp::Time _Now, _Last_Time;
-	float Sampling_Time;
 	rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr Cmd_Vel_Sub;
 	rclcpp::Subscription<ackermann_msgs::msg::AckermannDriveStamped>::SharedPtr Akm_Cmd_Vel_Sub;
 
@@ -173,8 +144,6 @@ private:
 	rclcpp::Publisher<origincar_msg::msg::Data>::SharedPtr robotvel_publisher;
 	// rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr tf_pub_;
 
-	std::shared_ptr<tf2_ros::TransformBroadcaster> tf_bro;
-	rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr tf_pub_;
 	rclcpp::TimerBase::SharedPtr test_timer;
 
 	rclcpp::TimerBase::SharedPtr odom_timer;
@@ -183,8 +152,6 @@ private:
 
 	rclcpp::TimerBase::SharedPtr robotpose_timer;
 	rclcpp::TimerBase::SharedPtr robotvel_timer;
-
-	std::unique_ptr<tf2_ros::TransformBroadcaster> tf_broadcaster_;
 
 	rclcpp::Subscription<std_msgs::msg::Int32>::SharedPtr Sign_Switch_Sub;
 
@@ -195,6 +162,13 @@ private:
 	double command_timeout_sec;
 	CommandMode command_mode;
 	std::unique_ptr<CommandWatchdog> command_watchdog;
+	SensorCalibration sensor_calibration_;
+	IntegrationClock integration_clock_;
+	XorFrameStreamParser<RECEIVE_DATA_SIZE> sensor_frame_parser_;
+	std::array<double, 36> odom_pose_covariance_;
+	std::array<double, 36> odom_twist_covariance_;
+	std::array<double, 9> imu_angular_velocity_covariance_;
+	std::array<double, 9> imu_linear_acceleration_covariance_;
 	RECEIVE_DATA Receive_Data;
 	SEND_DATA Send_Data;
 

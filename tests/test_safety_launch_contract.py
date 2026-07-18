@@ -25,6 +25,13 @@ SMARTCAR_BRINGUP = (
     / "launch"
     / "smartcar_bringup.launch.py"
 )
+SMARTCAR_SAFETY_LAUNCH = (
+    REPOSITORY_ROOT
+    / "src"
+    / "smartcar_safety"
+    / "launch"
+    / "smartcar_safety.launch.py"
+)
 BASE_SERIAL = (
     REPOSITORY_ROOT
     / "src"
@@ -45,6 +52,25 @@ def string_values(node):
         for item in ast.walk(node)
         if isinstance(item, ast.Constant) and isinstance(item.value, str)
     }
+
+
+def launch_argument_default(tree, argument_name):
+    for node in ast.walk(tree):
+        if not (
+            isinstance(node, ast.Call)
+            and isinstance(node.func, ast.Name)
+            and node.func.id == "DeclareLaunchArgument"
+            and node.args
+            and isinstance(node.args[0], ast.Constant)
+            and node.args[0].value == argument_name
+        ):
+            continue
+        for keyword in node.keywords:
+            if keyword.arg == "default_value" and isinstance(
+                keyword.value, ast.Constant
+            ):
+                return keyword.value.value
+    raise AssertionError(f"launch argument {argument_name!r} not found")
 
 
 def chassis_input_expression_parts(tree):
@@ -71,6 +97,18 @@ def chassis_input_expression_parts(tree):
 
 
 class SafetyLaunchContractTests(unittest.TestCase):
+    def test_safety_launch_exposes_required_raw_odom_switch(self):
+        tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
+        values = string_values(tree)
+        self.assertIn("require_raw_odom", values)
+        self.assertEqual(
+            launch_argument_default(tree, "require_raw_odom"),
+            "true",
+        )
+
+        source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
+        self.assertIn('"require_raw_odom": require_raw_odom', source)
+
     def test_top_level_conditionally_starts_safety(self):
         source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
         self.assertIn("smartcar_safety.launch.py", source)
@@ -88,6 +126,21 @@ class SafetyLaunchContractTests(unittest.TestCase):
 
         source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
         self.assertIn("'input_topic': chassis_input_topic", source)
+
+    def test_top_level_forwards_required_raw_odom_switch(self):
+        tree = source_tree(SMARTCAR_BRINGUP)
+        values = string_values(tree)
+        self.assertIn("safety_require_raw_odom", values)
+        self.assertEqual(
+            launch_argument_default(tree, "safety_require_raw_odom"),
+            "true",
+        )
+
+        source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
+        self.assertIn(
+            "'require_raw_odom': safety_require_raw_odom",
+            source,
+        )
 
     def test_vendor_bringup_forwards_topic_into_base_serial(self):
         tree = source_tree(ORIGINCAR_BRINGUP)

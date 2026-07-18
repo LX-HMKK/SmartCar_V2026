@@ -46,12 +46,25 @@ rosidl_generate_interfaces(${PROJECT_NAME}
 )
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_cmake_pytest REQUIRED)
 
   ament_add_gtest(test_command_watchdog test/test_command_watchdog.cpp)
   target_include_directories(test_command_watchdog PRIVATE include)
 
   ament_add_gtest(test_command_mode test/test_command_mode.cpp)
   target_include_directories(test_command_mode PRIVATE include)
+
+  ament_add_gtest(test_sensor_calibration test/test_sensor_calibration.cpp)
+  target_include_directories(test_sensor_calibration PRIVATE include)
+
+  ament_add_gtest(test_serial_frame test/test_serial_frame.cpp)
+  target_include_directories(test_serial_frame PRIVATE include)
+
+  ament_add_pytest_test(
+    test_ekf_set_pose
+    test/test_ekf_set_pose.py
+    TIMEOUT 45
+  )
 
   option(
     ORIGINCAR_ENABLE_LEGACY_LINT
@@ -84,11 +97,31 @@ if(BUILD_TESTING)
       ${task2_cpp_lint_files}
       TESTNAME task2_uncrustify
     )
+
+    set(task45_cpp_lint_files
+      include/origincar_base/sensor_calibration.hpp
+      include/origincar_base/serial_frame.hpp
+      test/test_sensor_calibration.cpp
+      test/test_serial_frame.cpp
+    )
+    ament_cpplint(
+      ${task45_cpp_lint_files}
+      TESTNAME task45_cpplint
+      FILTERS "-legal/copyright"
+    )
+    ament_uncrustify(
+      ${task45_cpp_lint_files}
+      TESTNAME task45_uncrustify
+    )
     ament_flake8(
       scripts/ackermann_math.py
       scripts/cmd_vel_to_ackermann_drive.py
       launch/base_serial.launch.py
       TESTNAME task2_flake8
+    )
+    ament_flake8(
+      test/test_ekf_set_pose.py
+      TESTNAME task45_flake8
     )
     ament_lint_cmake(
       CMakeLists.txt

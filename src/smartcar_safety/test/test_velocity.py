@@ -8,10 +8,20 @@ import unittest
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
-from smartcar_safety.velocity import ZERO_TWIST_COMPONENTS, sanitize_twist_components
+from smartcar_safety.velocity import (
+    ZERO_TWIST_COMPONENTS,
+    sanitize_twist_components,
+    values_are_finite,
+)
 
 
 class TwistSanitizerTests(unittest.TestCase):
+    def test_generic_finite_value_check(self):
+        self.assertTrue(values_are_finite([0, 1.5, -2]))
+        for invalid in (math.nan, math.inf, -math.inf, "not-a-number"):
+            with self.subTest(invalid=invalid):
+                self.assertFalse(values_are_finite([0.0, invalid]))
+
     def test_finite_components_are_preserved(self):
         components = (0.5, -0.1, 0.2, -0.3, 0.4, -0.5)
         valid, sanitized = sanitize_twist_components(components)

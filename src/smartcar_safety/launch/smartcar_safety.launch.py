@@ -13,6 +13,7 @@ def generate_launch_description():
     config_file = LaunchConfiguration("config_file")
     require_scan = LaunchConfiguration("require_scan")
     require_odom = LaunchConfiguration("require_odom")
+    require_raw_odom = LaunchConfiguration("require_raw_odom")
 
     return LaunchDescription([
         DeclareLaunchArgument(
@@ -30,6 +31,11 @@ def generate_launch_description():
             default_value="true",
             description="Require fresh /odom_combined before forwarding velocity",
         ),
+        DeclareLaunchArgument(
+            "require_raw_odom",
+            default_value="true",
+            description="Require fresh raw /odom before forwarding velocity",
+        ),
         Node(
             package="smartcar_safety",
             executable="safety_node",
@@ -37,7 +43,11 @@ def generate_launch_description():
             output="screen",
             parameters=[
                 config_file,
-                {"require_scan": require_scan, "require_odom": require_odom},
+                {
+                    "require_scan": require_scan,
+                    "require_odom": require_odom,
+                    "require_raw_odom": require_raw_odom,
+                },
             ],
         ),
     ])

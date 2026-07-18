@@ -19,6 +19,40 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             source,
         )
 
+    def test_raw_odom_has_an_independent_required_subscription(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(
+            'self.declare_parameter("raw_odom_timeout_sec", 0.25)',
+            source,
+        )
+        self.assertIn(
+            'self.declare_parameter("require_raw_odom", True)',
+            source,
+        )
+        self.assertIn(
+            'Odometry, "/odom", self._on_raw_odom, 10',
+            source,
+        )
+        self.assertIn(
+            'raw_odom_timeout_sec=self.get_parameter("raw_odom_timeout_sec").value',
+            source,
+        )
+        self.assertIn(
+            'require_raw_odom=self.get_parameter("require_raw_odom").value',
+            source,
+        )
+        self.assertIn("self.guard.mark_raw_odom(now_sec)", source)
+
+    def test_odometry_must_be_finite_and_localization_fault_clear_is_explicit(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("def odometry_is_finite(message):", source)
+        self.assertIn("self.guard.mark_odom_invalid()", source)
+        self.assertIn("self.guard.mark_raw_odom_invalid(now_sec)", source)
+        self.assertIn(
+            '"/smartcar/safety/clear_localization_fault"', source)
+        self.assertIn("self.guard.clear_localization_fault(now_sec)", source)
+        self.assertIn("fresh_nonzero_command", source)
+
     def test_all_twist_fields_are_sanitized_before_caching(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
         for field in (

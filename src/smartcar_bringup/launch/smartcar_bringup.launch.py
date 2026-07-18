@@ -27,6 +27,7 @@ def generate_launch_description():
     use_safety = LaunchConfiguration('use_safety')
     safety_require_scan = LaunchConfiguration('safety_require_scan')
     safety_require_odom = LaunchConfiguration('safety_require_odom')
+    safety_require_raw_odom = LaunchConfiguration('safety_require_raw_odom')
     odom_frame = LaunchConfiguration('odom_frame')
     chassis_input_topic = PythonExpression([
         "'/cmd_vel_safe' if '", use_safety,
@@ -63,6 +64,7 @@ def generate_launch_description():
         launch_arguments={
             'require_scan': safety_require_scan,
             'require_odom': safety_require_odom,
+            'require_raw_odom': safety_require_raw_odom,
         }.items(),
         condition=IfCondition(use_safety),
     )
@@ -78,7 +80,9 @@ def generate_launch_description():
         DeclareLaunchArgument('safety_require_scan', default_value='true',
                               description='安全门要求新鲜 /scan'),
         DeclareLaunchArgument('safety_require_odom', default_value='true',
-                              description='安全门要求新鲜 /odom_combined'),
+                              description='安全门要求新鲜融合 /odom_combined'),
+        DeclareLaunchArgument('safety_require_raw_odom', default_value='true',
+                              description='安全门要求新鲜底盘原始 /odom'),
         DeclareLaunchArgument('use_nav', default_value='false',
                               description='预留：启动 Nav2（本期不实现，smartcar_nav2 未就绪）'),
         DeclareLaunchArgument('use_sim_time', default_value='false',

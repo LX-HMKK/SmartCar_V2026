@@ -17,9 +17,11 @@ class SafetyGuardTests(unittest.TestCase):
             "command_timeout_sec": 0.30,
             "scan_timeout_sec": 0.35,
             "odom_timeout_sec": 0.35,
+            "raw_odom_timeout_sec": 0.25,
             "minimum_voltage": 0.0,
             "require_scan": True,
             "require_odom": True,
+            "require_raw_odom": True,
         }
         options.update(overrides)
         return SafetyGuard(**options)
@@ -28,6 +30,7 @@ class SafetyGuardTests(unittest.TestCase):
         guard.mark_command(now)
         guard.mark_scan(now)
         guard.mark_odom(now)
+        guard.mark_raw_odom(now)
         guard.mark_voltage(voltage, now)
 
     def test_startup_fails_closed(self):
@@ -67,6 +70,125 @@ class SafetyGuardTests(unittest.TestCase):
             {"allowed": False, "reason": "odom_stale"},
         )
 
+    def test_raw_odom_is_required_by_default(self):
+        guard = SafetyGuard(require_scan=False, require_odom=False)
+        guard.mark_command(10.0)
+
+        self.assertEqual(guard.raw_odom_timeout_sec, 0.25)
+        self.assertEqual(
+            guard.evaluate(10.1),
+            {"allowed": False, "reason": "raw_odom_missing"},
+        )
+
+    def test_fresh_raw_odom_allows_motion(self):
+        guard = self.make_guard(require_raw_odom=True)
+        self.make_healthy(guard)
+        guard.mark_raw_odom(10.0)
+
+        self.assertEqual(guard.evaluate(10.20), {"allowed": True, "reason": "ok"})
+
+    def test_stale_raw_odom_blocks_motion(self):
+        guard = self.make_guard(require_raw_odom=True)
+        self.make_healthy(guard)
+        guard.mark_raw_odom(10.0)
+        guard.mark_command(10.20)
+        guard.mark_scan(10.20)
+        guard.mark_odom(10.20)
+
+        self.assertEqual(
+            guard.evaluate(10.26),
+            {"allowed": False, "reason": "localization_fault"},
+        )
+
+    def test_raw_odom_timeout_latches_until_explicit_clear(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+
+        self.assertEqual(
+            guard.evaluate(10.26),
+            {"allowed": False, "reason": "localization_fault"},
+        )
+        self.make_healthy(guard, now=10.30)
+        self.assertEqual(
+            guard.evaluate(10.31),
+            {"allowed": False, "reason": "localization_fault"},
+        )
+        self.assertTrue(guard.clear_localization_fault(10.31))
+        self.assertEqual(guard.evaluate(10.31), {"allowed": True, "reason": "ok"})
+
+    def test_localization_fault_clear_requires_fresh_raw_and_fused_odom(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+        guard.evaluate(10.26)
+
+        guard.mark_raw_odom(10.30)
+        self.assertFalse(guard.clear_localization_fault(10.40))
+        guard.mark_odom(10.40)
+        self.assertTrue(guard.clear_localization_fault(10.40))
+
+    def test_invalid_raw_odom_latches_localization_fault(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+        guard.mark_raw_odom_invalid(10.10)
+
+        self.assertEqual(
+            guard.evaluate(10.10),
+            {"allowed": False, "reason": "localization_fault"},
+        )
+
+    def test_invalid_raw_odom_is_ignored_when_requirement_is_disabled(self):
+        guard = self.make_guard(require_raw_odom=False)
+        self.make_healthy(guard)
+        guard.mark_raw_odom_invalid(10.10)
+
+        self.assertFalse(guard.localization_fault_latched)
+        self.assertEqual(guard.evaluate(10.10), {"allowed": True, "reason": "ok"})
+
+    def test_fault_clear_requires_post_fault_raw_and_fused_samples(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+        guard.mark_raw_odom_invalid(10.10)
+
+        self.assertFalse(guard.clear_localization_fault(10.11))
+        guard.mark_raw_odom(10.11)
+        self.assertFalse(guard.clear_localization_fault(10.11))
+        guard.mark_odom(10.12)
+        self.assertTrue(guard.clear_localization_fault(10.12))
+
+    def test_repeated_fault_requires_samples_after_latest_fault(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+        guard.mark_raw_odom_invalid(10.10)
+        guard.mark_raw_odom(10.11)
+        guard.mark_odom(10.11)
+        guard.mark_raw_odom_invalid(10.12)
+
+        self.assertFalse(guard.clear_localization_fault(10.13))
+        guard.mark_raw_odom(10.13)
+        guard.mark_odom(10.13)
+        self.assertTrue(guard.clear_localization_fault(10.13))
+
+    def test_fault_clear_does_not_require_disabled_fused_odom(self):
+        guard = self.make_guard(require_odom=False)
+        guard.mark_command(10.0)
+        guard.mark_scan(10.0)
+        guard.mark_raw_odom(10.0)
+        guard.evaluate(10.26)
+
+        guard.mark_raw_odom(10.27)
+        self.assertTrue(guard.clear_localization_fault(10.27))
+
+    def test_invalid_fused_odom_blocks_until_valid_sample(self):
+        guard = self.make_guard()
+        self.make_healthy(guard)
+        guard.mark_odom_invalid()
+        self.assertEqual(
+            guard.evaluate(10.10),
+            {"allowed": False, "reason": "odom_invalid"},
+        )
+        guard.mark_odom(10.11)
+        self.assertEqual(guard.evaluate(10.12), {"allowed": True, "reason": "ok"})
+
     def test_emergency_stop_latches_until_explicitly_cleared(self):
         guard = self.make_guard()
         self.make_healthy(guard)
@@ -79,7 +201,11 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertEqual(guard.evaluate(10.10), {"allowed": True, "reason": "ok"})
 
     def test_disabled_sensor_requirements_do_not_block(self):
-        guard = self.make_guard(require_scan=False, require_odom=False)
+        guard = self.make_guard(
+            require_scan=False,
+            require_odom=False,
+            require_raw_odom=False,
+        )
         guard.mark_command(10.0)
         self.assertEqual(guard.evaluate(10.20), {"allowed": True, "reason": "ok"})
 
@@ -112,6 +238,7 @@ class SafetyGuardTests(unittest.TestCase):
             "command_timeout_sec",
             "scan_timeout_sec",
             "odom_timeout_sec",
+            "raw_odom_timeout_sec",
         ):
             for timeout in (math.nan, math.inf, -math.inf):
                 with self.subTest(field=field, timeout=timeout):
@@ -123,6 +250,7 @@ class SafetyGuardTests(unittest.TestCase):
             "command_timeout_sec",
             "scan_timeout_sec",
             "odom_timeout_sec",
+            "raw_odom_timeout_sec",
         ):
             for timeout in (0.0, -0.01):
                 with self.subTest(field=field, timeout=timeout):
@@ -138,6 +266,7 @@ class SafetyGuardTests(unittest.TestCase):
             minimum_voltage=0.0,
             require_scan=False,
             require_odom=False,
+            require_raw_odom=False,
         )
         guard.mark_command(10.0)
         self.assertEqual(guard.evaluate(10.1), {"allowed": True, "reason": "ok"})
