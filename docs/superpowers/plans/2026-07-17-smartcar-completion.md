@@ -295,21 +295,21 @@ Expected: zero failed tests; all synthetic outputs are finite; stopping raw `/od
 - Any VLM timeout or error returns `success=true`, `fallback_used=true`, description `检测到人物立牌`, and a diagnostic status; absence of a fresh image returns `success=false`.
 - The whole DescribeScene operation has one finite deadline capped at 8 seconds, including fresh-image wait, JPEG encoding, and backend work. Temporary JPEG files use mode `0600` and are removed on every exit path.
 
-- [ ] **Step 1: Write failing sample-buffer and backend tests**
+- [x] **Step 1: Write failing sample-buffer and backend tests**
 
 Cover fresh/stale/equal-time sample selection, concurrent wake-up, command argument expansion without shell interpretation, process-group timeout, static/disabled backends, one-deadline fallback selection, and temporary-file cleanup. Add launch contracts for the Aurora default, disabled depth streams, selected image topic, and zbar remaps.
 
-- [ ] **Step 2: Verify RED**
+- [x] **Step 2: Verify RED**
 
 Run: `python -m unittest discover -s src/smartcar_vision/test -v`
 
 Expected: FAIL because vision modules do not exist.
 
-- [ ] **Step 3: Implement pure logic, ROS services, and launch**
+- [x] **Step 3: Implement pure logic, ROS services, and launch**
 
 Use a `MultiThreadedExecutor` with at least three threads, reentrant subscription callbacks, and a mutually-exclusive service callback group so service waits do not block samples and two VLM requests cannot run concurrently. Convert the selected image to JPEG through `cv_bridge`; store it under a configurable runtime directory and remove it after backend completion.
 
-- [ ] **Step 4: Verify GREEN and RDK build**
+- [x] **Step 4: Verify GREEN and RDK build**
 
 Run locally: `python -m unittest discover -s src/smartcar_vision/test -v`
 

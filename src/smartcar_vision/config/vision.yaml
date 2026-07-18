@@ -1,0 +1,11 @@
+vision_node:
+  ros__parameters:
+    image_topic: /aurora/rgb/image_raw
+    barcode_topic: /barcode
+    vlm_backend_mode: disabled
+    vlm_command_argv: [""]
+    vlm_static_text: ""
+    default_prompt: "请描述图中人物立牌的外观和动作。"
+    max_vlm_timeout_sec: 8.0
+    runtime_dir: /tmp/smartcar_vision
+    jpeg_quality: 90
