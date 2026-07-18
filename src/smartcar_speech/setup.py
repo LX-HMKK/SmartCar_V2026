@@ -2,7 +2,7 @@ from glob import glob
 from setuptools import find_packages, setup
 
 
-package_name = "smartcar_vision"
+package_name = "smartcar_speech"
 
 setup(
     name=package_name,
@@ -19,13 +19,11 @@ setup(
     zip_safe=True,
     maintainer="LX-HMKK",
     maintainer_email="lx_hmkk@qq.com",
-    description="QR recognition and bounded VLM services for SmartCar.",
+    description="Optional bounded Volcengine TTS consumer for SmartCar.",
     license="MIT",
     entry_points={
         "console_scripts": [
-            "vision_node = smartcar_vision.vision_node:main",
-            "volcengine_vlm_cli = "
-            "smartcar_vision.volcengine_vlm_cli:main",
+            "speech_node = smartcar_speech.speech_node:main",
         ],
     },
 )

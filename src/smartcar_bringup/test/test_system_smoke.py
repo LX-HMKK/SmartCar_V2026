@@ -153,6 +153,7 @@ def generate_test_description():
                     "use_camera": "false",
                     "use_vision": "true",
                     "use_task": "true",
+                    "use_speech": "false",
                     "autostart_mission": "false",
                     "image_topic": "/smartcar/vision/image",
                 }.items(),
@@ -286,6 +287,7 @@ class TestSystemSmoke(unittest.TestCase):
             "aurora",
             "usb_cam",
             "mipi_cam",
+            "speech_node",
         )
         self.assertFalse([
             name for name in names if any(value in name for value in forbidden)

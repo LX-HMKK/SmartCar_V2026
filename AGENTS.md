@@ -21,7 +21,7 @@
 
 - LiDAR 仅用于避障，不参与定位；不要擅自改成 LiDAR SLAM/定位架构。
 - 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。
-- 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发和 TTS consumer 不是当前 release 依赖。
+- 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发不是当前 release 依赖；TTS consumer 已提供但默认关闭，不属于任务或运动门禁依赖。
 - 发车时车辆手动置于 P 区原点，车头朝 `+X`；任务 reset 不能替代物理复位。
 - 未经用户明确授权，不得启动实体相机、发布非零速度或进行实车运动测试。
 
@@ -34,6 +34,7 @@ src/smartcar_interfaces/             ReadQr、DescribeScene 接口
 src/smartcar_safety/                 速度安全门
 src/smartcar_nav2/                   Nav2 配置、行为树和航点
 src/smartcar_vision/                 QR 与 VLM 服务
+src/smartcar_speech/                 可选火山 TTS consumer
 src/smartcar_task/                   五子任务状态机
 src/smartcar_bringup/                分层和完整系统 launch
 scripts/                             RDK 同步与环境脚本
@@ -50,6 +51,7 @@ Windows PowerShell：
 python -m unittest discover -s tests -v
 python -m unittest discover -s src/smartcar_safety/test -v
 python -m unittest discover -s src/smartcar_vision/test -v
+python -m unittest discover -s src/smartcar_speech/test -v
 python -m unittest discover -s src/smartcar_task/test -v
 python scripts/sync_to_rdk.py push --dry-run
 python scripts/sync_to_rdk.py push
@@ -70,7 +72,7 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-18 最终证据：本地根合同 108/108；RDK 15 个包构建通过，`508 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。smoke 必须关闭底盘、LiDAR 驱动、障碍物驱动和实体相机，使用合成传感器，并在 Nav2 激活前锁存急停。
+2026-07-18 最新证据：本地根合同 114/114；RDK 16 个包构建通过，`533 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。smoke 必须关闭底盘、LiDAR 驱动、障碍物驱动、实体相机和语音节点，使用合成传感器，并在 Nav2 激活前锁存急停。
 
 vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不要把继承源码的历史格式债务混入默认功能测试。
 
@@ -81,7 +83,8 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - 实测并替换 `src/smartcar_nav2/config/waypoints/default_waypoints.yaml` 占位航点。
 - 测量 `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参。
 - 完成转向、轮速和陀螺仪标定。
-- 部署端侧 VLM 模型，并将 command backend 配置为本地 argv。
+- 配置并实测一个 VLM 后端（火山 Ark 或端侧模型）；如需语音，再验证火山 TTS、现场网络和扬声器。
+- 使用云端后端前确认比赛规则允许公网且赛场网络稳定；否则必须准备经过实测的端侧 VLM 备用方案。
 - 验证人工物理急停，再依次进行车轮离地、低速地面和完整赛道测试。
 
 五个运动门禁 `waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved` 默认均为 `false`。只有对应实测完成后才可显式开启。

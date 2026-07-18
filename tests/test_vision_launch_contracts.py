@@ -3,12 +3,20 @@ import ast
 from pathlib import Path
 import unittest
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "smartcar_vision"
 LAUNCH_FILE = PACKAGE / "launch" / "smartcar_vision.launch.py"
 NODE_FILE = PACKAGE / "smartcar_vision" / "vision_node.py"
+VOLCENGINE_CLI = (
+    PACKAGE / "smartcar_vision" / "volcengine_vlm_cli.py"
+)
 PACKAGE_XML = PACKAGE / "package.xml"
+SETUP_FILE = PACKAGE / "setup.py"
+DEFAULT_CONFIG = PACKAGE / "config" / "vision.yaml"
+VOLCENGINE_CONFIG = PACKAGE / "config" / "vision_volcengine.yaml"
 
 
 def launch_default(source, name):
@@ -93,6 +101,39 @@ class VisionLaunchContractTests(unittest.TestCase):
             "python3-opencv",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
+
+    def test_volcengine_vlm_is_explicit_opt_in_without_stored_credentials(self):
+        default = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+        default_params = default["vision_node"]["ros__parameters"]
+        self.assertEqual(default_params["vlm_backend_mode"], "disabled")
+
+        volcengine = yaml.safe_load(
+            VOLCENGINE_CONFIG.read_text(encoding="utf-8"))
+        params = volcengine["vision_node"]["ros__parameters"]
+        self.assertEqual(params["vlm_backend_mode"], "command")
+        argv = params["vlm_command_argv"]
+        self.assertEqual(
+            argv[:5],
+            [
+                "python3",
+                "-X",
+                "utf8",
+                "-m",
+                "smartcar_vision.volcengine_vlm_cli",
+            ],
+        )
+        self.assertIn("{image}", argv)
+        self.assertIn("{prompt}", argv)
+        config_source = VOLCENGINE_CONFIG.read_text(encoding="utf-8")
+        self.assertNotIn("Authorization", config_source)
+        self.assertNotIn("api_key", config_source.lower())
+
+        cli_source = VOLCENGINE_CLI.read_text(encoding="utf-8")
+        self.assertIn("ARK_API_KEY", cli_source)
+        self.assertIn("DOUBAO_KEY", cli_source)
+        self.assertIn("https://ark.cn-beijing.volces.com/api/v3", cli_source)
+        setup_source = SETUP_FILE.read_text(encoding="utf-8")
+        self.assertIn("volcengine_vlm_cli", setup_source)
 
 
 if __name__ == "__main__":

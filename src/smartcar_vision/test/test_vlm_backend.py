@@ -72,6 +72,18 @@ class VlmBackendTests(unittest.TestCase):
         self.assertFalse(empty.ok)
         self.assertEqual(empty.status, "backend_empty_output")
 
+    def test_command_decodes_utf8_description_independent_of_locale(self):
+        result = CommandBackend([
+            sys.executable,
+            "-X",
+            "utf8",
+            "-c",
+            "print('人物正在挥手')",
+        ]).describe("unused.jpg", "unused", 2.0)
+
+        self.assertTrue(result.ok, result.status)
+        self.assertEqual(result.text, "人物正在挥手")
+
     def test_static_and_disabled_backends(self):
         static = StaticBackend("bench description").describe(
             "unused.jpg", "unused", 1.0)

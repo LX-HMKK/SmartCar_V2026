@@ -1,0 +1,28 @@
+speech_node:
+  ros__parameters:
+    enabled: false
+    input_topic: /smartcar/output/speech
+    status_topic: /smartcar/speech/status
+    api_url: https://openspeech.bytedance.com/api/v1/tts
+    app_id_env: VOLCENGINE_TTS_APP_ID
+    access_token_env: VOLCENGINE_TTS_ACCESS_TOKEN
+    cluster: volcano_tts
+    voice_type: zh_male_M392_conversation_wvae_bigtts
+    user_id: smartcar_rdk_x5
+    encoding: mp3
+    speed_ratio: 1.0
+    request_timeout_sec: 10.0
+    max_response_bytes: 8388608
+    max_text_bytes: 1024
+    queue_capacity: 4
+    runtime_dir: /tmp/smartcar_speech
+    player_argv:
+      - ffplay
+      - -nodisp
+      - -autoexit
+      - -loglevel
+      - quiet
+      - "{audio_file}"
+    player_timeout_sec: 30.0
+    speaker_sink: ""
+    shutdown_timeout_sec: 2.0

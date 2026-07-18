@@ -28,6 +28,7 @@ toggles:
   use_camera: true
   use_vision: true
   use_task: true
+  use_speech: false
   nav_autostart: true
   autostart_mission: false
   use_sim_time: false

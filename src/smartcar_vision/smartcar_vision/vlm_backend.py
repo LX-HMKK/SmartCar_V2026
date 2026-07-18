@@ -68,6 +68,8 @@ class CommandBackend:
             "stdout": subprocess.PIPE,
             "stderr": subprocess.PIPE,
             "text": True,
+            "encoding": "utf-8",
+            "errors": "replace",
         }
         if os.name == "posix":
             popen_options["start_new_session"] = True

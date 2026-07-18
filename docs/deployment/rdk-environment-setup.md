@@ -51,7 +51,7 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-18 验证结果：15 个包构建通过，`508 tests, 0 errors, 0 failures, 90 skipped`。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
+2026-07-18 验证结果：16 个包构建通过，`533 tests, 0 errors, 0 failures, 90 skipped`。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
 
 ```bash
 colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON
@@ -64,7 +64,7 @@ colcon test --packages-select \
 首选方式是运行 `smartcar_bringup` 的 launch test。测试自动执行以下安全顺序：
 
 1. 使用独立 ROS 域和 localhost-only 通信。
-2. 关闭底盘、LiDAR、障碍物驱动和实体相机。
+2. 关闭底盘、LiDAR、障碍物驱动、实体相机和语音节点。
 3. 启动合成 `/scan`、`/odom`、`/odom_combined` 与静态 TF。
 4. 在 Nav2 lifecycle 激活前锁存急停。
 5. 验证七个 Nav2 节点 active、vision/task 服务存在、任务为 `IDLE`。
@@ -125,6 +125,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 | `use_camera` | `true` | 实体相机驱动 |
 | `use_vision` | `true` | QR/VLM 服务与 zbar |
 | `use_task` | `true` | 任务状态机 |
+| `use_speech` | `false` | 可选火山 TTS 与本地播放器 |
 | `autostart_mission` | `false` | 不自动开始任务 |
 
 `smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
@@ -191,11 +192,58 @@ ros2 service call /smartcar/safety/emergency_stop \
 
 `/smartcar/task/stop` 不等于急停。串口断线、无新鲜 `/scan`、无新鲜原始/融合里程计、非法速度或定位故障都会让安全门 fail-closed。底盘进程关闭时会复用当前串口发送一次零命令；仍必须准备人工可触达的物理急停。
 
-## 8. 视觉与端侧 VLM
+## 8. 视觉、火山 VLM 与语音合成
 
 相机选择：`camera_driver:=aurora|usb|mipi`。默认 Aurora 只启用 15 FPS RGB，关闭 depth/IR/point cloud。
 
-`vision.yaml` 默认 `vlm_backend_mode: disabled`，因此未部署模型时 DescribeScene 返回兜底文案。部署本地模型后使用 `command` 模式和 argv 列表，不经过 shell；整个请求包含图像等待、JPEG 编码和后端推理，硬上限为 8 秒。
+`vision.yaml` 默认 `vlm_backend_mode: disabled`，因此未选择后端时 DescribeScene 返回兜底文案。`vision_volcengine.yaml` 是显式启用的火山 Ark 配置：它使用 Python 3 标准库调用 OpenAI-compatible HTTPS 接口，不需要安装 Ark SDK，且仍由外层无 shell 命令后端强制终止。整个请求包含图像等待、JPEG 编码和后端推理，共享硬上限 8 秒；公网响应过慢时按既有合同返回“检测到人物立牌”。
+
+凭据只从环境变量读取，不得写入 YAML、launch、源码或 rosbag。建议放入权限 `0600` 的现场环境文件，再由 `~/source_env.sh` 加载：
+
+```bash
+export ARK_API_KEY='<火山 Ark API key>'
+export VOLC_ARK_MODEL='doubao-1-5-vision-pro-32k-250115'
+export VOLCENGINE_TTS_APP_ID='<火山语音应用 ID>'
+export VOLCENGINE_TTS_ACCESS_TOKEN='<火山语音 access token>'
+```
+
+VLM 兼容参考工程使用的 `DOUBAO_KEY`，但新部署优先使用 `ARK_API_KEY`。模型可通过 `VOLC_ARK_MODEL` 覆盖，基础地址仅在确有区域差异时通过 `VOLC_ARK_BASE_URL` 覆盖；客户端拒绝非 HTTPS、URL 内凭据和 HTTP 重定向，避免认证头跨主机泄露。
+
+云端方案投入比赛前必须确认比赛规则允许访问公网，并在实际赛场网络下统计成功率和端到端耗时。公网不可用或 8 秒期限内稳定性不足时，只会得到既定兜底文案，不能替代有效的人物描述；这种情况下必须切换到经过实测的端侧 VLM 后端。
+
+首次 API 和音频 bench 必须关闭底盘、LiDAR、障碍物驱动、Nav2 和实体相机，并锁存急停：
+
+```bash
+VISION_CONFIG="$(ros2 pkg prefix smartcar_vision)/share/smartcar_vision/config/vision_volcengine.yaml"
+
+ros2 launch smartcar_bringup smartcar_system.launch.py \
+  vision_config_file:="$VISION_CONFIG" \
+  use_base:=false \
+  use_lidar:=false \
+  use_obstacle:=false \
+  use_safety:=true \
+  safety_emergency_stop_on_start:=true \
+  use_nav:=false \
+  nav_autostart:=false \
+  use_camera:=false \
+  image_topic:=/smartcar/vision/image \
+  use_task:=false \
+  use_speech:=true \
+  autostart_mission:=false
+```
+
+这个 bench 只等待外部或合成图像和手工发布的语音文本，不会启动实体相机或任务运动。完成 API、扬声器、现场网络和全部运动门禁验收后，才可把同一 `vision_config_file` 与 `use_speech:=true` 带入完整系统启动。
+
+`smartcar_speech` 订阅 `/smartcar/output/speech`，用火山 V1 同步 TTS 合成 MP3，再通过 RDK 已安装的 `ffplay` 播放。启动前检查：
+
+```bash
+command -v ffplay
+ros2 topic echo /smartcar/speech/status
+```
+
+状态为 JSON，包含 `state`、`request_id`、`detail`；正常顺序为 `queued -> synthesizing -> playing -> completed`，配置缺失、API 错误、队列满或播放器错误分别报告 `unconfigured`、`failed` 或 `dropped`。任务状态机对语音采用 fire-and-forget，不会等待 `completed` 后再导航；当前比赛流程若要求严格“播完再走”，需要后续增加 action/ack 协议，不能把状态话题当同步确认。
+
+本仓库自动化测试不会访问火山 API，也不会启动播放器。真实 API、现场网络和扬声器测试必须在保持任务不自动启动、车辆静止的人工 bench 中单独验收。
 
 VFH 备用避障和 YOLO 自动触发未纳入当前 release；人物描述由语义航点 `task: vlm` 调用。
 
@@ -207,7 +255,8 @@ ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
   /scan /odom /odom_combined /imu/data_raw /imu/data \
   /cmd_vel /cmd_vel_safe /ackermann_cmd /PowerVoltage \
   /tf /tf_static /smartcar/safety/status /smartcar/task/state \
-  /barcode /smartcar/output/text /smartcar/output/speech
+  /barcode /smartcar/output/text /smartcar/output/speech \
+  /smartcar/speech/status
 ```
 
 常用检查：

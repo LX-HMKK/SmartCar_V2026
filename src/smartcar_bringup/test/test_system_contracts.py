@@ -48,6 +48,7 @@ class SystemContractTests(unittest.TestCase):
             "use_camera": "true",
             "use_vision": "true",
             "use_task": "true",
+            "use_speech": "false",
             "autostart_mission": "false",
             "use_sim_time": "false",
             "nav_autostart": "true",
@@ -57,13 +58,14 @@ class SystemContractTests(unittest.TestCase):
             with self.subTest(name=name):
                 self.assertEqual(launch_default(SYSTEM, name), expected)
 
-    def test_system_composes_all_four_layers_and_common_waypoints(self):
+    def test_system_composes_all_layers_and_common_waypoints(self):
         source = SYSTEM.read_text(encoding="utf-8")
         for package, launch_file in (
             ("smartcar_bringup", "smartcar_bringup.launch.py"),
             ("smartcar_nav2", "smartcar_nav2.launch.py"),
             ("smartcar_vision", "smartcar_vision.launch.py"),
             ("smartcar_task", "smartcar_task.launch.py"),
+            ("smartcar_speech", "smartcar_speech.launch.py"),
         ):
             self.assertIn(f'FindPackageShare("{package}")', source)
             self.assertIn(f'"{launch_file}"', source)
@@ -136,6 +138,26 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn("if use_services:", source)
         self.assertIn("if use_zbar:", source)
 
+    def test_system_forwards_an_explicit_vision_config_file(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertIn('"vision_config_file"', source)
+        self.assertIn('"config_file": LaunchConfiguration(', source)
+        self.assertIn('"vision_config_file").perform(context)', source)
+        self.assertIn('FindPackageShare("smartcar_vision")', source)
+
+    def test_speech_is_optional_and_receives_an_explicit_config_file(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertEqual(launch_default(SYSTEM, "use_speech"), "false")
+        self.assertIn('condition=IfCondition(use_speech)', source)
+        self.assertIn(
+            '"config_file": LaunchConfiguration("speech_config_file")',
+            source,
+        )
+        required_block = source.split("required_components = (", 1)[1].split(
+            ")", 1
+        )[0]
+        self.assertNotIn('"use_speech"', required_block)
+
     def test_all_motion_gates_default_false_in_task_and_system(self):
         for name in (
             "waypoints_calibrated",
@@ -169,6 +191,7 @@ class SystemContractTests(unittest.TestCase):
             "smartcar_safety",
             "smartcar_task",
             "smartcar_vision",
+            "smartcar_speech",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
         self.assertIn("<test_depend>ament_cmake_pytest</test_depend>", source)

@@ -3,7 +3,7 @@
 <package format="3">
   <name>smartcar_vision</name>
   <version>0.1.0</version>
-  <description>QR recognition and bounded local VLM services for SmartCar.</description>
+  <description>QR recognition and bounded VLM services for SmartCar.</description>
   <maintainer email="lx_hmkk@qq.com">LX-HMKK</maintainer>
   <license>MIT</license>
 

@@ -25,6 +25,7 @@
   <exec_depend>smartcar_nav2</exec_depend>
   <exec_depend>smartcar_vision</exec_depend>
   <exec_depend>smartcar_task</exec_depend>
+  <exec_depend>smartcar_speech</exec_depend>
 
   <test_depend>ament_cmake</test_depend>
   <test_depend>ament_cmake_pytest</test_depend>

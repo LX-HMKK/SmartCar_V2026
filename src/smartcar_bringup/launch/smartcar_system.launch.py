@@ -73,6 +73,8 @@ def _vision_and_camera_actions(context):
             "use_camera": "true" if use_camera else "false",
             "use_services": "true" if use_vision else "false",
             "use_zbar": "true" if use_vision else "false",
+            "config_file": LaunchConfiguration(
+                "vision_config_file").perform(context),
             "use_sim_time": LaunchConfiguration(
                 "use_sim_time").perform(context),
         }.items(),
@@ -134,6 +136,7 @@ def generate_launch_description():
     use_safety = LaunchConfiguration("use_safety")
     use_nav = LaunchConfiguration("use_nav")
     use_task = LaunchConfiguration("use_task")
+    use_speech = LaunchConfiguration("use_speech")
     use_sim_time = LaunchConfiguration("use_sim_time")
     nav_autostart = LaunchConfiguration("nav_autostart")
     autostart_mission = LaunchConfiguration("autostart_mission")
@@ -203,6 +206,18 @@ def generate_launch_description():
         }.items(),
         condition=IfCondition(use_task),
     )
+    speech = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_speech"),
+            "launch",
+            "smartcar_speech.launch.py",
+        ])),
+        launch_arguments={
+            "config_file": LaunchConfiguration("speech_config_file"),
+            "enabled": use_speech,
+        }.items(),
+        condition=IfCondition(use_speech),
+    )
 
     declarations = [
         DeclareLaunchArgument("use_base", default_value="true"),
@@ -213,6 +228,7 @@ def generate_launch_description():
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_vision", default_value="true"),
         DeclareLaunchArgument("use_task", default_value="true"),
+        DeclareLaunchArgument("use_speech", default_value="false"),
         DeclareLaunchArgument("autostart_mission", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("nav_autostart", default_value="true"),
@@ -233,6 +249,22 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("camera_driver", default_value="aurora"),
         DeclareLaunchArgument("image_topic", default_value=""),
+        DeclareLaunchArgument(
+            "vision_config_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_vision"),
+                "config",
+                "vision.yaml",
+            ]),
+        ),
+        DeclareLaunchArgument(
+            "speech_config_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_speech"),
+                "config",
+                "speech.yaml",
+            ]),
+        ),
         DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
         DeclareLaunchArgument("camera_frame", default_value=""),
         DeclareLaunchArgument("laser_frame", default_value="laser"),
@@ -263,5 +295,6 @@ def generate_launch_description():
         base,
         navigation,
         OpaqueFunction(function=_vision_and_camera_actions),
+        speech,
         task,
     ])

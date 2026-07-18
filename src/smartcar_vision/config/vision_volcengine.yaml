@@ -1,0 +1,24 @@
+vision_node:
+  ros__parameters:
+    image_topic: /aurora/rgb/image_raw
+    barcode_topic: /barcode
+    vlm_backend_mode: command
+    vlm_command_argv:
+      - python3
+      - -X
+      - utf8
+      - -m
+      - smartcar_vision.volcengine_vlm_cli
+      - --image
+      - "{image}"
+      - --prompt
+      - "{prompt}"
+      - --timeout-sec
+      - "7.0"
+      - --max-tokens
+      - "256"
+    vlm_static_text: ""
+    default_prompt: "请简洁描述图中人物立牌的外观特征和正在进行的动作。"
+    max_vlm_timeout_sec: 8.0
+    runtime_dir: /tmp/smartcar_vision
+    jpeg_quality: 90
