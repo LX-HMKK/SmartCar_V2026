@@ -13,12 +13,12 @@
 - **任务决策层**：五子任务状态机、二维码识别（`zbar_ros`）、人形立牌图生文（相机 → 端侧 VLM → 语音/屏幕输出）。
 - **导航层**：Nav2 Waypoint Follower + Regulated Pure Pursuit；航点序列为 P → 任务点 → 通道口 → C 环道 → 返回 P。
 - **避障感知层**：2D LiDAR 障碍物提取（`obstacle_detector_2`）、VFH 反应式紧急避障备用、YOLO 人形检测触发 VLM 图生文。
-- **定位层**：纯惯导，轮式里程计（STM32 编码器）+ IMU，经 `robot_localization` EKF 融合；无 SLAM。
+- **定位层**：轮式里程计（STM32 编码器）+ IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 融合；无 SLAM。
 - **控制层**：OriginCar 官方阿克曼底盘驱动（舵机转角 + 电机速度）。
 
 核心约束：
 
-- LiDAR **仅用于避障**，不参与定位。
+- LiDAR 不做 SLAM 或静态地图定位；必须支持连续扫描匹配激光里程计，并与轮速、IMU 一起进入 EKF。激光里程计只提供观测，不直接发布 EKF 所属 TF。
 - 锥桶仅依靠 LiDAR 避障，无需视觉。
 - 人形立牌由相机 + 端侧 VLM 完成图生文，设置 8 秒超时与兜底文案。
 - 发车时车模手动置于 P 区中心，代码假设该点为坐标原点。

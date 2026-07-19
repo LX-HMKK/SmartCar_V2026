@@ -64,7 +64,8 @@ def generate_launch_description():
             '<bt_through_poses_xml_file>': bt_through_poses_xml_file,
         })
 
-    # 纯惯导、无 SLAM：直接使用 navigation_launch.py，避免加载 map_server/AMCL
+    # 无静态地图定位：直接使用 navigation_launch.py，避免加载 map_server/AMCL。
+    # 激光里程计（如启用）作为 EKF 观测接入，不由 Nav2 直接拥有 TF。
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
             os.path.join(pkg_dir, 'launch', 'navigation_launch.py')),

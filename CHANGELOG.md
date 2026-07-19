@@ -1,5 +1,31 @@
 # 变更日志
 
+## 2026-07-19 - 场地路线与独立测试入口
+
+### 新增
+
+- 新增默认关闭的 RF2O 无地图 scan-to-scan 激光里程计，发布 `/odom_laser` 并作为可选观测融合进 EKF；EKF 仍是 `odom_combined -> base_footprint` 的唯一 TF owner。
+- 新增按规则图生成的 68 点未标定基线路线、`route_tool` 原子编辑命令、RViz 点位编辑器和单文件 `pull-route` 同步。
+- 新增纯导航、语音、二维码和图生文四个独立测试入口；纯导航采用 `/navigate_through_poses`、`0.15 m/s` 现场参数和显式 `prepare -> arm -> start` 安全流程。
+- 新增 PyQt5 HDMI 图生文界面，支持实体相机或单图循环回放，并复用 `/smartcar/output/text`。
+
+### 安全边界
+
+- 不增加静态地图、`map_server`、AMCL 或 SLAM；RF2O 默认关闭，启用时条件性要求 `laser_odometry_calibrated=true`。
+- 路线保持 `calibrated: false`，五项原有运动门禁保持默认 `false`；任何导航终态重新锁存急停。
+- 自动化验证没有启动底盘、LiDAR 驱动、实体相机、音频、真实 API，也没有发布非零速度。
+
+### 验证
+
+- 本地根合同 130/130；`smartcar_tools` 共 44 项，其中 43 项通过，Windows 因缺少 PyQt5 跳过 1 项 offscreen UI 布局测试。
+- RDK X5 上 18 个包构建通过，干净全量结果为 `578 tests, 0 errors, 0 failures, 90 skipped`；RDK 的 PyQt5 offscreen UI 测试通过。
+- 严格无硬件 smoke 连续 3 轮通过；7 个 `smartcar_tools` CLI 已安装，五个 launch 入口通过 `--show-args` 解析。
+
+### 待现场验收
+
+- 仍需完成路线逐点、外参、转向、轮速、IMU、RF2O 数据质量和物理急停标定。
+- 相机、二维码实景、VLM 后端、HDMI、网络、TTS、扬声器及完整赛道运动均未实测，不能据此宣称可直接上场。
+
 ## 2026-07-18 - 火山视觉与语音适配
 
 ### 新增
