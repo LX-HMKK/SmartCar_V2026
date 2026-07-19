@@ -16,8 +16,16 @@ from smartcar_tools.navigation_probe import (  # noqa: E402
     run_start_sequence,
 )
 
+PROBE_SOURCE = (
+    PACKAGE_ROOT / "smartcar_tools" / "navigation_probe.py"
+).read_text(encoding="utf-8")
+
 
 class NavigationProbeTests(unittest.TestCase):
+    def test_start_waits_for_the_full_motion_chain_to_be_active(self):
+        self.assertIn('"bt_navigator", "velocity_smoother"', PROBE_SOURCE)
+        self.assertIn("response.current_state.id", PROBE_SOURCE)
+
     def test_start_is_explicit_and_run_is_an_alias(self):
         self.assertEqual(build_parser().parse_args(["start"]).command, "start")
         self.assertEqual(build_parser().parse_args(["run"]).command, "run")

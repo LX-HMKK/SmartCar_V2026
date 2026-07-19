@@ -4,6 +4,7 @@ from dataclasses import dataclass
 import json
 import math
 import sys
+import time
 
 
 SUCCESS = 0
@@ -69,6 +70,7 @@ def build_parser():
 
 def _run(options, ros_args):
     import rclpy
+    from lifecycle_msgs.srv import GetState
     from nav2_msgs.action import NavigateThroughPoses
     from rclpy.action import ActionClient
     from rclpy.node import Node
@@ -88,6 +90,35 @@ def _run(options, ros_args):
         )
         for step in (*START_STEPS, "stop")
     }
+
+    def wait_until_active(node_name, timeout_sec):
+        client = node.create_client(
+            GetState,
+            f"/{node_name}/get_state",
+        )
+        deadline = time.monotonic() + float(timeout_sec)
+        if not client.wait_for_service(timeout_sec=timeout_sec):
+            return False
+        while time.monotonic() < deadline:
+            future = client.call_async(GetState.Request())
+            remaining = max(0.0, deadline - time.monotonic())
+            rclpy.spin_until_future_complete(
+                node,
+                future,
+                timeout_sec=min(1.0, remaining),
+            )
+            if future.done():
+                try:
+                    response = future.result()
+                except Exception:
+                    response = None
+                if (
+                    response is not None
+                    and int(response.current_state.id) == 3
+                ):
+                    return True
+            rclpy.spin_once(node, timeout_sec=0.05)
+        return False
 
     def call_step(step, *, wait_sec=None, timeout_sec=None):
         client = clients[step]
@@ -181,6 +212,15 @@ def _run(options, ros_args):
             }), flush=True)
             fail_safe_stop()
             return SERVICE_UNAVAILABLE
+        for lifecycle_node in ("bt_navigator", "velocity_smoother"):
+            if not wait_until_active(lifecycle_node, ready_timeout_sec):
+                print(json.dumps({
+                    "step": "nav2_ready",
+                    "success": False,
+                    "message": f"{lifecycle_node}_not_active",
+                }), flush=True)
+                fail_safe_stop()
+                return SERVICE_UNAVAILABLE
         print(json.dumps({
             "step": "nav2_ready",
             "success": True,
