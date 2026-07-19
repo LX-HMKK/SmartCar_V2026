@@ -41,6 +41,8 @@ class NavigationContracts(unittest.TestCase):
         self.assertIn('"use_laser_odometry"', source)
         self.assertIn('"laser_odometry_calibrated"', source)
         self.assertIn("/smartcar/localization/reset_laser_odometry", source)
+        self.assertIn('"arm_timeout_sec": 30.0', source)
+        self.assertNotIn('"arm_timeout_sec": "30.0"', source)
         for excluded in ("smartcar_task", "smartcar_vision", "smartcar_speech"):
             self.assertNotIn(excluded, source)
 

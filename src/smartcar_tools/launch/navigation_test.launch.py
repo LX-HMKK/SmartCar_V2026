@@ -95,7 +95,7 @@ def generate_launch_description():
             "navigation_timeout_sec": LaunchConfiguration(
                 "navigation_timeout_sec"
             ),
-            "arm_timeout_sec": "30.0",
+            "arm_timeout_sec": 30.0,
             "use_laser_odometry": LaunchConfiguration(
                 "use_laser_odometry"
             ),
