@@ -43,6 +43,7 @@ class SystemContractTests(unittest.TestCase):
             "use_base": "true",
             "use_lidar": "true",
             "use_obstacle": "true",
+            "use_laser_odometry": "false",
             "use_safety": "true",
             "use_nav": "true",
             "use_camera": "true",
@@ -102,6 +103,15 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('"safety_emergency_stop_on_start"', source)
         self.assertIn(
             '"safety_emergency_stop_on_start": LaunchConfiguration(', source)
+
+    def test_laser_odometry_is_opt_in_and_requires_calibration(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertEqual(
+            launch_default(SYSTEM, "use_laser_odometry"), "false")
+        self.assertEqual(
+            launch_default(SYSTEM, "laser_odometry_calibrated"), "false")
+        self.assertIn('"use_laser_odometry": use_laser_odometry', source)
+        self.assertIn('missing.append("laser_odometry_calibrated")', source)
 
     def test_base_and_laser_tf_are_parameterized_at_the_unique_vendor_owner(self):
         source = VENDOR.read_text(encoding="utf-8")
@@ -192,6 +202,7 @@ class SystemContractTests(unittest.TestCase):
             "smartcar_task",
             "smartcar_vision",
             "smartcar_speech",
+            "rf2o_laser_odometry",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
         self.assertIn("<test_depend>ament_cmake_pytest</test_depend>", source)

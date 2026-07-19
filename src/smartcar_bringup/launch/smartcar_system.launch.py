@@ -105,6 +105,14 @@ def _vision_and_camera_actions(context):
 def _validate_configuration(context):
     if _as_bool(context, "use_base") and not _as_bool(context, "use_safety"):
         raise RuntimeError("use_base requires use_safety")
+    if _as_bool(context, "use_laser_odometry"):
+        required = [
+            name for name in ("use_base", "use_lidar")
+            if not _as_bool(context, name)
+        ]
+        if required:
+            raise RuntimeError(
+                "use_laser_odometry requires: " + ",".join(required))
     if not _as_bool(context, "autostart_mission"):
         return []
     required_components = (
@@ -123,6 +131,11 @@ def _validate_configuration(context):
         name for name in MOTION_GATES
         if not _as_bool(context, name)
     )
+    if (
+        _as_bool(context, "use_laser_odometry")
+        and not _as_bool(context, "laser_odometry_calibrated")
+    ):
+        missing.append("laser_odometry_calibrated")
     if missing:
         raise RuntimeError(
             "autostart_mission requires: " + ",".join(missing))
@@ -133,6 +146,7 @@ def generate_launch_description():
     use_base = LaunchConfiguration("use_base")
     use_lidar = LaunchConfiguration("use_lidar")
     use_obstacle = LaunchConfiguration("use_obstacle")
+    use_laser_odometry = LaunchConfiguration("use_laser_odometry")
     use_safety = LaunchConfiguration("use_safety")
     use_nav = LaunchConfiguration("use_nav")
     use_task = LaunchConfiguration("use_task")
@@ -159,6 +173,9 @@ def generate_launch_description():
             "use_base": use_base,
             "use_lidar": use_lidar,
             "use_obstacle": use_obstacle,
+            "use_laser_odometry": use_laser_odometry,
+            "laser_odometry_config_file": LaunchConfiguration(
+                "laser_odometry_config_file"),
             "use_safety": use_safety,
             "use_sim_time": use_sim_time,
             "safety_require_scan": LaunchConfiguration(
@@ -199,6 +216,9 @@ def generate_launch_description():
             "use_sim_time": use_sim_time,
             "waypoints_file": waypoints_file,
             "autostart_mission": autostart_mission,
+            "use_laser_odometry": use_laser_odometry,
+            "laser_odometry_calibrated": LaunchConfiguration(
+                "laser_odometry_calibrated"),
             **{
                 name: LaunchConfiguration(name)
                 for name in MOTION_GATES
@@ -223,6 +243,8 @@ def generate_launch_description():
         DeclareLaunchArgument("use_base", default_value="true"),
         DeclareLaunchArgument("use_lidar", default_value="true"),
         DeclareLaunchArgument("use_obstacle", default_value="true"),
+        DeclareLaunchArgument(
+            "use_laser_odometry", default_value="false"),
         DeclareLaunchArgument("use_safety", default_value="true"),
         DeclareLaunchArgument("use_nav", default_value="true"),
         DeclareLaunchArgument("use_camera", default_value="true"),
@@ -245,6 +267,14 @@ def generate_launch_description():
                 "config",
                 "waypoints",
                 "default_waypoints.yaml",
+            ]),
+        ),
+        DeclareLaunchArgument(
+            "laser_odometry_config_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_bringup"),
+                "config",
+                "laser_odometry.yaml",
             ]),
         ),
         DeclareLaunchArgument("camera_driver", default_value="aurora"),
@@ -278,6 +308,8 @@ def generate_launch_description():
             "emergency_stop_ready", default_value="false"),
         DeclareLaunchArgument(
             "operator_approved", default_value="false"),
+        DeclareLaunchArgument(
+            "laser_odometry_calibrated", default_value="false"),
     ]
     declarations.extend(
         DeclareLaunchArgument(name, default_value="0.0")

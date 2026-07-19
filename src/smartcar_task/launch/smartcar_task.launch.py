@@ -58,6 +58,16 @@ def generate_launch_description():
             description="Explicitly authorize physical mission motion",
         ),
         DeclareLaunchArgument(
+            "use_laser_odometry",
+            default_value="false",
+            description="Require calibrated scan-to-scan odometry",
+        ),
+        DeclareLaunchArgument(
+            "laser_odometry_calibrated",
+            default_value="false",
+            description="Confirm RF2O timing, covariance, and fallback tests",
+        ),
+        DeclareLaunchArgument(
             "use_sim_time",
             default_value="false",
             description="Use the ROS simulation clock",
@@ -81,6 +91,10 @@ def generate_launch_description():
                         "emergency_stop_ready"),
                     "operator_approved": LaunchConfiguration(
                         "operator_approved"),
+                    "use_laser_odometry": LaunchConfiguration(
+                        "use_laser_odometry"),
+                    "laser_odometry_calibrated": LaunchConfiguration(
+                        "laser_odometry_calibrated"),
                     "autostart_mission": LaunchConfiguration(
                         "autostart_mission"),
                     "use_sim_time": LaunchConfiguration("use_sim_time"),

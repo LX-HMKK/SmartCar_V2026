@@ -1,0 +1,12 @@
+rf2o_laser_odometry:
+  ros__parameters:
+    laser_scan_topic: /scan
+    odom_topic: /odom_laser
+    base_frame_id: base_footprint
+    odom_frame_id: odom_combined
+    publish_tf: false
+    init_pose_from_topic: ""
+    reset_service: /smartcar/localization/reset_laser_odometry
+    freq: 10.0
+    pose_covariance_diagonal: [0.05, 0.05, 1000000.0, 1000000.0, 1000000.0, 0.03]
+    twist_covariance_diagonal: [0.04, 1000000.0, 1000000.0, 1000000.0, 1000000.0, 0.04]

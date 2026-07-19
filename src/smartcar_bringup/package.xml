@@ -15,6 +15,7 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
   <exec_depend>obstacle_detector</exec_depend>
+  <exec_depend>rf2o_laser_odometry</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher</exec_depend>
   <exec_depend>tf2_ros</exec_depend>

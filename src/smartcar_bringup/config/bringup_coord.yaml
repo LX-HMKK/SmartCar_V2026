@@ -22,6 +22,7 @@ toggles:
   use_base: true
   use_lidar: true
   use_obstacle: true
+  use_laser_odometry: false
   use_safety: true
   safety_emergency_stop_on_start: false
   use_nav: true
@@ -62,6 +63,7 @@ motion_gates:
   steering_calibrated: false
   emergency_stop_ready: false
   operator_approved: false
+  laser_odometry_calibrated: false
 
 hardware:
   chassis_serial: /dev/ttyACM0

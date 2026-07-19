@@ -573,6 +573,8 @@ class TaskNode(Node):
         self.declare_parameter("steering_calibrated", False)
         self.declare_parameter("emergency_stop_ready", False)
         self.declare_parameter("operator_approved", False)
+        self.declare_parameter("use_laser_odometry", False)
+        self.declare_parameter("laser_odometry_calibrated", False)
         self.declare_parameter("autostart_mission", False)
         self.declare_parameter("server_wait_timeout_sec", 5.0)
         self.declare_parameter("navigation_timeout_sec", 120.0)
@@ -607,6 +609,9 @@ class TaskNode(Node):
                 "operator_approved",
             )
         }
+        if bool(self.get_parameter("use_laser_odometry").value):
+            self._motion_gates["laser_odometry_calibrated"] = bool(
+                self.get_parameter("laser_odometry_calibrated").value)
         self._stop_timeout_sec = _positive_finite(
             "stop_timeout_sec",
             self.get_parameter("stop_timeout_sec").value,

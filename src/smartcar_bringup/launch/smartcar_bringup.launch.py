@@ -13,6 +13,7 @@ def generate_launch_description():
     use_base = LaunchConfiguration('use_base')
     use_lidar = LaunchConfiguration('use_lidar')
     use_obstacle = LaunchConfiguration('use_obstacle')
+    use_laser_odometry = LaunchConfiguration('use_laser_odometry')
     use_safety = LaunchConfiguration('use_safety')
     use_sim_time = LaunchConfiguration('use_sim_time')
     safety_require_scan = LaunchConfiguration('safety_require_scan')
@@ -72,6 +73,16 @@ def generate_launch_description():
         }.items(),
         condition=IfCondition(use_obstacle),
     )
+    laser_odometry = IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(os.path.join(
+            bringup_dir, 'launch', 'laser_odometry.launch.py')),
+        launch_arguments={
+            'config_file': LaunchConfiguration(
+                'laser_odometry_config_file'),
+            'use_sim_time': use_sim_time,
+        }.items(),
+        condition=IfCondition(use_laser_odometry),
+    )
     safety = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             safety_dir, 'launch', 'smartcar_safety.launch.py')),
@@ -89,6 +100,12 @@ def generate_launch_description():
         DeclareLaunchArgument('use_base', default_value='true'),
         DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument('use_obstacle', default_value='true'),
+        DeclareLaunchArgument(
+            'use_laser_odometry', default_value='false'),
+        DeclareLaunchArgument(
+            'laser_odometry_config_file',
+            default_value=os.path.join(
+                bringup_dir, 'config', 'laser_odometry.yaml')),
         DeclareLaunchArgument('use_safety', default_value='true'),
         DeclareLaunchArgument('safety_require_scan', default_value='true'),
         DeclareLaunchArgument('safety_require_odom', default_value='true'),
@@ -108,5 +125,6 @@ def generate_launch_description():
         origincar_bringup,
         ydlidar,
         obstacle,
+        laser_odometry,
         safety,
     ])
