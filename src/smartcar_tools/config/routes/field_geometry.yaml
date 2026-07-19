@@ -1,0 +1,26 @@
+schema_version: 1
+name: competition_field_rule_geometry
+units: meters
+source:
+  diagrams:
+    - ../reference/competition_field_dimensions.png
+    - ../reference/competition_field_route_example.png
+  note: P origin and task publication point are estimated from the diagram and require venue measurement.
+geometry:
+  field_width_m: 5.0
+  field_height_m: 5.0
+  zone_a_height_m: 2.0
+  zone_b_height_m: 0.5
+  zone_c_height_m: 2.5
+  corridor_width_m: 1.0
+  corridor_center_x_from_west_m: 2.5
+  ring_outer_width_m: 4.0
+  ring_outer_height_m: 1.65
+  ring_inner_width_m: 3.0
+  ring_inner_height_m: 0.65
+  ring_center_x_from_west_m: 2.5
+  ring_center_y_from_south_m: 3.575
+  p_origin_x_from_west_m: 0.5
+  p_origin_y_from_south_m: 0.25
+  task_point_x_from_west_m: 4.65
+  task_point_y_from_south_m: 1.6

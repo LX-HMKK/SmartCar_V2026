@@ -169,6 +169,13 @@ class TestTargets(unittest.TestCase):
         self.assertTrue(any("origincar" in d for _, d in t))
         self.assertTrue(any("obstacle_detector_2" in d for _, d in t))
 
+    def test_route_pull_is_scoped_to_one_yaml(self):
+        self.assertTrue(sync.REMOTE_ROUTE.endswith("/full_course_route.yaml"))
+        self.assertEqual(
+            sync.LOCAL_ROUTE.name,
+            "full_course_route.yaml",
+        )
+
 
 class TestParser(unittest.TestCase):
     def test_push_subcommand(self):
@@ -182,6 +189,11 @@ class TestParser(unittest.TestCase):
     def test_no_subcommand_errors(self):
         with self.assertRaises(SystemExit):
             sync.build_parser().parse_args([])
+
+    def test_pull_route_subcommand(self):
+        args = sync.build_parser().parse_args(["pull-route", "--dry-run"])
+        self.assertEqual(args.command, "pull-route")
+        self.assertTrue(args.dry_run)
 
 
 class TestCmdPush(unittest.TestCase):
@@ -233,6 +245,15 @@ class TestCmdPull(unittest.TestCase):
             sync.main(["pull", "--delete"])
             argv = run.call_args[0][0]
             self.assertIn("--delete", argv)
+
+    def test_pull_route_only_syncs_the_route_file(self):
+        with mock.patch.object(sync, "ensure_rsync_available"), \
+             mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run:
+            sync.main(["pull-route", "--dry-run"])
+            argv = run.call_args[0][0]
+            self.assertIn(sync.REMOTE_ROUTE, " ".join(argv))
+            self.assertIn("full_course_route.yaml", " ".join(argv))
+            self.assertNotIn("--delete", argv)
 
 
 class TestCmdInitVendor(unittest.TestCase):

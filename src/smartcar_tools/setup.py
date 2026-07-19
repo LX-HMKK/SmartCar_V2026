@@ -1,0 +1,50 @@
+from glob import glob
+import os
+
+from setuptools import find_packages, setup
+
+
+package_name = "smartcar_tools"
+
+
+def install_tree(source_directory):
+    """Return data_files entries while preserving nested config paths."""
+    entries = []
+    for source in glob(source_directory + "/**/*", recursive=True):
+        if os.path.isfile(source):
+            relative_parent = os.path.dirname(source)
+            entries.append((
+                os.path.join("share", package_name, relative_parent),
+                [source],
+            ))
+    return entries
+
+
+setup(
+    name=package_name,
+    version="0.1.0",
+    packages=find_packages(exclude=["test"]),
+    data_files=[
+        ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
+        ("share/" + package_name, ["package.xml"]),
+        ("share/" + package_name + "/launch", glob("launch/*.launch.py")),
+    ] + install_tree("config") + install_tree("rviz"),
+    install_requires=["setuptools"],
+    tests_require=["pytest"],
+    zip_safe=True,
+    maintainer="LX-HMKK",
+    maintainer_email="lx_hmkk@qq.com",
+    description="Isolated navigation, route editing, vision, and speech field-test tools.",
+    license="MIT",
+    entry_points={
+        "console_scripts": [
+            "navigation_runner = smartcar_tools.navigation_runner:main",
+            "route_editor_node = smartcar_tools.route_editor_node:main",
+            "route_tool = smartcar_tools.route_tool:main",
+            "speech_probe = smartcar_tools.speech_probe:main",
+            "qr_probe = smartcar_tools.qr_probe:main",
+            "image_replay_node = smartcar_tools.image_replay_node:main",
+            "vlm_display = smartcar_tools.vlm_display:main",
+        ],
+    },
+)

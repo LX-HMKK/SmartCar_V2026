@@ -1,0 +1,105 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.5
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 125; 125; 125
+      Enabled: true
+      Name: Field Grid
+      Plane: XY
+      Reference Frame: odom_combined
+    - Class: rviz_default_plugins/TF
+      Enabled: true
+      Frame Timeout: 15
+      Name: TF
+      Show Arrows: true
+      Show Axes: true
+      Show Names: false
+    - Class: rviz_default_plugins/RobotModel
+      Description Source: Topic
+      Description Topic:
+        Value: /robot_description
+      Enabled: true
+      Name: Robot
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: true
+      Name: Laser Scan
+      Size (m): 0.02
+      Style: Points
+      Topic:
+        Depth: 5
+        Value: /scan
+    - Alpha: 0.45
+      Class: rviz_default_plugins/Map
+      Color Scheme: costmap
+      Enabled: true
+      Name: Global Costmap
+      Topic:
+        Durability Policy: Transient Local
+        Value: /global_costmap/costmap
+    - Alpha: 0.55
+      Class: rviz_default_plugins/Map
+      Color Scheme: costmap
+      Enabled: true
+      Name: Local Costmap
+      Topic:
+        Durability Policy: Transient Local
+        Value: /local_costmap/costmap
+    - Class: rviz_default_plugins/Path
+      Color: 25; 255; 0
+      Enabled: true
+      Line Style: Lines
+      Line Width: 0.03
+      Name: Global Plan
+      Topic:
+        Value: /plan
+    - Class: rviz_default_plugins/Path
+      Color: 255; 120; 0
+      Enabled: true
+      Line Style: Lines
+      Line Width: 0.04
+      Name: Local Plan
+      Topic:
+        Value: /local_plan
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Editable Route
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/route_editor/markers
+  Enabled: true
+  Global Options:
+    Background Color: 32; 34; 38
+    Fixed Frame: odom_combined
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+      Topic:
+        Value: /initialpose
+    - Class: rviz_default_plugins/SetGoal
+      Topic:
+        Value: /goal_pose
+  Views:
+    Current:
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top Down
+      Scale: 80
+      Target Frame: odom_combined
+Window Geometry:
+  Height: 900
+  Width: 1440

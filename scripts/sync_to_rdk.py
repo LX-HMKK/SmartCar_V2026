@@ -4,6 +4,7 @@
 子命令：
   push         本机 src/ + config/ -> RDK /root/ros2_ws/{src,config}/（--delete 镜像）
   pull         RDK /root/ros2_ws/src/ -> 本机 src/（反向，慎用）
+  pull-route   仅回传 RDK 上现场微调后的纯导航路线 YAML
   init-vendor  一次性回传官方 origincar 与第三方 obstacle_detector_2 到本机
   setup        scp source_env.sh 到 RDK ~/
 
@@ -37,6 +38,10 @@ LOCAL_VENDOR_ORIGINCAR = LOCAL_SRC / "origincar"
 LOCAL_THIRD_PARTY = LOCAL_SRC / "third_party"
 LOCAL_OBSTACLE = LOCAL_THIRD_PARTY / "obstacle_detector_2"
 LOCAL_SOURCE_ENV = REPO_ROOT / "scripts" / "source_env.sh"
+ROUTE_RELATIVE_PATH = Path(
+    "src/smartcar_tools/config/routes/full_course_route.yaml")
+LOCAL_ROUTE = REPO_ROOT / ROUTE_RELATIVE_PATH
+REMOTE_ROUTE = f"{REMOTE_WS}/{ROUTE_RELATIVE_PATH.as_posix()}"
 
 EXCLUDES = [
     "**/.git/", "build/", "install/", "log/",
@@ -190,6 +195,13 @@ def build_parser():
     p.add_argument("--delete", action="store_true", help="删除本机不在 RDK 上的文件（默认不删，本机为权威源）")
     p.set_defaults(func="pull")
 
+    p = sub.add_parser(
+        "pull-route",
+        help="仅回传 RDK 上现场微调后的 full_course_route.yaml",
+    )
+    p.add_argument("--dry-run", action="store_true")
+    p.set_defaults(func="pull_route")
+
     p = sub.add_parser("init-vendor", help="一次性回传官方包与第三方")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func="init_vendor")
@@ -228,6 +240,17 @@ def cmd_pull(args):
         run_rsync(src, dst, delete=delete, dry_run=args.dry_run)
 
 
+def cmd_pull_route(args):
+    ensure_rsync_available()
+    run_rsync(
+        f"{HOST}:{REMOTE_ROUTE}",
+        str(LOCAL_ROUTE),
+        delete=False,
+        dry_run=args.dry_run,
+        excludes=[],
+    )
+
+
 def cmd_init_vendor(args):
     ensure_rsync_available()
     for src, dst in init_vendor_targets():
@@ -251,6 +274,7 @@ def cmd_setup(args):
 _DISPATCH = {
     "push": cmd_push,
     "pull": cmd_pull,
+    "pull_route": cmd_pull_route,
     "init_vendor": cmd_init_vendor,
     "setup": cmd_setup,
 }
