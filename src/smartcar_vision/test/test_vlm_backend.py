@@ -148,14 +148,11 @@ class VlmBackendTests(unittest.TestCase):
     def test_timeout_kills_child_after_group_leader_exits(self):
         with tempfile.TemporaryDirectory() as directory:
             pid_file = Path(directory) / "child.pid"
-            child_code = (
-                "import os,pathlib,sys,time; "
-                "pathlib.Path(sys.argv[1]).write_text(str(os.getpid())); "
-                "time.sleep(30)"
-            )
+            child_code = "import time; time.sleep(30)"
             parent_code = (
-                "import subprocess,sys; "
-                "subprocess.Popen([sys.executable,'-c',sys.argv[2],sys.argv[1]])"
+                "import pathlib,subprocess,sys; "
+                "child=subprocess.Popen([sys.executable,'-c',sys.argv[2]]); "
+                "pathlib.Path(sys.argv[1]).write_text(str(child.pid))"
             )
             backend = CommandBackend([
                 sys.executable,
