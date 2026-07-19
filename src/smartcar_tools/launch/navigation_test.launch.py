@@ -19,6 +19,12 @@ MOTION_GATES = (
 def generate_launch_description():
     use_sim_time = LaunchConfiguration("use_sim_time")
     route_file = LaunchConfiguration("route_file")
+    field_to_pose_bt = PathJoinSubstitution([
+        FindPackageShare("smartcar_nav2"),
+        "config",
+        "behavior_trees",
+        "navigate_to_pose_field_test.xml",
+    ])
     field_bt = PathJoinSubstitution([
         FindPackageShare("smartcar_nav2"),
         "config",
@@ -76,6 +82,7 @@ def generate_launch_description():
                 "config",
                 "field_test_nav2_params.yaml",
             ]),
+            "bt_xml_file": field_to_pose_bt,
             "bt_through_poses_xml_file": field_bt,
         }.items(),
     )

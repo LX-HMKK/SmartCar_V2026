@@ -19,6 +19,12 @@ BT = (
     / "behavior_trees"
     / "navigate_through_poses_field_test.xml"
 )
+TO_POSE_BT = (
+    NAV2
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_field_test.xml"
+)
 
 
 class NavigationTestContractTests(unittest.TestCase):
@@ -87,6 +93,7 @@ class NavigationTestContractTests(unittest.TestCase):
         self.assertIn('executable="navigation_runner"', self.launch_source)
         self.assertIn("field_test_nav2_params.yaml", self.launch_source)
         self.assertIn("navigate_through_poses_field_test.xml", self.launch_source)
+        self.assertIn("navigate_to_pose_field_test.xml", self.launch_source)
         for forbidden_package in (
             "smartcar_task",
             "smartcar_vision",
@@ -127,6 +134,13 @@ class NavigationTestContractTests(unittest.TestCase):
         self.assertAlmostEqual(float(remove_passed.attrib["radius"]), 0.20)
         self.assertEqual(remove_passed.attrib["global_frame"], "odom_combined")
         self.assertEqual(remove_passed.attrib["robot_base_frame"], "base_footprint")
+
+    def test_default_single_pose_tree_cannot_request_reverse(self):
+        root = ElementTree.parse(TO_POSE_BT).getroot()
+        tags = [element.tag for element in root.iter()]
+        self.assertNotIn("Spin", tags)
+        self.assertNotIn("BackUp", tags)
+        self.assertIn("ComputePathToPose", tags)
 
 
 if __name__ == "__main__":
