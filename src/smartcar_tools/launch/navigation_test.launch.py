@@ -94,6 +94,7 @@ def generate_launch_description():
         output="screen",
         parameters=[{
             "route_file": route_file,
+            "route_end_id": LaunchConfiguration("route_end_id"),
             "behavior_tree": field_bt,
             "base_frame": "base_footprint",
             "sensor_timeout_sec": LaunchConfiguration(
@@ -169,6 +170,11 @@ def generate_launch_description():
                 "routes",
                 "full_course_route.yaml",
             ]),
+        ),
+        DeclareLaunchArgument(
+            "route_end_id",
+            default_value="",
+            description="Optional inclusive endpoint for staged route tests",
         ),
     ]
     declarations.extend(

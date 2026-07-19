@@ -37,6 +37,11 @@ class NavigationContracts(unittest.TestCase):
         self.assertIn('self._state = "locking_estop"', source)
         self.assertGreaterEqual(source.count("self._sensor_readiness_error()"), 3)
         self.assertIn("cancel_requested = self._cancel_requested", source)
+        self.assertIn('self.declare_parameter("route_end_id", "")', source)
+        self.assertIn("self._waypoints = self._select_waypoints", source)
+        self.assertIn("ClearEntireCostmap", source)
+        self.assertIn("post_clear_scan_timeout", source)
+        self.assertIn("required_scan_sequence = self._scan_sequence + 2", source)
         for interface in ("prepare", "arm", "start", "stop", "status"):
             self.assertIn(f"/smartcar/test/navigation/{interface}", source)
 
@@ -50,6 +55,7 @@ class NavigationContracts(unittest.TestCase):
         self.assertIn('"arm_timeout_sec": 30.0', source)
         self.assertNotIn('"arm_timeout_sec": "30.0"', source)
         self.assertIn("navigate_to_pose_field_test.xml", source)
+        self.assertIn('"route_end_id": LaunchConfiguration("route_end_id")', source)
         for excluded in ("smartcar_task", "smartcar_vision", "smartcar_speech"):
             self.assertNotIn(excluded, source)
 

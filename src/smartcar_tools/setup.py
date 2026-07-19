@@ -39,6 +39,7 @@ setup(
     entry_points={
         "console_scripts": [
             "navigation_runner = smartcar_tools.navigation_runner:main",
+            "navigation_probe = smartcar_tools.navigation_probe:main",
             "route_editor_node = smartcar_tools.route_editor_node:main",
             "route_tool = smartcar_tools.route_tool:main",
             "speech_probe = smartcar_tools.speech_probe:main",

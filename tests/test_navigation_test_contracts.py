@@ -64,6 +64,17 @@ class NavigationTestContractTests(unittest.TestCase):
             "cancel_requested = self._cancel_requested",
             self.runner_source,
         )
+        self.assertIn(
+            'self.declare_parameter("route_end_id", "")',
+            self.runner_source,
+        )
+        self.assertIn("self._waypoints = self._select_waypoints", self.runner_source)
+        self.assertIn("ClearEntireCostmap", self.runner_source)
+        self.assertIn("post_clear_scan_timeout", self.runner_source)
+        self.assertIn(
+            "required_scan_sequence = self._scan_sequence + 2",
+            self.runner_source,
+        )
 
     def test_optional_laser_odometry_is_disabled_and_gated_by_default(self):
         self.assertIn(
@@ -94,6 +105,10 @@ class NavigationTestContractTests(unittest.TestCase):
         self.assertIn("field_test_nav2_params.yaml", self.launch_source)
         self.assertIn("navigate_through_poses_field_test.xml", self.launch_source)
         self.assertIn("navigate_to_pose_field_test.xml", self.launch_source)
+        self.assertIn(
+            '"route_end_id": LaunchConfiguration("route_end_id")',
+            self.launch_source,
+        )
         for forbidden_package in (
             "smartcar_task",
             "smartcar_vision",

@@ -9,6 +9,7 @@ from action_msgs.msg import GoalStatus
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateThroughPoses
+from nav2_msgs.srv import ClearEntireCostmap
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import (
@@ -176,6 +177,7 @@ class NavigationRunner(Node):
     def __init__(self):
         super().__init__("navigation_test_runner")
         self.declare_parameter("route_file", "")
+        self.declare_parameter("route_end_id", "")
         self.declare_parameter("behavior_tree", "")
         self.declare_parameter("base_frame", "base_footprint")
         self.declare_parameter("sensor_timeout_sec", 0.50)
@@ -203,6 +205,10 @@ class NavigationRunner(Node):
             raise ValueError("route_file must be provided")
         self._route_file = route_file
         self._route = load_route(route_file)
+        self._route_end_id = str(
+            self.get_parameter("route_end_id").value
+        ).strip()
+        self._waypoints = self._select_waypoints(self._route)
         self._behavior_tree = str(
             self.get_parameter("behavior_tree").value
         ).strip()
@@ -281,11 +287,12 @@ class NavigationRunner(Node):
         self._started_at = None
         self._finished_elapsed_sec = 0.0
         self._current_index = 0
-        self._remaining_points = len(self._route.waypoints)
+        self._remaining_points = len(self._waypoints)
         self._distance_remaining_m = 0.0
         self._last_odom = None
         self._last_odom_received_at = None
         self._last_scan_received_at = None
+        self._scan_sequence = 0
         self._last_laser_odom = None
         self._last_laser_odom_received_at = None
         self._odom_sequence = 0
@@ -349,6 +356,16 @@ class NavigationRunner(Node):
             "/smartcar/safety/clear_localization_fault",
             callback_group=self._io_group,
         )
+        self._global_costmap_clear_client = self.create_client(
+            ClearEntireCostmap,
+            "/global_costmap/clear_entirely_global_costmap",
+            callback_group=self._io_group,
+        )
+        self._local_costmap_clear_client = self.create_client(
+            ClearEntireCostmap,
+            "/local_costmap/clear_entirely_local_costmap",
+            callback_group=self._io_group,
+        )
         self._laser_reset_client = None
         if self._use_laser_odometry and self._laser_reset_service:
             self._laser_reset_client = self.create_client(
@@ -395,8 +412,18 @@ class NavigationRunner(Node):
         self._publish_status(force=True)
         self.get_logger().warning(
             "Navigation test runner loaded an unstarted route with "
-            f"{len(self._route.waypoints)} points from {route_file}"
+            f"{len(self._waypoints)} points from {route_file}"
         )
+
+    def _select_waypoints(self, route):
+        if not self._route_end_id:
+            return tuple(route.waypoints)
+        for index, point in enumerate(route.waypoints):
+            if point.id == self._route_end_id:
+                if index < 1:
+                    raise ValueError("route_end_id must include forward motion")
+                return tuple(route.waypoints[:index + 1])
+        raise ValueError(f"route_end_id not found: {self._route_end_id}")
 
     def _now_monotonic(self):
         return time.monotonic()
@@ -413,11 +440,11 @@ class NavigationRunner(Node):
         return max(0.0, self._now_monotonic() - self._started_at)
 
     def _snapshot_locked(self):
-        waypoint_count = len(self._route.waypoints)
+        waypoint_count = len(self._waypoints)
         current_point = ""
         if waypoint_count:
             index = min(max(0, self._current_index), waypoint_count - 1)
-            current_point = str(self._route.waypoints[index].id)
+            current_point = str(self._waypoints[index].id)
         arm_remaining = 0.0
         if self._armed_deadline is not None:
             arm_remaining = max(
@@ -473,6 +500,8 @@ class NavigationRunner(Node):
     def _on_scan(self, _message):
         with self._condition:
             self._last_scan_received_at = self._now_monotonic()
+            self._scan_sequence += 1
+            self._condition.notify_all()
 
     def _on_laser_odom(self, message):
         with self._condition:
@@ -512,10 +541,12 @@ class NavigationRunner(Node):
 
     def _reload_route(self):
         route = load_route(self._route_file)
+        waypoints = self._select_waypoints(route)
         with self._condition:
             self._route = route
+            self._waypoints = waypoints
             self._current_index = 0
-            self._remaining_points = len(route.waypoints)
+            self._remaining_points = len(waypoints)
             self._distance_remaining_m = 0.0
 
     def _reset_origin(self):
@@ -611,6 +642,45 @@ class NavigationRunner(Node):
             time.sleep(min(0.10, max(0.0, deadline - self._now_monotonic())))
         return False, last_message
 
+    def _clear_costmaps(self):
+        deadline = self._now_monotonic() + self._reset_timeout_sec
+        clients = (
+            ("global_costmap", self._global_costmap_clear_client),
+            ("local_costmap", self._local_costmap_clear_client),
+        )
+        for name, client in clients:
+            remaining = deadline - self._now_monotonic()
+            if remaining <= 0.0 or not client.wait_for_service(
+                timeout_sec=remaining
+            ):
+                return False, f"{name}_clear_service_unavailable"
+            future = client.call_async(ClearEntireCostmap.Request())
+            completed, response, error = _wait_future(
+                future,
+                max(0.0, deadline - self._now_monotonic()),
+            )
+            if not completed:
+                _remove_pending(client, future)
+                return False, f"{name}_clear_timeout"
+            if error is not None or response is None:
+                return (
+                    False,
+                    f"{name}_clear_error:{type(error).__name__}",
+                )
+
+        with self._condition:
+            required_scan_sequence = self._scan_sequence + 2
+            while (
+                self._scan_sequence < required_scan_sequence
+                and self._now_monotonic() < deadline
+            ):
+                self._condition.wait(
+                    timeout=max(0.0, deadline - self._now_monotonic())
+                )
+            if self._scan_sequence < required_scan_sequence:
+                return False, "post_clear_scan_timeout"
+        return True, "costmaps_cleared"
+
     def _on_prepare(self, _request, response):
         with self._condition:
             active = self._navigation_active_locked()
@@ -676,6 +746,18 @@ class NavigationRunner(Node):
             response.success = False
             response.message = message
             return response
+        success, message = self._clear_costmaps()
+        if not success:
+            self._set_state("locked", message)
+            response.success = False
+            response.message = message
+            return response
+        sensor_error = self._sensor_readiness_error()
+        if sensor_error:
+            self._set_state("locked", sensor_error)
+            response.success = False
+            response.message = sensor_error
+            return response
         with self._condition:
             self._prepared = True
             self._finished_elapsed_sec = 0.0
@@ -683,7 +765,10 @@ class NavigationRunner(Node):
             self._forced_failure_reason = ""
         self._set_state("prepared")
         response.success = True
-        response.message = "origin reset and verified; emergency stop remains latched"
+        response.message = (
+            "origin reset, costmaps refreshed, and sensors verified; "
+            "emergency stop remains latched"
+        )
         return response
 
     def _sensor_readiness_error(self):
@@ -824,7 +909,7 @@ class NavigationRunner(Node):
     def _make_goal(self):
         goal = NavigateThroughPoses.Goal()
         stamp = self.get_clock().now().to_msg()
-        for point in self._route.waypoints:
+        for point in self._waypoints:
             pose = PoseStamped()
             pose.header.frame_id = self._route.frame_id
             pose.header.stamp = stamp
@@ -862,7 +947,7 @@ class NavigationRunner(Node):
                 self._forced_failure_reason = ""
                 self._armed_deadline = None
                 self._current_index = 0
-                self._remaining_points = len(self._route.waypoints)
+                self._remaining_points = len(self._waypoints)
                 self._distance_remaining_m = 0.0
         if arm_expired:
             latched, message = self._call_estop(True)
@@ -960,7 +1045,7 @@ class NavigationRunner(Node):
         )
         response.success = True
         response.message = (
-            f"navigation started with {len(self._route.waypoints)} poses"
+            f"navigation started with {len(self._waypoints)} poses"
         )
         return response
 
@@ -1010,7 +1095,7 @@ class NavigationRunner(Node):
                 "number_of_poses_remaining",
                 self._remaining_points,
             ))
-            total = len(self._route.waypoints)
+            total = len(self._waypoints)
             self._remaining_points = min(max(0, remaining), total)
             self._current_index = min(
                 max(0, total - self._remaining_points),
@@ -1058,7 +1143,7 @@ class NavigationRunner(Node):
             reason = ""
             with self._condition:
                 self._remaining_points = 0
-                self._current_index = max(0, len(self._route.waypoints) - 1)
+                self._current_index = max(0, len(self._waypoints) - 1)
                 self._distance_remaining_m = 0.0
         elif status == GoalStatus.STATUS_CANCELED:
             terminal_state = "canceled"
