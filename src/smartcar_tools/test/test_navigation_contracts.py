@@ -55,16 +55,25 @@ class NavigationContracts(unittest.TestCase):
         planner = params["planner_server"]["ros__parameters"]["GridBased"]
         self.assertEqual(controller["desired_linear_vel"], 0.15)
         self.assertEqual(smoother["max_velocity"][0], 0.15)
+        self.assertEqual(smoother["min_velocity"][0], 0.0)
         self.assertEqual(planner["motion_model_for_search"], "DUBIN")
         self.assertIs(controller["use_rotate_to_heading"], False)
+        self.assertIs(controller["allow_reversing"], False)
+        self.assertNotIn(
+            "backup",
+            params["behavior_server"]["ros__parameters"]["behavior_plugins"],
+        )
 
     def test_field_tree_has_tight_pass_radius_and_no_spin(self):
         root = ElementTree.parse(BT).getroot()
         tags = [element.tag for element in root.iter()]
         self.assertNotIn("Spin", tags)
+        self.assertNotIn("BackUp", tags)
         self.assertIn("ComputePathThroughPoses", tags)
         remove_passed = next(root.iter("RemovePassedGoals"))
         self.assertEqual(float(remove_passed.attrib["radius"]), 0.20)
+        self.assertEqual(remove_passed.attrib["global_frame"], "odom_combined")
+        self.assertEqual(remove_passed.attrib["robot_base_frame"], "base_footprint")
 
 
 if __name__ == "__main__":

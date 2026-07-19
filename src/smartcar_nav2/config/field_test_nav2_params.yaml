@@ -58,7 +58,7 @@ controller_server:
       regulated_linear_scaling_min_radius: 0.90
       regulated_linear_scaling_min_speed: 0.04
       use_rotate_to_heading: false
-      allow_reversing: true
+      allow_reversing: false
 
 local_costmap:
   local_costmap:
@@ -158,9 +158,7 @@ behavior_server:
     costmap_topic: local_costmap/costmap_raw
     footprint_topic: local_costmap/published_footprint
     cycle_frequency: 10.0
-    behavior_plugins: ["backup", "drive_on_heading", "wait"]
-    backup:
-      plugin: "nav2_behaviors/BackUp"
+    behavior_plugins: ["drive_on_heading", "wait"]
     drive_on_heading:
       plugin: "nav2_behaviors/DriveOnHeading"
     wait:
@@ -188,7 +186,7 @@ velocity_smoother:
     scale_velocities: false
     feedback: "OPEN_LOOP"
     max_velocity: [0.15, 0.0, 0.375]
-    min_velocity: [-0.04, 0.0, -0.375]
+    min_velocity: [0.0, 0.0, -0.375]
     max_accel: [0.30, 0.0, 0.75]
     max_decel: [-1.0, 0.0, -1.5]
     odom_topic: "odom_combined"
