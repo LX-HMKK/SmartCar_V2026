@@ -160,6 +160,20 @@ ros2 launch smartcar_tools navigation_test.launch.py \
   use_laser_odometry:=false
 ```
 
+首次地面验证必须限制为短段，不要直接提交 68 点全程。`route_end_id` 是包含式终点，例如只验证 P 到首个前进点：
+
+```bash
+ros2 launch smartcar_tools navigation_test.launch.py \
+  route_file:="$ROUTE" \
+  route_end_id:=a_depart \
+  waypoints_calibrated:=true \
+  extrinsics_calibrated:=true \
+  steering_calibrated:=true \
+  emergency_stop_ready:=true \
+  operator_approved:=true \
+  use_laser_odometry:=false
+```
+
 如已额外完成 RF2O 标定和退化回退验证，可将最后一行替换为：
 
 ```bash
@@ -175,7 +189,26 @@ source ~/source_env.sh
 ros2 topic echo /smartcar/test/navigation/status
 ```
 
-现场操作顺序：
+### 4.1 快速启动（推荐）
+
+启动栈后直接运行以下命令。它在一个 ROS 进程内等待 `/navigate_through_poses` 可用，再连续执行 `prepare -> arm -> start`，避免三次独立 `ros2 service call` 重复启动 Python 和等待 ROS 图发现：
+
+```bash
+source ~/source_env.sh
+ros2 run smartcar_tools navigation_probe start
+```
+
+`run` 是 `start` 的别名。默认最多等待 Nav2 60 秒；任一步失败、超时或异常都会 best-effort 调用 `stop` 重新锁停。该命令仍是操作员显式发车动作，不是自动发车，也不会绕过路线标定、传感器新鲜度或五个运动门禁。
+
+正常或紧急停止统一使用：
+
+```bash
+ros2 run smartcar_tools navigation_probe stop
+```
+
+### 4.2 分步诊断（仅排障）
+
+以下命令保留用于定位具体门禁或服务问题。每条 `ros2 service call` 都会创建新进程并重新发现 ROS 图，在 RDK 上可能耗时数秒；不要依靠三条独立命令赶 30 秒 `arm` 窗口。
 
 ```bash
 # 1. 锁停、确认无活动目标、复位并验证 P 原点
@@ -194,6 +227,22 @@ ros2 service call /smartcar/test/navigation/start \
 ros2 service call /smartcar/test/navigation/stop \
   std_srvs/srv/Trigger "{}"
 ```
+
+若快速停止入口不可用，先直接锁存安全门：
+
+```bash
+ros2 service call /smartcar/safety/emergency_stop \
+  std_srvs/srv/SetBool "{data: true}"
+```
+
+通过 transient systemd unit 启动测试栈时，确认急停已锁存后可结束整个进程组：
+
+```bash
+systemctl kill --kill-who=all --signal=SIGINT \
+  smartcar-navigation-test.service
+```
+
+结束进程组不能替代软件急停或现场物理急停。不要先等待 ROS launch 的逐节点优雅退出，再处理仍在运行的车辆。
 
 状态包含当前点、剩余点数、剩余距离、耗时、急停状态和失败原因。首次实车不得直接跑全程，应依次完成车轮离地、单点、短段、低速全程；全程目标为经过任务发布点和中央通道，完成 C 环顺时针一圈并返回 P，终点误差目标不超过 `0.20 m`。
 

@@ -182,7 +182,7 @@ operator_approved
 | `qr_test.launch.py` | 指定相机或单图回放、zbar、QR 服务 | 底盘、Nav2、任务与语音 |
 | `vlm_test.launch.py` | 指定相机或单图回放、VLM 服务、PyQt5 HDMI UI | 底盘、Nav2、任务与语音 |
 
-这些入口的完整命令、`prepare -> arm -> start -> stop` 安全顺序、`route_tool`/RViz 微调、HDMI 环境变量和 `pull-route` 见 [`field-test-entrypoints.md`](field-test-entrypoints.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
+这些入口的完整命令、`navigation_probe start|stop` 单进程快速导航流程、分步 `prepare -> arm -> start -> stop` 排障顺序、`route_end_id` 短段验证、`route_tool`/RViz 微调、HDMI 环境变量和 `pull-route` 见 [`field-test-entrypoints.md`](field-test-entrypoints.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
 
 ## 7. 任务、停止和复位
 
