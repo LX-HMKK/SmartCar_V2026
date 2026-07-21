@@ -1,8 +1,8 @@
 # RDK X5 部署与运行手册
 
-更新时间：2026-07-19
+更新时间：2026-07-21
 
-目标板：`root@192.168.128.10`
+目标板：无线 `root@172.16.25.27`；有线备用 `root@192.168.128.10`
 
 工作空间：`/root/ros2_ws`
 
@@ -11,7 +11,7 @@
 RDK 的 ROS 2 环境入口是 `/opt/tros/humble/setup.bash`。仓库提供的 `~/source_env.sh` 会加载 TROS 和 `/root/ros2_ws/install`，日常只使用这一入口：
 
 ```bash
-ssh root@192.168.128.10
+ssh root@172.16.25.27
 source ~/source_env.sh
 ```
 

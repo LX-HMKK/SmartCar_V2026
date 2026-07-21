@@ -67,7 +67,7 @@ python scripts/sync_to_rdk.py push
 ## RDK 构建与测试
 
 ```bash
-ssh root@192.168.128.10
+ssh root@172.16.25.27
 source ~/source_env.sh
 cd /root/ros2_ws
 colcon build --symlink-install

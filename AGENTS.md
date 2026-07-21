@@ -64,7 +64,7 @@ python scripts/sync_to_rdk.py push
 
 ## RDK 构建与验证
 
-RDK 当前通过有线网络免密连接：`ssh root@192.168.128.10`。ROS2 环境入口是 `/opt/tros/humble/setup.bash`，日常统一使用 `~/source_env.sh`，不要叠加 `/userdata/dev_ws` overlay。
+RDK 当前通过无线网络免密连接：`ssh root@172.16.25.27`；有线备用地址为 `root@192.168.128.10`。ROS2 环境入口是 `/opt/tros/humble/setup.bash`，日常统一使用 `~/source_env.sh`，不要叠加 `/userdata/dev_ws` overlay。
 
 ```bash
 source ~/source_env.sh
