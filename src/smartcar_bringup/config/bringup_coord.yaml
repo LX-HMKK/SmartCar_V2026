@@ -38,30 +38,40 @@ toggles:
 
 extrinsics:
   base_to_link:
-    measured: false
+    measured: true
     parent: base_footprint
     child: base_link
-    xyz: [0.0, 0.0, 0.0]
+    xyz: [0.0841, 0.0, 0.03]
     rpy: [0.0, 0.0, 0.0]
   link_to_laser:
-    measured: false
+    measured: true
     parent: base_link
     child: laser
-    xyz: [0.0, 0.0, 0.0]
+    xyz: [-0.05, 0.0, 0.23]
     rpy: [0.0, 0.0, 0.0]
   link_to_camera:
-    measured: false
+    measured: true
     parent: base_link
     child_by_driver:
       aurora: rgb_camera_link
       usb: default_usb_cam
       mipi: default_cam
-    xyz: [0.0, 0.0, 0.0]
+    xyz: [0.1205, 0.0, 0.11]
     rpy: [0.0, 0.0, 0.0]
+
+calibration:
+  longitudinal_velocity_scale: 1.03
+  gyro_z_bias: 0.000853
+  gyro_z_scale: 1.0
+  steering_command_scale: 0.5
+  steering_command_offset_rad: 0.0
+  max_calibrated_steering_command_rad: 0.225
+  wheelbase: 0.189
+  max_steering_angle: 0.45
 
 motion_gates:
   waypoints_calibrated: false
-  extrinsics_calibrated: false
+  extrinsics_calibrated: true
   steering_calibrated: false
   emergency_stop_ready: false
   operator_approved: false

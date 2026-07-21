@@ -164,6 +164,16 @@ def generate_launch_description():
         "laser_x", "laser_y", "laser_z",
         "laser_roll", "laser_pitch", "laser_yaw",
     )
+    sensor_calib_names = (
+        "longitudinal_velocity_scale",
+        "lateral_velocity_scale",
+        "yaw_velocity_scale",
+        "gyro_z_scale",
+        "gyro_z_bias",
+        "steering_command_scale",
+        "steering_command_offset_rad",
+        "max_calibrated_steering_command_rad",
+    )
 
     base = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -194,6 +204,10 @@ def generate_launch_description():
             **{
                 name: LaunchConfiguration(name)
                 for name in extrinsic_names
+            },
+            **{
+                name: LaunchConfiguration(name)
+                for name in sensor_calib_names
             },
         }.items(),
     )
@@ -319,6 +333,22 @@ def generate_launch_description():
             "operator_approved", default_value="false"),
         DeclareLaunchArgument(
             "laser_odometry_calibrated", default_value="false"),
+        DeclareLaunchArgument(
+            "longitudinal_velocity_scale", default_value="1.03"),
+        DeclareLaunchArgument(
+            "lateral_velocity_scale", default_value="1.125"),
+        DeclareLaunchArgument(
+            "yaw_velocity_scale", default_value="1.0"),
+        DeclareLaunchArgument(
+            "gyro_z_scale", default_value="1.0"),
+        DeclareLaunchArgument(
+            "gyro_z_bias", default_value="0.000853"),
+        DeclareLaunchArgument(
+            "steering_command_scale", default_value="0.5"),
+        DeclareLaunchArgument(
+            "steering_command_offset_rad", default_value="0.0"),
+        DeclareLaunchArgument(
+            "max_calibrated_steering_command_rad", default_value="0.225"),
     ]
     declarations.extend(
         DeclareLaunchArgument(name, default_value="0.0")

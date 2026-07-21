@@ -41,6 +41,21 @@ def generate_launch_description():
         for name in extrinsic_names
     }
 
+    sensor_calib_names = (
+        'longitudinal_velocity_scale',
+        'lateral_velocity_scale',
+        'yaw_velocity_scale',
+        'gyro_z_scale',
+        'gyro_z_bias',
+        'steering_command_scale',
+        'steering_command_offset_rad',
+        'max_calibrated_steering_command_rad',
+    )
+    sensor_calib = {
+        name: LaunchConfiguration(name)
+        for name in sensor_calib_names
+    }
+
     origincar_dir = get_package_share_directory('origincar_base')
     ydlidar_dir = get_package_share_directory('ydlidar_ros2_driver')
     bringup_dir = get_package_share_directory('smartcar_bringup')
@@ -56,6 +71,7 @@ def generate_launch_description():
             'use_robot_description': use_robot_description,
             'laser_frame': laser_frame,
             **extrinsics,
+            **sensor_calib,
         }.items(),
         condition=IfCondition(use_base),
     )
@@ -127,6 +143,24 @@ def generate_launch_description():
         DeclareLaunchArgument(name, default_value='0.0')
         for name in extrinsic_names
     )
+    declarations.extend([
+        DeclareLaunchArgument(
+            'longitudinal_velocity_scale', default_value='1.03'),
+        DeclareLaunchArgument(
+            'lateral_velocity_scale', default_value='1.125'),
+        DeclareLaunchArgument(
+            'yaw_velocity_scale', default_value='1.0'),
+        DeclareLaunchArgument(
+            'gyro_z_scale', default_value='1.0'),
+        DeclareLaunchArgument(
+            'gyro_z_bias', default_value='0.0'),
+        DeclareLaunchArgument(
+            'steering_command_scale', default_value='0.5'),
+        DeclareLaunchArgument(
+            'steering_command_offset_rad', default_value='0.0'),
+        DeclareLaunchArgument(
+            'max_calibrated_steering_command_rad', default_value='0.225'),
+    ])
     return LaunchDescription(declarations + [
         origincar_bringup,
         ydlidar,

@@ -36,6 +36,16 @@ def generate_launch_description():
     laser_pitch = LaunchConfiguration('laser_pitch')
     laser_yaw = LaunchConfiguration('laser_yaw')
 
+    longitudinal_velocity_scale = LaunchConfiguration('longitudinal_velocity_scale')
+    lateral_velocity_scale = LaunchConfiguration('lateral_velocity_scale')
+    yaw_velocity_scale = LaunchConfiguration('yaw_velocity_scale')
+    gyro_z_scale = LaunchConfiguration('gyro_z_scale')
+    gyro_z_bias = LaunchConfiguration('gyro_z_bias')
+    steering_command_scale = LaunchConfiguration('steering_command_scale')
+    steering_command_offset_rad = LaunchConfiguration('steering_command_offset_rad')
+    max_calibrated_steering_command_rad = LaunchConfiguration(
+        'max_calibrated_steering_command_rad')
+
     declarations = [
         DeclareLaunchArgument('carto_slam', default_value='false'),
         DeclareLaunchArgument(
@@ -57,6 +67,19 @@ def generate_launch_description():
         DeclareLaunchArgument('laser_roll', default_value='0.0'),
         DeclareLaunchArgument('laser_pitch', default_value='0.0'),
         DeclareLaunchArgument('laser_yaw', default_value='0.0'),
+        DeclareLaunchArgument(
+            'longitudinal_velocity_scale', default_value='1.03'),
+        DeclareLaunchArgument(
+            'lateral_velocity_scale', default_value='1.125'),
+        DeclareLaunchArgument('yaw_velocity_scale', default_value='1.0'),
+        DeclareLaunchArgument('gyro_z_scale', default_value='1.0'),
+        DeclareLaunchArgument('gyro_z_bias', default_value='0.0'),
+        DeclareLaunchArgument(
+            'steering_command_scale', default_value='0.5'),
+        DeclareLaunchArgument(
+            'steering_command_offset_rad', default_value='0.0'),
+        DeclareLaunchArgument(
+            'max_calibrated_steering_command_rad', default_value='0.225'),
     ]
 
     origincar_base = IncludeLaunchDescription(
@@ -66,6 +89,15 @@ def generate_launch_description():
             'akmcar': 'true',
             'input_topic': input_topic,
             'use_sim_time': use_sim_time,
+            'longitudinal_velocity_scale': longitudinal_velocity_scale,
+            'lateral_velocity_scale': lateral_velocity_scale,
+            'yaw_velocity_scale': yaw_velocity_scale,
+            'gyro_z_scale': gyro_z_scale,
+            'gyro_z_bias': gyro_z_bias,
+            'steering_command_scale': steering_command_scale,
+            'steering_command_offset_rad': steering_command_offset_rad,
+            'max_calibrated_steering_command_rad':
+                max_calibrated_steering_command_rad,
         }.items(),
     )
     description = IncludeLaunchDescription(

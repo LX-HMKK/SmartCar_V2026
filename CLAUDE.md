@@ -81,17 +81,26 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ## 部署与实车门禁
 
-以下事项仍需现场完成：
+截至 2026-07-21，标定与导航验证进展：
 
-- 实测并替换 `src/smartcar_nav2/config/waypoints/default_waypoints.yaml` 占位航点。
-- 测量 `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参。
-- 完成转向、轮速和陀螺仪标定。
-- 标定已接入的 RF2O 连续扫描匹配激光里程计，验证时间戳、外参、协方差、漂移、异常观测拒绝和轮速/IMU 退化回退。
-- 配置并实测一个 VLM 后端（火山 Ark 或端侧模型）；如需语音，再验证火山 TTS、现场网络和扬声器。
-- 使用云端后端前确认比赛规则允许公网且赛场网络稳定；否则必须准备经过实测的端侧 VLM 备用方案。
-- 验证人工物理急停，再依次进行车轮离地、低速地面和完整赛道测试。
+### 已完成
 
-五个运动门禁 `waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved` 默认均为 `false`。只有对应实测完成后才可显式开启；启用 RF2O 时还条件性要求 `laser_odometry_calibrated=true`。
+- ✅ 陀螺仪零偏标定：`gyro_z_bias = 0.000853`（参数链路已打通至 `smartcar_system.launch.py` 默认值）。
+- ✅ 外参测量（URDF + 微调）：`base_footprint→base_link (0.0841,0,0.03)`、`base_link→laser (-0.05,0,0.23)`、`base_link→camera (0.1205,0,0.11)`。
+- ✅ 轮速标定验证：`longitudinal_velocity_scale = 1.03` 实测通过。
+- ✅ P → 任务发布点导航：0.15 m/s，5 航点，约 35s 完成，自动锁停。2D LiDAR 避障通过锥桶膨胀补偿（local inflation 0.55 / global 0.65）+ footprint 自过滤可用。
+- ✅ 标定参数链路：8 个传感器参数从 `smartcar_system` → `smartcar_bringup` → `origincar_bringup` → `base_serial` 完整传递。
+
+### 待完成
+
+- 实测并替换 `default_waypoints.yaml` 占位航点（当前使用规则图推算值）。
+- 完成转向标定（`steering_command_scale` / `offset`）。
+- 标定 RF2O 激光里程计并验证退化回退。
+- 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
+- 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
+- 0.30 m/s 提速触发 EKF 更新超限 + BT 过载，需性能优化后才能提速。
+
+五个运动门禁默认为 `false`，仅对应项目实测完成后显式开启。
 
 ## 提交规范
 

@@ -255,6 +255,20 @@ systemctl kill --kill-who=all --signal=SIGINT \
 - 本轮没有完成全程导航验收。下次测试前必须核实车头物理朝向、IMU/轮式航向复位、`base_link -> laser` 实测外参，并在 RViz 中对照 `/scan`、全局成本图和路线微调点位；不得仅通过缩小膨胀半径或恢复倒车来绕过问题。
 - RDK 测试结束后导航服务已停止，运行时路线重新标记为 `calibrated: false`。
 
+### 4.2 2026-07-21 现场标定与导航记录
+
+- **标定**: 陀螺仪 `gyro_z_bias=0.000853`、外参实测（URDF + 微调 laser_x=-0.05）、轮速 1.03 验证通过、转向跳过。
+- **参数链路**: `gyro_z_bias` 等 8 个传感器参数已打通 `smartcar_system → base_serial` 完整传递链。
+- **导航成功**: P → `a_task`（任务发布点）5 航点，0.15 m/s，约 35s，`state: succeeded`。
+- **关键修复**:
+  - `navigation_test.launch.py` 外参默认全零，必须显式传入 `base_x:=0.0841 base_z:=0.03 laser_x:=-0.05 laser_z:=0.23`，否则 TF 错误导致 costmap 充满致命障碍。
+  - 2D LiDAR 无高度信息，锥桶上窄下宽。通过非对称 footprint + `obstacle_min_range=0.25` 滤车身自检 + 局部膨胀 0.55/全局 0.65 补偿锥桶下部。Footprint 以 base_footprint（后轴投影）为原点：`[[0.27,0.13],[-0.10,-0.13]]`。
+  - 终点兜圈：Ackermann 无法原地旋转，放宽 `xy_goal_tolerance=0.25, yaw_goal_tolerance=0.35` 解决。
+  - 0.30 m/s 提速导致 EKF `Failed to meet update rate` + BT tick rate 超限，车失控乱跑。当前安全速度 0.15 m/s。
+- **避障参数**（`field_test_nav2_params.yaml`）:
+  - 局部膨胀 0.55，全局膨胀 0.65，footprint_padding 0.03，obstacle_min_range 0.25
+- **已知问题**: velocity_smoother 激活后偶发服务卡死（需清进程+重启 daemon）；EKF 在高负载下更新率不稳定；转向未标定（默认 scale=0.5）。
+
 ## 5. 独立语音测试
 
 该入口只启动火山 TTS consumer，不启动底盘、Nav2、视觉或任务。先设置凭据并确认播放器：

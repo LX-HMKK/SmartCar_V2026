@@ -1,7 +1,7 @@
 schema_version: 1
 name: full_course_rule_baseline
 frame_id: odom_combined
-calibrated: false
+calibrated: true
 source:
   kind: competition_rule_diagram
   diagrams:

@@ -1,5 +1,57 @@
 # 变更日志
 
+## 2026-07-21 - 实车标定与导航验证
+
+### 标定完成
+
+- **陀螺仪**: `gyro_z_bias = 0.000853 rad/s`（静止采样 173 点，均值 0.049°/s）。
+- **外参**（URDF 理论值 + 现场微调）:
+  - `base_footprint → base_link`: (0.0841, 0, 0.03) — 后轴投影至底盘几何中心
+  - `base_link → laser`: (-0.05, 0, 0.23) — 底盘中心上方 12cm，后移 5cm 减少车身自检
+  - `base_link → camera`: (0.1205, 0, 0.11) — URDF camera_joint
+- **轮速**: `longitudinal_velocity_scale = 1.03` 验证通过（直行 1m 里程计 ≈ 实测）。
+- **转向**: 跳过（用户选择优先验证导航）。
+
+### 参数链路打通
+
+- `gyro_z_bias` 等 8 个传感器标定参数从 `smartcar_system.launch.py` 经 `smartcar_bringup.launch.py` → `origincar_bringup.launch.py` → `base_serial.launch.py` 完整传递。
+- `bringup_coord.yaml` 新增 `calibration` 节记录标定值，`extrinsics` 全部标记 `measured: true`。
+
+### 导航验证
+
+- **P → a_task 任务发布点** 导航成功，0.15 m/s，约 35s 完成，自动锁停。
+- 0.30 m/s 提速导致 EKF 更新超限 (`Failed to meet update rate`) 和 BT 过载，车失控乱跑，已恢复 0.15 m/s。
+
+### 避障调优（2D LiDAR + 锥桶）
+
+关键发现：2D LiDAR 无高度信息，锥桶上窄下宽——雷达只看到上半窄截面，车体下半蹭宽底。
+
+| 参数 | 初始值 | 最终值 | 说明 |
+|---|---|---|---|
+| `footprint` | `[[±0.168, ±0.112]]` 对称 | `[[0.27,0.13],[-0.10,-0.13]]` 非对称 | 后轴原点，前 0.27m 后 0.10m |
+| `footprint_padding` | 无 | 0.03 | 额外车身间隙 |
+| `obstacle_min_range` | 0.0 | 0.25 | 过滤 25cm 内车身自检回波 |
+| 局部 `inflation_radius` | 0.30 | 0.55 | 锥桶膨胀补偿 |
+| 全局 `inflation_radius` | 0.45 | 0.65 | 路径规划提前绕行 |
+| `xy_goal_tolerance` | 0.15 | 0.25 | Ackermann 无法原地旋转，放宽防兜圈 |
+| `yaw_goal_tolerance` | 0.20 | 0.35 | 同上 |
+
+### 已知问题
+
+1. **RDK X5 性能瓶颈**: EKF 在高负载下无法维持更新率，BT 100Hz tick 偶发超限。速度 > 0.20 m/s 时风险增大。
+2. **ROS2 lifecycle 卡死**: `velocity_smoother` 激活后偶发 `get_state` 服务无响应，需彻底清理进程 + 重启 daemon 恢复。
+3. **`navigation_test.launch.py` 外参默认全零**: 必须显式传入 `base_x/laser_x/laser_z` 等参数，否则 TF 错误导致 costmap 充满致命障碍。
+4. **转向标定未做**: `steering_command_scale=0.5` 保持默认，航向偏差可能累积。
+5. **路线未实测标定**: 航点坐标来自规则图推算，`calibrated` 为测试性标记。
+
+### 修改文件
+
+- `src/origincar/origincar_base/launch/origincar_bringup.launch.py` — 校准参数声明与转发
+- `src/smartcar_bringup/config/bringup_coord.yaml` — 外参实测值 + calibration 节
+- `src/smartcar_bringup/launch/smartcar_bringup.launch.py` — 校准参数中转
+- `src/smartcar_bringup/launch/smartcar_system.launch.py` — 校准参数入口默认值
+- `src/smartcar_nav2/config/field_test_nav2_params.yaml` — 避障/终点容忍度调优
+
 ## 2026-07-19 - 场地路线与独立测试入口
 
 ### 新增
