@@ -41,7 +41,6 @@ from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 FIXTURE_ARGUMENT = "--system-smoke-fixture"
 MANAGED_NODES = (
     "controller_server",
-    "smoother_server",
     "planner_server",
     "behavior_server",
     "bt_navigator",

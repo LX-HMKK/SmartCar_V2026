@@ -56,6 +56,11 @@ class NavigationContracts(unittest.TestCase):
         self.assertNotIn('"arm_timeout_sec": "30.0"', source)
         self.assertIn("navigate_to_pose_field_test.xml", source)
         self.assertIn('"route_end_id": LaunchConfiguration("route_end_id")', source)
+        self.assertIn('"use_waypoint_follower": "false"', source)
+        self.assertIn(
+            'DeclareLaunchArgument("use_obstacle", default_value="false")',
+            source,
+        )
         for excluded in ("smartcar_task", "smartcar_vision", "smartcar_speech"):
             self.assertNotIn(excluded, source)
 
@@ -75,6 +80,10 @@ class NavigationContracts(unittest.TestCase):
         self.assertNotIn(
             "backup",
             params["behavior_server"]["ros__parameters"]["behavior_plugins"],
+        )
+        self.assertEqual(
+            params["behavior_server"]["ros__parameters"]["behavior_plugins"],
+            ["wait"],
         )
 
     def test_field_tree_has_tight_pass_radius_and_no_spin(self):

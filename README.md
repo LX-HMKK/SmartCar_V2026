@@ -29,6 +29,7 @@
 - RDK X5 8G，TROS ROS 2 Humble，环境入口由 `~/source_env.sh` 统一提供。
 - OriginCar 阿克曼底盘，`/odom`、`/imu/data_raw` 和可选 `/odom_laser` 经 EKF 输出 `/odom_combined`。
 - YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；没有静态地图、`map_server`、AMCL 或 SLAM。
+- `obstacle_detector_2`、Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
 - 本地 Windows 通过 WSL rsync 同步到 RDK 的单一工作空间 `/root/ros2_ws`。
 
 主要包：
@@ -100,7 +101,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
   autostart_mission:=false
 ```
 
-常用开关：`use_base`、`use_lidar`、`use_obstacle`、`use_laser_odometry`、`use_safety`、`use_nav`、`use_camera`、`use_vision`、`use_task`、`use_speech`、`nav_autostart`、`safety_emergency_stop_on_start`、`use_sim_time`。`use_laser_odometry` 和 `use_speech` 默认均为 `false`；前者启用后要求底盘、LiDAR 和额外的 `laser_odometry_calibrated` 门禁。关闭 `use_base` 时仍会保留 safety 节点，适合无硬件 bench；物理底盘开启时系统强制要求 `use_safety=true`。
+常用开关：`use_base`、`use_lidar`、`use_obstacle`、`use_laser_odometry`、`use_imu_filter`、`use_robot_description`、`use_safety`、`use_nav`、`use_camera`、`use_vision`、`use_task`、`use_speech`、`nav_autostart`、`safety_emergency_stop_on_start`、`use_sim_time`。`use_obstacle`、`use_laser_odometry`、`use_imu_filter`、`use_robot_description` 和 `use_speech` 默认均为 `false`；关闭 `use_obstacle` 不会关闭 costmap 的 `/scan` 避障。RF2O 启用后要求底盘、LiDAR 和额外的 `laser_odometry_calibrated` 门禁。关闭 `use_base` 时仍会保留 safety 节点，适合无硬件 bench；物理底盘开启时系统强制要求 `use_safety=true`。
 
 ## 场地路线与独立测试入口
 

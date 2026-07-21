@@ -95,14 +95,11 @@ class TestNav2Contracts(unittest.TestCase):
         behavior = ros_parameters(self.params, "behavior_server")
         self.assertEqual(
             behavior["behavior_plugins"],
-            ["backup", "drive_on_heading", "wait"],
+            ["backup", "wait"],
         )
         self.assertEqual(behavior["backup"]["plugin"], "nav2_behaviors/BackUp")
-        self.assertEqual(
-            behavior["drive_on_heading"]["plugin"],
-            "nav2_behaviors/DriveOnHeading",
-        )
         self.assertEqual(behavior["wait"]["plugin"], "nav2_behaviors/Wait")
+        self.assertNotIn("drive_on_heading", behavior)
         self.assertNotIn("spin", behavior)
         self.assertNotIn("nav2_recoveries", yaml.safe_dump(self.params))
 
@@ -232,12 +229,12 @@ class TestNav2Contracts(unittest.TestCase):
         output_remapping = ("cmd_vel_smoothed", "cmd_vel")
 
         for package in ("nav2_controller", "nav2_behaviors"):
-            self.assertEqual(len(calls[package]), 2)
+            self.assertEqual(len(calls[package]), 1)
             self.assertTrue(
                 all(input_remapping in remappings for remappings in calls[package])
             )
 
-        self.assertEqual(len(calls["nav2_velocity_smoother"]), 2)
+        self.assertEqual(len(calls["nav2_velocity_smoother"]), 1)
         self.assertTrue(
             all(
                 {input_remapping, output_remapping}.issubset(remappings)
@@ -248,6 +245,14 @@ class TestNav2Contracts(unittest.TestCase):
         wrapper_source = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
         self.assertNotIn("nav2_bringup_dir", wrapper_source)
         self.assertIn("'navigation_launch.py'", wrapper_source)
+
+    def test_navigation_launch_omits_unused_path_smoother(self):
+        source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
+        calls = launch_calls_by_package(source)
+        self.assertNotIn("nav2_smoother", calls)
+        self.assertNotIn("smoother_server", source)
+        self.assertIn("use_waypoint_follower", source)
+        self.assertNotIn("use_composition", source)
 
     def test_waypoints_are_valid_and_fit_the_rolling_global_costmap(self):
         global_costmap = self.params["global_costmap"]["global_costmap"][
@@ -299,7 +304,6 @@ class TestNav2Contracts(unittest.TestCase):
                 "nav2_planner",
                 "nav2_smac_planner",
                 "nav2_regulated_pure_pursuit_controller",
-                "nav2_smoother",
             }.issubset(exec_dependencies)
         )
         self.assertTrue(

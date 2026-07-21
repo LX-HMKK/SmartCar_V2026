@@ -17,6 +17,7 @@ def generate_launch_description():
         'bt_through_poses_xml_file')
     waypoints_file = LaunchConfiguration('waypoints_file')
     autostart = LaunchConfiguration('autostart')
+    use_waypoint_follower = LaunchConfiguration('use_waypoint_follower')
 
     declare_use_sim_time = DeclareLaunchArgument(
         'use_sim_time',
@@ -50,6 +51,9 @@ def generate_launch_description():
     declare_autostart = DeclareLaunchArgument(
         'autostart', default_value='true',
         description='Automatically activate Nav2 lifecycle nodes')
+    declare_use_waypoint_follower = DeclareLaunchArgument(
+        'use_waypoint_follower', default_value='true',
+        description='Start FollowWaypoints support for the mission task')
 
     nav2_bringup = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -60,6 +64,7 @@ def generate_launch_description():
             'bt_xml_file': bt_xml_file,
             'bt_through_poses_xml_file': bt_through_poses_xml_file,
             'autostart': autostart,
+            'use_waypoint_follower': use_waypoint_follower,
         }.items())
 
     return LaunchDescription([
@@ -69,5 +74,6 @@ def generate_launch_description():
         declare_bt_through_poses_xml_file,
         declare_waypoints_file,
         declare_autostart,
+        declare_use_waypoint_follower,
         nav2_bringup,
     ])

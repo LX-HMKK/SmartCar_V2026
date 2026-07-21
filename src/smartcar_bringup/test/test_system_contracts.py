@@ -42,8 +42,10 @@ class SystemContractTests(unittest.TestCase):
         expected_defaults = {
             "use_base": "true",
             "use_lidar": "true",
-            "use_obstacle": "true",
+            "use_obstacle": "false",
             "use_laser_odometry": "false",
+            "use_imu_filter": "false",
+            "use_robot_description": "false",
             "use_safety": "true",
             "use_nav": "true",
             "use_camera": "true",
@@ -72,6 +74,7 @@ class SystemContractTests(unittest.TestCase):
             self.assertIn(f'"{launch_file}"', source)
         self.assertGreaterEqual(source.count('"waypoints_file": waypoints_file'), 2)
         self.assertIn('"autostart": nav_autostart', source)
+        self.assertIn('"use_waypoint_follower": use_task', source)
         self.assertIn('"autostart_mission": autostart_mission', source)
         self.assertIn('"use_base": use_base', source)
 
@@ -84,6 +87,26 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn("use_base = LaunchConfiguration('use_base')", source)
         self.assertIn("condition=IfCondition(use_base)", source)
         self.assertIn("safety = IncludeLaunchDescription", source)
+
+    def test_unused_sensor_and_visualization_nodes_are_opt_in(self):
+        system_source = SYSTEM.read_text(encoding="utf-8")
+        vendor_source = VENDOR.read_text(encoding="utf-8")
+        self.assertEqual(launch_default(SYSTEM, "use_obstacle"), "false")
+        self.assertEqual(launch_default(SYSTEM, "use_imu_filter"), "false")
+        self.assertEqual(
+            launch_default(SYSTEM, "use_robot_description"), "false"
+        )
+        self.assertIn('"use_imu_filter": use_imu_filter', system_source)
+        self.assertIn(
+            '"use_robot_description": use_robot_description', system_source
+        )
+        self.assertIn("condition=IfCondition(use_imu_filter)", vendor_source)
+        self.assertGreaterEqual(
+            vendor_source.count(
+                "condition=IfCondition(use_robot_description)"
+            ),
+            2,
+        )
 
     def test_autostart_requires_a_real_base_chain(self):
         source = SYSTEM.read_text(encoding="utf-8")

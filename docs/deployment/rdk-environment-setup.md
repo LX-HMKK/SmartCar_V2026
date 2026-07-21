@@ -115,10 +115,12 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 | 参数 | 默认值 | 作用 |
 |---|---:|---|
-| `use_base` | `true` | 底盘、IMU、EKF、URDF/TF |
+| `use_base` | `true` | 底盘、原始 IMU、EKF 和导航必需静态 TF |
 | `use_lidar` | `true` | YDLIDAR `/scan` |
-| `use_obstacle` | `true` | obstacle detector |
+| `use_obstacle` | `false` | 可选 obstacle detector；costmap 避障不依赖它 |
 | `use_laser_odometry` | `false` | 可选 RF2O `/scan` -> `/odom_laser` |
+| `use_imu_filter` | `false` | 可选 Madgwick `/imu/data`；EKF 使用 `/imu/data_raw` |
+| `use_robot_description` | `false` | 可选 URDF、robot/joint state publisher，用于 RViz 车型显示 |
 | `use_safety` | `true` | `/cmd_vel` 到 `/cmd_vel_safe` 安全门 |
 | `safety_emergency_stop_on_start` | `false` | 节点创建时立即锁存急停 |
 | `use_nav` | `true` | Nav2 |
@@ -129,7 +131,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 | `use_speech` | `false` | 可选火山 TTS 与本地播放器 |
 | `autostart_mission` | `false` | 不自动开始任务 |
 
-`smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。`use_laser_odometry=true` 时必须同时启用底盘和 LiDAR；任务自动启动还会要求 `laser_odometry_calibrated=true`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
+`smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。`use_laser_odometry=true` 时必须同时启用底盘和 LiDAR；任务自动启动还会要求 `laser_odometry_calibrated=true`。默认精简配置不启动无消费者的 obstacle extractor、Madgwick、URDF 车型发布和 Nav2 path smoother；完整任务仍按需启动 `waypoint_follower`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
 
 ## 5. 校准数据与运动门禁
 
@@ -177,7 +179,7 @@ operator_approved
 
 | 入口 | 启动内容 | 明确不启动 |
 |---|---|---|
-| `navigation_test.launch.py` | 底盘、EKF、LiDAR、避障、安全门、Nav2、纯导航执行器；RF2O 可选 | 相机、视觉、五子任务状态机、语音 |
+| `navigation_test.launch.py` | 底盘、EKF、LiDAR、costmap 避障、安全门、精简 Nav2、纯导航执行器；RF2O 可选 | obstacle extractor、Madgwick、URDF 车型发布、waypoint follower、相机、视觉、五子任务状态机、语音 |
 | `speech_test.launch.py` | 火山 TTS consumer | 底盘、Nav2、视觉与任务 |
 | `qr_test.launch.py` | 指定相机或单图回放、zbar、QR 服务 | 底盘、Nav2、任务与语音 |
 | `vlm_test.launch.py` | 指定相机或单图回放、VLM 服务、PyQt5 HDMI UI | 底盘、Nav2、任务与语音 |

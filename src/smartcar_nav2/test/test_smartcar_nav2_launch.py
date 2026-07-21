@@ -23,6 +23,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
+from std_srvs.srv import Trigger
 from geometry_msgs.msg import TransformStamped, Twist
 from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 
@@ -30,11 +31,9 @@ from tf2_ros.static_transform_broadcaster import StaticTransformBroadcaster
 FIXTURE_ARGUMENT = "--nav2-test-fixture"
 MANAGED_NODES = (
     "controller_server",
-    "smoother_server",
     "planner_server",
     "behavior_server",
     "bt_navigator",
-    "waypoint_follower",
     "velocity_smoother",
 )
 
@@ -135,7 +134,10 @@ def generate_test_description():
         actions=[
             IncludeLaunchDescription(
                 PythonLaunchDescriptionSource(launch_file),
-                launch_arguments={"use_sim_time": "false"}.items(),
+                launch_arguments={
+                    "use_sim_time": "false",
+                    "use_waypoint_follower": "false",
+                }.items(),
             )
         ],
     )
@@ -212,9 +214,42 @@ class TestSmartcarNav2Lifecycle(unittest.TestCase):
     def _is_zero_twist(components):
         return all(value == 0.0 for value in components)
 
+    def _clear_localization_fault(self):
+        client = self.node.create_client(
+            Trigger, "/smartcar/safety/clear_localization_fault"
+        )
+        try:
+            self.assertTrue(client.wait_for_service(timeout_sec=5.0))
+            deadline = time.monotonic() + 5.0
+            last_message = "no response"
+            while time.monotonic() < deadline:
+                future = client.call_async(Trigger.Request())
+                rclpy.spin_until_future_complete(
+                    self.node, future, timeout_sec=0.5
+                )
+                if future.done() and future.result() is not None:
+                    response = future.result()
+                    last_message = response.message
+                    if response.success:
+                        return
+                time.sleep(0.05)
+            self.fail(
+                "Could not clear localization fault with fresh synthetic "
+                f"odometry: {last_message}"
+            )
+        finally:
+            self.node.destroy_client(client)
+
     def test_all_managed_nodes_become_active(self):
         self._wait_for_managed_nodes_active()
         print("Nav2 lifecycle ACTIVE: " + ", ".join(MANAGED_NODES))
+
+    def test_waypoint_follower_is_absent_in_lean_mode(self):
+        names = {
+            name
+            for name, _namespace in self.node.get_node_names_and_namespaces()
+        }
+        self.assertNotIn("waypoint_follower", names)
 
     def test_cmd_vel_has_only_velocity_smoother_publisher(self):
         self._wait_for_managed_nodes_active()
@@ -234,6 +269,7 @@ class TestSmartcarNav2Lifecycle(unittest.TestCase):
 
     def test_upstream_dropout_reaches_and_holds_exact_safe_zero(self):
         self._wait_for_managed_nodes_active()
+        self._clear_localization_fault()
         safe_samples = []
 
         def on_safe_command(message):

@@ -14,6 +14,8 @@ def generate_launch_description():
     use_lidar = LaunchConfiguration('use_lidar')
     use_obstacle = LaunchConfiguration('use_obstacle')
     use_laser_odometry = LaunchConfiguration('use_laser_odometry')
+    use_imu_filter = LaunchConfiguration('use_imu_filter')
+    use_robot_description = LaunchConfiguration('use_robot_description')
     use_safety = LaunchConfiguration('use_safety')
     use_sim_time = LaunchConfiguration('use_sim_time')
     safety_require_scan = LaunchConfiguration('safety_require_scan')
@@ -50,6 +52,8 @@ def generate_launch_description():
         launch_arguments={
             'input_topic': chassis_input_topic,
             'use_sim_time': use_sim_time,
+            'use_imu_filter': use_imu_filter,
+            'use_robot_description': use_robot_description,
             'laser_frame': laser_frame,
             **extrinsics,
         }.items(),
@@ -99,7 +103,7 @@ def generate_launch_description():
     declarations = [
         DeclareLaunchArgument('use_base', default_value='true'),
         DeclareLaunchArgument('use_lidar', default_value='true'),
-        DeclareLaunchArgument('use_obstacle', default_value='true'),
+        DeclareLaunchArgument('use_obstacle', default_value='false'),
         DeclareLaunchArgument(
             'use_laser_odometry', default_value='false'),
         DeclareLaunchArgument(
@@ -107,6 +111,8 @@ def generate_launch_description():
             default_value=os.path.join(
                 bringup_dir, 'config', 'laser_odometry.yaml')),
         DeclareLaunchArgument('use_safety', default_value='true'),
+        DeclareLaunchArgument('use_imu_filter', default_value='false'),
+        DeclareLaunchArgument('use_robot_description', default_value='false'),
         DeclareLaunchArgument('safety_require_scan', default_value='true'),
         DeclareLaunchArgument('safety_require_odom', default_value='true'),
         DeclareLaunchArgument(

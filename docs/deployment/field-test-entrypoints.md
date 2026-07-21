@@ -1,6 +1,6 @@
 # 场地路线与四项独立测试入口
 
-更新时间：2026-07-19
+更新时间：2026-07-21
 
 本文用于 RDK X5 上的分项 bench 和后续实车分阶段验收。当前代码提供了可编辑的规则图基线路线、可选 RF2O 激光里程计，以及导航、语音、二维码、图生文四个互相隔离的入口。
 
@@ -139,7 +139,7 @@ python -m unittest discover -s src/smartcar_tools/test \
 
 ## 4. 独立完整导航
 
-`navigation_test.launch.py` 只启动底盘、EKF、LiDAR、障碍物、安全门、Nav2 和路线执行器；相机、QR/VLM、五子任务状态机和语音均不启动。执行器使用 `/navigate_through_poses` 和专用行为树，现场参数的期望线速度为 `0.15 m/s`。
+`navigation_test.launch.py` 只启动底盘、EKF、LiDAR、costmap 避障、安全门、精简 Nav2 和路线执行器；相机、QR/VLM、五子任务状态机、语音、无消费者的 obstacle extractor、未接入 EKF 的 Madgwick、URDF 车型发布、path smoother 和 waypoint follower 均不启动。执行器使用 `/navigate_through_poses` 和专用行为树，现场参数的期望线速度为 `0.15 m/s`。如需诊断提取后的障碍物或在 RViz 显示完整车型，可分别显式传入 `use_obstacle:=true`、`use_robot_description:=true`；二者都不是运动依赖。
 
 当前基线路线未标定。只有获得底盘和 LiDAR 启动授权、车辆架空或场地已清空时，才可用以下启动检查节点和状态；`arm` 必须拒绝：
 

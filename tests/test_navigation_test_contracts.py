@@ -98,6 +98,17 @@ class NavigationTestContractTests(unittest.TestCase):
             self.launch_source,
         )
 
+    def test_navigation_launch_uses_the_lean_runtime_profile(self):
+        self.assertIn(
+            'DeclareLaunchArgument("use_obstacle", default_value="false")',
+            self.launch_source,
+        )
+        self.assertIn(
+            'DeclareLaunchArgument("use_imu_filter", default_value="false")',
+            self.launch_source,
+        )
+        self.assertIn('"use_waypoint_follower": "false"', self.launch_source)
+
     def test_launch_is_navigation_only_and_latches_safety_on_start(self):
         ast.parse(self.launch_source)
         self.assertIn('"safety_emergency_stop_on_start": "true"', self.launch_source)

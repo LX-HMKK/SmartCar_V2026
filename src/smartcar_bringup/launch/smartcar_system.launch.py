@@ -147,6 +147,8 @@ def generate_launch_description():
     use_lidar = LaunchConfiguration("use_lidar")
     use_obstacle = LaunchConfiguration("use_obstacle")
     use_laser_odometry = LaunchConfiguration("use_laser_odometry")
+    use_imu_filter = LaunchConfiguration("use_imu_filter")
+    use_robot_description = LaunchConfiguration("use_robot_description")
     use_safety = LaunchConfiguration("use_safety")
     use_nav = LaunchConfiguration("use_nav")
     use_task = LaunchConfiguration("use_task")
@@ -174,6 +176,8 @@ def generate_launch_description():
             "use_lidar": use_lidar,
             "use_obstacle": use_obstacle,
             "use_laser_odometry": use_laser_odometry,
+            "use_imu_filter": use_imu_filter,
+            "use_robot_description": use_robot_description,
             "laser_odometry_config_file": LaunchConfiguration(
                 "laser_odometry_config_file"),
             "use_safety": use_safety,
@@ -202,6 +206,7 @@ def generate_launch_description():
         launch_arguments={
             "use_sim_time": use_sim_time,
             "autostart": nav_autostart,
+            "use_waypoint_follower": use_task,
             "waypoints_file": waypoints_file,
         }.items(),
         condition=IfCondition(use_nav),
@@ -242,10 +247,14 @@ def generate_launch_description():
     declarations = [
         DeclareLaunchArgument("use_base", default_value="true"),
         DeclareLaunchArgument("use_lidar", default_value="true"),
-        DeclareLaunchArgument("use_obstacle", default_value="true"),
+        DeclareLaunchArgument("use_obstacle", default_value="false"),
         DeclareLaunchArgument(
             "use_laser_odometry", default_value="false"),
         DeclareLaunchArgument("use_safety", default_value="true"),
+        DeclareLaunchArgument("use_imu_filter", default_value="false"),
+        DeclareLaunchArgument(
+            "use_robot_description", default_value="false"
+        ),
         DeclareLaunchArgument("use_nav", default_value="true"),
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_vision", default_value="true"),

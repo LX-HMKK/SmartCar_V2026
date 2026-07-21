@@ -11,7 +11,7 @@ frames:
 topics:
   raw_odom: /odom
   filtered_odom: /odom_combined
-  imu: /imu/data
+  imu: /imu/data_raw
   scan: /scan
   cmd_vel: /cmd_vel
   cmd_vel_safe: /cmd_vel_safe
@@ -21,8 +21,10 @@ topics:
 toggles:
   use_base: true
   use_lidar: true
-  use_obstacle: true
+  use_obstacle: false
   use_laser_odometry: false
+  use_imu_filter: false
+  use_robot_description: false
   use_safety: true
   safety_emergency_stop_on_start: false
   use_nav: true

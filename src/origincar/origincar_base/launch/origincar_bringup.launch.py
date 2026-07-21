@@ -5,7 +5,7 @@ from pathlib import Path
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import UnlessCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -20,6 +20,8 @@ def generate_launch_description():
     carto_slam = LaunchConfiguration('carto_slam')
     input_topic = LaunchConfiguration('input_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    use_imu_filter = LaunchConfiguration('use_imu_filter')
+    use_robot_description = LaunchConfiguration('use_robot_description')
     laser_frame = LaunchConfiguration('laser_frame')
     base_x = LaunchConfiguration('base_x')
     base_y = LaunchConfiguration('base_y')
@@ -40,6 +42,8 @@ def generate_launch_description():
             'input_topic', default_value='/cmd_vel_safe',
             description='Twist input topic for chassis conversion'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('use_imu_filter', default_value='false'),
+        DeclareLaunchArgument('use_robot_description', default_value='false'),
         DeclareLaunchArgument('laser_frame', default_value='laser'),
         DeclareLaunchArgument('base_x', default_value='0.0'),
         DeclareLaunchArgument('base_y', default_value='0.0'),
@@ -68,6 +72,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(
             os.path.join(launch_dir, 'robot_mode_description.launch.py')),
         launch_arguments={'use_sim_time': use_sim_time}.items(),
+        condition=IfCondition(use_robot_description),
     )
 
     base_to_link = Node(
@@ -101,6 +106,7 @@ def generate_launch_description():
         ],
     )
     imu_filter = Node(
+        condition=IfCondition(use_imu_filter),
         package='imu_filter_madgwick',
         executable='imu_filter_madgwick_node',
         parameters=[imu_config, {'use_sim_time': use_sim_time}],
@@ -113,6 +119,7 @@ def generate_launch_description():
         remappings=[('odometry/filtered', 'odom_combined')],
     )
     joint_state_publisher = Node(
+        condition=IfCondition(use_robot_description),
         package='joint_state_publisher',
         executable='joint_state_publisher',
         name='joint_state_publisher',
