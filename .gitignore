@@ -21,3 +21,4 @@ __pycache__/
 # 备份
 *.bak
 *.orig
+.temp/

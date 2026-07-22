@@ -48,7 +48,7 @@ extrinsics:
     parent: base_link
     child: laser
     xyz: [-0.05, 0.0, 0.23]
-    rpy: [0.0, 0.0, 0.0]
+    rpy: [0.0, 0.0, 1.5708]
   link_to_camera:
     measured: true
     parent: base_link

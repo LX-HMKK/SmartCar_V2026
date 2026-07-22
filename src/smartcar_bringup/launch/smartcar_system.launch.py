@@ -164,6 +164,9 @@ def generate_launch_description():
         "laser_x", "laser_y", "laser_z",
         "laser_roll", "laser_pitch", "laser_yaw",
     )
+    extrinsic_defaults = {
+        "laser_yaw": "1.5708",
+    }
     sensor_calib_names = (
         "longitudinal_velocity_scale",
         "lateral_velocity_scale",
@@ -351,7 +354,8 @@ def generate_launch_description():
             "max_calibrated_steering_command_rad", default_value="0.225"),
     ]
     declarations.extend(
-        DeclareLaunchArgument(name, default_value="0.0")
+        DeclareLaunchArgument(
+            name, default_value=extrinsic_defaults.get(name, "0.0"))
         for name in extrinsic_names
     )
     declarations.extend(

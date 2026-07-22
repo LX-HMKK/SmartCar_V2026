@@ -95,7 +95,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 - 实测并替换 `default_waypoints.yaml` 占位航点（当前使用规则图推算值）。
 - 完成转向标定（`steering_command_scale` / `offset`）。
-- 标定 RF2O 激光里程计并验证退化回退。
+- 标定 RF2O 激光里程计并验证退化回退。⚠️ 已完成朝向修复（laser_yaw=1.5708），漂移率 ~14%，建议在特征丰富的竞赛场地启用。
 - 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
 - 0.30 m/s 提速触发 EKF 更新超限 + BT 过载，需性能优化后才能提速。

@@ -268,6 +268,7 @@ systemctl kill --kill-who=all --signal=SIGINT \
 - **避障参数**（`field_test_nav2_params.yaml`）:
   - 局部膨胀 0.55，全局膨胀 0.65，footprint_padding 0.03，obstacle_min_range 0.25
 - **已知问题**: velocity_smoother 激活后偶发服务卡死（需清进程+重启 daemon）；EKF 在高负载下更新率不稳定；转向未标定（默认 scale=0.5）。
+- **RF2O 激光里程计（2026-07-22）**: LiDAR 物理安装转了 90°（Y 朝后/X 朝左），通过 `laser_yaw=1.5708` 修复。修复后 X 跟踪与轮式一致，Y 漂移率 ~14%（修复前 2800%）。RF2O 以差分模式（`odom1_differential: true`）输入 EKF，协方差 x/y=0.05, yaw=0.03，pose_rejection_threshold=3.0，publish_tf=false。当前训练场地特征不足，建议保持关闭；竞赛现场特征丰富时可启用 `use_laser_odometry:=true laser_odometry_calibrated:=true`。
 
 ## 5. 独立语音测试
 

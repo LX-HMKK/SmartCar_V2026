@@ -1,5 +1,25 @@
 # 变更日志
 
+## 2026-07-22 - RF2O 激光里程计标定与 LiDAR 朝向修复
+
+### RF2O 标定
+
+- **根因发现**: 2D LiDAR 物理安装转了 90°（Y 朝后、X 朝左），导致 RF2O 前进报横向漂移（1.29m Y / 0.05m X）。
+- **修复**: `laser_yaw = 1.5708` (+90°)，在 `base_link → laser` 静态 TF 中加入 Z 轴旋转。
+- **验证结果**: 修复后 RF2O 前进跟踪与轮式里程计一致（Δx 33cm vs 30cm），Y 漂移率从 28× 降至 ~14%。
+- **RF2O 配置**（`laser_odometry.yaml`）: 10Hz，差分模式输入 EKF，pose_cov x/y=0.05 yaw=0.03，跳变拒绝 3.0m，publish_tf=false。
+- **结论**: RF2O 可用，但横向漂移仍存在（~14% X 移动量），建议在特征丰富的竞赛场地启用。当前训练场地可保持关闭。
+
+### 参数链路完善
+
+- `laser_yaw` 加入 `smartcar_system.launch.py` 的 `extrinsic_defaults` 字典，默认值 `1.5708`。
+- `bringup_coord.yaml` 的 `link_to_laser.rpy` 更新为 `[0.0, 0.0, 1.5708]`。
+
+### 修改文件
+
+- `src/smartcar_bringup/config/bringup_coord.yaml` — laser rpy 旋转
+- `src/smartcar_bringup/launch/smartcar_system.launch.py` — laser_yaw 默认值
+
 ## 2026-07-21 - 实车标定与导航验证
 
 ### 标定完成
