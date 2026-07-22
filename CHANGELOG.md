@@ -1,5 +1,27 @@
 # 变更日志
 
+## 2026-07-22 - 航点可视化、导航 RViz 与里程计诊断
+
+### 新增工具
+
+- **`waypoint_viz`**: 独立航点可视化节点，读取 Nav2 waypoints YAML，发布 MarkerArray（球体+箭头+标签）到 `/smartcar/waypoints/markers`（TRANSIENT_LOCAL QoS），不依赖导航栈。
+- **`odom_diag`**: 里程计管道诊断工具，监控 `/odom`、`/odom_combined`、`/scan` 速率和间隔统计，输出 EKF 诊断警告。
+- **`navigation.rviz`**: 导航监控 RViz 配置，包含 Global/Local Costmap、Global/Local/Transformed Plan、LaserScan、Waypoint Markers、TF、RobotModel，TopDownOrtho 视图。
+
+### 高速里程计分析
+
+- 完成 EKF/串口/CPU 管道分析，写出 `docs/review/odometry-speed-analysis.md`。
+- **关键发现**: `IntegrationClock` 在帧间隔 >250ms 时静默跳过位置积分（`max_integration_dt_sec=0.25`），与 safety `raw_odom_timeout_sec=0.25` 同窗口触发。高速下 CPU 争抢 → Control() 阻塞 → 积分跳帧 → EKF 观测矛盾。
+
+### 修改文件
+
+- `src/smartcar_tools/smartcar_tools/waypoint_viz.py` — 新增
+- `src/smartcar_tools/smartcar_tools/odom_diag.py` — 新增
+- `src/smartcar_tools/rviz/navigation.rviz` — 新增
+- `src/smartcar_tools/setup.py` — +2 entry_points
+- `docs/review/odometry-speed-analysis.md` — 新增
+- `CLAUDE.md` — 更新工具引用与诊断命令
+
 ## 2026-07-22 - RF2O 激光里程计标定与 LiDAR 朝向修复
 
 ### RF2O 标定

@@ -46,6 +46,8 @@ setup(
             "qr_probe = smartcar_tools.qr_probe:main",
             "image_replay_node = smartcar_tools.image_replay_node:main",
             "vlm_display = smartcar_tools.vlm_display:main",
+            "waypoint_viz = smartcar_tools.waypoint_viz:main",
+            "odom_diag = smartcar_tools.odom_diag:main",
         ],
     },
 )
