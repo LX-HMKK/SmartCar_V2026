@@ -6,7 +6,7 @@
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-22，`main` 已包含完整软件里程碑，以及 RF2O 激光里程计（已标定朝向）、68 点场地基线路线和导航/语音/二维码/图生文四个独立测试入口。代码合同、RDK 构建与无硬件 smoke 已通过。实车标定与 P→任务发布点导航验证已完成，但航点实测、VLM 后端部署和完整赛道测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+截至 2026-07-22，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点历史导航验证已完成，但新航点实测、VLM 后端部署和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
 ## 高层架构
 
@@ -38,7 +38,7 @@ src/smartcar_vision/                 QR 与 VLM 服务
 src/smartcar_speech/                 可选火山 TTS consumer
 src/smartcar_task/                   五子任务状态机
 src/smartcar_bringup/                分层和完整系统 launch
-src/smartcar_tools/                  场地路线、独立测试入口、航点可视化与里程计诊断
+src/smartcar_tools/                  场地参考、航点编辑、媒体入口与里程计诊断
 scripts/                             RDK 同步与环境脚本
 tests/                               仓库级合同测试
 ```
@@ -69,7 +69,8 @@ RDK 通过无线网络免密连接（IP 由现场 DHCP 分配，以 `! ssh root@
 ```bash
 source ~/source_env.sh
 cd /root/ros2_ws
-colcon build --symlink-install
+colcon build --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 colcon test-result --delete-yes
 colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
@@ -98,45 +99,29 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - 完成转向标定（`steering_command_scale` / `offset`）。
 - 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
-- 0.30 m/s 提速触发 EKF 更新超限 + BT 过载，需性能优化后才能提速。
+- 0.30 m/s 运动异常尚未完成单变量复测；历史 EKF 超期发生在发车前，不能归因于车速。已实施首批调度修复，仍须现场分级验证。
 
 五个运动门禁默认为 `false`，仅对应项目实测完成后显式开启。
 
 ### 已知问题与避坑指南
 
 - **LiDAR 物理朝向**：2D LiDAR 物理安装转了 90°（Y 朝后/X 朝左），`laser_yaw=1.5708` 已修复。若更换/重新安装 LiDAR 必须重新确认朝向。
-- **`navigation_test.launch.py` 外参默认全零**：启动时必须显式传入 `base_x/base_z/laser_x/laser_z/laser_yaw`，否则 TF 全零导致 costmap 充满致命障碍。
 - **`cmd_vel_to_ackermann_drive` 竞争**：直接往 `/ackermann_cmd` pub 时，必须先 kill 该节点，否则 safety_node 20Hz 零值覆盖你的指令（车不动或抖动）。
 - **`velocity_smoother` 生命周期卡死**：激活后偶发 `get_state` 服务无响应。解决：`ros2 daemon stop` → `kill -9` 所有 ROS 进程 → `ros2 daemon start` → 重启 launch。
 - **2D LiDAR 无法区分高度**：锥桶上窄下宽——雷达看到的是上半窄截面，车体下半蹭宽底。通过非对称 footprint（后轴原点）+ `obstacle_min_range=0.25` 滤车身 + 膨胀半径补偿，不能根本解决。物理上需 3D 感知或更谨慎的锥桶摆放。
 - **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.35` 已修复。
-- **0.30 m/s 提速失控**：EKF `Failed to meet update rate` + BT tick rate 超限。根因分析见 `docs/review/odometry-speed-analysis.md`。关键发现：`origincar_base` 的 `IntegrationClock` 在串口帧间隔 >250ms 时静默跳过位置积分（`max_integration_dt_sec=0.25`），与 safety `raw_odom_timeout_sec=0.25` 同窗口触发。高速下 CPU 争抢 → Control() 阻塞 → 串口间隙 → 积分跳帧 → EKF 观测矛盾。安全速度 0.15 m/s。
+- **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版“IntegrationClock 导致 EKF pose/速度冲突”的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
 
-### 导航快捷命令
+### 航点编辑与可视化
 
-RDK 上启动纯导航测试（到任务发布点）：
-
-```bash
-# 车放在 P 原点，车头朝 +X
-source ~/source_env.sh
-nohup /tmp/start_nav.sh > /tmp/nav_test.log 2>&1 &   # 启动导航栈 + 路线执行器
-# 等待约 20s 后：
-ros2 run smartcar_tools navigation_probe start        # prepare → arm → start
-# 紧急停止：
-ros2 run smartcar_tools navigation_probe stop
-# 或在另一终端查看状态：
-ros2 topic echo /smartcar/test/navigation/status --once --field data
-```
-
-RViz 可视化（HDMI 屏幕）：
+RDK 上启动无运动航点编辑器：
 
 ```bash
 export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
-# 导航监控（costmap + plan + 航点）：
-rviz2 -d /root/ros2_ws/src/smartcar_tools/rviz/navigation.rviz
-# 航点编辑器（编辑 route YAML）：
-rviz2 -d /root/ros2_ws/src/smartcar_tools/rviz/route_editor.rviz
+ros2 launch smartcar_tools waypoint_editor.launch.py
 ```
+
+编辑器直接拖拽唯一的 `default_waypoints.yaml`，同时显示官方尺寸参考层；右键航点可保存、撤销或重载。它不启动 Nav2 或底盘，并默认锁存软件急停。
 
 航点可视化（独立工具，不依赖导航栈）：
 

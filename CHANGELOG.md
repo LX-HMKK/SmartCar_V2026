@@ -1,17 +1,33 @@
 # 变更日志
 
+## 2026-07-22 - 定位更新率取证纠偏与调度减负
+
+- 原始日志证明最严重的 EKF 更新率告警发生在发车前，撤回“0.30 m/s 导致 EKF 过载”和“IntegrationClock pose/速度冲突”的无证据归因。
+- EKF `transform_timeout` 改为非阻塞并开启诊断；保持 30 Hz、`sensor_timeout` 和输入队列不变。
+- Nav2 BT tick 由 10 ms 调整为 20 ms；controller 和 costmap 更新频率不变。
+- RF2O 三处逐帧 INFO 改为 DEBUG，避免 10 Hz 热路径持续写日志。
+- 显式隔离 safety 与 RF2O 参数文件，并将安全输入 QoS 收敛为 `KeepLast(1)`。
+- 修复 `odom_diag` 在 timer 回调内 shutdown 后可能不退出的问题，并加入 `/imu/data_raw` 统计。
+
+## 2026-07-22 - 统一九点任务路线与官方场地参考层
+
+- 删除 68 点 `full_course_route`、独立纯导航 launch/runner/probe、专用 Nav2 配置及对应测试，只保留 `default_waypoints.yaml`。
+- 路线调整为 P -> QR 留距位 -> 出站通道 -> C 区四角（角 1 触发 VLM 并朝左）-> 回程通道 -> P；QR/VLM/返程按三段 `FollowWaypoints` 提交。
+- 新增官方规则图 Marker 参考层和 RViz Interactive Marker 编辑器，可直接拖动位置、旋转航向并右键保存/撤销/重载；编辑器不启动运动栈且默认锁存急停。
+- `pull-route` 替换为只回传唯一语义路线的 `pull-waypoints`。
+
 ## 2026-07-22 - 航点可视化、导航 RViz 与里程计诊断
 
 ### 新增工具
 
 - **`waypoint_viz`**: 独立航点可视化节点，读取 Nav2 waypoints YAML，发布 MarkerArray（球体+箭头+标签）到 `/smartcar/waypoints/markers`（TRANSIENT_LOCAL QoS），不依赖导航栈。
-- **`odom_diag`**: 里程计管道诊断工具，监控 `/odom`、`/odom_combined`、`/scan` 速率和间隔统计，输出 EKF 诊断警告。
+- **`odom_diag`**: 里程计管道诊断工具，监控 `/odom`、`/imu/data_raw`、`/odom_combined`、`/scan` 和 `/odom_laser` 的速率与间隔，输出 EKF 诊断警告。
 - **`navigation.rviz`**: 导航监控 RViz 配置，包含 Global/Local Costmap、Global/Local/Transformed Plan、LaserScan、Waypoint Markers、TF、RobotModel，TopDownOrtho 视图。
 
 ### 高速里程计分析
 
 - 完成 EKF/串口/CPU 管道分析，写出 `docs/review/odometry-speed-analysis.md`。
-- **关键发现**: `IntegrationClock` 在帧间隔 >250ms 时静默跳过位置积分（`max_integration_dt_sec=0.25`），与 safety `raw_odom_timeout_sec=0.25` 同窗口触发。高速下 CPU 争抢 → Control() 阻塞 → 积分跳帧 → EKF 观测矛盾。
+- **后续纠偏**: 原始 `/odom` pose 未被 EKF 融合，因此当时的 `IntegrationClock` 根因推断不成立；以本日新增的取证纠偏章节和修订后的分析文档为准。
 
 ### 修改文件
 

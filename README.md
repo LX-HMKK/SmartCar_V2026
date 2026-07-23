@@ -4,15 +4,15 @@
 
 ## 软件里程碑
 
-2026-07-19 当前软件基线已包含可选 RF2O、68 点场地基线路线和四个独立测试入口。本地根合同 130/130 通过；RDK X5 上 18 个包构建通过，干净全量测试结果为 `578 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。版本内容见 [`CHANGELOG.md`](CHANGELOG.md)。这些结果不包含真实传感器、云端 API、音频或车辆运动验收。
+当前软件基线包含可选 RF2O、一份 9 点语义任务路线、官方规则图参考层、RViz 可拖拽航点编辑器，以及语音/二维码/图生文三个独立媒体入口。2026-07-19 记录的 RDK 全量结果 `578 tests, 0 errors, 0 failures, 90 skipped` 属于删除旧纯导航链之前的历史基线；当前版本需重新完成 RDK 构建与 smoke。版本内容见 [`CHANGELOG.md`](CHANGELOG.md)。这些结果不包含真实传感器、云端 API、音频或车辆运动验收。
 
 ## 当前边界
 
-软件代码已经覆盖底盘安全门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。自动化测试和 RDK 合成传感器 smoke 已通过。
+软件代码已经覆盖底盘安全门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。删除旧纯导航链之前的自动化测试和 RDK 合成传感器 smoke 曾通过；当前 9 点路线版本仍需在 RDK 上重新构建并运行 smoke。
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
-- 五子任务的默认语义航点仍是占位坐标；纯导航另有按规则图生成的 68 点基线路线，但其 `calibrated: false`，必须现场实测后才能授权运动。
+- 唯一的 9 点语义路线来自官方规则图推算且保持 `calibrated: false`，必须现场实测后才能授权运动。
 - `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参尚未实测。
 - 转向、轮速、陀螺仪标定尚未完成。
 - RF2O 无地图连续扫描匹配已作为可选激光里程计接入，默认关闭，且已通过 RDK Humble/aarch64 构建；真实雷达时间同步、外参、协方差、漂移、异常观测拒绝和轮速/IMU 退化回退仍未实测。
@@ -45,7 +45,7 @@ src/smartcar_vision/           zbar 与有界 VLM 服务
 src/smartcar_speech/           可选火山 TTS 与本地音频播放
 src/smartcar_task/             五子任务状态机
 src/smartcar_bringup/          分层与一键系统 launch
-src/smartcar_tools/            场地路线编辑和四项独立测试入口
+src/smartcar_tools/            场地参考、航点编辑、诊断和三个媒体测试入口
 ```
 
 ## 本地开发与同步
@@ -70,13 +70,14 @@ python scripts/sync_to_rdk.py push
 ssh root@172.16.25.27
 source ~/source_env.sh
 cd /root/ros2_ws
-colcon build --symlink-install
+colcon build --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 colcon test-result --delete-yes
 colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-19 最近一次已记录的全工作区结果为 18 个包构建通过，`578 tests, 0 errors, 0 failures, 90 skipped`。`ydlidar_ros2_driver`、`origincar_bringup`、`origincar_description` 的继承源码全量 lint 为显式 opt-in；需要清理 vendor 风格债务时使用 `colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不影响默认功能测试。
+2026-07-19 最近一次已记录的全工作区结果为 18 个包构建通过，`578 tests, 0 errors, 0 failures, 90 skipped`。该结果来自删除旧纯导航链之前，不能作为当前 9 点路线版本的验证证据；当前版本须重新执行上述构建和测试。`ydlidar_ros2_driver`、`origincar_bringup`、`origincar_description` 的继承源码全量 lint 为显式 opt-in；需要清理 vendor 风格债务时使用 `colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不影响默认功能测试。
 
 ## 无硬件 smoke
 
@@ -105,9 +106,9 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 ## 场地路线与独立测试入口
 
-`smartcar_tools` 提供互相隔离的纯导航、语音、二维码和图生文入口，以及 `route_tool`/RViz 路线微调。纯导航通过 `/navigate_through_poses` 执行 P -> 任务发布点 -> 中央通道 -> C 环顺时针一圈 -> P，不启动相机、视觉任务、状态机或语音；其 `prepare -> arm -> start` 服务链默认保持急停锁存，任何终态都会重新锁停。
+`smartcar_tools` 提供官方规则图参考层、直接拖拽 `default_waypoints.yaml` 的 RViz 编辑器，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘，并默认锁存软件急停。
 
-规则图只提供了几何基线，P 区和任务发布点仍含估算值。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整命令、安全顺序、HDMI 的 `DISPLAY`/`XAUTHORITY` 设置和单文件 `pull-route` 同步方式见 [`docs/deployment/field-test-entrypoints.md`](docs/deployment/field-test-entrypoints.md)。
+规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整编辑命令、HDMI 的 `DISPLAY`/`XAUTHORITY` 设置和单文件 `pull-waypoints` 同步方式见 [`docs/deployment/field-test-entrypoints.md`](docs/deployment/field-test-entrypoints.md)。
 
 真实相机默认使用 Aurora RGB；关闭相机但保留服务时需要提供合成或外部图像话题：
 
@@ -148,7 +149,7 @@ ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
   /cmd_vel /cmd_vel_safe /ackermann_cmd /PowerVoltage \
   /tf /tf_static /smartcar/safety/status /smartcar/task/state \
   /barcode /smartcar/output/text /smartcar/output/speech \
-  /smartcar/speech/status /smartcar/test/navigation/status
+  /smartcar/speech/status
 ```
 
 关键输出：`/cmd_vel_safe`、`/smartcar/safety/status`、`/smartcar/task/state`、`/smartcar/vision/read_qr`、`/smartcar/vision/describe_scene`、`/smartcar/speech/status`。

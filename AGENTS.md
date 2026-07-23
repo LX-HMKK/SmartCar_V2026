@@ -6,7 +6,7 @@
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-19，`main` 已包含完整软件里程碑，以及可选 RF2O 激光里程计、68 点场地基线路线和导航/语音/二维码/图生文四个独立测试入口。代码合同、RDK 构建与无硬件 smoke 已通过，但实车标定、端侧模型部署和运动测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+截至 2026-07-22，仓库已收敛为一份 9 点语义任务路线，并提供官方规则图参考层、RViz 可拖拽航点编辑器，以及语音/二维码/图生文三个独立媒体测试入口。旧 68 点路线和独立纯导航测试链已删除。实车航点标定、端侧模型部署和完整任务运动测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
 ## 高层架构
 
@@ -38,7 +38,7 @@ src/smartcar_vision/                 QR 与 VLM 服务
 src/smartcar_speech/                 可选火山 TTS consumer
 src/smartcar_task/                   五子任务状态机
 src/smartcar_bringup/                分层和完整系统 launch
-src/smartcar_tools/                  场地路线与四项独立测试入口
+src/smartcar_tools/                  场地参考、航点编辑、诊断与三个媒体测试入口
 scripts/                             RDK 同步与环境脚本
 tests/                               仓库级合同测试
 ```
@@ -69,13 +69,14 @@ RDK 当前通过无线网络免密连接：`ssh root@172.16.25.27`；有线备�
 ```bash
 source ~/source_env.sh
 cd /root/ros2_ws
-colcon build --symlink-install
+colcon build --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 colcon test-result --delete-yes
 colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-19 最新证据：本地根合同 130/130；RDK 18 个包构建通过，`578 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。smoke 必须关闭底盘、LiDAR 驱动、障碍物驱动、RF2O、实体相机和语音节点，使用合成传感器，并在 Nav2 激活前锁存急停。
+2026-07-19 的 RDK 全量结果 `578 tests, 0 errors, 0 failures, 90 skipped` 属于删除旧纯导航链之前的历史基线。当前 9 点路线与交互编辑器完成后必须重新构建和测试，不能沿用旧计数。smoke 必须关闭底盘、LiDAR 驱动、障碍物驱动、RF2O、实体相机和语音节点，使用合成传感器，并在 Nav2 激活前锁存急停。
 
 vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不要把继承源码的历史格式债务混入默认功能测试。
 

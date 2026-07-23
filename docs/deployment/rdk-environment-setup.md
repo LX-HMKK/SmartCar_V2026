@@ -1,6 +1,6 @@
 # RDK X5 部署与运行手册
 
-更新时间：2026-07-21
+更新时间：2026-07-22
 
 目标板：无线 `root@172.16.25.27`；有线备用 `root@192.168.128.10`
 
@@ -40,7 +40,8 @@ RDK：
 ```bash
 source ~/source_env.sh
 cd /root/ros2_ws
-colcon build --symlink-install
+colcon build --symlink-install \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
 
 清除历史 xunit 后运行完整工作区测试：
@@ -51,7 +52,7 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-19 验证结果：18 个包构建通过，清除旧 xunit 后的全量结果为 `578 tests, 0 errors, 0 failures, 90 skipped`；其中包含 RF2O、`smartcar_tools` 和场地测试入口。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
+2026-07-19 历史验证结果：18 个包构建通过，清除旧 xunit 后的全量结果为 `578 tests, 0 errors, 0 failures, 90 skipped`；其中仍包含后来删除的 68 点路线和独立纯导航测试链，不能作为当前 9 点路线版本的验证证据。当前版本须重新执行上述构建、测试和 smoke。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
 
 ```bash
 colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON
@@ -142,7 +143,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 - `base_link -> camera`：`camera_x/camera_y/camera_z/camera_roll/camera_pitch/camera_yaw`
 - 激光里程计：RF2O `/odom_laser` 时间戳/协方差、`base_link -> laser` 外参、异常观测拒绝和退化回退阈值。
 - 五子任务语义航点：`src/smartcar_nav2/config/waypoints/default_waypoints.yaml`
-- 纯导航场地路线：`src/smartcar_tools/config/routes/full_course_route.yaml`
+- 官方规则图参考尺寸：`src/smartcar_tools/config/routes/field_geometry.yaml`
 - 转向、轮速、陀螺仪参数：`origincar_base` launch 参数
 
 `src/smartcar_bringup/config/bringup_coord.yaml` 当前只是协调和审计记录，不会自动写入 launch。运行时必须通过 launch 参数或后续实测参数文件提供真实值。
@@ -169,22 +170,22 @@ operator_approved
 
 `/odom_laser` 由 RF2O 2D scan-to-scan 算法提供，只作为 EKF 观测；RF2O 配置为 `publish_tf: false`，`odom_combined -> base_footprint` 只能由 EKF 发布。同一 `/scan` 仍继续供 Nav2 rolling costmap 避障。没有 `map_server`、AMCL、SLAM 或静态栅格地图；RF2O 不提供绝对定位，轮速/IMU 仍是其关闭或退化时的回退来源。
 
-代码接入和 RDK 构建通过不等于完成标定。`use_laser_odometry` 默认 `false`，首次启用前必须用实测数据验证时间戳、外参、协方差、漂移、异常观测拒绝和回退；完成后才可设置 `laser_odometry_calibrated=true`。复位服务为 `/smartcar/localization/reset_laser_odometry`，纯导航 `prepare` 会先复位 RF2O，再复位 EKF 原点。
+代码接入和 RDK 构建通过不等于完成标定。`use_laser_odometry` 默认 `false`，首次启用前必须用实测数据验证时间戳、外参、协方差、漂移、异常观测拒绝和回退；完成后才可设置 `laser_odometry_calibrated=true`。复位服务为 `/smartcar/localization/reset_laser_odometry`。
 
-## 6. 场地路线与四项独立测试
+## 6. 航点编辑与三个媒体分项测试
 
-规则图生成的 `full_course_route.yaml` 是 68 点基线：P 原点出发，经任务发布点、中央通道、C 环顺时针一圈，再由原通道返回 P。它当前明确标记 `calibrated: false`；P/任务点位置含规则图估算，`arm` 会拒绝未标定路线。
+仓库只保留 `default_waypoints.yaml` 一份 9 点语义路线：P -> QR 留距位 -> 出站通道 -> C 区角 1/VLM -> 角 2 -> 角 3 -> 角 4 -> 回程通道 -> P。它明确标记 `calibrated: false`，规则图推算不能替代现场实测。
 
 `smartcar_tools` 提供以下隔离入口：
 
 | 入口 | 启动内容 | 明确不启动 |
 |---|---|---|
-| `navigation_test.launch.py` | 底盘、EKF、LiDAR、costmap 避障、安全门、精简 Nav2、纯导航执行器；RF2O 可选 | obstacle extractor、Madgwick、URDF 车型发布、waypoint follower、相机、视觉、五子任务状态机、语音 |
+| `waypoint_editor.launch.py` | 官方场地参考层、语义航点交互编辑器、RViz、锁存急停 | 底盘、LiDAR、Nav2、相机、视觉与语音 |
 | `speech_test.launch.py` | 火山 TTS consumer | 底盘、Nav2、视觉与任务 |
 | `qr_test.launch.py` | 指定相机或单图回放、zbar、QR 服务 | 底盘、Nav2、任务与语音 |
 | `vlm_test.launch.py` | 指定相机或单图回放、VLM 服务、PyQt5 HDMI UI | 底盘、Nav2、任务与语音 |
 
-这些入口的完整命令、`navigation_probe start|stop` 单进程快速导航流程、分步 `prepare -> arm -> start -> stop` 排障顺序、`route_end_id` 短段验证、`route_tool`/RViz 微调、HDMI 环境变量和 `pull-route` 见 [`field-test-entrypoints.md`](field-test-entrypoints.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
+参考层只发布 `odom_combined` 下的 Marker，不发布 `/map`、TF，也不加入 Nav2 costmap。拖拽编辑、右键保存、HDMI 环境变量和 `pull-waypoints` 见 [`field-test-entrypoints.md`](field-test-entrypoints.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
 
 ## 7. 任务、停止和复位
 
@@ -288,7 +289,7 @@ ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
   /cmd_vel /cmd_vel_safe /ackermann_cmd /PowerVoltage \
   /tf /tf_static /smartcar/safety/status /smartcar/task/state \
   /barcode /smartcar/output/text /smartcar/output/speech \
-  /smartcar/speech/status /smartcar/test/navigation/status
+  /smartcar/speech/status
 ```
 
 常用检查：
@@ -308,10 +309,10 @@ ros2 action list | grep follow_waypoints
 
 1. 自动化测试和无硬件 smoke 全部通过。
 2. 测量外参，完成转向、轮速和 IMU 标定；如启用 RF2O，单独完成激光里程计数据质量和回退验证。
-3. 用 `route_tool`/RViz 标定路线，保持 `calibrated: false` 直到现场逐点复核完成。
+3. 用 `waypoint_editor.launch.py` 对照官方参考层标定唯一语义路线，现场逐点复核期间保持 `calibrated: false`。
 4. 人工物理急停可用，车轮离地测试。
 5. 低速直线、低速转向、急停、串口断线分别验证。
-6. 按单点、短段、`0.15 m/s` 全程的顺序进行纯导航测试。
-7. 纯导航验收后，最后才进行视觉、语音和五子任务联调。
+6. 通过正式任务链按 QR 段、VLM 段、返程段和 `0.15 m/s` 全程逐级验证。
+7. 最后进行视觉、语音和完整五子任务联调。
 
 在上述步骤完成前，软件状态只能称为“代码合同完成、待物理标定与实车验证”。

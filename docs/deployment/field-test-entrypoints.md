@@ -1,27 +1,59 @@
-# 场地路线与四项独立测试入口
+# 场地航点编辑与三个媒体分项入口
 
-更新时间：2026-07-21
+更新时间：2026-07-22
 
-本文用于 RDK X5 上的分项 bench 和后续实车分阶段验收。当前代码提供了可编辑的规则图基线路线、可选 RF2O 激光里程计，以及导航、语音、二维码、图生文四个互相隔离的入口。
+本文用于 RDK X5 上的场地航点标定，以及语音、二维码、图生文三个互相隔离的 bench 入口。仓库只保留一份任务路线：
 
-这些能力尚未完成 RDK 全量构建和物理验收。除单图回放等无硬件 bench 外，未经现场负责人明确授权，不得启动实体相机、音频播放器、底盘或任何实车运动。
+`src/smartcar_nav2/config/waypoints/default_waypoints.yaml`
 
-## 1. 架构与安全边界
+旧的 68 点纯导航路线、独立纯导航 launch、runner、probe 和专用 Nav2 参数已经删除。完整运动验证统一通过正式任务链完成，不再维护第二套路由。
 
-定位和导航不使用静态栅格地图，不启动 `map_server`、AMCL 或 SLAM。Nav2 使用 rolling costmap，LiDAR `/scan` 用于动态避障，并可选地提供 RF2O 连续扫描匹配：
+未经现场负责人明确授权，不得启动实体相机、音频播放器、底盘或任何实车运动。航点编辑入口不启动 Nav2、LiDAR 或底盘，并默认锁存软件急停。
+
+## 1. 坐标与参考层
+
+车辆发车时手动放在 P 区原点 `(0, 0)`，车头朝 `+X`；`+X` 指向规则图右侧，`+Y` 指向 B/C 区。规则图尺寸由以下文件保存：
 
 ```text
-/odom + /imu/data_raw + optional /odom_laser
-                    -> robot_localization EKF -> /odom_combined
+src/smartcar_tools/config/routes/field_geometry.yaml
+src/smartcar_tools/config/reference/competition_field_dimensions.png
+src/smartcar_tools/config/reference/competition_field_route_example.png
 ```
 
-RF2O 只发布 `/odom_laser`，配置为 `publish_tf: false`；`odom_combined -> base_footprint` 的唯一 TF owner 是 EKF。`use_laser_odometry` 默认 `false`，启用后才条件性要求 `laser_odometry_calibrated=true`。该布尔参数只是验收记录，不会自动完成标定。
+`field_reference_node` 根据官方尺寸发布 `/smartcar/field_reference/markers`，显示 5 m x 5 m 外框、A/B/C 分区、B 区墙体和通道、C 区环道、P 点及规则图任务标志。
 
-所有运动命令必须经过 `smartcar_safety`。纯导航启动时急停默认锁存，必须依次成功调用 `prepare`、`arm`、`start`；完成、取消、超时或异常后会重新锁停。`arm` 后 30 秒内没有调用 `start` 也会自动重新锁停。
+该参考层只用于 RViz 看图和量点：
 
-## 2. 构建与公共路径
+- 固定在 `odom_combined`。
+- 不发布 `/map` 或任何 TF。
+- 不启动 `map_server`、AMCL、SLAM。
+- 不加入 Nav2 costmap，也不会校正 EKF 漂移。
 
-先完成同步和构建：
+因此它是“规则图先验参考”，不是静态地图定位。
+
+## 2. 唯一的 9 点任务路线
+
+当前未实测基线顺序为：
+
+```text
+p_start
+  -> a_task_observe       QR 任务点留距位
+  -> b_corridor_out       出站通道口
+  -> c_corner_1           VLM，车头朝规则图左侧
+  -> c_corner_2
+  -> c_corner_3
+  -> c_corner_4
+  -> b_corridor_return    回程通道口
+  -> p_finish
+```
+
+QR 观察位距离规则图任务标志约 0.89 m，避免驶得过近。C 区四角取自官方环道中线尺寸，角 1 航向为 `-180 deg` 并触发图生文。任务状态机按 QR、VLM、返回 P 分成三个 `FollowWaypoints` action，通道和其余角点作为段内途经点，避免每个点单独创建 action。
+
+这些数值仍是规则图推算值，文件保持 `calibrated: false`。只有实车逐段验证完成后，才能显式开启 `waypoints_calibrated=true` 运动门禁。
+
+## 3. RViz 直接拖拽编辑
+
+先同步、构建并加载环境：
 
 ```powershell
 python scripts/sync_to_rdk.py push --dry-run
@@ -32,369 +64,139 @@ python scripts/sync_to_rdk.py push
 ssh root@172.16.25.27
 source ~/source_env.sh
 cd /root/ros2_ws
-colcon build --symlink-install
+# 从仍含旧纯导航入口的版本升级时，仅清理这两个包的生成目录一次，
+# 避免 setuptools/ament 在 install 中保留已删除的 launch 和脚本。
+rm -rf /root/ros2_ws/build/smartcar_tools \
+  /root/ros2_ws/install/smartcar_tools \
+  /root/ros2_ws/build/smartcar_nav2 \
+  /root/ros2_ws/install/smartcar_nav2
+colcon build --symlink-install --packages-select \
+  smartcar_task smartcar_tools smartcar_nav2 \
+  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
 
-RDK 上后续命令使用以下路径：
+启动编辑器：
 
 ```bash
-export ROUTE=/root/ros2_ws/src/smartcar_tools/config/routes/full_course_route.yaml
-export GEOMETRY=/root/ros2_ws/src/smartcar_tools/config/routes/field_geometry.yaml
+ros2 launch smartcar_tools waypoint_editor.launch.py
 ```
 
-## 3. 68 点规则图基线路线
+RViz 默认同时显示官方场地参考层、任务折线和交互航点。使用顶部 `Interact` 工具：
 
-`full_course_route.yaml` 的坐标约定为 P 区中心 `(0, 0)`、车头朝 `+X`，`+Y` 指向 B/C 区。路线顺序为 P -> 任务发布点 -> 中央通道 -> C 环顺时针一圈 -> 原通道返回 -> P。
+- 拖动平面手柄修改非 P 点的 XY 位置。
+- 拖动旋转环修改航向。
+- `p_start` 的位置和朝向固定；`p_finish` 的位置固定，只能修改最终航向。
+- 右键任一点可选择 `Save all waypoints`、`Undo last drag` 或 `Reload from disk`。
 
-场地尺寸来自规则图：整体 `5 m x 5 m`，A/B/C 高度分别为 `2/0.5/2.5 m`，中央通道宽 `1 m`，C 环外轮廓 `4 x 1.65 m`、内轮廓 `3 x 0.65 m`。C 环中线的相邻采样点不超过 `0.25 m`。P 区和任务发布点缺少完整定位尺寸，当前坐标含估算值，所以文件保持：
-
-```yaml
-calibrated: false
-```
-
-检查和列出点位：
+也可使用服务完成同样操作：
 
 ```bash
-ros2 run smartcar_tools route_tool validate "$ROUTE"
-ros2 run smartcar_tools route_tool list "$ROUTE"
+ros2 service call /smartcar/waypoint_editor/save std_srvs/srv/Trigger "{}"
+ros2 service call /smartcar/waypoint_editor/undo std_srvs/srv/Trigger "{}"
+ros2 service call /smartcar/waypoint_editor/load std_srvs/srv/Trigger "{}"
+ros2 topic echo /smartcar/waypoint_editor/status
 ```
 
-按规则尺寸重新生成基线会覆盖所有现场修改，只有明确需要重建时才使用：
+保存使用原子替换并自动写回 `calibrated: false`。编辑器启动期间不解除软件急停，也不会把修改热加载到正在运行的任务节点。
 
-```bash
-ros2 run smartcar_tools route_tool generate "$ROUTE" \
-  --geometry "$GEOMETRY" --force
-```
-
-### 3.1 命令行微调
-
-```bash
-# 直接设置一个点
-ros2 run smartcar_tools route_tool set "$ROUTE" a_task \
-  --x 4.10 --y 1.32 --yaw-deg 0
-
-# 增量微调
-ros2 run smartcar_tools route_tool nudge "$ROUTE" a_task \
-  --dx -0.02 --dy 0.01 --dyaw-deg 2
-
-# 在已有点后插入
-ros2 run smartcar_tools route_tool insert "$ROUTE" \
-  --after a_task --id a_task_exit --zone A \
-  --x 4.20 --y 1.20 --yaw-deg -45
-
-# 删除点
-ros2 run smartcar_tools route_tool delete "$ROUTE" a_task_exit
-```
-
-每次坐标或结构修改都会完整校验并原子替换文件，同时自动恢复为 `calibrated: false`。逐点测量、短段验证和路线复核全部完成后，才可由现场负责人显式记录：
-
-```bash
-ros2 run smartcar_tools route_tool mark-calibrated "$ROUTE"
-```
-
-需要撤销标记时：
-
-```bash
-ros2 run smartcar_tools route_tool mark-calibrated "$ROUTE" --uncalibrated
-```
-
-### 3.2 RViz 点位编辑
-
-路线编辑入口不启动底盘、LiDAR 或 Nav2；它启动一个默认锁存急停的 safety 节点、编辑节点和 RViz：
-
-```bash
-ros2 launch smartcar_tools route_editor.launch.py route_file:="$ROUTE"
-```
-
-替换已有点时，先在另一终端选择 ID，再在 RViz 使用 `2D Goal Pose` 给出位置和朝向：
-
-```bash
-ros2 topic pub --once /smartcar/route_editor/selected_id \
-  std_msgs/msg/String "{data: a_task}"
-```
-
-没有选择 ID 时，下一次 `2D Goal Pose` 会在终点 P 之前插入一个临时命名点。编辑服务为：
-
-```bash
-ros2 service call /smartcar/route_editor/load std_srvs/srv/Trigger "{}"
-ros2 service call /smartcar/route_editor/undo std_srvs/srv/Trigger "{}"
-ros2 service call /smartcar/route_editor/clear std_srvs/srv/Trigger "{}"
-ros2 service call /smartcar/route_editor/save std_srvs/srv/Trigger "{}"
-```
-
-`save` 会重新校验、原子写入，并把路线标为未标定。状态和选择话题分别为 `/smartcar/route_editor/status`、`/smartcar/route_editor/selected_id`。
-
-### 3.3 只回传路线
-
-在 RDK 完成点位修改后，从 Windows PowerShell 只回传单个路线文件，避免全量 `pull` 覆盖本地源码：
+现场修改后只回传这一份文件：
 
 ```powershell
-python scripts/sync_to_rdk.py pull-route --dry-run
-python scripts/sync_to_rdk.py pull-route
-python -m unittest discover -s src/smartcar_tools/test \
-  -p test_route_model.py -v
+python scripts/sync_to_rdk.py pull-waypoints --dry-run
+python scripts/sync_to_rdk.py pull-waypoints
+python -m unittest discover -s src/smartcar_task/test -p test_waypoints.py -v
 ```
 
-回传目标固定为 `src/smartcar_tools/config/routes/full_course_route.yaml`，不会删除或覆盖其他源码。
-
-## 4. 独立完整导航
-
-`navigation_test.launch.py` 只启动底盘、EKF、LiDAR、costmap 避障、安全门、精简 Nav2 和路线执行器；相机、QR/VLM、五子任务状态机、语音、无消费者的 obstacle extractor、未接入 EKF 的 Madgwick、URDF 车型发布、path smoother 和 waypoint follower 均不启动。执行器使用 `/navigate_through_poses` 和专用行为树，现场参数的期望线速度为 `0.15 m/s`。如需诊断提取后的障碍物或在 RViz 显示完整车型，可分别显式传入 `use_obstacle:=true`、`use_robot_description:=true`；二者都不是运动依赖。
-
-当前基线路线未标定。只有获得底盘和 LiDAR 启动授权、车辆架空或场地已清空时，才可用以下启动检查节点和状态；`arm` 必须拒绝：
+只读查看时可分别启动参考层和普通 Marker：
 
 ```bash
-ros2 launch smartcar_tools navigation_test.launch.py route_file:="$ROUTE"
+ros2 run smartcar_tools field_reference_node
+ros2 run smartcar_tools waypoint_viz --ros-args \
+  -p waypoints_file:=/root/ros2_ws/src/smartcar_nav2/config/waypoints/default_waypoints.yaml
 ```
 
-只有完成外参、转向、物理急停、路线和操作员授权后，才可在车辆物理放回 P 原点、车头朝 `+X` 的情况下显式打开五个门禁：
+## 4. 独立语音测试
 
-```bash
-ros2 launch smartcar_tools navigation_test.launch.py \
-  route_file:="$ROUTE" \
-  waypoints_calibrated:=true \
-  extrinsics_calibrated:=true \
-  steering_calibrated:=true \
-  emergency_stop_ready:=true \
-  operator_approved:=true \
-  use_laser_odometry:=false
-```
-
-首次地面验证必须限制为短段，不要直接提交 68 点全程。`route_end_id` 是包含式终点，例如只验证 P 到首个前进点：
-
-```bash
-ros2 launch smartcar_tools navigation_test.launch.py \
-  route_file:="$ROUTE" \
-  route_end_id:=a_depart \
-  waypoints_calibrated:=true \
-  extrinsics_calibrated:=true \
-  steering_calibrated:=true \
-  emergency_stop_ready:=true \
-  operator_approved:=true \
-  use_laser_odometry:=false
-```
-
-如已额外完成 RF2O 标定和退化回退验证，可将最后一行替换为：
-
-```bash
-  use_laser_odometry:=true laser_odometry_calibrated:=true
-```
-
-RF2O 启用后，`prepare` 会先调用 `/smartcar/localization/reset_laser_odometry`，再调用 EKF `/set_pose` 并等待新鲜 `/odom_combined` 验证 P 原点；`arm` 还会检查新鲜 `/odom_laser`。不要在未完成激光里程计实测时传入 `laser_odometry_calibrated=true`。
-
-另开终端观察 JSON 状态：
-
-```bash
-source ~/source_env.sh
-ros2 topic echo /smartcar/test/navigation/status
-```
-
-### 4.1 快速启动（推荐）
-
-启动栈后直接运行以下命令。它在一个 ROS 进程内等待 `/navigate_through_poses` 可用，再连续执行 `prepare -> arm -> start`，避免三次独立 `ros2 service call` 重复启动 Python 和等待 ROS 图发现：
-
-```bash
-source ~/source_env.sh
-ros2 run smartcar_tools navigation_probe start
-```
-
-`run` 是 `start` 的别名。默认最多等待 Nav2 60 秒；任一步失败、超时或异常都会 best-effort 调用 `stop` 重新锁停。该命令仍是操作员显式发车动作，不是自动发车，也不会绕过路线标定、传感器新鲜度或五个运动门禁。
-
-正常或紧急停止统一使用：
-
-```bash
-ros2 run smartcar_tools navigation_probe stop
-```
-
-### 4.2 分步诊断（仅排障）
-
-以下命令保留用于定位具体门禁或服务问题。每条 `ros2 service call` 都会创建新进程并重新发现 ROS 图，在 RDK 上可能耗时数秒；不要依靠三条独立命令赶 30 秒 `arm` 窗口。
-
-```bash
-# 1. 锁停、确认无活动目标、复位并验证 P 原点
-ros2 service call /smartcar/test/navigation/prepare \
-  std_srvs/srv/Trigger "{}"
-
-# 2. 检查全部门禁、TF、scan/odom 新鲜度，再解除软件急停
-ros2 service call /smartcar/test/navigation/arm \
-  std_srvs/srv/Trigger "{}"
-
-# 3. 必须在 arm 成功后的 30 秒内显式开始
-ros2 service call /smartcar/test/navigation/start \
-  std_srvs/srv/Trigger "{}"
-
-# 4. 随时停止：先锁存急停，再取消 Nav2 目标并等待终态
-ros2 service call /smartcar/test/navigation/stop \
-  std_srvs/srv/Trigger "{}"
-```
-
-若快速停止入口不可用，先直接锁存安全门：
-
-```bash
-ros2 service call /smartcar/safety/emergency_stop \
-  std_srvs/srv/SetBool "{data: true}"
-```
-
-通过 transient systemd unit 启动测试栈时，确认急停已锁存后可结束整个进程组：
-
-```bash
-systemctl kill --kill-who=all --signal=SIGINT \
-  smartcar-navigation-test.service
-```
-
-结束进程组不能替代软件急停或现场物理急停。不要先等待 ROS launch 的逐节点优雅退出，再处理仍在运行的车辆。
-
-状态包含当前点、剩余点数、剩余距离、耗时、急停状态和失败原因。首次实车不得直接跑全程，应依次完成车轮离地、单点、短段、低速全程；全程目标为经过任务发布点和中央通道，完成 C 环顺时针一圈并返回 P，终点误差目标不超过 `0.20 m`。
-
-### 4.1 2026-07-19 现场记录
-
-- 首次发车发生后退。日志确认是现场 BT 的 `RemovePassedGoals` 使用默认 `map/base_link` 导致规划失败，随后触发 `BackUp` recovery；不是底盘速度符号反转。现场树现已固定为 `odom_combined/base_footprint`，并从行为树、控制器和速度平滑器三处禁止倒车。
-- P 到 `a_depart (0.80, 0.05)` 的两点短段已成功，耗时 `6.53 s`；终态为 `succeeded`，急停重新锁存，`/cmd_vel_safe` 回到精确零。
-- P 到 `a_sweep (2.10, 0.25)` 的三点测试未出发。Smac Hybrid 连续报告到 `a_depart` 无有效路径，操作端调用 `stop` 后确认急停锁存。
-- 锁停后的诊断快照中，`/odom_combined` 位置为 `(0, 0)`，但航向为 `20.9 deg`；全局成本图中 P 和 `a_depart` 分别为膨胀代价 `101/79`，P 到 `a_sweep` 的直线采样穿过 `15` 个致命栅格。避障链已工作，当前问题是路线、定位/外参或现场障碍与成本图不一致。
-- 本轮没有完成全程导航验收。下次测试前必须核实车头物理朝向、IMU/轮式航向复位、`base_link -> laser` 实测外参，并在 RViz 中对照 `/scan`、全局成本图和路线微调点位；不得仅通过缩小膨胀半径或恢复倒车来绕过问题。
-- RDK 测试结束后导航服务已停止，运行时路线重新标记为 `calibrated: false`。
-
-### 4.2 2026-07-21 现场标定与导航记录
-
-- **标定**: 陀螺仪 `gyro_z_bias=0.000853`、外参实测（URDF + 微调 laser_x=-0.05）、轮速 1.03 验证通过、转向跳过。
-- **参数链路**: `gyro_z_bias` 等 8 个传感器参数已打通 `smartcar_system → base_serial` 完整传递链。
-- **导航成功**: P → `a_task`（任务发布点）5 航点，0.15 m/s，约 35s，`state: succeeded`。
-- **关键修复**:
-  - `navigation_test.launch.py` 外参默认全零，必须显式传入 `base_x:=0.0841 base_z:=0.03 laser_x:=-0.05 laser_z:=0.23`，否则 TF 错误导致 costmap 充满致命障碍。
-  - 2D LiDAR 无高度信息，锥桶上窄下宽。通过非对称 footprint + `obstacle_min_range=0.25` 滤车身自检 + 局部膨胀 0.55/全局 0.65 补偿锥桶下部。Footprint 以 base_footprint（后轴投影）为原点：`[[0.27,0.13],[-0.10,-0.13]]`。
-  - 终点兜圈：Ackermann 无法原地旋转，放宽 `xy_goal_tolerance=0.25, yaw_goal_tolerance=0.35` 解决。
-  - 0.30 m/s 提速导致 EKF `Failed to meet update rate` + BT tick rate 超限，车失控乱跑。当前安全速度 0.15 m/s。
-- **避障参数**（`field_test_nav2_params.yaml`）:
-  - 局部膨胀 0.55，全局膨胀 0.65，footprint_padding 0.03，obstacle_min_range 0.25
-- **已知问题**: velocity_smoother 激活后偶发服务卡死（需清进程+重启 daemon）；EKF 在高负载下更新率不稳定；转向未标定（默认 scale=0.5）。
-- **RF2O 激光里程计（2026-07-22）**: LiDAR 物理安装转了 90°（Y 朝后/X 朝左），通过 `laser_yaw=1.5708` 修复。修复后 X 跟踪与轮式一致，Y 漂移率 ~14%（修复前 2800%）。RF2O 以差分模式（`odom1_differential: true`）输入 EKF，协方差 x/y=0.05, yaw=0.03，pose_rejection_threshold=3.0，publish_tf=false。当前训练场地特征不足，建议保持关闭；竞赛现场特征丰富时可启用 `use_laser_odometry:=true laser_odometry_calibrated:=true`。
-
-## 5. 独立语音测试
-
-该入口只启动火山 TTS consumer，不启动底盘、Nav2、视觉或任务。先设置凭据并确认播放器：
+该入口只启动火山 TTS consumer，不启动底盘、Nav2、视觉或任务：
 
 ```bash
 export VOLCENGINE_TTS_APP_ID='<应用 ID>'
 export VOLCENGINE_TTS_ACCESS_TOKEN='<access token>'
-command -v ffplay
 ros2 launch smartcar_tools speech_test.launch.py
 ```
 
-另开终端发送一次请求，并跟踪同一 `request_id` 的 `queued -> synthesizing -> playing -> completed`：
+另开终端发送一次请求：
 
 ```bash
 source ~/source_env.sh
 ros2 run smartcar_tools speech_probe --text '语音分项测试'
 ```
 
-`speech_probe` 成功退出码为 `0`；请求失败为 `1`，超时为 `2`，consumer 不可用为 `3`。该测试会访问网络并实际播放音频，不能纳入无硬件自动化 smoke。
+该测试会访问网络并实际播放音频，不能纳入无硬件 smoke。
 
-## 6. 独立二维码测试
+## 5. 独立二维码测试
 
-### 6.1 单张图片回放
-
-该模式不打开实体相机：
+单张图片回放不打开实体相机：
 
 ```bash
 ros2 launch smartcar_tools qr_test.launch.py \
-  input_source:=file \
-  image_file:=/root/test-data/qr.png
+  input_source:=file image_file:=/root/test-data/qr.png
 ```
-
-另开终端调用一次或连续调用：
 
 ```bash
 source ~/source_env.sh
 ros2 run smartcar_tools qr_probe --timeout-sec 3
-ros2 run smartcar_tools qr_probe --continuous --count 10 --interval-sec 0.25
 ```
 
-输出为包含 `success`、`content`、`status` 的 JSON。退出码 `0` 表示识别成功，`1` 表示未识别，`2` 表示服务不可用，`3` 表示传输错误。
-
-### 6.2 实体相机
-
-获得实体相机启动授权后，按驱动选择：
+获得实体相机启动授权后，才可切换到相机：
 
 ```bash
 ros2 launch smartcar_tools qr_test.launch.py \
   input_source:=camera camera_driver:=aurora
-
-# 或 USB
-ros2 launch smartcar_tools qr_test.launch.py \
-  input_source:=camera camera_driver:=usb usb_video_device:=/dev/video0
 ```
 
-该入口只启动所选相机、zbar 和 QR 服务，不启动底盘或 Nav2。
+## 6. 独立图生文与 HDMI UI
 
-## 7. 独立图生文与 HDMI UI
-
-该入口启动相机或单图回放、VLM 服务和 PyQt5 UI，不启动语音、底盘、Nav2 或任务。UI 显示实时画面、触发按钮、处理状态、耗时和大字号描述文本，同时订阅 `/smartcar/output/text`。
-
-RDK 的 LightDM HDMI 默认设置为：
+该入口启动相机或单图回放、VLM 服务和 PyQt5 UI，不启动语音、底盘、Nav2 或任务。先配置 HDMI 环境：
 
 ```bash
-test -r /var/run/lightdm/root/:0
 export DISPLAY=:0
 export XAUTHORITY=/var/run/lightdm/root/:0
 ```
 
-火山 Ark 模式还需在启动前设置：
+火山 Ark 模式还需设置：
 
 ```bash
 export ARK_API_KEY='<火山 Ark API key>'
 export VOLC_ARK_MODEL='doubao-1-5-vision-pro-32k-250115'
 ```
 
-先用单张图片回放验证服务和界面：
+先使用单张图片验证：
 
 ```bash
 ros2 launch smartcar_tools vlm_test.launch.py \
-  input_source:=file \
-  image_file:=/root/test-data/person.png \
-  display:=:0 \
-  xauthority:=/var/run/lightdm/root/:0
+  input_source:=file image_file:=/root/test-data/person.png \
+  display:=:0 xauthority:=/var/run/lightdm/root/:0
 ```
 
-获得实体相机授权后再切换输入：
+获得实体相机授权后再切换：
 
 ```bash
 ros2 launch smartcar_tools vlm_test.launch.py \
   input_source:=camera camera_driver:=aurora \
-  display:=:0 \
-  xauthority:=/var/run/lightdm/root/:0
+  display:=:0 xauthority:=/var/run/lightdm/root/:0
 ```
 
-点击 UI 的触发按钮会调用 `/smartcar/vision/describe_scene`。请求包含等待新鲜图像、JPEG 编码和后端推理，硬期限为 8 秒；界面会区分处理中、成功、兜底和失败。可单独验证比赛文字输出通道：
+云端 VLM 必须确认比赛规则允许公网，并在赛场网络下完成成功率和 8 秒时限验收；回放或兜底文案不能证明真实后端可用。
 
-```bash
-ros2 topic pub --once /smartcar/output/text \
-  std_msgs/msg/String "{data: 'HDMI 文字显示测试'}"
+## 7. 验证边界
+
+本地无硬件检查：
+
+```powershell
+python -m unittest discover -s tests -v
+python -m unittest discover -s src/smartcar_task/test -v
+python -m unittest discover -s src/smartcar_tools/test -v
 ```
 
-若 HDMI 用户、显示号或 LightDM 配置变化，先用 `ps` 和 `/var/run/lightdm` 实际状态确认 X authority 文件，不要把凭据写入 launch 或仓库。云端 VLM 还必须确认比赛规则允许公网，并在赛场网络下完成成功率和 8 秒时限验收；自动化回放或兜底文案不能证明真实后端可用。
-
-## 8. 验证与证据边界
-
-新增包的无硬件检查：
-
-```bash
-source ~/source_env.sh
-cd /root/ros2_ws
-colcon test-result --delete-yes
-colcon test --packages-select \
-  rf2o_laser_odometry smartcar_tools smartcar_bringup \
-  --return-code-on-test-failure
-colcon test-result --all --verbose
-```
-
-自动化测试不得启动底盘、LiDAR 驱动、实体相机、音频播放器或发布非零速度。它只能证明构建、接口、门禁和回放合同；以下项目仍需分别记录现场证据：
-
-2026-07-19 RDK X5 记录：18 个包构建通过，干净全量结果为 `578 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过，四个测试 launch 和路线编辑 launch 均通过 `--show-args` 解析。RF2O 和 `smartcar_tools` 已完成目标板软件构建，但没有启动任何硬件。
-
-- RF2O 时间戳、外参、协方差、漂移、拒绝异常观测和轮速/IMU 回退。
-- 路线逐点坐标、C 环完整性、通过性和回到 P 的误差。
-- 相机、二维码、VLM 后端、HDMI、网络、TTS 和扬声器。
-- 物理急停、车轮离地、单点、短段和 `0.15 m/s` 全程实车测试。
-
-上述证据完成前，项目状态只能表述为“软件入口、安全合同和 RDK 无硬件验证已完成，待物理标定和实车验证”，不能表述为“可直接上场”或“完整赛道已跑通”。
+这些测试只能证明路线合同、编辑器隔离、文件写回和媒体回放接口。官方参考层不能证明现场尺寸、外参、定位漂移或路线可通行；完成外参、转向、物理急停和航点实测前，不得表述为已具备竞赛现场运行条件。
