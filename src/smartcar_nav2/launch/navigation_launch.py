@@ -91,18 +91,13 @@ def generate_launch_description():
 
     remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
 
-    param_substitutions = {
-        'use_sim_time': use_sim_time,
-        'autostart': autostart,
-    }
-
+    # NOTE(lx): RewrittenYaml output is intercepted by YDLIDAR param files on
+    # Nav2 1.1.20 (TROS Humble).  Use a pre-resolved fixed params file with
+    # hardcoded BT-XML paths instead; generated during colcon build by the
+    # CMake configure step or manually from the nav2_params.yaml template.
+    _pkg_dir = get_package_share_directory('smartcar_nav2')
     configured_params = ParameterFile(
-        RewrittenYaml(
-            source_file=params_file,
-            root_key=namespace,
-            param_rewrites=param_substitutions,
-            convert_types=True,
-        ),
+        os.path.join(_pkg_dir, 'config', 'nav2_params_fixed.yaml'),
         allow_substs=True,
     )
 

@@ -1,5 +1,62 @@
 # 变更日志
 
+## 2026-07-23 - Nav2 参数链路修复、导航调优与行为树加固
+
+### 背景
+
+实车实测中发现 Nav2 1.1.20 (TROS Humble) 的 `RewrittenYaml` 参数链路存在 bug：`ParameterFile(RewrittenYaml(...))` 生成的 Nav2 参数临时文件被 YDLIDAR 驱动参数覆盖（537 bytes vs 5918 bytes），导致 `controller_server` 的 `FollowPath.plugin` 回退默认值 `dwb_core::DWBLocalPlanner`，DWB 加载时找不到 critics 而 FATAL 崩溃。同时任务航点首段包含起点 p_start(0,0)，planner 对零长度路径规划失败。行为树 recovery 中的 Backup/Wait 不适用于阿克曼底盘。
+
+### R1: 固化参数链路（绕过 RewrittenYaml）
+
+- `navigation_launch.py` 不再使用 `RewrittenYaml`/`ReplaceString` 动态生成参数文件，改为直接加载 `nav2_params_fixed.yaml`。
+- `CMakeLists.txt` 新增 `add_custom_target(generate_fixed_params ALL)`，在 `colcon build` 时从 `nav2_params.yaml` 自动复制生成 `nav2_params_fixed.yaml`。
+- `nav2_params.yaml` 中 BT-XML 路径硬编码为安装路径，不再使用 `<bt_xml_file>` 占位符。
+- **效果**: `controller_server` 正确加载 RPP 控制器，不再回退 DWB。
+
+### R2: 行为树加固（去掉 Backup/Wait recovery）
+
+- `navigate_to_pose_w_replanning_and_recovery.xml` 和 `navigate_through_poses_w_replanning_and_recovery.xml` 移除 `RoundRobin` 中的 `Wait(1s)` 和 `BackUp(0.15m)` recovery 动作。
+- 恢复策略简化为仅 `ClearEntireCostmap(local + global)` + 重规划，适配阿克曼底盘。
+- **效果**: 遇障碍不再回退，仅清代价地图重规划。
+
+### R3: 修复起点航点零长度路径
+
+- `mission.py:_navigation_segments()` 中跳过 `task=start` 的起始航点（车已位于起点，对起点的规划是零长度路径，Smac Hybrid 无法处理）。
+- **效果**: 首个导航段从 `[p_start, a_task_observe]` 变为 `[a_task_observe]`，planner 正确生成 (0,0)→(3.45,0.80) 路径。
+
+### R4: 代价地图参数调优
+
+| 参数 | 修复前 | 修复后 | 说明 |
+|------|--------|--------|------|
+| `obstacle_min_range` | 0.0 | 0.25 | 过滤车身/LiDAR 近场噪声 |
+| 局部 `inflation_radius` | 0.20→0.55 | 0.30 | 竞赛场地平衡 |
+| 全局 `inflation_radius` | 0.20→0.65 | 0.30 | 同上 |
+
+- 膨胀半径回退至 0.30 已验证可行；0.20 过小导致车间隙过窄反复触障。
+
+### 验证结果
+
+- `FollowPath.plugin` = `nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController` ✅
+- 8/8 Nav2 lifecycle 节点 `active` ✅
+- 任务启动 → `NAVIGATING`，`/cmd_vel_safe` 正常输出（~0.13 m/s, ~0.05 rad/s）✅
+- 成功导航至 `a_task_observe`（首个 QR 航点）✅
+- QR 任务因测试场地无实际二维码而超时（预期行为）
+
+### 已知问题
+
+- **重启必须彻底清理旧进程**: 多次 kill/restart 后残留的旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等）会占用串口和 CPU。每次重启前执行完整的 `pkill -9` + `ros2 daemon stop/start` 清理。
+- **QR/VLM 任务硬依赖**: 到达航点后必须有实际二维码/人物标牌，否则任务在重试后 FAILED。纯导航测试需要将 QR/VLM 航点 task 改为 `continue` 或移除。
+
+### 修改文件
+
+- `src/smartcar_nav2/CMakeLists.txt` — 新增 `generate_fixed_params` target
+- `src/smartcar_nav2/config/nav2_params.yaml` — BT 路径硬编码，inflation 0.30，min_range 0.25，RPP @ 0.15
+- `src/smartcar_nav2/config/nav2_params_fixed.yaml` — 已删除（CMake 自动生成）
+- `src/smartcar_nav2/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml` — 去掉 backup/wait
+- `src/smartcar_nav2/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml` — 去掉 backup/wait
+- `src/smartcar_nav2/launch/navigation_launch.py` — `RewrittenYaml` → 固定文件
+- `src/smartcar_task/smartcar_task/mission.py` — `_navigation_segments` 跳过 `task=start` 航点
+
 ## 2026-07-23 - 系统 CPU 深度优化：按需 QR、USB 摄像头、C++ 安全节点
 
 ### 背景

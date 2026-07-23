@@ -262,6 +262,8 @@ class Mission:
     def _navigation_segments(waypoints):
         segment = []
         for waypoint in waypoints:
+            if not segment and waypoint.task == "start":
+                continue  # car already at start, skip zero-length nav
             segment.append(waypoint)
             if waypoint.task in {"qr", "vlm", "return"}:
                 yield tuple(segment)
