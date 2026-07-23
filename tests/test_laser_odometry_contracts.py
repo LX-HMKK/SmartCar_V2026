@@ -62,8 +62,22 @@ class LaserOdometryContractTests(unittest.TestCase):
         )
         for message in ("execution time (ms)", "LASERodom", "BASEodom"):
             with self.subTest(message=message):
-                self.assertIn(f'RCLCPP_DEBUG(get_logger(), "[rf2o] {message}', core)
-                self.assertNotIn(f'RCLCPP_INFO(get_logger(), "[rf2o] {message}', core)
+                self.assertIn(f'RCLCPP_DEBUG(logger_, "[rf2o] {message}', core)
+                self.assertNotIn(f'RCLCPP_INFO(logger_, "[rf2o] {message}', core)
+
+    def test_algorithm_reuses_the_wrapper_node_logger(self):
+        header = (RF2O / "include" / "rf2o_laser_odometry" /
+                  "CLaserOdometry2D.h").read_text(encoding="utf-8")
+        node_header = (RF2O / "include" / "rf2o_laser_odometry" /
+                       "CLaserOdometry2DNode.h").read_text(encoding="utf-8")
+        core = (RF2O / "src" / "CLaserOdometry2D.cpp").read_text(
+            encoding="utf-8")
+
+        self.assertNotIn("CLaserOdometry2D: public rclcpp::Node", header)
+        self.assertIn("CLaserOdometry2D(const rclcpp::Logger & logger)", header)
+        self.assertIn("rf2o_ref(get_logger())", node_header)
+        self.assertNotIn('Node("CLaserOdometry2D")', core)
+        self.assertNotIn("get_clock()->now()", core)
 
     def test_latest_scan_is_received_before_each_processing_cycle(self):
         node = (RF2O / "src" / "CLaserOdometry2DNode.cpp").read_text(

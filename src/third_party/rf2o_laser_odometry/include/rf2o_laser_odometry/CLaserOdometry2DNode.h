@@ -66,7 +66,9 @@ public:
     std::shared_ptr<std_srvs::srv::Trigger::Response> response);
 };
 
-inline CLaserOdometry2DNode::CLaserOdometry2DNode(): Node("CLaserOdometry2DNode")
+inline CLaserOdometry2DNode::CLaserOdometry2DNode():
+  Node("CLaserOdometry2DNode"),
+  rf2o_ref(get_logger())
 {
   RCLCPP_INFO(get_logger(), "Initializing RF2O node...");
 

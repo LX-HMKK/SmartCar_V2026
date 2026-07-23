@@ -71,11 +71,11 @@ using Pose3d = Eigen::Isometry3d;
 using MatrixS31 = Eigen::Matrix<Scalar, 3, 1>;
 using IncrementCov = Eigen::Matrix<Scalar, 3, 3>;
 
-class CLaserOdometry2D: public rclcpp::Node
+class CLaserOdometry2D
 {
 public:
 
-  CLaserOdometry2D();
+  explicit CLaserOdometry2D(const rclcpp::Logger & logger);
 
   void init(const sensor_msgs::msg::LaserScan& scan,
             const geometry_msgs::msg::Pose& initial_robot_pose);
@@ -152,6 +152,8 @@ public:
   Pose3d laser_oldpose_;
   Pose3d robot_pose_;
   Pose3d robot_oldpose_;
+
+  rclcpp::Logger logger_;
 
   bool test;
   std::vector<double> last_m_lin_speeds;
