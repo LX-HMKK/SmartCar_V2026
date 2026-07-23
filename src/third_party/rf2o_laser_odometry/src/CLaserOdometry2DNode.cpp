@@ -181,9 +181,6 @@ void CLaserOdometry2DNode::LaserCallBack(const sensor_msgs::msg::LaserScan::Shar
     //Initialize module on first scan
     if (rf2o_ref.first_laser_scan == false)
     {
-      //copy laser scan to internal variable
-      for (unsigned int i = 0; i < rf2o_ref.width; i++)
-        rf2o_ref.range_wf(i) = new_scan->ranges[i];
       new_scan_available = true;
     }
     else
@@ -257,8 +254,8 @@ int main(int argc, char** argv)
   auto myLaserOdomNode = std::make_shared<rf2o::CLaserOdometry2DNode>() ;
   rclcpp::Rate rate(myLaserOdomNode->freq);
   while (rclcpp::ok()){
-      myLaserOdomNode->process();
       rclcpp::spin_some(myLaserOdomNode);
+      myLaserOdomNode->process();
       rate.sleep();
   }
   rclcpp::shutdown();

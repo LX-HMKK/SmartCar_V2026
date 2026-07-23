@@ -65,6 +65,21 @@ class LaserOdometryContractTests(unittest.TestCase):
                 self.assertIn(f'RCLCPP_DEBUG(get_logger(), "[rf2o] {message}', core)
                 self.assertNotIn(f'RCLCPP_INFO(get_logger(), "[rf2o] {message}', core)
 
+    def test_latest_scan_is_received_before_each_processing_cycle(self):
+        node = (RF2O / "src" / "CLaserOdometry2DNode.cpp").read_text(
+            encoding="utf-8"
+        )
+        main = node[node.index("int main("):]
+
+        self.assertLess(
+            main.index("rclcpp::spin_some(myLaserOdomNode)"),
+            main.index("myLaserOdomNode->process()"),
+        )
+        self.assertNotIn(
+            "rf2o_ref.range_wf(i) = new_scan->ranges[i]",
+            node,
+        )
+
     def test_bringup_config_is_conservative(self):
         config = yaml.safe_load(
             (BRINGUP / "config" / "laser_odometry.yaml").read_text(
