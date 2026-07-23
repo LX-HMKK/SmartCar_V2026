@@ -169,11 +169,11 @@ class TestTargets(unittest.TestCase):
         self.assertTrue(any("origincar" in d for _, d in t))
         self.assertTrue(any("obstacle_detector_2" in d for _, d in t))
 
-    def test_route_pull_is_scoped_to_one_yaml(self):
-        self.assertTrue(sync.REMOTE_ROUTE.endswith("/full_course_route.yaml"))
+    def test_waypoint_pull_is_scoped_to_one_yaml(self):
+        self.assertTrue(sync.REMOTE_WAYPOINTS.endswith("/default_waypoints.yaml"))
         self.assertEqual(
-            sync.LOCAL_ROUTE.name,
-            "full_course_route.yaml",
+            sync.LOCAL_WAYPOINTS.name,
+            "default_waypoints.yaml",
         )
 
 
@@ -190,9 +190,9 @@ class TestParser(unittest.TestCase):
         with self.assertRaises(SystemExit):
             sync.build_parser().parse_args([])
 
-    def test_pull_route_subcommand(self):
-        args = sync.build_parser().parse_args(["pull-route", "--dry-run"])
-        self.assertEqual(args.command, "pull-route")
+    def test_pull_waypoints_subcommand(self):
+        args = sync.build_parser().parse_args(["pull-waypoints", "--dry-run"])
+        self.assertEqual(args.command, "pull-waypoints")
         self.assertTrue(args.dry_run)
 
 
@@ -246,13 +246,13 @@ class TestCmdPull(unittest.TestCase):
             argv = run.call_args[0][0]
             self.assertIn("--delete", argv)
 
-    def test_pull_route_only_syncs_the_route_file(self):
+    def test_pull_waypoints_only_syncs_the_waypoint_file(self):
         with mock.patch.object(sync, "ensure_rsync_available"), \
              mock.patch("subprocess.run", return_value=mock.Mock(returncode=0)) as run:
-            sync.main(["pull-route", "--dry-run"])
+            sync.main(["pull-waypoints", "--dry-run"])
             argv = run.call_args[0][0]
-            self.assertIn(sync.REMOTE_ROUTE, " ".join(argv))
-            self.assertIn("full_course_route.yaml", " ".join(argv))
+            self.assertIn(sync.REMOTE_WAYPOINTS, " ".join(argv))
+            self.assertIn("default_waypoints.yaml", " ".join(argv))
             self.assertNotIn("--delete", argv)
 
 

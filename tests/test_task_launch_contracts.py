@@ -53,9 +53,12 @@ class TaskLaunchContractTests(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_follow_waypoints_goal_contains_exactly_one_pose(self):
+    def test_follow_waypoints_goal_contains_each_segment_pose(self):
         source = NODE.read_text(encoding="utf-8")
-        self.assertIn("goal.poses = [pose]", source)
+        self.assertIn("waypoints = tuple(waypoints)", source)
+        self.assertIn("for waypoint in waypoints:", source)
+        self.assertIn("goal.poses.append(pose)", source)
+        self.assertNotIn("goal.poses = [pose]", source)
 
     def test_reset_adapter_orders_set_pose_odom_verification_and_clear(self):
         source = NODE.read_text(encoding="utf-8")

@@ -239,13 +239,14 @@ class Mission:
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
 
-        for item in waypoints:
-            navigation = self._navigate(generation, item)
+        for segment in self._navigation_segments(waypoints):
+            navigation = self._navigate(generation, segment)
             if not navigation.success:
                 return navigation
-            if item.task == "qr":
+            endpoint_task = segment[-1].task
+            if endpoint_task == "qr":
                 task_result = self._run_qr(generation)
-            elif item.task == "vlm":
+            elif endpoint_task == "vlm":
                 task_result = self._run_vlm(generation)
             else:
                 task_result = OperationResult(True, "ok")
@@ -257,14 +258,25 @@ class Mission:
         self._set_state(MissionState.COMPLETED, generation)
         return OperationResult(True, "mission_completed")
 
-    def _navigate(self, generation, waypoint):
+    @staticmethod
+    def _navigation_segments(waypoints):
+        segment = []
+        for waypoint in waypoints:
+            segment.append(waypoint)
+            if waypoint.task in {"qr", "vlm", "return"}:
+                yield tuple(segment)
+                segment.clear()
+        if segment:
+            yield tuple(segment)
+
+    def _navigate(self, generation, segment):
         self._set_state(MissionState.NAVIGATING, generation)
         attempts = self._config.navigation_retries + 1
         last_status = "navigation_failed"
         for attempt in range(attempts):
             if self._stop_requested.is_set():
                 return self._finish_stopped(generation)
-            result = self._navigator.navigate(waypoint)
+            result = self._navigator.navigate(segment)
             if self._stop_requested.is_set():
                 return self._finish_stopped(generation)
             if result.success:

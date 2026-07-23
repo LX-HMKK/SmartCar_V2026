@@ -16,6 +16,13 @@ Visualization Manager:
       Name: Field Grid
       Plane: XY
       Reference Frame: odom_combined
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Official Field Reference
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/field_reference/markers
     - Class: rviz_default_plugins/TF
       Enabled: true
       Frame Timeout: 15
@@ -86,13 +93,6 @@ Visualization Manager:
         Durability Policy: Transient Local
         Reliability Policy: Reliable
         Value: /smartcar/waypoints/markers
-    - Class: rviz_default_plugins/MarkerArray
-      Enabled: false
-      Name: Route Editor (editable)
-      Topic:
-        Durability Policy: Transient Local
-        Reliability Policy: Reliable
-        Value: /smartcar/route_editor/markers
     - Alpha: 0.8
       Class: rviz_default_plugins/Marker
       Enabled: false
@@ -131,11 +131,15 @@ Visualization Manager:
       Name: Top Down
       Scale: 80
       Target Frame: odom_combined
+      X: 2
+      Y: 2.25
     Saved:
       - Class: rviz_default_plugins/TopDownOrtho
         Name: Top Down
         Scale: 80
         Target Frame: odom_combined
+        X: 2
+        Y: 2.25
 Window Geometry:
   Height: 900
   Width: 1440

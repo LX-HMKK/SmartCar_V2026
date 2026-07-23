@@ -1,4 +1,4 @@
-"""Launch a motion-disabled RViz route editor without Nav2 or a chassis driver."""
+"""Launch the motion-disabled semantic waypoint editor and field reference."""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
 from launch.conditions import IfCondition
@@ -9,9 +9,10 @@ from launch_ros.substitutions import FindPackageShare
 
 
 def generate_launch_description():
-    route_file = LaunchConfiguration("route_file")
-    use_rviz = LaunchConfiguration("use_rviz")
+    waypoints_file = LaunchConfiguration("waypoints_file")
+    geometry_file = LaunchConfiguration("geometry_file")
     start_safety = LaunchConfiguration("start_safety")
+    use_rviz = LaunchConfiguration("use_rviz")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     safety = IncludeLaunchDescription(
@@ -30,13 +31,23 @@ def generate_launch_description():
         condition=IfCondition(start_safety),
     )
 
-    editor = Node(
+    field_reference = Node(
         package="smartcar_tools",
-        executable="route_editor_node",
-        name="route_editor",
+        executable="field_reference_node",
+        name="field_reference",
         output="screen",
         parameters=[{
-            "route_file": route_file,
+            "geometry_file": geometry_file,
+            "use_sim_time": use_sim_time,
+        }],
+    )
+    editor = Node(
+        package="smartcar_tools",
+        executable="waypoint_editor_node",
+        name="waypoint_editor",
+        output="screen",
+        parameters=[{
+            "waypoints_file": waypoints_file,
             "latch_emergency_stop": True,
             "use_sim_time": use_sim_time,
         }],
@@ -44,11 +55,11 @@ def generate_launch_description():
     rviz = Node(
         package="rviz2",
         executable="rviz2",
-        name="route_editor_rviz",
+        name="waypoint_editor_rviz",
         arguments=["-d", PathJoinSubstitution([
             FindPackageShare("smartcar_tools"),
             "rviz",
-            "route_editor.rviz",
+            "waypoint_editor.rviz",
         ])],
         output="screen",
         condition=IfCondition(use_rviz),
@@ -56,26 +67,28 @@ def generate_launch_description():
 
     return LaunchDescription([
         DeclareLaunchArgument(
-            "route_file",
+            "waypoints_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_nav2"),
+                "config",
+                "waypoints",
+                "default_waypoints.yaml",
+            ]),
+        ),
+        DeclareLaunchArgument(
+            "geometry_file",
             default_value=PathJoinSubstitution([
                 FindPackageShare("smartcar_tools"),
                 "config",
                 "routes",
-                "full_course_route.yaml",
+                "field_geometry.yaml",
             ]),
-            description="Route YAML to load and atomically update",
         ),
-        DeclareLaunchArgument(
-            "start_safety",
-            default_value="true",
-            description=(
-                "Start a standalone emergency-stopped safety node; set false "
-                "when reusing an already running safety node"
-            ),
-        ),
+        DeclareLaunchArgument("start_safety", default_value="true"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         safety,
+        field_reference,
         editor,
         rviz,
     ])

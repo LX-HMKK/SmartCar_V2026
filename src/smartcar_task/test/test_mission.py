@@ -70,8 +70,8 @@ class FakeNavigator:
     def wait_ready(self, _timeout_sec):
         return self.ready
 
-    def navigate(self, item):
-        self.calls.append(item)
+    def navigate(self, segment):
+        self.calls.append(tuple(segment))
         self.active = True
         if self.on_navigate is not None:
             self.on_navigate()
@@ -90,8 +90,8 @@ class FakeNavigator:
 
 
 class UnconfirmedNavigator(FakeNavigator):
-    def navigate(self, item):
-        self.calls.append(item)
+    def navigate(self, segment):
+        self.calls.append(tuple(segment))
         self.active = True
         return OperationResult(False, "cancel_unconfirmed")
 
@@ -161,25 +161,84 @@ class MissionTests(unittest.TestCase):
         )
         return self.mission
 
-    def test_success_path_navigates_one_waypoint_at_a_time_and_runs_tasks(self):
+    def test_success_path_navigates_three_segments_and_runs_endpoint_tasks(self):
         vision = FakeVision(
             qr_results=[OperationResult(True, "ok", "WARD-A")],
             vlm_results=[OperationResult(True, "ok", "person description")],
         )
         mission = self.make_mission(vision=vision)
-        items = [waypoint("start"), waypoint("qr", 1.0), waypoint("vlm", 2.0)]
+        items = [
+            waypoint("start", 0.0),
+            waypoint("qr", 1.0),
+            waypoint("corridor", 2.0),
+            waypoint("vlm", 3.0),
+            waypoint("loop", 4.0),
+            waypoint("loop", 5.0),
+            waypoint("loop", 6.0),
+            waypoint("corridor", 7.0),
+            waypoint("return", 8.0),
+        ]
 
         result = mission.execute(items)
 
         self.assertTrue(result.success, result.status)
         self.assertEqual(mission.state, MissionState.COMPLETED)
-        self.assertEqual(self.navigator.calls, items)
+        self.assertEqual(
+            self.navigator.calls,
+            [tuple(items[:2]), tuple(items[2:4]), tuple(items[4:])],
+        )
         self.assertEqual(vision.ready_calls, [(True, True)])
         self.assertEqual(self.output.text, ["WARD-A", "person description"])
         self.assertEqual(self.output.speech, ["WARD-A", "person description"])
         self.assertIn(MissionState.NAVIGATING.value, self.output.states)
         self.assertIn(MissionState.RUNNING_QR.value, self.output.states)
         self.assertIn(MissionState.RUNNING_VLM.value, self.output.states)
+
+    def test_endpoint_task_waits_for_its_navigation_segment(self):
+        items = [
+            waypoint("start"),
+            waypoint("qr", 1.0),
+            waypoint("corridor", 2.0),
+            waypoint("vlm", 3.0),
+        ]
+        navigator = FakeNavigator(results=[
+            OperationResult(True, "ok"),
+            OperationResult(False, "planner_failed"),
+            OperationResult(False, "planner_failed"),
+        ])
+        vision = FakeVision(
+            qr_results=[OperationResult(True, "ok", "WARD-A")],
+            vlm_results=[OperationResult(True, "ok", "must-not-run")],
+        )
+        mission = self.make_mission(navigator=navigator, vision=vision)
+
+        result = mission.execute(items)
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "navigation_failed:planner_failed")
+        self.assertEqual(
+            navigator.calls,
+            [tuple(items[:2]), tuple(items[2:]), tuple(items[2:])],
+        )
+        self.assertEqual(len(vision.qr_calls), 1)
+        self.assertEqual(vision.vlm_calls, [])
+
+    def test_qr_task_is_not_run_when_its_navigation_segment_fails(self):
+        items = [waypoint("start"), waypoint("qr", 1.0)]
+        navigator = FakeNavigator(results=[
+            OperationResult(False, "planner_failed"),
+            OperationResult(False, "planner_failed"),
+        ])
+        vision = FakeVision(
+            qr_results=[OperationResult(True, "ok", "must-not-run")],
+        )
+        mission = self.make_mission(navigator=navigator, vision=vision)
+
+        result = mission.execute(items)
+
+        self.assertFalse(result.success)
+        self.assertEqual(navigator.calls, [tuple(items), tuple(items)])
+        self.assertEqual(vision.qr_calls, [])
 
     def test_navigation_retries_once_before_continuing(self):
         navigator = FakeNavigator(results=[
@@ -192,6 +251,10 @@ class MissionTests(unittest.TestCase):
 
         self.assertTrue(result.success)
         self.assertEqual(len(navigator.calls), 2)
+        self.assertEqual(
+            navigator.calls,
+            [(waypoint("return"),), (waypoint("return"),)],
+        )
 
     def test_qr_settle_and_single_retry_use_fresh_request_times(self):
         vision = FakeVision(qr_results=[

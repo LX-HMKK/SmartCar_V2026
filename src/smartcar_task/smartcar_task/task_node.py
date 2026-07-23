@@ -149,23 +149,29 @@ class RosNavigator:
                 return False
         return self._client.wait_for_server(timeout_sec=float(timeout_sec))
 
-    def navigate(self, waypoint):
+    def navigate(self, waypoints):
+        waypoints = tuple(waypoints)
+        if not waypoints:
+            return OperationResult(False, "navigation_segment_empty")
+
         goal = FollowWaypoints.Goal()
-        pose = PoseStamped()
-        pose.header.stamp = self._node.get_clock().now().to_msg()
-        pose.header.frame_id = waypoint.frame_id
-        (
-            pose.pose.position.x,
-            pose.pose.position.y,
-            pose.pose.position.z,
-        ) = waypoint.position
-        (
-            pose.pose.orientation.x,
-            pose.pose.orientation.y,
-            pose.pose.orientation.z,
-            pose.pose.orientation.w,
-        ) = waypoint.orientation
-        goal.poses = [pose]
+        stamp = self._node.get_clock().now().to_msg()
+        for waypoint in waypoints:
+            pose = PoseStamped()
+            pose.header.stamp = stamp
+            pose.header.frame_id = waypoint.frame_id
+            (
+                pose.pose.position.x,
+                pose.pose.position.y,
+                pose.pose.position.z,
+            ) = waypoint.position
+            (
+                pose.pose.orientation.x,
+                pose.pose.orientation.y,
+                pose.pose.orientation.z,
+                pose.pose.orientation.w,
+            ) = waypoint.orientation
+            goal.poses.append(pose)
 
         with self._condition:
             if self._active_locked():

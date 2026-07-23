@@ -4,7 +4,7 @@
 子命令：
   push         本机 src/ + config/ -> RDK /root/ros2_ws/{src,config}/（--delete 镜像）
   pull         RDK /root/ros2_ws/src/ -> 本机 src/（反向，慎用）
-  pull-route   仅回传 RDK 上现场微调后的纯导航路线 YAML
+  pull-waypoints  仅回传 RDK 上现场微调后的语义航点 YAML
   init-vendor  一次性回传官方 origincar 与第三方 obstacle_detector_2 到本机
   setup        scp source_env.sh 到 RDK ~/
 
@@ -38,10 +38,10 @@ LOCAL_VENDOR_ORIGINCAR = LOCAL_SRC / "origincar"
 LOCAL_THIRD_PARTY = LOCAL_SRC / "third_party"
 LOCAL_OBSTACLE = LOCAL_THIRD_PARTY / "obstacle_detector_2"
 LOCAL_SOURCE_ENV = REPO_ROOT / "scripts" / "source_env.sh"
-ROUTE_RELATIVE_PATH = Path(
-    "src/smartcar_tools/config/routes/full_course_route.yaml")
-LOCAL_ROUTE = REPO_ROOT / ROUTE_RELATIVE_PATH
-REMOTE_ROUTE = f"{REMOTE_WS}/{ROUTE_RELATIVE_PATH.as_posix()}"
+WAYPOINTS_RELATIVE_PATH = Path(
+    "src/smartcar_nav2/config/waypoints/default_waypoints.yaml")
+LOCAL_WAYPOINTS = REPO_ROOT / WAYPOINTS_RELATIVE_PATH
+REMOTE_WAYPOINTS = f"{REMOTE_WS}/{WAYPOINTS_RELATIVE_PATH.as_posix()}"
 
 EXCLUDES = [
     "**/.git/", "build/", "install/", "log/",
@@ -196,11 +196,11 @@ def build_parser():
     p.set_defaults(func="pull")
 
     p = sub.add_parser(
-        "pull-route",
-        help="仅回传 RDK 上现场微调后的 full_course_route.yaml",
+        "pull-waypoints",
+        help="仅回传 RDK 上现场微调后的 default_waypoints.yaml",
     )
     p.add_argument("--dry-run", action="store_true")
-    p.set_defaults(func="pull_route")
+    p.set_defaults(func="pull_waypoints")
 
     p = sub.add_parser("init-vendor", help="一次性回传官方包与第三方")
     p.add_argument("--dry-run", action="store_true")
@@ -240,11 +240,11 @@ def cmd_pull(args):
         run_rsync(src, dst, delete=delete, dry_run=args.dry_run)
 
 
-def cmd_pull_route(args):
+def cmd_pull_waypoints(args):
     ensure_rsync_available()
     run_rsync(
-        f"{HOST}:{REMOTE_ROUTE}",
-        str(LOCAL_ROUTE),
+        f"{HOST}:{REMOTE_WAYPOINTS}",
+        str(LOCAL_WAYPOINTS),
         delete=False,
         dry_run=args.dry_run,
         excludes=[],
@@ -274,7 +274,7 @@ def cmd_setup(args):
 _DISPATCH = {
     "push": cmd_push,
     "pull": cmd_pull,
-    "pull_route": cmd_pull_route,
+    "pull_waypoints": cmd_pull_waypoints,
     "init_vendor": cmd_init_vendor,
     "setup": cmd_setup,
 }

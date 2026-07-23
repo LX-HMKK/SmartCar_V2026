@@ -58,8 +58,13 @@ class RosAdapterTests(unittest.TestCase):
 
     def test_follow_waypoints_success_and_cancel_reach_terminal_results(self):
         modes = ["success", "cancel"]
+        received_poses = []
 
         def execute(goal_handle):
+            received_poses.append(tuple(
+                (pose.header.frame_id, pose.pose.position.x)
+                for pose in goal_handle.request.poses
+            ))
             mode = modes.pop(0)
             if mode == "success":
                 goal_handle.succeed()
@@ -95,10 +100,21 @@ class RosAdapterTests(unittest.TestCase):
             orientation=(0.0, 0.0, 0.0, 1.0),
             task="start",
         )
+        endpoint = Waypoint(
+            frame_id="odom_combined",
+            position=(1.0, 0.0, 0.0),
+            orientation=(0.0, 0.0, 0.0, 1.0),
+            task="qr",
+        )
+        segment = (item, endpoint)
 
         self.assertTrue(navigator.wait_ready(1.0))
-        success = navigator.navigate(item)
+        success = navigator.navigate(segment)
         self.assertTrue(success.success, success.status)
+        self.assertEqual(
+            received_poses[0],
+            (("odom_combined", 0.0), ("odom_combined", 1.0)),
+        )
 
         class LateCancelFuture:
             @staticmethod
@@ -115,7 +131,7 @@ class RosAdapterTests(unittest.TestCase):
 
         outcome = []
         worker = threading.Thread(
-            target=lambda: outcome.append(navigator.navigate(item)))
+            target=lambda: outcome.append(navigator.navigate(segment)))
         worker.start()
         deadline = time.monotonic() + 1.0
         while not navigator.is_active() and time.monotonic() < deadline:
@@ -126,6 +142,7 @@ class RosAdapterTests(unittest.TestCase):
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(outcome[0].status, "navigation_canceled")
+        self.assertEqual(len(received_poses[1]), 2)
         self.assertFalse(navigator.is_active())
         self.assertEqual(GoalStatus.STATUS_CANCELED, 5)
 

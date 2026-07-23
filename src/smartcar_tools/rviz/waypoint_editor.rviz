@@ -1,0 +1,71 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Tool Properties
+    Name: Tool Properties
+  - Class: rviz_common/Views
+    Name: Views
+Visualization Manager:
+  Class: ""
+  Displays:
+    - Alpha: 0.35
+      Cell Size: 0.5
+      Class: rviz_default_plugins/Grid
+      Color: 125; 125; 125
+      Enabled: true
+      Name: Metric Grid
+      Plane: XY
+      Reference Frame: odom_combined
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Official Field Reference
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/field_reference/markers
+    - Class: rviz_default_plugins/MarkerArray
+      Enabled: true
+      Name: Mission Route
+      Topic:
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/waypoint_editor/markers
+    - Class: rviz_default_plugins/InteractiveMarkers
+      Enable Transparency: true
+      Enabled: true
+      Name: Draggable Waypoints
+      Show Axes: false
+      Show Descriptions: true
+      Show Visual Aids: true
+      Update Topic: /smartcar/waypoint_editor/update
+  Enabled: true
+  Global Options:
+    Background Color: 32; 34; 38
+    Fixed Frame: odom_combined
+    Frame Rate: 30
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/FocusCamera
+    - Class: rviz_default_plugins/Measure
+  Views:
+    Current:
+      Angle: 0
+      Class: rviz_default_plugins/TopDownOrtho
+      Name: Top Down
+      Scale: 100
+      Target Frame: odom_combined
+      X: 2
+      Y: 2.25
+    Saved:
+      - Class: rviz_default_plugins/TopDownOrtho
+        Name: Full Field
+        Scale: 100
+        Target Frame: odom_combined
+        X: 2
+        Y: 2.25
+Window Geometry:
+  Height: 900
+  Width: 1440

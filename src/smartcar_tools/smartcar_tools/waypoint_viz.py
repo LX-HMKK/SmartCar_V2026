@@ -5,14 +5,13 @@ Launch: ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<path
 """
 
 import math
-from pathlib import Path
 
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from geometry_msgs.msg import Point, PoseStamped
+from geometry_msgs.msg import Point
+from smartcar_task.waypoints import load_waypoints as load_mission_waypoints
 from visualization_msgs.msg import Marker, MarkerArray
-import yaml
 
 
 MARKER_TOPIC = "/smartcar/waypoints/markers"
@@ -28,11 +27,8 @@ _DEFAULT_COLOR = (0.80, 0.80, 0.80)  # grey
 
 
 def _yaw_from_quaternion(orientation):
-    """Compute yaw angle from geometry_msgs/Quaternion-like dict."""
-    x = float(orientation.get("x", 0.0))
-    y = float(orientation.get("y", 0.0))
-    z = float(orientation.get("z", 0.0))
-    w = float(orientation.get("w", 1.0))
+    """Compute yaw angle from a validated (x, y, z, w) tuple."""
+    x, y, z, w = orientation
     sin_yaw = 2.0 * (w * z + x * y)
     cos_yaw = 1.0 - 2.0 * (y * y + z * z)
     return math.atan2(sin_yaw, cos_yaw)
@@ -44,25 +40,18 @@ def _yaw_quaternion(yaw_rad):
 
 
 def load_waypoints(path):
-    """Return list of (frame_id, x, y, yaw_rad, task_label) tuples."""
-    with open(path, "r", encoding="utf-8") as fh:
-        doc = yaml.safe_load(fh)
-    raw = doc.get("waypoints", [])
-    if not isinstance(raw, list) or not raw:
-        raise ValueError(f"No waypoints list found in {path}")
-
-    result = []
-    for i, wp in enumerate(raw):
-        frame_id = str(wp.get("frame_id", "odom_combined"))
-        pose = wp.get("pose", {})
-        pos = pose.get("position", {})
-        orient = pose.get("orientation", {})
-        x = float(pos.get("x", 0.0))
-        y = float(pos.get("y", 0.0))
-        yaw = _yaw_from_quaternion(orient)
-        task = str(wp.get("task", f"wp_{i}")).strip()
-        result.append((frame_id, x, y, yaw, task))
-    return result
+    """Return validated display tuples including stable waypoint IDs."""
+    return [
+        (
+            item.frame_id,
+            item.position[0],
+            item.position[1],
+            _yaw_from_quaternion(item.orientation),
+            item.task,
+            item.id,
+        )
+        for item in load_mission_waypoints(path)
+    ]
 
 
 class WaypointVizNode(Node):
@@ -125,12 +114,12 @@ class WaypointVizNode(Node):
         line.color.r = 0.6
         line.color.g = 0.6
         line.color.b = 0.8
-        for _, x, y, _, _ in self._waypoints:
+        for _, x, y, _, _, _ in self._waypoints:
             line.points.append(Point(x=x, y=y, z=0.03))
         msg.markers.append(line)
 
         # ── per-waypoint sphere / arrow / label ──────────────────────
-        for i, (_fid, x, y, yaw, task) in enumerate(self._waypoints):
+        for i, (_fid, x, y, yaw, task, waypoint_id) in enumerate(self._waypoints):
             r, g, b = _TASK_COLORS.get(task, _DEFAULT_COLOR)
 
             sphere = Marker()
@@ -191,7 +180,7 @@ class WaypointVizNode(Node):
             label.color.g = 1.0
             label.color.b = 1.0
             label.color.a = 1.0
-            label.text = f"{i}: {task}"
+            label.text = f"{i}: {waypoint_id} [{task}]"
             msg.markers.append(label)
 
         self._publisher.publish(msg)

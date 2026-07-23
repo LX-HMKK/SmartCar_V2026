@@ -1,40 +1,71 @@
-# 默认航点序列：P 区 → 任务点 → 通道口 → C 环道 → 返回 P 区
-# 坐标单位为米，基于发车时 P 区中心为坐标原点
-# 注意：以下数值为占位符，需根据赛场实际测量后替换
+# 默认语义航点：P → QR 任务点留距位 → 通道 → C 区顺时针四角 → 通道 → P
+# 坐标单位为米；P 区原点为 (0, 0)，+X 向规则图右侧，+Y 指向 B/C 区。
+# 数值由官方规则图尺寸推算，仅作为 RViz 标定基线，实测前不得开启航点门禁。
+
+calibrated: false
 
 waypoints:
-  - frame_id: "odom_combined"
+  - id: "p_start"
+    frame_id: "odom_combined"
     pose:
       position: { x: 0.0, y: 0.0, z: 0.0 }
       orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
     task: "start"   # P 区发车点
 
-  - frame_id: "odom_combined"
+  - id: "a_task_observe"
+    frame_id: "odom_combined"
     pose:
-      position: { x: 1.5, y: 0.0, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
-    task: "qr"      # 任务点 1：二维码识别
+      # 距规则图任务标志约 0.89 m，避免贴得过近。
+      position: { x: 3.45, y: 0.8, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.25881905, w: 0.96592583 }
+    task: "qr"      # 任务发布点：停车识别二维码
 
-  - frame_id: "odom_combined"
+  - id: "b_corridor_out"
+    frame_id: "odom_combined"
     pose:
-      position: { x: 3.0, y: 0.5, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
-    task: "vlm"     # 任务点 2：VLM 图生文（人形立牌）
-
-  - frame_id: "odom_combined"
-    pose:
-      position: { x: 4.0, y: 1.0, z: 0.0 }
+      position: { x: 2.0, y: 2.4, z: 0.0 }
       orientation: { x: 0.0, y: 0.0, z: 0.70710678, w: 0.70710678 }
-    task: "corridor" # 通道口
+    task: "corridor" # 去程通道口
 
-  - frame_id: "odom_combined"
+  - id: "c_corner_1"
+    frame_id: "odom_combined"
     pose:
-      position: { x: 4.0, y: 3.0, z: 0.0 }
+      # C 环中线左下角，车头朝规则图左侧时触发图生文。
+      position: { x: 0.825, y: 2.75, z: 0.0 }
       orientation: { x: 0.0, y: 0.0, z: 1.0, w: 0.0 }
-    task: "loop"    # C 环道终点
+    task: "vlm"     # 顺时针角 1：VLM 图生文
 
-  - frame_id: "odom_combined"
+  - id: "c_corner_2"
+    frame_id: "odom_combined"
+    pose:
+      position: { x: 0.825, y: 3.9, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+    task: "loop"    # 顺时针角 2
+
+  - id: "c_corner_3"
+    frame_id: "odom_combined"
+    pose:
+      position: { x: 3.175, y: 3.9, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+    task: "loop"    # 顺时针角 3
+
+  - id: "c_corner_4"
+    frame_id: "odom_combined"
+    pose:
+      position: { x: 3.175, y: 2.75, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 1.0, w: 0.0 }
+    task: "loop"    # 顺时针角 4
+
+  - id: "b_corridor_return"
+    frame_id: "odom_combined"
+    pose:
+      position: { x: 2.0, y: 2.4, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: -0.70710678, w: 0.70710678 }
+    task: "corridor" # 回程通道口
+
+  - id: "p_finish"
+    frame_id: "odom_combined"
     pose:
       position: { x: 0.0, y: 0.0, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+      orientation: { x: 0.0, y: 0.0, z: -1.0, w: 0.0 }
     task: "return"  # 返回 P 区
