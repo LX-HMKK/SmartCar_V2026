@@ -1,5 +1,7 @@
 """ROS 2 adapters and services for semantic waypoint missions."""
 import math
+import shlex
+import subprocess
 import threading
 import time
 
@@ -371,6 +373,7 @@ class RosNavigator:
 
 class RosVision:
     def __init__(self, node, callback_group):
+        self._node = node
         self._read_qr_client = node.create_client(
             ReadQr,
             "/smartcar/vision/read_qr",
@@ -381,6 +384,52 @@ class RosVision:
             "/smartcar/vision/describe_scene",
             callback_group=callback_group,
         )
+        self._reader_process = None
+        reader_startup = node.get_parameter("qr_reader_startup_sec").value
+        self._reader_startup_sec = float(reader_startup)
+
+    def _ensure_reader(self):
+        if self._reader_process is not None and self._reader_process.poll() is None:
+            return
+        # If the old process exited but was never waited on, reap it first
+        # to avoid zombie processes (Python 3.9+ does not auto-reap).
+        if self._reader_process is not None:
+            try:
+                self._reader_process.wait(timeout=0.0)
+            except subprocess.TimeoutExpired:
+                pass  # should not happen — poll() already confirmed exit
+            except Exception:
+                pass
+        cmd_str = str(self._node.get_parameter("barcode_reader_cmd").value)
+        self._node.get_logger().info("Starting barcode_reader on demand")
+        cmd = shlex.split(cmd_str)
+        self._reader_process = subprocess.Popen(cmd)
+        time.sleep(self._reader_startup_sec)
+
+    def _stop_reader(self):
+        if self._reader_process is None:
+            return
+        self._node.get_logger().info("Stopping barcode_reader")
+        try:
+            self._reader_process.terminate()
+            self._reader_process.wait(timeout=5.0)
+        except subprocess.TimeoutExpired:
+            try:
+                self._reader_process.kill()
+                # Blocking wait — SIGKILL is near-instant on Linux.
+                self._reader_process.wait()
+            except subprocess.TimeoutExpired:
+                self._node.get_logger().error(
+                    "barcode_reader did not respond to SIGKILL")
+            except ProcessLookupError:
+                pass
+        except ProcessLookupError:
+            pass
+        finally:
+            self._reader_process = None
+
+    def shutdown(self):
+        self._stop_reader()
 
     def wait_ready(self, require_qr, require_vlm, timeout_sec):
         deadline = time.monotonic() + float(timeout_sec)
@@ -395,25 +444,29 @@ class RosVision:
         return True
 
     def read_qr(self, not_before_ns, timeout_sec):
-        request = ReadQr.Request()
-        request.not_before = _time_from_nanoseconds(not_before_ns)
-        request.timeout_sec = float(timeout_sec)
-        future = self._read_qr_client.call_async(request)
-        completed, response, error = _wait_future(
-            future, max(0.0, float(timeout_sec)))
-        if not completed:
-            _remove_pending(self._read_qr_client, future)
-            return OperationResult(False, "read_qr_transport_timeout")
-        if error is not None or response is None:
+        self._ensure_reader()
+        try:
+            request = ReadQr.Request()
+            request.not_before = _time_from_nanoseconds(not_before_ns)
+            request.timeout_sec = float(timeout_sec)
+            future = self._read_qr_client.call_async(request)
+            completed, response, error = _wait_future(
+                future, max(0.0, float(timeout_sec)))
+            if not completed:
+                _remove_pending(self._read_qr_client, future)
+                return OperationResult(False, "read_qr_transport_timeout")
+            if error is not None or response is None:
+                return OperationResult(
+                    False,
+                    f"read_qr_transport_error:{type(error).__name__}",
+                )
             return OperationResult(
-                False,
-                f"read_qr_transport_error:{type(error).__name__}",
+                bool(response.success),
+                str(response.status),
+                str(response.content),
             )
-        return OperationResult(
-            bool(response.success),
-            str(response.status),
-            str(response.content),
-        )
+        finally:
+            self._stop_reader()
 
     def describe_scene(self, not_before_ns, timeout_sec, prompt):
         request = DescribeScene.Request()
@@ -570,6 +623,14 @@ class TaskNode(Node):
         self.declare_parameter("reset_timeout_sec", 5.0)
         self.declare_parameter("origin_position_tolerance", 0.20)
         self.declare_parameter("origin_yaw_tolerance", 0.20)
+        self.declare_parameter("qr_reader_startup_sec", 2.0)
+        self.declare_parameter(
+            "barcode_reader_cmd",
+            "ros2 run zbar_ros barcode_reader --ros-args "
+            "-r image:=/aurora/rgb/image_raw "
+            "-r barcode:=/barcode "
+            "-p throttle_repeated_barcodes:=0.0",
+        )
 
         waypoints_file = str(
             self.get_parameter("waypoints_file").value).strip()
@@ -754,6 +815,7 @@ class TaskNode(Node):
             worker = self._worker
         if worker is not None:
             worker.join(timeout=self._stop_timeout_sec)
+        self._vision.shutdown()
 
 
 def main(args=None):

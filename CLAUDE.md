@@ -8,7 +8,7 @@
 
 截至 2026-07-23，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点历史导航验证已完成，但新航点实测、VLM 后端部署和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
-已完成四轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~67%（idle 状态）：origincar_base 从 66.7% 降至 8.7%（轮询→定时器），cmd_vel_to_ackermann 已合并入 safety_node（省一个 Python 进程），safety_node 回归纯心跳超时。
+已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
 ## 高层架构
 
@@ -17,7 +17,7 @@
 - **导航层**：Nav2 Waypoint Follower + Smac Hybrid（DUBIN）+ Regulated Pure Pursuit；禁止 Spin recovery 和原地旋转。
 - **避障感知层**：YDLIDAR `/scan` 直接进入 obstacle/inflation costmap；无消费者的 `obstacle_detector_2` 默认关闭，仅保留诊断开关。
 - **定位层**：STM32 轮式里程计 + IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
-- **控制层**：`/cmd_vel` 经 fail-closed `smartcar_safety` 直接输出 `/ackermann_cmd`（内部 Twist→Ackermann 转换，`use_safety_ackermann:=true` 时跳过独立转换器节点）。安全节点只做三件事：指令消毒、急停锁存、传感器心跳超时。
+- **控制层**：`/cmd_vel` 经 fail-closed `smartcar_safety`（C++ 默认，Python 备选）直接输出 `/ackermann_cmd`（内部 Twist→Ackermann 转换，`use_safety_ackermann:=true` 时跳过独立转换器节点）。安全节点只做三件事：指令消毒、急停锁存、传感器心跳超时。
 
 核心约束：
 
@@ -26,6 +26,7 @@
 - 安全节点 odom 回调有 50ms 节流（`odom_throttle_interval_sec`），有效 odom 看门狗窗口 = `odom_timeout + throttle_interval + timer_period`（最坏 ~450ms，0.15 m/s 下 ~6.8 cm）。`raw_odom_timeout_sec` 已参数化。
 - 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发不是当前 release 依赖；TTS consumer 已提供但默认关闭，不属于任务或运动门禁依赖。
 - 发车时车辆手动置于 P 区原点，车头朝 `+X`；任务 reset 不能替代物理复位。
+- 系统默认使用 USB 摄像头 (camera_driver:=usb) 和按需 QR 扫描 (barcode_reader 由 task_node 子进程拉起)，Aurora 930 和持续 zbar 为备选。
 - 未经用户明确授权，不得启动实体相机、发布非零速度或进行实车运动测试。
 
 ## 仓库结构
@@ -35,7 +36,7 @@ src/origincar/                       vendor 底盘、IMU、EKF、YDLIDAR
 src/third_party/obstacle_detector_2/ LiDAR 障碍物提取
 src/third_party/rf2o_laser_odometry/ 可选无地图激光里程计
 src/smartcar_interfaces/             ReadQr、DescribeScene 接口
-src/smartcar_safety/                 速度安全门
+src/smartcar_safety/                 速度安全门（C++ 默认，Python 备选）
 src/smartcar_nav2/                   Nav2 配置、行为树和航点
 src/smartcar_vision/                 QR 与 VLM 服务
 src/smartcar_speech/                 可选火山 TTS consumer

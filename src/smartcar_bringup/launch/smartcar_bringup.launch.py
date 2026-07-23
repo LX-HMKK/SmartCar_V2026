@@ -24,6 +24,7 @@ def generate_launch_description():
     safety_emergency_stop_on_start = LaunchConfiguration(
         'safety_emergency_stop_on_start')
     use_safety_ackermann = LaunchConfiguration('use_safety_ackermann')
+    use_safety_cpp = LaunchConfiguration('use_safety_cpp')
     odom_frame = LaunchConfiguration('odom_frame')
     laser_frame = LaunchConfiguration('laser_frame')
     chassis_input_topic = PythonExpression([
@@ -121,6 +122,7 @@ def generate_launch_description():
             'require_raw_odom': safety_require_raw_odom,
             'emergency_stop_on_start': safety_emergency_stop_on_start,
             'use_sim_time': use_sim_time,
+            'use_cpp': use_safety_cpp,
         }.items(),
         condition=IfCondition(use_safety),
     )
@@ -138,6 +140,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_safety', default_value='true'),
         DeclareLaunchArgument(
             'use_safety_ackermann', default_value='true'),
+        DeclareLaunchArgument(
+            'use_safety_cpp', default_value='true'),
         DeclareLaunchArgument(
             'safety_config_file',
             default_value=os.path.join(

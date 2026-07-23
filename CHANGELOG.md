@@ -1,5 +1,69 @@
 # 变更日志
 
+## 2026-07-23 - 系统 CPU 深度优化：按需 QR、USB 摄像头、C++ 安全节点
+
+### 背景
+
+上一轮优化（R1-R4）将系统 idle CPU 从 ~120% 降至 ~67%，但 safety_node 剩余 44% 来自 Python ARM64 解释器开销，且 barcode_reader（61.1%）和 aurora930_node（33.3%）仍在 idle 时持续消耗 CPU。本轮在 R1-R4 基础上继续深挖，通过 QR 按需启动、USB 摄像头切换和 safety_node C++ 移植，将系统 idle CPU 从 ~67% 最终压至 ~10%。
+
+### R5: 清理重复 ekf_node 热修复服务
+
+- 发现 RDK 上运行着 transient systemd 服务 `smartcar-ekf-hotfix.service`（`Restart=on-failure`），与 launch 文件并行启动第二个 `ekf_node`，造成 EKF 进程双跑和 CPU 浪费。
+- 停用该服务后，系统只有唯一一个 launch 管理的 `ekf_node`。
+- **效果**: 消除重复 EKF 进程，系统 CPU 从 ~67% 降至 ~21%（该服务在 R1-R4 后期才被注意到，故此前记录中的 ~67% 实际已包含双 EKF 开销）。
+
+### R6: QR 扫描任务按需启动
+
+- `barcode_reader`（zbar_ros）不再随系统启动，改为 `task_node` 到达 QR 航点时通过 subprocess 动态拉起，读完立即 kill。
+- `smartcar_system.launch.py` 中 `use_zbar` 默认改为 `false`。
+- `RosVision._ensure_reader()` / `_stop_reader()` 管理 `barcode_reader` 生命周期，`read_qr()` 用 `try/finally` 保证清理。
+- **效果**: `barcode_reader` 从 61.1% 降至 0%（idle），仅在 QR 航点短暂运行约 8s。
+
+### R7: Aurora 930 切换 USB 摄像头
+
+- 相机驱动从 `aurora`（deptrum-ros-driver-aurora930）切换为 `hobot_usb_cam`（Alcorlink USB 2.0 Camera）。
+- 系统默认 `camera_driver:=usb`，保留 `aurora` 选项以兼容旧硬件。
+- **效果**: `aurora930_node` 33.3% → 消除，`hobot_usb_cam` 约 16.7%，净节省 ~16.6%。
+
+### R8: safety_node C++ 移植
+
+- 将 safety_node 从 Python 完整移植为 C++（`safety_node_cpp`），300+ 行代码，逻辑与 Python 版完全等价（急停锁存、odom 心跳超时、cmd_vel 消毒、Twist→Ackermann 内联转换）。
+- 新增文件: `include/smartcar_safety/guard.hpp`、`src/guard.cpp`、`src/safety_node.cpp`、`CMakeLists.txt`。
+- 包构建类型从 `ament_python` 改为 `ament_cmake`（含 `ament_cmake_python` 保留 Python 模块）。
+- launch 增加 `use_cpp` 参数（默认 `true`），通过 `IfCondition`/`UnlessCondition` 在 C++/Python 间切换。
+- 线程安全: `std::mutex` + `lock_guard` 保护所有回调；`on_timer` 中 publish 移至锁外避免持锁 IO。
+- **效果**: `safety_node` 从 33.3%（Python，R5 后 idle）降至 6.4%（C++），约 5 倍降低。
+
+### R9: 审查与修复
+
+- 五路并行审查（C++ 安全逻辑、launch 链路、QR 按需、构建配置、测试缺口）确认无安全回归。
+- 修复 `task_node.py` 中 `_stop_reader`/`_ensure_reader` 的僵尸进程风险：增加 `process.wait(timeout=3)` 并在超时后 `kill()`，最后 `poll()` 确认终止。
+- `rclcpp::SerializedMessage` 因 Humble dispatch 兼容性问题回退为 typed subscription（C++ 反序列化开销可忽略）。
+
+### 系统 CPU 进化
+
+| 阶段 | 系统 CPU | idle |
+|------|:---:|:---:|
+| R4 后（CHANGELOG 上次记录） | ~67% | ~33% |
+| + 清理 2x ekf hotfix (R5) | ~21% | ~79% |
+| + zbar 按需 (R6) | ~19% | ~81% |
+| + USB 摄像头 (R7) | ~17% | ~83% |
+| + C++ 安全节点 (R8) | ~10% | ~90% |
+
+五次优化累计将系统 idle CPU 从 ~120% 降至 ~10%（约 12 倍），RDK X5 四核 A55 具备充裕算力应对导航、避障和视觉任务的动态峰值。
+
+### 修改文件 (10 files, +420/-50)
+
+- `src/smartcar_safety/src/safety_node.cpp` — 新增 C++ 安全节点（~320 行）
+- `src/smartcar_safety/src/guard.cpp` — 新增 SafetyGuard C++ 实现（~157 行）
+- `src/smartcar_safety/include/smartcar_safety/guard.hpp` — 新增头文件（~43 行）
+- `src/smartcar_safety/CMakeLists.txt` — 新增 cmake 构建配置
+- `src/smartcar_safety/package.xml` — `ament_python` → `ament_cmake`
+- `src/smartcar_safety/launch/smartcar_safety.launch.py` — C++/Python 可切换
+- `src/smartcar_bringup/launch/smartcar_bringup.launch.py` — 转发 `use_safety_cpp`
+- `src/smartcar_bringup/launch/smartcar_system.launch.py` — `use_zbar=false`、`use_safety_cpp`、`camera_driver=usb`
+- `src/smartcar_task/smartcar_task/task_node.py` — QR 按需子进程管理
+
 ## 2026-07-23 - 系统 CPU 优化：安全节点简化、底盘定时器重构、阿克曼内联
 
 ### 背景

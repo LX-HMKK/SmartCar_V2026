@@ -72,7 +72,9 @@ def _vision_and_camera_actions(context):
                 "usb_video_device").perform(context),
             "use_camera": "true" if use_camera else "false",
             "use_services": "true" if use_vision else "false",
-            "use_zbar": "true" if use_vision else "false",
+            # QR scanning is task-driven: barcode_reader is NOT launched at
+            # system start; task_node starts it on demand at QR waypoints.
+            "use_zbar": "false",
             "config_file": LaunchConfiguration(
                 "vision_config_file").perform(context),
             "use_sim_time": LaunchConfiguration(
@@ -205,6 +207,7 @@ def generate_launch_description():
                 "safety_require_raw_odom"),
             "safety_emergency_stop_on_start": LaunchConfiguration(
                 "safety_emergency_stop_on_start"),
+            "use_safety_cpp": LaunchConfiguration("use_safety_cpp"),
             "laser_frame": LaunchConfiguration("laser_frame"),
             **{
                 name: LaunchConfiguration(name)
@@ -288,6 +291,9 @@ def generate_launch_description():
             "safety_require_raw_odom", default_value="true"),
         DeclareLaunchArgument(
             "safety_emergency_stop_on_start", default_value="false"),
+        DeclareLaunchArgument(
+            "use_safety_cpp", default_value="true",
+            description="Use C++ safety_node (false = Python fallback)"),
         DeclareLaunchArgument(
             "waypoints_file",
             default_value=PathJoinSubstitution([
