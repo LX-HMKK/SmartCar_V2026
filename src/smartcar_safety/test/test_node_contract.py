@@ -17,7 +17,10 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
         self.assertIn("LATEST_SENSOR_QOS = QoSProfile(", source)
         self.assertIn("depth=1", source)
         self.assertIn('Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS', source)
-        self.assertIn('LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS', source)
+        self.assertIn(
+            'LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True',
+            source,
+        )
 
     def test_raw_odom_has_an_independent_required_subscription(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
@@ -45,7 +48,8 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
 
     def test_odometry_must_be_finite_and_localization_fault_clear_is_explicit(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("def odometry_is_finite(message):", source)
+        self.assertIn(
+            "from smartcar_safety.odometry import odometry_is_finite", source)
         self.assertIn("self.guard.mark_odom_invalid()", source)
         self.assertIn("self.guard.mark_raw_odom_invalid(now_sec)", source)
         self.assertIn(
@@ -68,12 +72,15 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
 
     def test_invalid_command_is_latched_and_publishes_zero_immediately_and_later(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("self._last_command_components = None", source)
-        self.assertIn("self.guard.mark_command_invalid()", source)
-        self.assertGreaterEqual(
-            source.count("twist_from_components(ZERO_TWIST_COMPONENTS)"),
-            2,
+        self.assertIn(
+            "self._zero_command = twist_from_components(ZERO_TWIST_COMPONENTS)",
+            source,
         )
+        self.assertIn("self._last_command_components = None", source)
+        self.assertIn("self._last_command_message = None", source)
+        self.assertIn("self.guard.mark_command_invalid()", source)
+        self.assertIn("self._safe_publisher.publish(self._zero_command)", source)
+        self.assertIn("command = self._zero_command", source)
 
     def test_startup_emergency_stop_is_explicit_and_fail_closed(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")

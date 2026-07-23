@@ -14,10 +14,10 @@ from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool, Trigger
 
 from smartcar_safety.guard import SafetyGuard, validate_publish_frequency
+from smartcar_safety.odometry import odometry_is_finite
 from smartcar_safety.velocity import (
     ZERO_TWIST_COMPONENTS,
     sanitize_twist_components,
-    values_are_finite,
 )
 
 
@@ -40,27 +40,6 @@ def twist_from_components(components):
     result.angular.y = components[4]
     result.angular.z = components[5]
     return result
-
-
-def odometry_is_finite(message):
-    values = [
-        message.pose.pose.position.x,
-        message.pose.pose.position.y,
-        message.pose.pose.position.z,
-        message.pose.pose.orientation.x,
-        message.pose.pose.orientation.y,
-        message.pose.pose.orientation.z,
-        message.pose.pose.orientation.w,
-        message.twist.twist.linear.x,
-        message.twist.twist.linear.y,
-        message.twist.twist.linear.z,
-        message.twist.twist.angular.x,
-        message.twist.twist.angular.y,
-        message.twist.twist.angular.z,
-    ]
-    values.extend(message.pose.covariance)
-    values.extend(message.twist.covariance)
-    return values_are_finite(values)
 
 
 class SafetyNode(Node):
@@ -94,7 +73,9 @@ class SafetyNode(Node):
         frequency_hz = validate_publish_frequency(
             self.get_parameter("publish_frequency_hz").value)
 
+        self._zero_command = twist_from_components(ZERO_TWIST_COMPONENTS)
         self._last_command_components = None
+        self._last_command_message = None
         self._last_status_reason = None
         self._last_blocked_status_at = None
 
@@ -104,7 +85,7 @@ class SafetyNode(Node):
         self.create_subscription(
             Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS)
         self.create_subscription(
-            LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS)
+            LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True)
         self.create_subscription(
             Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS)
         self.create_subscription(
@@ -138,9 +119,11 @@ class SafetyNode(Node):
         ))
         if valid:
             self._last_command_components = components
+            self._last_command_message = twist_from_components(components)
             self.guard.mark_command(now_sec)
         else:
             self._last_command_components = None
+            self._last_command_message = None
             self.guard.mark_command_invalid()
             self._publish_zero_command()
         self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
@@ -148,7 +131,6 @@ class SafetyNode(Node):
     def _on_scan(self, _message):
         now_sec = self._now_sec()
         self.guard.mark_scan(now_sec)
-        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
 
     def _on_odom(self, message):
         now_sec = self._now_sec()
@@ -157,7 +139,8 @@ class SafetyNode(Node):
         else:
             self.guard.mark_odom_invalid()
             self._publish_zero_command()
-        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
+            self._publish_status_if_due(
+                now_sec, self.guard.evaluate(now_sec), True)
 
     def _on_raw_odom(self, message):
         now_sec = self._now_sec()
@@ -166,7 +149,8 @@ class SafetyNode(Node):
         else:
             self.guard.mark_raw_odom_invalid(now_sec)
             self._publish_zero_command()
-        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
+            self._publish_status_if_due(
+                now_sec, self.guard.evaluate(now_sec), True)
 
     def _on_voltage(self, message):
         now_sec = self._now_sec()
@@ -207,16 +191,15 @@ class SafetyNode(Node):
         return response
 
     def _publish_zero_command(self):
-        self._safe_publisher.publish(
-            twist_from_components(ZERO_TWIST_COMPONENTS))
+        self._safe_publisher.publish(self._zero_command)
 
     def _on_timer(self):
         now_sec = self._now_sec()
         result = self.guard.evaluate(now_sec)
-        if result["allowed"] and self._last_command_components is not None:
-            command = twist_from_components(self._last_command_components)
+        if result["allowed"] and self._last_command_message is not None:
+            command = self._last_command_message
         else:
-            command = twist_from_components(ZERO_TWIST_COMPONENTS)
+            command = self._zero_command
         self._safe_publisher.publish(command)
         self._publish_status_if_due(now_sec, result)
 
