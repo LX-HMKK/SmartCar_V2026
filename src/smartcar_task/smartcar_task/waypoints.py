@@ -166,14 +166,56 @@ def validate_waypoints(waypoints):
         if tasks.count(task) != 1:
             raise ValueError(f"mission task {task} must occur exactly once")
 
+    # validate sequence with a simple state machine:
+    #   start → qr → corridor* → vlm → loop+ → corridor* → return
     loop_count = tasks.count("loop")
-    expected = ["start", "qr", "corridor", "vlm"]
-    expected.extend(["loop"] * loop_count)
-    expected.extend(["corridor", "return"])
-    if loop_count < 3 or tasks != expected:
+    if loop_count < 3:
+        raise ValueError("mission must contain at least three loop corners")
+
+    state = "start"
+    for i, task in enumerate(tasks):
+        if state == "start":
+            if task != "start":
+                raise ValueError(f"waypoint {i}: expected start, got {task}")
+            state = "qr"
+        elif state == "qr":
+            if task != "qr":
+                raise ValueError(f"waypoint {i}: expected qr, got {task}")
+            state = "outbound_corridor"
+        elif state == "outbound_corridor":
+            if task == "corridor":
+                continue  # stay in outbound_corridor
+            elif task == "vlm":
+                state = "loop"
+            else:
+                raise ValueError(
+                    f"waypoint {i}: expected corridor or vlm, got {task}"
+                )
+        elif state == "loop":
+            if task == "loop":
+                continue  # stay in loop
+            elif task == "corridor":
+                state = "return_corridor"
+            else:
+                raise ValueError(
+                    f"waypoint {i}: expected loop or corridor, got {task}"
+                )
+        elif state == "return_corridor":
+            if task == "corridor":
+                continue  # stay in return_corridor
+            elif task == "return":
+                state = "done"
+            else:
+                raise ValueError(
+                    f"waypoint {i}: out-of-sequence task {task} "
+                    f"(expected corridor or return in this segment)"
+                )
+        elif state == "done":
+            raise ValueError(f"waypoint {i}: unexpected {task} after return")
+    if state != "done":
         raise ValueError(
-            "mission order must be start, qr, outbound corridor, vlm corner, "
-            "at least three loop corners, return corridor, return"
+            "mission order must be start, qr, corridor transit(s), vlm corner, "
+            "at least three loop corners, corridor transit(s), return"
         )
     if not _is_origin_position(waypoints[0]) or not _faces_positive_x(
         waypoints[0]

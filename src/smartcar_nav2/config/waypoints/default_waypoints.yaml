@@ -20,6 +20,14 @@ waypoints:
       orientation: { x: 0.0, y: 0.0, z: 0.25881905, w: 0.96592583 }
     task: "qr"      # 任务发布点：停车识别二维码
 
+  - id: "b_corridor_enter"
+    frame_id: "odom_combined"
+    pose:
+      # 通道南入口对准点，居中 x=2.0，防止擦碰 B 区隔墙。
+      position: { x: 2.0, y: 1.85, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: 0.70710678, w: 0.70710678 }
+    task: "corridor" # 去程：通道入口对准
+
   - id: "b_corridor_out"
     frame_id: "odom_combined"
     pose:
@@ -55,6 +63,14 @@ waypoints:
       position: { x: 3.175, y: 2.75, z: 0.0 }
       orientation: { x: 0.0, y: 0.0, z: 1.0, w: 0.0 }
     task: "loop"    # 顺时针角 4
+
+  - id: "b_corridor_return_enter"
+    frame_id: "odom_combined"
+    pose:
+      # 通道北入口对准点，居中 x=2.0，回程避免擦碰 B 区隔墙。
+      position: { x: 2.0, y: 2.55, z: 0.0 }
+      orientation: { x: 0.0, y: 0.0, z: -0.70710678, w: 0.70710678 }
+    task: "corridor" # 回程：通道入口对准
 
   - id: "b_corridor_return"
     frame_id: "odom_combined"

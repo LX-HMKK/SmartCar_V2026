@@ -229,7 +229,7 @@ class WaypointTests(unittest.TestCase):
             document["waypoints"][2], document["waypoints"][3] = (
                 document["waypoints"][3], document["waypoints"][2]
             )
-            with self.assertRaisesRegex(ValueError, "sequence|order"):
+            with self.assertRaisesRegex(ValueError, "sequence|order|out-of"):
                 load_waypoints(self.write_document(directory, document))
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
@@ -240,7 +240,7 @@ class WaypointTests(unittest.TestCase):
             / "waypoints"
             / "default_waypoints.yaml"
         )
-        corners = waypoints[3:7]
+        corners = waypoints[4:8]
         self.assertEqual([item.task for item in corners], [
             "vlm", "loop", "loop", "loop",
         ])
@@ -276,14 +276,16 @@ class WaypointTests(unittest.TestCase):
         self.assertIs(document["calibrated"], False)
         waypoints = load_waypoints(default_file)
         qr = waypoints[1]
-        outbound, inbound = waypoints[2], waypoints[-2]
+        # outbound/return corridor waypoints still share the same centre position
+        outbound_center = waypoints[3]   # b_corridor_out
+        inbound_center = waypoints[-2]   # b_corridor_return
         self.assertEqual(qr.position, (3.45, 0.8, 0.0))
         standoff = math.hypot(4.15 - qr.position[0], 1.35 - qr.position[1])
         self.assertAlmostEqual(standoff, 0.89022469, delta=1.0e-6)
         self.assertGreater(standoff, 0.5)
-        self.assertEqual(outbound.position, inbound.position)
-        self.assertEqual(outbound.task, "corridor")
-        self.assertEqual(inbound.task, "corridor")
+        self.assertEqual(outbound_center.position, inbound_center.position)
+        self.assertEqual(outbound_center.task, "corridor")
+        self.assertEqual(inbound_center.task, "corridor")
 
     def test_atomic_editor_write_preserves_ids_and_clears_calibration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -327,8 +329,8 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.task for item in waypoints],
             [
-                "start", "qr", "corridor", "vlm", "loop",
-                "loop", "loop", "corridor", "return",
+                "start", "qr", "corridor", "corridor", "vlm", "loop",
+                "loop", "loop", "corridor", "corridor", "return",
             ],
         )
         self.assertEqual(
@@ -336,11 +338,13 @@ class WaypointTests(unittest.TestCase):
             [
                 "p_start",
                 "a_task_observe",
+                "b_corridor_enter",
                 "b_corridor_out",
                 "c_corner_1",
                 "c_corner_2",
                 "c_corner_3",
                 "c_corner_4",
+                "b_corridor_return_enter",
                 "b_corridor_return",
                 "p_finish",
             ],

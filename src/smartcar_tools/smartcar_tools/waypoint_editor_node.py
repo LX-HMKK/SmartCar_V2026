@@ -1,12 +1,25 @@
-"""Motion-disabled RViz editor for the semantic mission waypoint file."""
+"""Motion-disabled RViz editor for the semantic mission waypoint file.
+
+Editing via RViz toolbar tools:
+  - "Publish Point"     → moves the selected waypoint to the clicked position
+  - "2D Pose Estimate"  → sets both position AND orientation of the selected waypoint
+
+Select a waypoint to edit:
+  ros2 param set /waypoint_editor selected_index 3
+
+Save / Undo / Reload via services or right-click context menu (if interactive
+markers are functional in the current RViz version).
+"""
+
 from __future__ import annotations
 
 from dataclasses import replace
 import math
 from pathlib import Path
+import threading
 
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import Point
+from geometry_msgs.msg import Point, PointStamped, PoseWithCovarianceStamped
 from interactive_markers.interactive_marker_server import InteractiveMarkerServer
 from interactive_markers.menu_handler import MenuHandler
 import rclpy
@@ -68,7 +81,7 @@ def _quaternion_yaw(orientation):
 
 
 class WaypointEditorNode(Node):
-    """Edit the one mission waypoint file through RViz interactive markers."""
+    """Edit the one mission waypoint file through RViz."""
 
     def __init__(self):
         super().__init__("waypoint_editor")
@@ -78,6 +91,7 @@ class WaypointEditorNode(Node):
         )
         self.declare_parameter("waypoints_file", default_file)
         self.declare_parameter("latch_emergency_stop", True)
+        self.declare_parameter("selected_index", 0)
 
         self._path = Path(
             str(self.get_parameter("waypoints_file").value)
@@ -86,6 +100,7 @@ class WaypointEditorNode(Node):
         self._waypoints = list(loaded)
         self._history = []
         self._dragging = set()
+        self._lock = threading.Lock()
 
         latched_qos = QoSProfile(depth=1)
         latched_qos.durability = DurabilityPolicy.TRANSIENT_LOCAL
@@ -100,11 +115,20 @@ class WaypointEditorNode(Node):
         self.create_service(Trigger, f"{SERVICE_PREFIX}/undo", self._on_undo)
         self.create_service(Trigger, f"{SERVICE_PREFIX}/save", self._on_save)
 
+        # ── interactive markers (best-effort; may not render in all RViz versions) ──
         self._server = InteractiveMarkerServer(self, EDITOR_NAMESPACE)
         self._menu = MenuHandler()
         self._menu.insert("Save all waypoints", callback=self._menu_save)
         self._menu.insert("Undo last drag", callback=self._menu_undo)
         self._menu.insert("Reload from disk", callback=self._menu_load)
+
+        # ── clicked-point / 2D-pose editing (always works via MarkerArray display) ──
+        self._clicked_sub = self.create_subscription(
+            PointStamped, "/clicked_point", self._on_clicked_point, 10
+        )
+        self._pose_sub = self.create_subscription(
+            PoseWithCovarianceStamped, "/initialpose", self._on_initial_pose, 10
+        )
 
         self._estop_required = bool(
             self.get_parameter("latch_emergency_stop").value
@@ -116,16 +140,45 @@ class WaypointEditorNode(Node):
             SetBool, "/smartcar/safety/emergency_stop"
         )
         self._estop_timer = self.create_timer(0.25, self._ensure_estop)
+        self._param_callback_handle = self.add_on_set_parameters_callback(
+            self._on_param_change
+        )
 
         self._refresh_display()
+        selected = self._selected_index
+        lock_state = "locked" if selected in (0, len(self._waypoints) - 1) else "editable"
         self._publish_status(
-            f"loaded {len(self._waypoints)} draggable mission waypoints from "
-            f"{self._path}"
+            f"loaded {len(self._waypoints)} waypoints; "
+            f"selected [{selected}] {self._waypoints[selected].id} ({lock_state}); "
+            f"use Publish Point or 2D Pose Estimate tool to edit; "
+            f"change selection with: ros2 param set /waypoint_editor selected_index N"
         )
+
+    @property
+    def _selected_index(self):
+        return max(0, min(
+            len(self._waypoints) - 1,
+            self.get_parameter("selected_index").value,
+        ))
+
+    def _on_param_change(self, params):
+        for param in params:
+            if param.name == "selected_index":
+                idx = max(0, min(len(self._waypoints) - 1, param.value))
+                lock_state = "LOCKED" if idx in (0, len(self._waypoints) - 1) else "editable"
+                self._publish_status(
+                    f"selected [{idx}] {self._waypoints[idx].id} ({lock_state})"
+                )
+                self._publish_route_markers()  # re-render to show selection highlight
+        return rclpy.parameter.SetParametersResult(successful=True)
+
+    # ── status ──────────────────────────────────────────────────────────
 
     def _publish_status(self, message):
         self._status_publisher.publish(String(data=str(message)))
         self.get_logger().info(str(message))
+
+    # ── emergency stop ──────────────────────────────────────────────────
 
     def _ensure_estop(self):
         if not self._estop_required or self._estop_pending:
@@ -163,10 +216,64 @@ class WaypointEditorNode(Node):
             message = "no response" if response is None else response.message
             self.get_logger().error(f"emergency stop rejected: {message}")
 
+    # ── clicked-point / pose editing ───────────────────────────────────
+
+    def _update_waypoint(self, index, x, y, yaw=None):
+        """Move (and optionally rotate) a waypoint. Returns (success, message)."""
+        if index == 0:
+            return False, "cannot move start waypoint (index 0)"
+        if index == len(self._waypoints) - 1:
+            return False, "cannot move return waypoint (last index)"
+
+        original = self._waypoints[index]
+        if yaw is None:
+            _qx, _qy, qz, qw = original.orientation
+            yaw = math.atan2(2.0 * (qw * qz), 1.0 - 2.0 * (qz * qz))
+
+        if not all(math.isfinite(v) for v in (x, y, yaw)):
+            return False, f"invalid pose: x={x}, y={y}, yaw={yaw}"
+
+        self._push_history()
+        with self._lock:
+            self._waypoints[index] = replace(
+                original,
+                position=(float(x), float(y), 0.0),
+                orientation=_yaw_quaternion(float(yaw)),
+            )
+        self._publish_route_markers()
+        self._refresh_interactive_markers()
+        return True, (
+            f"waypoint [{index}] {original.id} → "
+            f"({x:.3f}, {y:.3f}, yaw={math.degrees(yaw):.1f}°)"
+        )
+
+    def _on_clicked_point(self, msg: PointStamped):
+        """Publish Point tool: move the selected waypoint to the clicked location."""
+        index = self._selected_index
+        success, message = self._update_waypoint(index, msg.point.x, msg.point.y)
+        self._publish_status(f"[clicked] {message}")
+
+    def _on_initial_pose(self, msg: PoseWithCovarianceStamped):
+        """2D Pose Estimate tool: set both position and orientation."""
+        index = self._selected_index
+        orientation = msg.pose.pose.orientation
+        try:
+            yaw = _quaternion_yaw(orientation)
+        except ValueError:
+            yaw = 0.0
+        success, message = self._update_waypoint(
+            index, msg.pose.pose.position.x, msg.pose.pose.position.y, yaw
+        )
+        self._publish_status(f"[pose] {message}")
+
+    # ── history ────────────────────────────────────────────────────────
+
     def _push_history(self):
         self._history.append(tuple(self._waypoints))
         if len(self._history) > 100:
             del self._history[0]
+
+    # ── interactive markers (best-effort; core editing is via clicked_point) ──
 
     def _make_interactive_marker(self, index, waypoint):
         marker = InteractiveMarker()
@@ -245,6 +352,8 @@ class WaypointEditorNode(Node):
 
         stamp = self.get_clock().now().to_msg()
         frame_id = self._waypoints[0].frame_id
+        selected = self._selected_index
+
         line = Marker()
         line.header.frame_id = frame_id
         line.header.stamp = stamp
@@ -265,6 +374,66 @@ class WaypointEditorNode(Node):
         message.markers.append(line)
 
         for index, waypoint in enumerate(self._waypoints):
+            red, green, blue = TASK_COLORS[waypoint.task]
+            qx, qy, qz, qw = waypoint.orientation
+            sin_yaw = 2.0 * (qw * qz + qx * qy)
+            cos_yaw = 1.0 - 2.0 * (qy * qy + qz * qz)
+            yaw = math.atan2(sin_yaw, cos_yaw)
+            half = yaw / 2.0
+            aqx, aqy, aqz, aqw = 0.0, 0.0, math.sin(half), math.cos(half)
+
+            is_selected = index == selected
+            is_locked = index in (0, len(self._waypoints) - 1)
+
+            arrow = Marker()
+            arrow.header.frame_id = frame_id
+            arrow.header.stamp = stamp
+            arrow.ns = "mission_arrows"
+            arrow.id = index
+            arrow.type = Marker.ARROW
+            arrow.action = Marker.ADD
+            arrow.pose.position.x = waypoint.position[0]
+            arrow.pose.position.y = waypoint.position[1]
+            arrow.pose.position.z = 0.09
+            arrow.pose.orientation.x = aqx
+            arrow.pose.orientation.y = aqy
+            arrow.pose.orientation.z = aqz
+            arrow.pose.orientation.w = aqw
+            arrow.scale.x = 0.22
+            arrow.scale.y = 0.04
+            arrow.scale.z = 0.04
+            arrow.color.r = red
+            arrow.color.g = green
+            arrow.color.b = blue
+            arrow.color.a = 0.95
+            message.markers.append(arrow)
+
+            # sphere with selection highlight
+            sphere = Marker()
+            sphere.header.frame_id = frame_id
+            sphere.header.stamp = stamp
+            sphere.ns = "mission_spheres"
+            sphere.id = index
+            sphere.type = Marker.SPHERE
+            sphere.action = Marker.ADD
+            sphere.pose.position.x = waypoint.position[0]
+            sphere.pose.position.y = waypoint.position[1]
+            sphere.pose.position.z = 0.06
+            sphere.pose.orientation.w = 1.0
+            if is_selected:
+                sphere.scale.x = sphere.scale.y = sphere.scale.z = 0.16
+                sphere.color.r = 1.0
+                sphere.color.g = 1.0
+                sphere.color.b = 0.2
+                sphere.color.a = 1.0
+            else:
+                sphere.scale.x = sphere.scale.y = sphere.scale.z = 0.10
+                sphere.color.r = red
+                sphere.color.g = green
+                sphere.color.b = blue
+                sphere.color.a = 0.7 if is_locked else 1.0
+            message.markers.append(sphere)
+
             label = Marker()
             label.header.frame_id = frame_id
             label.header.stamp = stamp
@@ -279,7 +448,9 @@ class WaypointEditorNode(Node):
             label.scale.z = 0.10
             label.color.r = label.color.g = label.color.b = 1.0
             label.color.a = 1.0
-            label.text = f"{index}: {waypoint.id}"
+            lock_mark = " [LOCKED]" if is_locked else ""
+            sel_mark = " *" if is_selected else ""
+            label.text = f"{index}: {waypoint.id}{sel_mark}{lock_mark}"
             message.markers.append(label)
         self._marker_publisher.publish(message)
 
@@ -330,11 +501,12 @@ class WaypointEditorNode(Node):
             self._refresh_interactive_markers()
             self._publish_status(f"rejected invalid drag for {feedback.marker_name}: {error}")
             return
-        self._waypoints[index] = replace(
-            original,
-            position=(x_m, y_m, 0.0),
-            orientation=_yaw_quaternion(yaw),
-        )
+        with self._lock:
+            self._waypoints[index] = replace(
+                original,
+                position=(x_m, y_m, 0.0),
+                orientation=_yaw_quaternion(yaw),
+            )
         self._publish_route_markers()
 
     def _load(self):
@@ -349,18 +521,20 @@ class WaypointEditorNode(Node):
     def _undo(self):
         if not self._history:
             return False, "nothing to undo"
-        self._waypoints = list(self._history.pop())
+        with self._lock:
+            self._waypoints = list(self._history.pop())
         self._dragging.clear()
         self._refresh_display()
         return True, "restored the previous waypoint positions"
 
     def _save(self):
-        validate_waypoints(self._waypoints)
-        destination = self._path.resolve()
-        write_waypoints_atomic(destination, self._template, self._waypoints)
-        self._path = destination
-        self._template, loaded = load_waypoint_document(destination)
-        self._waypoints = list(loaded)
+        with self._lock:
+            validate_waypoints(self._waypoints)
+            destination = self._path.resolve()
+            write_waypoints_atomic(destination, self._template, self._waypoints)
+            self._path = destination
+            self._template, loaded = load_waypoint_document(destination)
+            self._waypoints = list(loaded)
         self._history.clear()
         self._dragging.clear()
         self._refresh_display()
