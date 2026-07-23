@@ -4,7 +4,9 @@ bt_navigator:
     global_frame: odom_combined
     robot_base_frame: base_footprint
     odom_topic: /odom_combined
-    bt_loop_duration: 10
+    # Milliseconds. 20 ms halves the default 100 Hz BT load while remaining
+    # faster than the independent 20 Hz path-controller loop.
+    bt_loop_duration: 20
     default_server_timeout: 20
     default_nav_to_pose_bt_xml: "<bt_xml_file>"
     default_nav_through_poses_bt_xml: "<bt_through_poses_xml_file>"

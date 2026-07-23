@@ -107,6 +107,7 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(os.path.join(
             safety_dir, 'launch', 'smartcar_safety.launch.py')),
         launch_arguments={
+            'config_file': LaunchConfiguration('safety_config_file'),
             'require_scan': safety_require_scan,
             'require_odom': safety_require_odom,
             'require_raw_odom': safety_require_raw_odom,
@@ -127,6 +128,10 @@ def generate_launch_description():
             default_value=os.path.join(
                 bringup_dir, 'config', 'laser_odometry.yaml')),
         DeclareLaunchArgument('use_safety', default_value='true'),
+        DeclareLaunchArgument(
+            'safety_config_file',
+            default_value=os.path.join(
+                safety_dir, 'config', 'safety.yaml')),
         DeclareLaunchArgument('use_imu_filter', default_value='false'),
         DeclareLaunchArgument('use_robot_description', default_value='false'),
         DeclareLaunchArgument('safety_require_scan', default_value='true'),

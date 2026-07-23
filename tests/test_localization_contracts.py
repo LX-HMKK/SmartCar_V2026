@@ -69,6 +69,8 @@ class EkfContractTests(unittest.TestCase):
     def test_frames_timeout_and_tf_owner_are_exact(self):
         params = ekf_parameters()
         self.assertEqual(params["sensor_timeout"], 0.25)
+        self.assertEqual(params["transform_timeout"], 0.0)
+        self.assertIs(params["print_diagnostics"], True)
         self.assertIs(params["two_d_mode"], True)
         self.assertIs(params["publish_tf"], True)
         self.assertEqual(params["odom_frame"], "odom_combined")

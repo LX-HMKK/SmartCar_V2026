@@ -193,6 +193,8 @@ def generate_launch_description():
             "use_robot_description": use_robot_description,
             "laser_odometry_config_file": LaunchConfiguration(
                 "laser_odometry_config_file"),
+            "safety_config_file": LaunchConfiguration(
+                "safety_config_file"),
             "use_safety": use_safety,
             "use_sim_time": use_sim_time,
             "safety_require_scan": LaunchConfiguration(
@@ -301,6 +303,14 @@ def generate_launch_description():
                 FindPackageShare("smartcar_bringup"),
                 "config",
                 "laser_odometry.yaml",
+            ]),
+        ),
+        DeclareLaunchArgument(
+            "safety_config_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_safety"),
+                "config",
+                "safety.yaml",
             ]),
         ),
         DeclareLaunchArgument("camera_driver", default_value="aurora"),

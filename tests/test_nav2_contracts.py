@@ -122,6 +122,7 @@ class TestNav2Contracts(unittest.TestCase):
 
     def test_bt_navigator_only_overrides_matching_tree(self):
         bt_navigator = ros_parameters(self.params, "bt_navigator")
+        self.assertEqual(bt_navigator["bt_loop_duration"], 20)
         self.assertEqual(
             bt_navigator["default_nav_to_pose_bt_xml"], "<bt_xml_file>"
         )

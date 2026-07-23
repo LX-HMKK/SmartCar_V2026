@@ -4,8 +4,10 @@ ekf_filter_node:
     sensor_timeout: 0.25
     two_d_mode: true
     transform_time_offset: 0.0
-    transform_timeout: 0.2
-    print_diagnostics: false
+    # All sensor-to-base transforms are static. Do not let a missing transform
+    # block a 30 Hz filter cycle; reject the observation and expose diagnostics.
+    transform_timeout: 0.0
+    print_diagnostics: true
     debug: false
     publish_tf: true
     publish_acceleration: false

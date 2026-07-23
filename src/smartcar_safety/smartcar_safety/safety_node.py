@@ -3,7 +3,12 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    QoSProfile,
+    ReliabilityPolicy,
+)
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool, Trigger
@@ -13,6 +18,15 @@ from smartcar_safety.velocity import (
     ZERO_TWIST_COMPONENTS,
     sanitize_twist_components,
     values_are_finite,
+)
+
+
+LATEST_RELIABLE_QOS = QoSProfile(depth=1)
+LATEST_SENSOR_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    reliability=ReliabilityPolicy.BEST_EFFORT,
+    durability=DurabilityPolicy.VOLATILE,
 )
 
 
@@ -87,12 +101,16 @@ class SafetyNode(Node):
         self._safe_publisher = self.create_publisher(Twist, "/cmd_vel_safe", 10)
         self._status_publisher = self.create_publisher(
             String, "/smartcar/safety/status", 10)
-        self.create_subscription(Twist, "/cmd_vel", self._on_command, 10)
         self.create_subscription(
-            LaserScan, "/scan", self._on_scan, qos_profile_sensor_data)
-        self.create_subscription(Odometry, "/odom_combined", self._on_odom, 10)
-        self.create_subscription(Odometry, "/odom", self._on_raw_odom, 10)
-        self.create_subscription(Float32, "/PowerVoltage", self._on_voltage, 10)
+            Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS)
+        self.create_subscription(
+            LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS)
+        self.create_subscription(
+            Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS)
+        self.create_subscription(
+            Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS)
+        self.create_subscription(
+            Float32, "/PowerVoltage", self._on_voltage, LATEST_RELIABLE_QOS)
         self.create_service(
             SetBool, "/smartcar/safety/emergency_stop", self._on_emergency_stop)
         self.create_service(

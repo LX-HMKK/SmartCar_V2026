@@ -56,6 +56,15 @@ class LaserOdometryContractTests(unittest.TestCase):
         self.assertIn("lin_speed = 0.0", core)
         self.assertIn("ang_speed = 0.0", core)
 
+    def test_per_scan_telemetry_is_not_logged_at_info(self):
+        core = (RF2O / "src" / "CLaserOdometry2D.cpp").read_text(
+            encoding="utf-8"
+        )
+        for message in ("execution time (ms)", "LASERodom", "BASEodom"):
+            with self.subTest(message=message):
+                self.assertIn(f'RCLCPP_DEBUG(get_logger(), "[rf2o] {message}', core)
+                self.assertNotIn(f'RCLCPP_INFO(get_logger(), "[rf2o] {message}', core)
+
     def test_bringup_config_is_conservative(self):
         config = yaml.safe_load(
             (BRINGUP / "config" / "laser_odometry.yaml").read_text(

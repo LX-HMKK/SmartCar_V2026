@@ -11,13 +11,13 @@ NODE_SOURCE = (
 
 
 class SafetyNodeCommandContractTests(unittest.TestCase):
-    def test_scan_subscription_uses_sensor_data_qos(self):
+    def test_safety_inputs_keep_only_the_latest_sample(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("from rclpy.qos import qos_profile_sensor_data", source)
-        self.assertIn(
-            'LaserScan, "/scan", self._on_scan, qos_profile_sensor_data',
-            source,
-        )
+        self.assertIn("LATEST_RELIABLE_QOS = QoSProfile(depth=1)", source)
+        self.assertIn("LATEST_SENSOR_QOS = QoSProfile(", source)
+        self.assertIn("depth=1", source)
+        self.assertIn('Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS', source)
+        self.assertIn('LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS', source)
 
     def test_raw_odom_has_an_independent_required_subscription(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
@@ -30,7 +30,7 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            'Odometry, "/odom", self._on_raw_odom, 10',
+            'Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS',
             source,
         )
         self.assertIn(

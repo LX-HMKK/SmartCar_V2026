@@ -25,6 +25,13 @@ SMARTCAR_BRINGUP = (
     / "launch"
     / "smartcar_bringup.launch.py"
 )
+SMARTCAR_SYSTEM = (
+    REPOSITORY_ROOT
+    / "src"
+    / "smartcar_bringup"
+    / "launch"
+    / "smartcar_system.launch.py"
+)
 SMARTCAR_SAFETY_LAUNCH = (
     REPOSITORY_ROOT
     / "src"
@@ -153,6 +160,20 @@ class SafetyLaunchContractTests(unittest.TestCase):
             "'require_raw_odom': safety_require_raw_odom",
             source,
         )
+
+    def test_safety_and_laser_odometry_receive_distinct_config_files(self):
+        source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
+        self.assertIn("'laser_odometry_config_file'", source)
+        self.assertIn("'safety_config_file'", source)
+        self.assertIn("'config_file': LaunchConfiguration(\n                'laser_odometry_config_file')", source)
+        self.assertIn(
+            "'config_file': LaunchConfiguration('safety_config_file')",
+            source,
+        )
+
+        system_source = SMARTCAR_SYSTEM.read_text(encoding="utf-8")
+        self.assertIn('"safety_config_file": LaunchConfiguration(', system_source)
+        self.assertIn('DeclareLaunchArgument(\n            "safety_config_file"', system_source)
 
     def test_vendor_bringup_forwards_topic_into_base_serial(self):
         tree = source_tree(ORIGINCAR_BRINGUP)

@@ -1,0 +1,39 @@
+"""Source-level contracts for the no-motion odometry diagnostic."""
+
+from pathlib import Path
+import unittest
+import xml.etree.ElementTree as ElementTree
+
+
+PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+SOURCE_FILE = PACKAGE_ROOT / "smartcar_tools" / "odom_diag.py"
+
+
+class OdomDiagContractTests(unittest.TestCase):
+    def test_monitors_all_localization_inputs_and_output(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        for topic in (
+            "/odom",
+            "/imu/data_raw",
+            "/odom_combined",
+            "/scan",
+            "/odom_laser",
+            "/diagnostics",
+        ):
+            with self.subTest(topic=topic):
+                self.assertIn(topic, source)
+
+    def test_shutdown_occurs_outside_ros_callbacks(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        self.assertIn("self.finished = True", source)
+        self.assertIn("while rclpy.ok() and not node.finished", source)
+        self.assertEqual(source.count("rclpy.shutdown()"), 1)
+
+    def test_manifest_declares_diagnostic_messages(self):
+        root = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()
+        dependencies = {item.text for item in root.findall("exec_depend")}
+        self.assertIn("diagnostic_msgs", dependencies)
+
+
+if __name__ == "__main__":
+    unittest.main()
