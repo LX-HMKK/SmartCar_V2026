@@ -193,6 +193,14 @@ class BaseDriverContractTests(unittest.TestCase):
             r"orientation_covariance\[0\]\s*=\s*-1\.0",
         )
 
+    def test_quaternion_helper_has_no_architecture_dependent_type_punning(self):
+        source = (
+            BASE_PACKAGE / "src" / "Quaternion_Solution.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn("std::uint32_t", source)
+        self.assertIn("std::memcpy", source)
+        self.assertNotIn("( long * )", source)
+
     def test_shutdown_uses_existing_serial_and_read_failures_are_fail_closed(self):
         source = BASE_SOURCE_FILE.read_text(encoding="utf-8")
         self.assertNotIn("sigintHandler", source)

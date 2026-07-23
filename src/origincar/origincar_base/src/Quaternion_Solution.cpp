@@ -1,5 +1,9 @@
 
 #include "origincar_base/Quaternion_Solution.h"
+
+#include <cstdint>
+#include <cstring>
+
 #define SAMPLING_FREQ 20.0f // 采样频率
 /**************************************
 Date: May 31, 2020
@@ -7,15 +11,15 @@ Function: 平方根倒数 求四元数用到
 ***************************************/
 float InvSqrt(float number)
 {
-  volatile long i;
-    volatile float x, y;
-    volatile const float f = 1.5F;
-    x = number * 0.5F;
-    y = number;
-    i = * (( long * ) &y);
-    i = 0x5f375a86 - ( i >> 1 );
-    y = * (( float * ) &i);
-    y = y * ( f - ( x * y * y ) );
+  float x = number * 0.5F;
+  float y = number;
+  constexpr float kHalf = 1.5F;
+  std::uint32_t bits = 0;
+  static_assert(sizeof(bits) == sizeof(y), "float must be 32-bit");
+  std::memcpy(&bits, &y, sizeof(bits));
+  bits = 0x5f375a86U - (bits >> 1);
+  std::memcpy(&y, &bits, sizeof(y));
+  y = y * (kHalf - (x * y * y));
 
   return y;
 }
