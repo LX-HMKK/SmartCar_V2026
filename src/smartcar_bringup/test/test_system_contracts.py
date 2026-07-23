@@ -205,14 +205,22 @@ class SystemContractTests(unittest.TestCase):
                 TASK_NODE.read_text(encoding="utf-8"),
             )
 
-    def test_coord_config_marks_unmeasured_extrinsics_and_placeholder_waypoints(self):
+    def test_coord_config_preserves_measured_extrinsics_and_closes_pending_gates(self):
         config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
         self.assertIs(config["toggles"]["use_base"], True)
-        self.assertIs(config["extrinsics"]["base_to_link"]["measured"], False)
-        self.assertIs(config["extrinsics"]["link_to_laser"]["measured"], False)
-        self.assertIs(config["extrinsics"]["link_to_camera"]["measured"], False)
+        self.assertIs(config["extrinsics"]["base_to_link"]["measured"], True)
+        self.assertIs(config["extrinsics"]["link_to_laser"]["measured"], True)
+        self.assertIs(config["extrinsics"]["link_to_camera"]["measured"], True)
         gates = config["motion_gates"]
-        self.assertTrue(all(value is False for value in gates.values()))
+        self.assertIs(gates["extrinsics_calibrated"], True)
+        for name in (
+            "waypoints_calibrated",
+            "steering_calibrated",
+            "emergency_stop_ready",
+            "operator_approved",
+            "laser_odometry_calibrated",
+        ):
+            self.assertIs(gates[name], False)
 
     def test_bringup_declares_direct_runtime_and_test_dependencies(self):
         source = PACKAGE_XML.read_text(encoding="utf-8")
