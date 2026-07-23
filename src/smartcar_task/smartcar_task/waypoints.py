@@ -16,6 +16,7 @@ ALLOWED_TASKS = frozenset({
     "corridor",
     "loop",
     "return",
+    "nav",       # pure navigation pass-through (no vision/media subtask)
 })
 ORIGIN_TOLERANCE = 1e-9
 QUATERNION_NORM_TOLERANCE = 1e-3
@@ -162,12 +163,12 @@ def validate_waypoints(waypoints):
         raise ValueError("first waypoint task must be start")
     if tasks[-1] != "return":
         raise ValueError("last waypoint task must be return")
-    for task in ("start", "qr", "vlm", "return"):
+    for task in ("start", "return"):
         if tasks.count(task) != 1:
             raise ValueError(f"mission task {task} must occur exactly once")
 
     # validate sequence with a simple state machine:
-    #   start → qr → corridor* → vlm → loop+ → corridor* → return
+    #   start → (qr|nav) → corridor* → (vlm|nav) → loop+ → corridor* → return
     loop_count = tasks.count("loop")
     if loop_count < 3:
         raise ValueError("mission must contain at least three loop corners")
@@ -177,19 +178,22 @@ def validate_waypoints(waypoints):
         if state == "start":
             if task != "start":
                 raise ValueError(f"waypoint {i}: expected start, got {task}")
-            state = "qr"
-        elif state == "qr":
-            if task != "qr":
-                raise ValueError(f"waypoint {i}: expected qr, got {task}")
-            state = "outbound_corridor"
+            state = "before_loop"
+        elif state == "before_loop":
+            if task in ("qr", "nav"):
+                state = "outbound_corridor"
+            else:
+                raise ValueError(
+                    f"waypoint {i}: expected qr or nav, got {task}"
+                )
         elif state == "outbound_corridor":
             if task == "corridor":
                 continue  # stay in outbound_corridor
-            elif task == "vlm":
+            elif task in ("vlm", "nav"):
                 state = "loop"
             else:
                 raise ValueError(
-                    f"waypoint {i}: expected corridor or vlm, got {task}"
+                    f"waypoint {i}: expected corridor or vlm/nav, got {task}"
                 )
         elif state == "loop":
             if task == "loop":
@@ -214,8 +218,8 @@ def validate_waypoints(waypoints):
             raise ValueError(f"waypoint {i}: unexpected {task} after return")
     if state != "done":
         raise ValueError(
-            "mission order must be start, qr, corridor transit(s), vlm corner, "
-            "at least three loop corners, corridor transit(s), return"
+            "mission order must be start, (qr|nav), corridor transit(s), "
+            "(vlm|nav), at least three loop corners, corridor transit(s), return"
         )
     if not _is_origin_position(waypoints[0]) or not _faces_positive_x(
         waypoints[0]

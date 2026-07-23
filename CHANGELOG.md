@@ -1,5 +1,47 @@
 # 变更日志
 
+## 2026-07-23 - 纯导航任务类型 `nav` 与一键测试脚本
+
+### 背景
+
+现有语义航点（`task: qr`/`task: vlm`）在视觉服务不可用时直接 FAILED，需要一种方式跳过视觉任务、单独测试完整导航路线。此前 QR/VLM 硬依赖意味着纯导航测试无法覆盖全路线。
+
+### 改动
+
+- **`waypoints.py`**: `ALLOWED_TASKS` 新增 `"nav"`，状态机接受 `nav` 替代 `qr`/`vlm`（`start → (qr|nav) → corridor* → (vlm|nav) → loop+ → corridor* → return`），`_navigation_segments` 不拆分 nav 航点段。
+- **`nav_only.yaml`**: 新增纯导航航点文件，qr/vlm → nav（直通不触发视觉），11 航点覆盖完整 P→A→B→C→B→P 路线。
+- **`mission.py`**: `"nav"` task 作为 pass-through（`OperationResult(True, "ok")`），不调用任何服务。
+- **`/root/nav_test.sh`**: 一键全流程脚本（清理→构建→启动→等就绪→RViz→发车），使用 `use_vision:=false use_camera:=false nav_only.yaml`。
+- **`/root/monitor_mission.py`**: rclpy 实时监控（任务状态、odom 位姿、cmd_vel、耗时）。
+- **`/tmp/kill_all.sh`**: RDK 端快速清理所有 ROS 进程的脚本。
+
+### 使用方式
+
+```bash
+# RDK 上一键启动纯导航测试
+setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
+
+# 实时监控
+python3 /root/monitor_mission.py
+
+# 紧急停车（ROS2 CLI 卡死时）
+pkill -9 -f "ros2 launch"
+```
+
+### 验证结果
+
+- `nav_only.yaml` 通过 `validate_waypoints` 校验（11 waypoints）✅
+- 全系统启动，8/8 lifecycle active ✅
+- RViz 正常显示 ✅
+- 任务启动成功，waypoint_follower 处理航点 ✅
+
+### 修改文件
+
+- `src/smartcar_task/smartcar_task/waypoints.py` — +`"nav"` task，状态机更新
+- `src/smartcar_nav2/config/waypoints/nav_only.yaml` — 新增
+- `scripts/nav_test.sh` — 新增
+- `scripts/monitor_mission.py` — 新增
+
 ## 2026-07-23 - Nav2 参数链路修复、导航调优与行为树加固
 
 ### 背景
@@ -45,7 +87,7 @@
 ### 已知问题
 
 - **重启必须彻底清理旧进程**: 多次 kill/restart 后残留的旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等）会占用串口和 CPU。每次重启前执行完整的 `pkill -9` + `ros2 daemon stop/start` 清理。
-- **QR/VLM 任务硬依赖**: 到达航点后必须有实际二维码/人物标牌，否则任务在重试后 FAILED。纯导航测试需要将 QR/VLM 航点 task 改为 `continue` 或移除。
+- **QR/VLM 任务硬依赖 (2026-07-23 已解决)**: ~~到达航点后必须有实际二维码/人物标牌，否则任务在重试后 FAILED。~~ 新增 `"nav"` 任务类型和 `nav_only.yaml` 航点文件，可跳过视觉服务进行纯导航全路线测试。
 
 ### 修改文件
 

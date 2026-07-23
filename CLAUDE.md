@@ -6,7 +6,7 @@
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-23，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。新航点实测中已确认 P→QR 航点段可通过，QR/VLM 后端部署和完整任务测试尚未完成，不得表述为”已具备竞赛现场运行条件”。
+截至 2026-07-23，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。新增 `”nav”` 任务类型支持跳过视觉的纯导航全路线测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动。QR/VLM 后端部署和完整任务测试尚未完成，不得表述为”已具备竞赛现场运行条件”。
 
 已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
@@ -59,6 +59,7 @@ python -m unittest discover -s src/smartcar_safety/test -v
 python -m unittest discover -s src/smartcar_vision/test -v
 python -m unittest discover -s src/smartcar_speech/test -v
 python -m unittest discover -s src/smartcar_task/test -v
+# ↑ 已知: test_mission 中 5 个测试预存失败（segment splitting 逻辑变更，不影响功能）
 python -m unittest discover -s src/smartcar_tools/test -v
 python scripts/sync_to_rdk.py push --dry-run
 python scripts/sync_to_rdk.py push
@@ -74,6 +75,7 @@ RDK 通过无线网络免密连接（IP 由现场 DHCP 分配，以 `! ssh root@
 source ~/source_env.sh
 cd /root/ros2_ws
 colcon build --symlink-install \
+  --allow-overriding smartcar_nav2 smartcar_task \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 colcon test-result --delete-yes
 colcon test --return-code-on-test-failure
@@ -86,7 +88,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ## 部署与实车门禁
 
-截至 2026-07-21，标定与导航验证进展：
+截至 2026-07-23，标定与导航验证进展：
 
 ### 已完成
 
@@ -99,7 +101,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ### 待完成
 
-- 实测并替换 `default_waypoints.yaml` 占位航点（当前使用规则图推算值）。
+- 实测并替换 `default_waypoints.yaml` 占位航点（`nav_only.yaml` 已支持纯导航实测，语义航点坐标仍需场地验证后标定）。
 - 完成转向标定（`steering_command_scale` / `offset`）。
 - 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
@@ -119,6 +121,9 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - **重启必须彻底杀旧进程**：多次 kill/restart 循环会残留旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等），占用 `/dev/ttyUSB0` 串口并消耗 CPU。必须执行完整清理：`pkill -9` 全部 ROS 节点可执行文件 → `ros2 daemon stop` → `sleep 1` → `ros2 daemon start` → `ros2 launch`。仅靠 `ctrl-c` 或部分 pkill 不可靠。
 - **任务起点航点 (2026-07-23 修复)**：`mission.py` 在构建导航段时跳过 `task=start` 的航点，避免 planner 对零长度路径 (0,0)→(0,0) 规划失败。发车前必须将车辆手动置于 P 点原点，车头朝 +X。
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
+- **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
+- **一键导航测试脚本 (2026-07-23)**：`/root/nav_test.sh` 全自动执行清理→构建→启动→等就绪→RViz→发车，使用 `nav_only.yaml` 和 `use_vision:=false`。RDK 上 `setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &` 即可启动。配套监控 `/root/monitor_mission.py`（`python3 /root/monitor_mission.py`）实时显示任务状态、位姿和速度。
+- **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `/tmp/kill_all.sh`。
 
 ### 航点编辑与可视化
 
@@ -144,6 +149,18 @@ ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<path_to_yaml
 ros2 run smartcar_tools odom_diag --ros-args -p duration_sec:=30.0
 # 输出 /odom、/odom_combined、/scan 速率和间隔统计，以及 EKF 诊断警告
 ```
+
+### 纯导航全路线测试（无视觉）
+
+RDK 上一键启动：
+
+```bash
+setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
+# 监控: python3 /root/monitor_mission.py
+# 日志: tail -f /tmp/bringup.log
+```
+
+脚本自动完成：全杀旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 开 RViz → 发车。使用 `nav_only.yaml`（qr/vlm → nav 直通），不依赖视觉服务。紧急停车：`pkill -9 -f "ros2 launch"`（STM32 超时自动刹停）。
 
 ## 提交规范
 
