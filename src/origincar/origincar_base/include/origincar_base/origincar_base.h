@@ -2,6 +2,9 @@
 #ifndef _ORIGINCAR_BASE_H_
 #define _ORIGINCAR_BASE_H_
 
+#include <array>
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <inttypes.h>
 #include "rclcpp/rclcpp.hpp"
@@ -116,13 +119,19 @@ private:
 	void Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr twist_aux);
 	void Akm_Cmd_Vel_Callback(const ackermann_msgs::msg::AckermannDriveStamped::SharedPtr akm_ctl);
 	void Send_Stop_Command();
+	void Prepare_Stop_Command();
 	void Write_Command();
+	void Handle_Serial_Write_Failure(
+		const std::string & detail, bool short_write = false);
+	void Handle_Serial_Read_Failure(const std::string & detail);
+	void Record_Sensor_Frame_Timing(double sensor_time_sec);
+	void Maybe_Log_Serial_Diagnostics(double now_sec);
 
 	void Publish_ImuSensor(const rclcpp::Time & sensor_time);
 	void Publish_Voltage();
 	auto createQuaternionMsgFromYaw(double yaw);
 
-	bool Get_Sensor_Data();
+	bool Get_Sensor_Data(rclcpp::Time & sensor_time);
 	unsigned char Check_Sum(unsigned char Count_Number,unsigned char mode);
 	short IMU_Trans(uint8_t Data_High,uint8_t Data_Low);
 	float Odom_Trans(uint8_t Data_High,uint8_t Data_Low);
@@ -158,12 +167,14 @@ private:
 	std::string cmd_vel;
 	int serial_baud_rate;
 	int serial_read_timeout_ms;
+	int serial_write_timeout_ms;
 	double command_timeout_sec;
 	CommandMode command_mode;
 	std::unique_ptr<CommandWatchdog> command_watchdog;
 	SensorCalibration sensor_calibration_;
 	IntegrationClock integration_clock_;
 	XorFrameStreamParser<RECEIVE_DATA_SIZE> sensor_frame_parser_;
+	LatestFrameSelector<RECEIVE_DATA_SIZE> latest_sensor_frame_selector_;
 	std::array<double, 36> odom_pose_covariance_;
 	std::array<double, 36> odom_twist_covariance_;
 	std::array<double, 9> imu_angular_velocity_covariance_;
@@ -175,6 +186,24 @@ private:
 	Vel_Pos_Data Robot_Vel;
 	MPU6050_DATA Mpu6050_Data;
 	float Power_voltage;
+	std::uint64_t serial_bytes_read_;
+	std::uint64_t serial_bad_frames_;
+	std::uint64_t serial_discarded_bytes_;
+	std::uint64_t serial_backlog_deferrals_;
+	std::uint64_t serial_short_reads_;
+	std::uint64_t serial_read_failures_;
+	std::uint64_t serial_write_failures_;
+	std::uint64_t serial_short_writes_;
+	std::uint64_t serial_published_frames_;
+	std::size_t serial_backlog_high_watermark_;
+	double last_sensor_frame_time_sec_;
+	double latest_sensor_frame_interval_sec_;
+	double max_sensor_frame_interval_sec_;
+	double last_serial_diagnostic_time_sec_;
+	rclcpp::Time pending_sensor_frame_time_;
+	bool pending_sensor_frame_deferred_by_backlog_;
+	bool has_sensor_frame_time_;
+	bool serial_failure_latched_;
     size_t count_;
 };
 

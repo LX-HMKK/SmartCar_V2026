@@ -177,7 +177,7 @@ class BaseDriverContractTests(unittest.TestCase):
     def test_wrapped_frames_do_not_bypass_checksum(self):
         source = BASE_SOURCE_FILE.read_text(encoding="utf-8")
         self.assertTrue(SERIAL_FRAME_HEADER_FILE.is_file())
-        self.assertIn("sensor_frame_parser_.pop_frame(", source)
+        self.assertIn("sensor_frame_parser_.pop_latest_frame(", source)
         self.assertNotIn("Header_Pos", source)
         self.assertNotIn("Tail_Pos", source)
         self.assertNotRegex(

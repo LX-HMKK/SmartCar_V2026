@@ -12,6 +12,7 @@ def generate_launch_description():
     command_timeout_sec = LaunchConfiguration('command_timeout_sec')
     max_integration_dt_sec = LaunchConfiguration('max_integration_dt_sec')
     serial_read_timeout_ms = LaunchConfiguration('serial_read_timeout_ms')
+    serial_write_timeout_ms = LaunchConfiguration('serial_write_timeout_ms')
     input_topic = LaunchConfiguration('input_topic')
     output_topic = LaunchConfiguration('output_topic')
     frame_id = LaunchConfiguration('frame_id')
@@ -32,6 +33,7 @@ def generate_launch_description():
         {'usart_port_name': '/dev/ttyACM0',
          'serial_baud_rate': 115200,
          'serial_read_timeout_ms': serial_read_timeout_ms,
+         'serial_write_timeout_ms': serial_write_timeout_ms,
          'command_timeout_sec': command_timeout_sec,
          'max_integration_dt_sec': max_integration_dt_sec,
          'robot_frame_id': 'base_footprint',
@@ -59,7 +61,8 @@ def generate_launch_description():
         DeclareLaunchArgument('max_steering_angle', default_value='0.45'),
         DeclareLaunchArgument('command_timeout_sec', default_value='0.35'),
         DeclareLaunchArgument('max_integration_dt_sec', default_value='0.25'),
-        DeclareLaunchArgument('serial_read_timeout_ms', default_value='100'),
+        DeclareLaunchArgument('serial_read_timeout_ms', default_value='0'),
+        DeclareLaunchArgument('serial_write_timeout_ms', default_value='20'),
         DeclareLaunchArgument('input_topic', default_value='/cmd_vel_safe'),
         DeclareLaunchArgument('output_topic', default_value='/ackermann_cmd'),
         DeclareLaunchArgument('frame_id', default_value='odom_combined'),

@@ -5,7 +5,7 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from geometry_msgs.msg import Twist
 from ackermann_msgs.msg import AckermannDriveStamped
-from rclpy.qos import QoSProfile
+from rclpy.qos import HistoryPolicy, QoSProfile
 
 from ackermann_math import ackermann_command
 
@@ -27,12 +27,15 @@ class CmdVel2AckermannDriveNode(Node):
             'frame_id', 'odom_combined'
         ).value
 
-        qos = QoSProfile(depth=10)
+        command_qos = QoSProfile(
+            history=HistoryPolicy.KEEP_LAST,
+            depth=1,
+        )
         self.publisher = self.create_publisher(
-            AckermannDriveStamped, output_topic, qos
+            AckermannDriveStamped, output_topic, command_qos
         )
         self.subscription = self.create_subscription(
-            Twist, input_topic, self.cmd_callback, qos
+            Twist, input_topic, self.cmd_callback, command_qos
         )
 
     def cmd_callback(self, data):

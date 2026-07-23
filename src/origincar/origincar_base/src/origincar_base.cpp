@@ -3,9 +3,32 @@
 #include "ackermann_msgs/msg/ackermann_drive_stamped.hpp" 
 #include "origincar_msg/msg/data.hpp"
 
+#include <algorithm>
+#include <chrono>
+#include <cmath>
+#include <sstream>
+
 using std::placeholders::_1;
 using namespace std;
 sensor_msgs::msg::Imu Mpu6050;
+
+namespace
+{
+
+constexpr std::size_t kSerialReadChunkSize = RECEIVE_DATA_SIZE * 4U;
+constexpr std::size_t kSerialReadBudgetPerCycle = RECEIVE_DATA_SIZE * 8U;
+constexpr double kSerialDiagnosticPeriodSec = 10.0;
+constexpr double kMaxPendingSensorFrameAgeSec = 0.1;
+constexpr int kControlLoopSleepMs = 5;
+constexpr std::size_t kSerialRecoveryWriteAttempts = 2U;
+
+double monotonic_now_sec()
+{
+  return std::chrono::duration<double>(
+    std::chrono::steady_clock::now().time_since_epoch()).count();
+}
+
+}  // namespace
 
 
 int main(int argc, char *argv[])
@@ -138,21 +161,38 @@ void origincar_base::Cmd_Vel_Callback(const geometry_msgs::msg::Twist::SharedPtr
 
 void origincar_base::Write_Command()
 {
+    if (serial_failure_latched_) {
+      return;
+    }
+
+    if (!Stm32_Serial.isOpen()) {
+      Handle_Serial_Write_Failure("serial port is not open");
+      return;
+    }
+
     try {
-      if (Stm32_Serial.isOpen()) {
-        Stm32_Serial.write(Send_Data.tx, sizeof(Send_Data.tx));
+      const std::size_t expected_size = sizeof(Send_Data.tx);
+      const std::size_t written_size =
+        Stm32_Serial.write(Send_Data.tx, expected_size);
+      if (written_size != expected_size) {
+        std::ostringstream detail;
+        detail << "short serial write: wrote " << written_size << " of " <<
+          expected_size << " bytes";
+        Handle_Serial_Write_Failure(detail.str(), true);
       }
     } catch (const serial::IOException & error) {
-      RCLCPP_ERROR(
-        this->get_logger(), "Unable to send data through serial port: %s",
-        error.what());
-      if (rclcpp::ok()) {
-        rclcpp::shutdown();
-      }
+      Handle_Serial_Write_Failure(
+        std::string("IOException: ") + error.what());
+    } catch (const serial::SerialException & error) {
+      Handle_Serial_Write_Failure(
+        std::string("SerialException: ") + error.what());
+    } catch (const serial::PortNotOpenedException & error) {
+      Handle_Serial_Write_Failure(
+        std::string("PortNotOpenedException: ") + error.what());
     }
 }
 
-void origincar_base::Send_Stop_Command()
+void origincar_base::Prepare_Stop_Command()
 {
     Send_Data.tx[0] = FRAME_HEADER;
     for (size_t i = 1; i < 9; ++i) {
@@ -160,7 +200,109 @@ void origincar_base::Send_Stop_Command()
     }
     Send_Data.tx[9] = Check_Sum(9, SEND_DATA_CHECK);
     Send_Data.tx[10] = FRAME_TAIL;
+}
+
+void origincar_base::Send_Stop_Command()
+{
+    Prepare_Stop_Command();
     Write_Command();
+}
+
+void origincar_base::Handle_Serial_Write_Failure(
+  const std::string & detail, bool short_write)
+{
+    ++serial_write_failures_;
+    if (short_write) {
+      ++serial_short_writes_;
+    }
+    RCLCPP_ERROR(
+      this->get_logger(),
+      "Serial command path latched; shutting down node: %s",
+      detail.c_str());
+
+    Prepare_Stop_Command();
+    serial_failure_latched_ = true;
+
+    std::array<std::uint8_t, SEND_DATA_SIZE> stop_frame{};
+    std::copy_n(Send_Data.tx, stop_frame.size(), stop_frame.begin());
+    const auto recovery_stream = make_fail_closed_recovery_stream(stop_frame);
+    bool recovery_write_completed = false;
+    std::size_t recovery_attempts = 0;
+    for (std::size_t attempt = 1; attempt <= kSerialRecoveryWriteAttempts;
+      ++attempt)
+    {
+      recovery_attempts = attempt;
+      if (!Stm32_Serial.isOpen()) {
+        ++serial_write_failures_;
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Recovery stream attempt %zu unavailable because serial port is closed",
+          attempt);
+        break;
+      }
+
+      try {
+        const std::size_t written_size = Stm32_Serial.write(
+          recovery_stream.data(), recovery_stream.size());
+        if (written_size == recovery_stream.size()) {
+          recovery_write_completed = true;
+          RCLCPP_WARN(
+            this->get_logger(),
+            "Recovery stream write completed on attempt %zu; "
+            "STM32 stop state is unverified",
+            attempt);
+          break;
+        }
+
+        ++serial_write_failures_;
+        ++serial_short_writes_;
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Recovery stream attempt %zu was short: wrote %zu of %zu bytes",
+          attempt, written_size, recovery_stream.size());
+      } catch (const serial::IOException & error) {
+        ++serial_write_failures_;
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Recovery stream attempt %zu IOException: %s",
+          attempt, error.what());
+      } catch (const serial::SerialException & error) {
+        ++serial_write_failures_;
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Recovery stream attempt %zu SerialException: %s",
+          attempt, error.what());
+      } catch (const serial::PortNotOpenedException & error) {
+        ++serial_write_failures_;
+        RCLCPP_ERROR(
+          this->get_logger(),
+          "Recovery stream attempt %zu PortNotOpenedException: %s",
+          attempt, error.what());
+      }
+    }
+
+    if (!recovery_write_completed) {
+      RCLCPP_ERROR(
+        this->get_logger(),
+        "Recovery stream did not complete after %zu bounded attempt(s); "
+        "STM32 stop state is unverified",
+        recovery_attempts);
+    }
+
+    if (rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
+}
+
+void origincar_base::Handle_Serial_Read_Failure(const std::string & detail)
+{
+    ++serial_read_failures_;
+    RCLCPP_ERROR(
+      this->get_logger(), "Unable to read sensor data: %s", detail.c_str());
+    Send_Stop_Command();
+    if (rclcpp::ok()) {
+      rclcpp::shutdown();
+    }
 }
 
 void origincar_base::Sign_Switch_Callback(const std_msgs::msg::Int32::SharedPtr sign_switch)
@@ -274,33 +416,114 @@ unsigned char origincar_base::Check_Sum(unsigned char Count_Number,unsigned char
     return check_sum;
 }
 
-bool origincar_base::Get_Sensor_Data()
+bool origincar_base::Get_Sensor_Data(rclcpp::Time & sensor_time)
 {
     short transition_16 = 0;
-    std::array<std::uint8_t, RECEIVE_DATA_SIZE> read_buffer{};
-    size_t received_size = 0;
+    std::array<std::uint8_t, kSerialReadChunkSize> read_buffer{};
+    std::size_t total_received_size = 0;
+    std::size_t available_after_read = 0;
     try {
-      received_size = Stm32_Serial.read(
-        read_buffer.data(), read_buffer.size());
+      while (total_received_size < kSerialReadBudgetPerCycle) {
+        const std::size_t available_size = Stm32_Serial.available();
+        serial_backlog_high_watermark_ = std::max(
+          serial_backlog_high_watermark_, available_size);
+        if (available_size == 0) {
+          break;
+        }
+
+        const std::size_t requested_size = bounded_serial_read_size(
+          available_size,
+          kSerialReadBudgetPerCycle - total_received_size,
+          read_buffer.size());
+        const std::size_t received_size = Stm32_Serial.read(
+          read_buffer.data(), requested_size);
+        if (received_size == 0) {
+          ++serial_short_reads_;
+          break;
+        }
+
+        sensor_frame_parser_.append(read_buffer.data(), received_size);
+        serial_bytes_read_ += static_cast<std::uint64_t>(received_size);
+        total_received_size += received_size;
+        if (received_size < requested_size) {
+          ++serial_short_reads_;
+          break;
+        }
+      }
+
+      available_after_read = Stm32_Serial.available();
+      serial_backlog_high_watermark_ = std::max(
+        serial_backlog_high_watermark_, available_after_read);
     } catch (const serial::IOException & error) {
-      RCLCPP_ERROR(
-        this->get_logger(), "Unable to read sensor data: %s", error.what());
-      Send_Stop_Command();
-      if (rclcpp::ok()) {
-        rclcpp::shutdown();
+      Handle_Serial_Read_Failure(
+        std::string("IOException: ") + error.what());
+      return false;
+    } catch (const serial::SerialException & error) {
+      Handle_Serial_Read_Failure(
+        std::string("SerialException: ") + error.what());
+      return false;
+    } catch (const serial::PortNotOpenedException & error) {
+      Handle_Serial_Read_Failure(
+        std::string("PortNotOpenedException: ") + error.what());
+      return false;
+    }
+
+    std::array<std::uint8_t, RECEIVE_DATA_SIZE> newest_frame{};
+    XorFrameDrainStats drain_stats;
+    const bool received_valid_frame_this_cycle =
+      sensor_frame_parser_.pop_latest_frame(
+        FRAME_HEADER, FRAME_TAIL, newest_frame, drain_stats);
+    if (received_valid_frame_this_cycle)
+    {
+      pending_sensor_frame_time_ = rclcpp::Node::now();
+      latest_sensor_frame_selector_.offer(
+        newest_frame, drain_stats.valid_frames, monotonic_now_sec());
+    }
+    serial_bad_frames_ += static_cast<std::uint64_t>(drain_stats.invalid_frames);
+    serial_discarded_bytes_ +=
+      static_cast<std::uint64_t>(drain_stats.discarded_bytes);
+
+    const PendingFrameAction pending_action = choose_pending_frame_action(
+      available_after_read > 0,
+      pending_sensor_frame_deferred_by_backlog_,
+      received_valid_frame_this_cycle);
+    if (pending_action == PendingFrameAction::kDefer) {
+      pending_sensor_frame_deferred_by_backlog_ =
+        latest_sensor_frame_selector_.has_latest();
+      ++serial_backlog_deferrals_;
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "Serial RX backlog deferred publication: %zu bytes still queued",
+        available_after_read);
+      return false;
+    }
+
+    if (pending_action == PendingFrameAction::kDiscardBacklogStale) {
+      pending_sensor_frame_deferred_by_backlog_ = false;
+      if (latest_sensor_frame_selector_.discard_backlog_stale()) {
+        RCLCPP_WARN_THROTTLE(
+          this->get_logger(), *this->get_clock(), 5000,
+          "Discarded a deferred sensor frame because backlog cleared "
+          "without a fresh valid frame");
       }
       return false;
     }
-    if (received_size > 0) {
-      sensor_frame_parser_.append(read_buffer.data(), received_size);
-    }
-    std::array<std::uint8_t, RECEIVE_DATA_SIZE> normalized_frame{};
-    if (!sensor_frame_parser_.pop_frame(
-        FRAME_HEADER, FRAME_TAIL, normalized_frame))
+    pending_sensor_frame_deferred_by_backlog_ = false;
+
+    if (latest_sensor_frame_selector_.expire_if_older_than(
+        monotonic_now_sec(), kMaxPendingSensorFrameAgeSec))
     {
+      RCLCPP_WARN_THROTTLE(
+        this->get_logger(), *this->get_clock(), 5000,
+        "Expired a stale serial sensor frame after backlog recovery");
       return false;
     }
-    memcpy(Receive_Data.rx, normalized_frame.data(), normalized_frame.size());
+
+    if (!latest_sensor_frame_selector_.take_latest(newest_frame)) {
+      return false;
+    }
+    sensor_time = pending_sensor_frame_time_;
+    memcpy(Receive_Data.rx, newest_frame.data(), newest_frame.size());
 
     Receive_Data.Frame_Header = Receive_Data.rx[0];
     Receive_Data.Frame_Tail = Receive_Data.rx[23];
@@ -358,8 +581,10 @@ void origincar_base::Control()
         RCLCPP_WARN(this->get_logger(), "Command timeout; sent one stop command");
       }
 
-      if (true == Get_Sensor_Data()) {
-        const rclcpp::Time sensor_time = rclcpp::Node::now();
+      rclcpp::Time sensor_time(
+        0, 0, this->get_clock()->get_clock_type());
+      if (true == Get_Sensor_Data(sensor_time)) {
+        Record_Sensor_Frame_Timing(sensor_time.seconds());
         const IntegrationDelta delta = integration_clock_.update(sensor_time.seconds());
         if (delta.should_integrate) {
           try {
@@ -383,11 +608,35 @@ void origincar_base::Control()
         Publish_Voltage();
         Publish_Odom(sensor_time);
       }
+
+      Maybe_Log_Serial_Diagnostics(rclcpp::Node::now().seconds());
+      std::this_thread::sleep_for(
+        std::chrono::milliseconds(kControlLoopSleepMs));
     }
 }
 
 origincar_base::origincar_base()
-: rclcpp::Node ("origincar_base"), command_mode(CommandMode::kAckermann)
+: rclcpp::Node ("origincar_base"),
+  command_mode(CommandMode::kAckermann),
+  Power_voltage(0.0f),
+  serial_bytes_read_(0),
+  serial_bad_frames_(0),
+  serial_discarded_bytes_(0),
+  serial_backlog_deferrals_(0),
+  serial_short_reads_(0),
+  serial_read_failures_(0),
+  serial_write_failures_(0),
+  serial_short_writes_(0),
+  serial_published_frames_(0),
+  serial_backlog_high_watermark_(0),
+  last_sensor_frame_time_sec_(0.0),
+  latest_sensor_frame_interval_sec_(0.0),
+  max_sensor_frame_interval_sec_(0.0),
+  last_serial_diagnostic_time_sec_(0.0),
+  pending_sensor_frame_deferred_by_backlog_(false),
+  has_sensor_frame_time_(false),
+  serial_failure_latched_(false),
+  count_(0)
 {
   memset(&Robot_Pos, 0, sizeof(Robot_Pos));
   memset(&Robot_Vel, 0, sizeof(Robot_Vel));
@@ -402,7 +651,8 @@ origincar_base::origincar_base()
   this->declare_parameter<std::string>("robot_frame_id", "base_link");
   this->declare_parameter<std::string>("gyro_frame_id", "gyro_link");
   this->declare_parameter<int>("serial_baud_rate", 115200);
-  this->declare_parameter<int>("serial_read_timeout_ms", 100);
+  this->declare_parameter<int>("serial_read_timeout_ms", 0);
+  this->declare_parameter<int>("serial_write_timeout_ms", 20);
   this->declare_parameter<double>("command_timeout_sec", 0.35);
   this->declare_parameter<double>("max_integration_dt_sec", 0.25);
   this->declare_parameter<std::string>("command_mode", "ackermann");
@@ -435,6 +685,7 @@ origincar_base::origincar_base()
   this->get_parameter("robot_frame_id", robot_frame_id);
   this->get_parameter("gyro_frame_id", gyro_frame_id);
   this->get_parameter("serial_read_timeout_ms", serial_read_timeout_ms);
+  this->get_parameter("serial_write_timeout_ms", serial_write_timeout_ms);
   this->get_parameter("command_timeout_sec", command_timeout_sec);
   const std::string command_mode_name = this->get_parameter("command_mode").as_string();
   command_mode = command_mode_from_string(command_mode_name);
@@ -483,12 +734,18 @@ origincar_base::origincar_base()
     throw;
   }
 
-  if (serial_read_timeout_ms > 100) {
-    RCLCPP_WARN(this->get_logger(), "serial_read_timeout_ms capped at 100 ms");
-    serial_read_timeout_ms = 100;
-  } else if (serial_read_timeout_ms < 1) {
-    RCLCPP_WARN(this->get_logger(), "serial_read_timeout_ms raised to 1 ms");
-    serial_read_timeout_ms = 1;
+  if (serial_read_timeout_ms != 0) {
+    RCLCPP_WARN(
+      this->get_logger(),
+      "serial_read_timeout_ms is forced to 0 for available-driven reads");
+    serial_read_timeout_ms = 0;
+  }
+  if (serial_write_timeout_ms > 100) {
+    RCLCPP_WARN(this->get_logger(), "serial_write_timeout_ms capped at 100 ms");
+    serial_write_timeout_ms = 100;
+  } else if (serial_write_timeout_ms < 1) {
+    RCLCPP_WARN(this->get_logger(), "serial_write_timeout_ms raised to 1 ms");
+    serial_write_timeout_ms = 1;
   }
   command_watchdog = std::make_unique<CommandWatchdog>(command_timeout_sec);
 
@@ -502,12 +759,15 @@ origincar_base::origincar_base()
 
   robotvel_publisher = create_publisher<origincar_msg::msg::Data>("robotvel", 10);
 
+  const rclcpp::QoS command_qos(rclcpp::KeepLast(1));
   if (command_mode == CommandMode::kTwist) {
     Cmd_Vel_Sub = create_subscription<geometry_msgs::msg::Twist>(
-        cmd_vel, 1, std::bind(&origincar_base::Cmd_Vel_Callback, this, _1));
+        cmd_vel, command_qos,
+        std::bind(&origincar_base::Cmd_Vel_Callback, this, _1));
   } else {
     Akm_Cmd_Vel_Sub = create_subscription<ackermann_msgs::msg::AckermannDriveStamped>(
-        akm_cmd_vel, 1, std::bind(&origincar_base::Akm_Cmd_Vel_Callback, this, _1));
+        akm_cmd_vel, command_qos,
+        std::bind(&origincar_base::Akm_Cmd_Vel_Callback, this, _1));
   }
 
   // Sign_Switch_Sub = create_subscription<std_msgs::msg::Int32>(
@@ -515,15 +775,98 @@ origincar_base::origincar_base()
   try  {
     Stm32_Serial.setPort(usart_port_name);
     Stm32_Serial.setBaudrate(serial_baud_rate);
-    serial::Timeout _time = serial::Timeout::simpleTimeout(serial_read_timeout_ms);
-    Stm32_Serial.setTimeout(_time);
+    serial::Timeout serial_timeout(
+      serial::Timeout::max(),
+      static_cast<std::uint32_t>(serial_read_timeout_ms),
+      0U,
+      static_cast<std::uint32_t>(serial_write_timeout_ms),
+      0U);
+    Stm32_Serial.setTimeout(serial_timeout);
     Stm32_Serial.open();
-  } catch (serial::IOException& e) {
-    RCLCPP_ERROR(this->get_logger(),"origincar_base can not open serial port,Please check the serial port cable! ");
+  } catch (const serial::IOException & error) {
+    RCLCPP_FATAL(
+      this->get_logger(), "Unable to open serial port (IOException): %s",
+      error.what());
+    serial_failure_latched_ = true;
+  } catch (const serial::SerialException & error) {
+    RCLCPP_FATAL(
+      this->get_logger(), "Unable to open serial port (SerialException): %s",
+      error.what());
+    serial_failure_latched_ = true;
+  } catch (const serial::PortNotOpenedException & error) {
+    RCLCPP_FATAL(
+      this->get_logger(),
+      "Unable to open serial port (PortNotOpenedException): %s",
+      error.what());
+    serial_failure_latched_ = true;
   }
   if(Stm32_Serial.isOpen()) {
     RCLCPP_INFO(this->get_logger(),"origincar_base serial port opened");
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Serial RX uses available-byte reads capped at %zu bytes per cycle",
+      kSerialReadBudgetPerCycle);
+  } else if (rclcpp::ok()) {
+    rclcpp::shutdown();
   }
+}
+
+void origincar_base::Record_Sensor_Frame_Timing(double sensor_time_sec)
+{
+    if (has_sensor_frame_time_) {
+      const double interval_sec = sensor_time_sec - last_sensor_frame_time_sec_;
+      if (std::isfinite(interval_sec) && interval_sec > 0.0) {
+        latest_sensor_frame_interval_sec_ = interval_sec;
+        max_sensor_frame_interval_sec_ = std::max(
+          max_sensor_frame_interval_sec_, interval_sec);
+      }
+    }
+    last_sensor_frame_time_sec_ = sensor_time_sec;
+    has_sensor_frame_time_ = true;
+    ++serial_published_frames_;
+}
+
+void origincar_base::Maybe_Log_Serial_Diagnostics(double now_sec)
+{
+    if (!std::isfinite(now_sec) ||
+      now_sec - last_serial_diagnostic_time_sec_ < kSerialDiagnosticPeriodSec)
+    {
+      return;
+    }
+    last_serial_diagnostic_time_sec_ = now_sec;
+
+    const LatestFrameSelectionStats & selection_stats =
+      latest_sensor_frame_selector_.stats();
+    const double frame_age_ms = has_sensor_frame_time_ ?
+      std::max(0.0, (now_sec - last_sensor_frame_time_sec_) * 1000.0) : 0.0;
+    RCLCPP_INFO(
+      this->get_logger(),
+      "Serial RX stats: published=%llu valid=%llu dropped=%llu expired=%llu "
+      "backlog_stale=%llu bad=%llu discarded_bytes=%llu "
+      "coalescing_events=%llu "
+      "backlog_deferrals=%llu backlog_high_watermark=%zuB "
+      "parser_buffered=%zuB bytes_read=%llu short_reads=%llu "
+      "frame_interval_ms=%.1f max_frame_interval_ms=%.1f frame_age_ms=%.1f "
+      "read_failures=%llu write_failures=%llu short_writes=%llu",
+      static_cast<unsigned long long>(serial_published_frames_),
+      static_cast<unsigned long long>(selection_stats.valid_frames),
+      static_cast<unsigned long long>(selection_stats.dropped_frames),
+      static_cast<unsigned long long>(selection_stats.expired_frames),
+      static_cast<unsigned long long>(selection_stats.backlog_stale_frames),
+      static_cast<unsigned long long>(serial_bad_frames_),
+      static_cast<unsigned long long>(serial_discarded_bytes_),
+      static_cast<unsigned long long>(selection_stats.coalescing_events),
+      static_cast<unsigned long long>(serial_backlog_deferrals_),
+      serial_backlog_high_watermark_,
+      sensor_frame_parser_.buffered_size(),
+      static_cast<unsigned long long>(serial_bytes_read_),
+      static_cast<unsigned long long>(serial_short_reads_),
+      latest_sensor_frame_interval_sec_ * 1000.0,
+      max_sensor_frame_interval_sec_ * 1000.0,
+      frame_age_ms,
+      static_cast<unsigned long long>(serial_read_failures_),
+      static_cast<unsigned long long>(serial_write_failures_),
+      static_cast<unsigned long long>(serial_short_writes_));
 }
 
 
