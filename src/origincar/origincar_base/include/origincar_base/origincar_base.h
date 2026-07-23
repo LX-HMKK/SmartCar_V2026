@@ -105,7 +105,8 @@ class origincar_base : public rclcpp::Node
 public:
 	origincar_base();
 	~origincar_base();
-	void Control();
+	void start();
+	void on_serial_tick();
 	void Publish_Odom(const rclcpp::Time & sensor_time);
 
 public : 
@@ -153,6 +154,8 @@ private:
 	// rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr tf_pub_;
 
 	rclcpp::TimerBase::SharedPtr test_timer;
+
+	rclcpp::TimerBase::SharedPtr serial_timer_;
 
 	rclcpp::TimerBase::SharedPtr odom_timer;
 	rclcpp::TimerBase::SharedPtr imu_timer;

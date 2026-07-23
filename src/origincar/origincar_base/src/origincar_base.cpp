@@ -35,8 +35,9 @@ int main(int argc, char *argv[])
 {
     rclcpp::init(argc, argv);
     {
-      origincar_base Robot_Control;
-      Robot_Control.Control();
+      auto node = std::make_shared<origincar_base>();
+      node->start();
+      rclcpp::spin(node);
     }
     if (rclcpp::ok()) {
       rclcpp::shutdown();
@@ -570,49 +571,50 @@ bool origincar_base::Get_Sensor_Data(rclcpp::Time & sensor_time)
     return true;
 }
 
-void origincar_base::Control()
+void origincar_base::start()
 {
-    while(rclcpp::ok()) {
-      rclcpp::spin_some(this->get_node_base_interface());
+    using namespace std::chrono_literals;
+    serial_timer_ = this->create_wall_timer(
+        5ms, std::bind(&origincar_base::on_serial_tick, this));
+}
 
-      const rclcpp::Time command_time = rclcpp::Node::now();
-      if (command_watchdog->consume_stop(command_time.seconds())) {
+void origincar_base::on_serial_tick()
+{
+    const rclcpp::Time command_time = rclcpp::Node::now();
+    if (command_watchdog->consume_stop(command_time.seconds())) {
         Send_Stop_Command();
         RCLCPP_WARN(this->get_logger(), "Command timeout; sent one stop command");
-      }
+    }
 
-      rclcpp::Time sensor_time(
+    rclcpp::Time sensor_time(
         0, 0, this->get_clock()->get_clock_type());
-      if (true == Get_Sensor_Data(sensor_time)) {
+    if (true == Get_Sensor_Data(sensor_time)) {
         Record_Sensor_Frame_Timing(sensor_time.seconds());
         const IntegrationDelta delta = integration_clock_.update(sensor_time.seconds());
         if (delta.should_integrate) {
-          try {
-            const PlanarPose integrated = integrate_planar(
-              PlanarPose(Robot_Pos.X, Robot_Pos.Y, Robot_Pos.Z),
-              SensorSample(
-                Robot_Vel.X,
-                Robot_Vel.Y,
-                Robot_Vel.Z,
-                Mpu6050.angular_velocity.z),
-              delta.dt_sec);
-            Robot_Pos.X = integrated.x;
-            Robot_Pos.Y = integrated.y;
-            Robot_Pos.Z = integrated.yaw;
-          } catch (const std::invalid_argument & error) {
-            RCLCPP_ERROR(this->get_logger(), "Rejected odometry integration: %s", error.what());
-          }
+            try {
+                const PlanarPose integrated = integrate_planar(
+                    PlanarPose(Robot_Pos.X, Robot_Pos.Y, Robot_Pos.Z),
+                    SensorSample(
+                        Robot_Vel.X,
+                        Robot_Vel.Y,
+                        Robot_Vel.Z,
+                        Mpu6050.angular_velocity.z),
+                    delta.dt_sec);
+                Robot_Pos.X = integrated.x;
+                Robot_Pos.Y = integrated.y;
+                Robot_Pos.Z = integrated.yaw;
+            } catch (const std::invalid_argument & error) {
+                RCLCPP_ERROR(this->get_logger(), "Rejected odometry integration: %s", error.what());
+            }
         }
 
         Publish_ImuSensor(sensor_time);
         Publish_Voltage();
         Publish_Odom(sensor_time);
-      }
-
-      Maybe_Log_Serial_Diagnostics(rclcpp::Node::now().seconds());
-      std::this_thread::sleep_for(
-        std::chrono::milliseconds(kControlLoopSleepMs));
     }
+
+    Maybe_Log_Serial_Diagnostics(rclcpp::Node::now().seconds());
 }
 
 origincar_base::origincar_base()

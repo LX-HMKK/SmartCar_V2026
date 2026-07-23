@@ -59,13 +59,7 @@ class SafetyGuard:
         self.command_invalid = False
         self.scan_received_at = None
         self.odom_received_at = None
-        self.odom_sample_sequence = 0
-        self.odom_invalid = False
         self.raw_odom_received_at = None
-        self.raw_odom_sample_sequence = 0
-        self.localization_fault_latched = False
-        self.localization_fault_raw_sequence = 0
-        self.localization_fault_odom_sequence = 0
         self.voltage_received_at = None
         self.voltage = None
         self.emergency_stop = False
@@ -82,18 +76,9 @@ class SafetyGuard:
 
     def mark_odom(self, receipt_time_sec):
         self.odom_received_at = float(receipt_time_sec)
-        self.odom_sample_sequence += 1
-        self.odom_invalid = False
-
-    def mark_odom_invalid(self):
-        self.odom_invalid = True
 
     def mark_raw_odom(self, receipt_time_sec):
         self.raw_odom_received_at = float(receipt_time_sec)
-        self.raw_odom_sample_sequence += 1
-
-    def mark_raw_odom_invalid(self, _receipt_time_sec):
-        self._latch_localization_fault()
 
     def mark_voltage(self, voltage, receipt_time_sec):
         self.voltage = float(voltage)
@@ -118,54 +103,8 @@ class SafetyGuard:
         return self._fresh(
             self.command_received_at, now_sec, self.command_timeout_sec)
 
-    def clear_localization_fault(self, now_sec):
-        if self.require_raw_odom and not self._fresh(
-            self.raw_odom_received_at, now_sec, self.raw_odom_timeout_sec
-        ):
-            return False
-        if self.require_odom and (
-            self.odom_invalid
-            or not self._fresh(
-                self.odom_received_at, now_sec, self.odom_timeout_sec)
-        ):
-            return False
-        if (
-            self.localization_fault_latched
-            and self.require_raw_odom
-            and self.raw_odom_sample_sequence
-            <= self.localization_fault_raw_sequence
-        ):
-            return False
-        if (
-            self.localization_fault_latched
-            and self.require_odom
-            and self.odom_sample_sequence
-            <= self.localization_fault_odom_sequence
-        ):
-            return False
-        self.localization_fault_latched = False
-        return True
-
-    def _latch_localization_fault(self):
-        if not self.require_raw_odom:
-            return
-        self.localization_fault_latched = True
-        self.localization_fault_raw_sequence = self.raw_odom_sample_sequence
-        self.localization_fault_odom_sequence = self.odom_sample_sequence
-
-    def _update_localization_fault(self, now_sec):
-        if (
-            self.require_raw_odom
-            and self.raw_odom_received_at is not None
-            and not self._fresh(
-                self.raw_odom_received_at, now_sec, self.raw_odom_timeout_sec
-            )
-        ):
-            self._latch_localization_fault()
-
     def evaluate(self, now_sec):
         """Return a dict containing the fail-closed decision and its reason."""
-        self._update_localization_fault(now_sec)
         if self.emergency_stop:
             return self._result(False, "emergency_stop")
 
@@ -184,15 +123,10 @@ class SafetyGuard:
                 return self._result(False, "scan_stale")
 
         if self.require_odom:
-            if self.odom_invalid:
-                return self._result(False, "odom_invalid")
             if self.odom_received_at is None:
                 return self._result(False, "odom_missing")
             if not self._fresh(self.odom_received_at, now_sec, self.odom_timeout_sec):
                 return self._result(False, "odom_stale")
-
-        if self.localization_fault_latched:
-            return self._result(False, "localization_fault")
 
         if self.require_raw_odom:
             if self.raw_odom_received_at is None:
@@ -200,8 +134,7 @@ class SafetyGuard:
             if not self._fresh(
                 self.raw_odom_received_at, now_sec, self.raw_odom_timeout_sec
             ):
-                self._latch_localization_fault()
-                return self._result(False, "localization_fault")
+                return self._result(False, "raw_odom_stale")
 
         if self.minimum_voltage > 0.0:
             if self.voltage is None:

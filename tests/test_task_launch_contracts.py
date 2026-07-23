@@ -60,7 +60,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("goal.poses.append(pose)", source)
         self.assertNotIn("goal.poses = [pose]", source)
 
-    def test_reset_adapter_orders_set_pose_odom_verification_and_clear(self):
+    def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = NODE.read_text(encoding="utf-8")
         sequence = source[
             source.index("return run_reset_sequence("):
@@ -68,11 +68,9 @@ class TaskLaunchContractTests(unittest.TestCase):
         ]
         set_pose = sequence.index("self._call_set_pose")
         verify = sequence.index("self._wait_for_verified_origin")
-        clear = sequence.index("self._clear_localization_fault")
         self.assertLess(set_pose, verify)
-        self.assertLess(verify, clear)
         self.assertIn("self._set_pose_client.call_async", source)
-        self.assertIn("self._clear_fault_client.call_async", source)
+        self.assertNotIn("_clear_fault_client", source)
 
     def test_task_node_never_publishes_chassis_velocity(self):
         source = NODE.read_text(encoding="utf-8")

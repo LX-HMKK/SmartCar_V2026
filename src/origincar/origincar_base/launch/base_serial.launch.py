@@ -28,6 +28,7 @@ def generate_launch_description():
         'steering_command_offset_rad')
     max_calibrated_steering_command_rad = LaunchConfiguration(
         'max_calibrated_steering_command_rad')
+    skip_converter = LaunchConfiguration('skip_converter')
 
     robot_parameters = [
         {'usart_port_name': '/dev/ttyACM0',
@@ -79,6 +80,7 @@ def generate_launch_description():
             'steering_command_offset_rad', default_value='0.0'),
         DeclareLaunchArgument(
             'max_calibrated_steering_command_rad', default_value='0.225'),
+        DeclareLaunchArgument('skip_converter', default_value='false'),
 
         launch_ros.actions.Node(
             condition=IfCondition(akmcar),
@@ -91,7 +93,7 @@ def generate_launch_description():
         ),
 
         launch_ros.actions.Node(
-            condition=IfCondition(akmcar),
+            condition=UnlessCondition(skip_converter),
             package='origincar_base',
             executable='cmd_vel_to_ackermann_drive.py',
             name='cmd_vel_to_ackermann_drive',

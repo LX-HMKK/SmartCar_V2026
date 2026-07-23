@@ -4,46 +4,31 @@ import math
 
 def _values_are_finite(values):
     try:
-        for value in values:
-            if not math.isfinite(value):
-                return False
+        return all(math.isfinite(value) for value in values)
     except (TypeError, ValueError, OverflowError):
         return False
-    return True
 
 
 def odometry_is_finite(message):
-    """Return whether all pose, twist, and covariance values are finite."""
-    pose_with_covariance = message.pose
-    twist_with_covariance = message.twist
-    pose = pose_with_covariance.pose
-    twist = twist_with_covariance.twist
-    position = pose.position
-    orientation = pose.orientation
-    linear = twist.linear
-    angular = twist.angular
-
+    """Check only pose and twist scalars on an already-decoded message."""
     try:
-        scalar_values_are_finite = (
-            math.isfinite(position.x)
-            and math.isfinite(position.y)
-            and math.isfinite(position.z)
-            and math.isfinite(orientation.x)
-            and math.isfinite(orientation.y)
-            and math.isfinite(orientation.z)
-            and math.isfinite(orientation.w)
-            and math.isfinite(linear.x)
-            and math.isfinite(linear.y)
-            and math.isfinite(linear.z)
-            and math.isfinite(angular.x)
-            and math.isfinite(angular.y)
-            and math.isfinite(angular.z)
+        pose = message.pose.pose
+        twist = message.twist.twist
+        values = (
+            pose.position.x,
+            pose.position.y,
+            pose.position.z,
+            pose.orientation.x,
+            pose.orientation.y,
+            pose.orientation.z,
+            pose.orientation.w,
+            twist.linear.x,
+            twist.linear.y,
+            twist.linear.z,
+            twist.angular.x,
+            twist.angular.y,
+            twist.angular.z,
         )
-    except (TypeError, ValueError, OverflowError):
+    except (AttributeError, TypeError, ValueError):
         return False
-
-    return (
-        scalar_values_are_finite
-        and _values_are_finite(pose_with_covariance.covariance)
-        and _values_are_finite(twist_with_covariance.covariance)
-    )
+    return _values_are_finite(values)

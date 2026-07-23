@@ -1,4 +1,5 @@
 """ROS-runtime-independent contract for safety_node command sanitization."""
+import ast
 from pathlib import Path
 import unittest
 
@@ -21,15 +22,24 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             'LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True',
             source,
         )
+        self.assertIn(
+            'Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS,',
+            source,
+        )
+        self.assertIn(
+            'Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS,',
+            source,
+        )
+        self.assertEqual(source.count("raw=True"), 3)
 
     def test_raw_odom_has_an_independent_required_subscription(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
         self.assertIn(
-            'self.declare_parameter("raw_odom_timeout_sec", 0.25)',
+            'self.declare_parameter("require_raw_odom", True)',
             source,
         )
         self.assertIn(
-            'self.declare_parameter("require_raw_odom", True)',
+            'self.declare_parameter("raw_odom_timeout_sec", 0.25)',
             source,
         )
         self.assertIn(
@@ -37,25 +47,26 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             source,
         )
         self.assertIn(
-            'raw_odom_timeout_sec=self.get_parameter("raw_odom_timeout_sec").value',
-            source,
-        )
-        self.assertIn(
             'require_raw_odom=self.get_parameter("require_raw_odom").value',
             source,
         )
-        self.assertIn("self.guard.mark_raw_odom(now_sec)", source)
+        self.assertIn(
+            'raw_odom_timeout_sec=self.get_parameter("raw_odom_timeout_sec").value',
+            source,
+        )
+        self.assertIn("self.guard.mark_raw_odom(", source)
 
-    def test_odometry_must_be_finite_and_localization_fault_clear_is_explicit(self):
+    def test_odom_callbacks_are_lightweight_heartbeats(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
-        self.assertIn(
-            "from smartcar_safety.odometry import odometry_is_finite", source)
-        self.assertIn("self.guard.mark_odom_invalid()", source)
-        self.assertIn("self.guard.mark_raw_odom_invalid(now_sec)", source)
-        self.assertIn(
-            '"/smartcar/safety/clear_localization_fault"', source)
-        self.assertIn("self.guard.clear_localization_fault(now_sec)", source)
-        self.assertIn("fresh_nonzero_command", source)
+        self.assertIn("self.guard.mark_odom(", source)
+        self.assertIn("self.guard.mark_raw_odom(", source)
+        self.assertIn("self._last_odom_processed_at", source)
+        self.assertIn("self._last_raw_odom_processed_at", source)
+        self.assertIn("self._odom_throttle_interval", source)
+        self.assertNotIn("serialized_odometry_is_finite", source)
+        self.assertNotIn("mark_odom_invalid", source)
+        self.assertNotIn("mark_raw_odom_invalid", source)
+        self.assertNotIn("clear_localization_fault", source)
 
     def test_all_twist_fields_are_sanitized_before_caching(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
@@ -93,6 +104,21 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             source,
         )
         self.assertIn("self.guard.set_emergency_stop(True)", source)
+
+    def test_status_is_transient_local_and_only_changes_are_published(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("STATUS_QOS = QoSProfile(", source)
+        self.assertIn("durability=DurabilityPolicy.TRANSIENT_LOCAL", source)
+        self.assertIn("String, \"/smartcar/safety/status\", STATUS_QOS", source)
+        self.assertIn("if reason == self._last_status_reason:", source)
+        self.assertNotIn("_last_blocked_status_at", source)
+
+    def test_watchdog_uses_a_monotonic_arrival_clock(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("return time.monotonic()", source)
+        # get_clock().now() is only used for ackermann message header stamps,
+        # NOT for watchdog interval comparisons (which use time.monotonic())
+        self.assertEqual(source.count("self.get_clock().now()"), 1)
 
 
 if __name__ == "__main__":

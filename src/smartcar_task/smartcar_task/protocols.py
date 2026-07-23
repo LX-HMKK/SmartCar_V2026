@@ -93,7 +93,6 @@ def run_reset_sequence(
     navigation_stopped,
     set_pose,
     wait_for_verified_origin,
-    clear_localization_fault,
 ):
     if not navigation_stopped():
         return OperationResult(False, "navigation_not_stopped")
@@ -103,7 +102,4 @@ def run_reset_sequence(
     origin_result = wait_for_verified_origin()
     if not origin_result.success:
         return origin_result
-    clear_result = clear_localization_fault()
-    if not clear_result.success:
-        return clear_result
     return OperationResult(True, "ok")

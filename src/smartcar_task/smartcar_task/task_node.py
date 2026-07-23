@@ -462,11 +462,6 @@ class RosLocalization:
             "/set_pose",
             callback_group=callback_group,
         )
-        self._clear_fault_client = node.create_client(
-            Trigger,
-            "/smartcar/safety/clear_localization_fault",
-            callback_group=callback_group,
-        )
         self._condition = threading.Condition()
         self._odom_sequence = 0
         self._latest_odom = None
@@ -488,17 +483,14 @@ class RosLocalization:
             lambda: not self._navigator.is_active(),
             self._call_set_pose,
             self._wait_for_verified_origin,
-            self._clear_localization_fault,
         )
 
     def _wait_for_reset_services(self):
-        for client in (self._set_pose_client, self._clear_fault_client):
-            remaining = self._deadline - time.monotonic()
-            if remaining <= 0.0 or not client.wait_for_service(
-                timeout_sec=remaining
-            ):
-                return False
-        return True
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0.0:
+            return False
+        return self._set_pose_client.wait_for_service(
+            timeout_sec=remaining)
 
     def _call_set_pose(self):
         request = SetPose.Request()
@@ -541,27 +533,6 @@ class RosLocalization:
                 self._condition.wait(
                     timeout=max(0.0, self._deadline - time.monotonic()))
         return OperationResult(False, "origin_verification_timeout")
-
-    def _clear_localization_fault(self):
-        last_message = "clear_localization_fault_rejected"
-        while time.monotonic() < self._deadline:
-            request = Trigger.Request()
-            future = self._clear_fault_client.call_async(request)
-            remaining = self._deadline - time.monotonic()
-            completed, response, error = _wait_future(future, remaining)
-            if not completed:
-                _remove_pending(self._clear_fault_client, future)
-                return OperationResult(False, "clear_localization_fault_timeout")
-            if error is not None or response is None:
-                return OperationResult(
-                    False,
-                    f"clear_localization_fault_error:{type(error).__name__}",
-                )
-            if response.success:
-                return OperationResult(True, "ok")
-            last_message = str(response.message) or last_message
-            time.sleep(min(0.10, max(0.0, self._deadline - time.monotonic())))
-        return OperationResult(False, last_message)
 
     def _on_odom(self, message):
         with self._condition:

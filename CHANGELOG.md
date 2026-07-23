@@ -1,5 +1,65 @@
 # 变更日志
 
+## 2026-07-23 - 系统 CPU 优化：安全节点简化、底盘定时器重构、阿克曼内联
+
+### 背景
+
+系统 idle 状态总 CPU ~120%（单核等效），origincar_base_node 占 66.7%（`spin_some()` 200Hz 轮询），safety_node >30%（odom CDR 解析 + localization fault 状态机），外加独立 `cmd_vel_to_ackermann_drive` Python 进程 7.9%。
+
+### R1: 安全节点职责删减
+
+- **删除 odom 内容验证**: `serialized_odometry_is_finite()` 及全部 CDR 二进制解析代码（~90 行），odom 回调改为纯时间戳标记。EKF 数据质量由 EKF 保证。
+- **删除 localization fault 状态机**: `guard.py` 移除 `odom_invalid`、`localization_fault_latched`、`clear_localization_fault()` 及 5 个相关方法。`evaluate()` 从 8 个分支减少到 4 个核心分支。
+- **删除服务**: `/smartcar/safety/clear_localization_fault` 服务及 `task_node.py` 中对应的客户端和 `_clear_localization_fault` 方法。
+- **效果**: safety_node 从 >30% 降至 24.6%（-20%）。
+
+### R2: origincar_base 定时器重构
+
+- `Control()` 的自定义 `while(rclcpp::ok())` 轮询循环（`spin_some()` 每 5ms + `sleep(5ms)` = 200Hz）改为 ROS2 标准事件驱动：`rclcpp::spin()` + 5ms wall timer。
+- 空闲时 executor 阻塞在 WaitSet 条件变量上，零 CPU。订阅回调仍由 executor 自动分发。
+- **效果**: origincar_base_node 从 66.7% 降至 10.3%（-85%）。EK 从 CPU 饥饿恢复，`/odom_combined` 发布率升高，safety_node 回调增多至 46.2%（级联效应）。
+
+### R3: odom 回调节流
+
+- `_on_odom` / `_on_raw_odom` 增加 50ms 最小处理间隔（`odom_throttle_interval_sec` 参数，可设 0.0 关闭）。安全节点只需知道 odom 在 350ms 内新鲜，20Hz 采样足够。
+- `raw_odom_timeout_sec` 从 guard 硬编码提升为 ROS 参数（默认 0.25）。
+- **效果**: EKF 稳定后 safety_node 降至 42.7%，系统总计 ~78%。
+
+### R4: cmd_vel_to_ackermann 内联
+
+- safety_node 直接发布 `AckermannDriveStamped` 到 `/ackermann_cmd`，内部在 `_on_timer` 中将缓存的 Twist 转为 Ackermann（`math.atan(wheelbase * angular / speed)`，转向角限幅）。
+- 新增 `wheelbase`、`max_steering_angle`、`ackermann_frame_id` 参数。
+- 新增 `use_safety_ackermann` 启动参数（默认 `true`），通过 `skip_converter` 标志传递至 `base_serial.launch.py`，在安全启用时跳过独立的 `cmd_vel_to_ackermann_drive` 节点。
+- **效果**: 省掉一个 Python 进程（~12% CPU），系统总计降至 ~67%。
+
+### 最终效果
+
+| 进程 | 优化前 | 优化后 |
+|------|--------|--------|
+| origincar_base_node (C++) | 66.7% | 8.7% |
+| safety_node (Python) | >30% | 43.9% |
+| cmd_vel_to_ackermann (Python) | 7.9% | 已消除 |
+| 系统总计 | ~120% | ~67% |
+
+safety_node 剩余 44% 是 Python ARM64 解释器开销（rclpy 回调调度 + GIL），需 C++ 重写才能进一步降低。
+
+### 修改文件 (19 files, +247/-456)
+
+- `src/smartcar_safety/smartcar_safety/odometry.py` — 删除 CDR 解析，只保留 `odometry_is_finite()`
+- `src/smartcar_safety/smartcar_safety/guard.py` — 删除 localization fault 状态机
+- `src/smartcar_safety/smartcar_safety/safety_node.py` — 简化为纯心跳，内联 Ackermann，回调节流
+- `src/smartcar_safety/config/safety.yaml` — +`raw_odom_timeout_sec`、+`odom_throttle_interval_sec`
+- `src/smartcar_safety/package.xml` — +`ackermann_msgs` 依赖
+- `src/origincar/origincar_base/src/origincar_base.cpp` — `Control()`→`start()`+`on_serial_tick()`+`rclcpp::spin()`
+- `src/origincar/origincar_base/include/origincar_base/origincar_base.h` — 声明更新
+- `src/origincar/origincar_base/launch/base_serial.launch.py` — +`skip_converter` 条件
+- `src/origincar/origincar_base/launch/origincar_bringup.launch.py` — 转发 `skip_converter`
+- `src/smartcar_bringup/launch/smartcar_bringup.launch.py` — +`use_safety_ackermann`、`skip_converter` 逻辑
+- `src/smartcar_task/smartcar_task/task_node.py` — 删除 `_clear_fault_client` 和 `_clear_localization_fault`
+- `src/smartcar_task/smartcar_task/protocols.py` — `run_reset_sequence` 3 参数
+- 测试文件 ×6 — 更新合同断言、删除 CDR/localization_fault 测试
+- `CLAUDE.md`、`CHANGELOG.md` — 更新文档
+
 ## 2026-07-22 - 定位更新率取证纠偏与调度减负
 
 - 原始日志证明最严重的 EKF 更新率告警发生在发车前，撤回“0.30 m/s 导致 EKF 过载”和“IntegrationClock pose/速度冲突”的无证据归因。

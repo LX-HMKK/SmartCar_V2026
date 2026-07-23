@@ -23,11 +23,18 @@ def generate_launch_description():
     safety_require_raw_odom = LaunchConfiguration('safety_require_raw_odom')
     safety_emergency_stop_on_start = LaunchConfiguration(
         'safety_emergency_stop_on_start')
+    use_safety_ackermann = LaunchConfiguration('use_safety_ackermann')
     odom_frame = LaunchConfiguration('odom_frame')
     laser_frame = LaunchConfiguration('laser_frame')
     chassis_input_topic = PythonExpression([
         "'/cmd_vel_safe' if '", use_safety,
         "'.lower() in ('true', '1') else '/cmd_vel'",
+    ])
+    skip_converter = PythonExpression([
+        "'true' if '", use_safety,
+        "'.lower() in ('true', '1') and '",
+        use_safety_ackermann,
+        "'.lower() in ('true', '1') else 'false'",
     ])
 
     extrinsic_names = (
@@ -66,6 +73,7 @@ def generate_launch_description():
             origincar_dir, 'launch', 'origincar_bringup.launch.py')),
         launch_arguments={
             'input_topic': chassis_input_topic,
+            'skip_converter': skip_converter,
             'use_sim_time': use_sim_time,
             'use_imu_filter': use_imu_filter,
             'use_robot_description': use_robot_description,
@@ -128,6 +136,8 @@ def generate_launch_description():
             default_value=os.path.join(
                 bringup_dir, 'config', 'laser_odometry.yaml')),
         DeclareLaunchArgument('use_safety', default_value='true'),
+        DeclareLaunchArgument(
+            'use_safety_ackermann', default_value='true'),
         DeclareLaunchArgument(
             'safety_config_file',
             default_value=os.path.join(

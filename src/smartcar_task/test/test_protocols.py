@@ -76,17 +76,15 @@ class ProtocolTests(unittest.TestCase):
             lambda: True,
             success("set_pose"),
             success("verify_odom"),
-            success("clear_fault"),
         )
         self.assertTrue(result.success)
-        self.assertEqual(calls, ["set_pose", "verify_odom", "clear_fault"])
+        self.assertEqual(calls, ["set_pose", "verify_odom"])
 
         calls.clear()
         result = run_reset_sequence(
             lambda: True,
             success("set_pose"),
             lambda: OperationResult(False, "odom_timeout"),
-            success("clear_fault"),
         )
         self.assertFalse(result.success)
         self.assertEqual(calls, ["set_pose"])

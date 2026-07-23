@@ -20,7 +20,7 @@ try:
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.executors import MultiThreadedExecutor
     from robot_localization.srv import SetPose
-    from std_srvs.srv import Trigger
+
 
     from smartcar_task.task_node import RosLocalization, RosNavigator
     from smartcar_task.waypoints import Waypoint
@@ -148,6 +148,7 @@ class RosAdapterTests(unittest.TestCase):
 
     def test_localization_reset_ignores_pre_response_and_far_odometry(self):
         order = []
+        timers = []
         odom_publisher = self.server_node.create_publisher(
             Odometry, "/odom_combined", 10)
 
@@ -165,22 +166,22 @@ class RosAdapterTests(unittest.TestCase):
             self.assertIsInstance(request.pose, PoseWithCovarianceStamped)
             self.assertEqual(request.pose.header.frame_id, "odom_combined")
             publish_odom(0.0)
-            threading.Timer(0.05, lambda: publish_odom(1.0)).start()
-            threading.Timer(0.10, lambda: publish_odom(0.0)).start()
-            return response
-
-        def clear_fault(_request, response):
-            order.append("clear_fault")
-            response.success = True
-            response.message = "cleared"
+            deadline = time.monotonic() + 1.0
+            while (
+                localization._odom_sequence == 0
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.005)
+            self.assertGreater(localization._odom_sequence, 0)
+            timers.extend((
+                threading.Timer(0.10, lambda: publish_odom(1.0)),
+                threading.Timer(0.20, lambda: publish_odom(0.0)),
+            ))
+            for timer in timers:
+                timer.start()
             return response
 
         self.server_node.create_service(SetPose, "/set_pose", set_pose)
-        self.server_node.create_service(
-            Trigger,
-            "/smartcar/safety/clear_localization_fault",
-            clear_fault,
-        )
 
         class StoppedNavigator:
             @staticmethod
@@ -197,11 +198,12 @@ class RosAdapterTests(unittest.TestCase):
         )
 
         result = localization.reset_origin()
+        for timer in timers:
+            timer.join(timeout=1.0)
 
         self.assertTrue(result.success, result.status)
         self.assertEqual(order[0], "set_pose")
         self.assertIn("odom:1.0", order)
-        self.assertLess(order.index("odom:0.0", 2), order.index("clear_fault"))
 
 
 if __name__ == "__main__":

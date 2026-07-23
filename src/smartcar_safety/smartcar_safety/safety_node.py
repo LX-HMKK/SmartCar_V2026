@@ -1,4 +1,8 @@
 """ROS 2 wrapper for the fail-closed velocity guard."""
+import math
+import time
+
+from ackermann_msgs.msg import AckermannDriveStamped
 from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
@@ -11,10 +15,9 @@ from rclpy.qos import (
 )
 from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, String
-from std_srvs.srv import SetBool, Trigger
+from std_srvs.srv import SetBool
 
 from smartcar_safety.guard import SafetyGuard, validate_publish_frequency
-from smartcar_safety.odometry import odometry_is_finite
 from smartcar_safety.velocity import (
     ZERO_TWIST_COMPONENTS,
     sanitize_twist_components,
@@ -27,6 +30,12 @@ LATEST_SENSOR_QOS = QoSProfile(
     depth=1,
     reliability=ReliabilityPolicy.BEST_EFFORT,
     durability=DurabilityPolicy.VOLATILE,
+)
+STATUS_QOS = QoSProfile(
+    history=HistoryPolicy.KEEP_LAST,
+    depth=1,
+    reliability=ReliabilityPolicy.RELIABLE,
+    durability=DurabilityPolicy.TRANSIENT_LOCAL,
 )
 
 
@@ -50,12 +59,16 @@ class SafetyNode(Node):
         self.declare_parameter("command_timeout_sec", 0.30)
         self.declare_parameter("scan_timeout_sec", 0.35)
         self.declare_parameter("odom_timeout_sec", 0.35)
-        self.declare_parameter("raw_odom_timeout_sec", 0.25)
         self.declare_parameter("minimum_voltage", 0.0)
         self.declare_parameter("publish_frequency_hz", 20.0)
         self.declare_parameter("require_scan", True)
         self.declare_parameter("require_odom", True)
         self.declare_parameter("require_raw_odom", True)
+        self.declare_parameter("raw_odom_timeout_sec", 0.25)
+        self.declare_parameter("odom_throttle_interval_sec", 0.05)
+        self.declare_parameter("wheelbase", 0.189)
+        self.declare_parameter("max_steering_angle", 0.45)
+        self.declare_parameter("ackermann_frame_id", "odom_combined")
         self.declare_parameter("emergency_stop_on_start", False)
 
         self.guard = SafetyGuard(
@@ -77,35 +90,42 @@ class SafetyNode(Node):
         self._last_command_components = None
         self._last_command_message = None
         self._last_status_reason = None
-        self._last_blocked_status_at = None
+        self._last_odom_processed_at = None
+        self._last_raw_odom_processed_at = None
+        self._odom_throttle_interval = max(
+            0.0, float(self.get_parameter("odom_throttle_interval_sec").value))
 
         self._safe_publisher = self.create_publisher(Twist, "/cmd_vel_safe", 10)
+        self._ackermann_publisher = self.create_publisher(
+            AckermannDriveStamped, "/ackermann_cmd", 10)
+        self._wheelbase = float(self.get_parameter("wheelbase").value)
+        self._max_steering_angle = float(
+            self.get_parameter("max_steering_angle").value)
+        self._ackermann_frame_id = str(
+            self.get_parameter("ackermann_frame_id").value)
         self._status_publisher = self.create_publisher(
-            String, "/smartcar/safety/status", 10)
+            String, "/smartcar/safety/status", STATUS_QOS)
         self.create_subscription(
             Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS)
         self.create_subscription(
             LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True)
         self.create_subscription(
-            Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS)
+            Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS,
+            raw=True)
         self.create_subscription(
-            Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS)
+            Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS,
+            raw=True)
         self.create_subscription(
             Float32, "/PowerVoltage", self._on_voltage, LATEST_RELIABLE_QOS)
         self.create_service(
             SetBool, "/smartcar/safety/emergency_stop", self._on_emergency_stop)
-        self.create_service(
-            Trigger,
-            "/smartcar/safety/clear_localization_fault",
-            self._on_clear_localization_fault,
-        )
         self.create_timer(1.0 / frequency_hz, self._on_timer)
 
         now_sec = self._now_sec()
-        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
+        self._publish_status_if_changed(self.guard.evaluate(now_sec))
 
     def _now_sec(self):
-        return self.get_clock().now().nanoseconds / 1_000_000_000.0
+        return time.monotonic()
 
     def _on_command(self, message):
         now_sec = self._now_sec()
@@ -126,72 +146,65 @@ class SafetyNode(Node):
             self._last_command_message = None
             self.guard.mark_command_invalid()
             self._publish_zero_command()
-        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
+        self._publish_status_if_changed(self.guard.evaluate(now_sec))
 
     def _on_scan(self, _message):
         now_sec = self._now_sec()
         self.guard.mark_scan(now_sec)
 
-    def _on_odom(self, message):
-        now_sec = self._now_sec()
-        if odometry_is_finite(message):
-            self.guard.mark_odom(now_sec)
-        else:
-            self.guard.mark_odom_invalid()
-            self._publish_zero_command()
-            self._publish_status_if_due(
-                now_sec, self.guard.evaluate(now_sec), True)
+    def _on_odom(self, _serialized_message):
+        # Throttle: effective watchdog window = odom_timeout + throttle_interval + timer_period.
+        # At 0.15 m/s worst-case travel is ~68 mm; at 0.30 m/s ~135 mm — within safety margins.
+        now = self._now_sec()
+        if (self._last_odom_processed_at is not None
+                and now - self._last_odom_processed_at < self._odom_throttle_interval):
+            return
+        self._last_odom_processed_at = now
+        self.guard.mark_odom(now)
 
-    def _on_raw_odom(self, message):
-        now_sec = self._now_sec()
-        if odometry_is_finite(message):
-            self.guard.mark_raw_odom(now_sec)
-        else:
-            self.guard.mark_raw_odom_invalid(now_sec)
-            self._publish_zero_command()
-            self._publish_status_if_due(
-                now_sec, self.guard.evaluate(now_sec), True)
+    def _on_raw_odom(self, _serialized_message):
+        now = self._now_sec()
+        if (self._last_raw_odom_processed_at is not None
+                and now - self._last_raw_odom_processed_at < self._odom_throttle_interval):
+            return
+        self._last_raw_odom_processed_at = now
+        self.guard.mark_raw_odom(now)
 
     def _on_voltage(self, message):
         now_sec = self._now_sec()
         self.guard.mark_voltage(message.data, now_sec)
-        self._publish_status_if_due(now_sec, self.guard.evaluate(now_sec), True)
+        self._publish_status_if_changed(self.guard.evaluate(now_sec))
 
     def _on_emergency_stop(self, request, response):
         self.guard.set_emergency_stop(request.data)
         now_sec = self._now_sec()
         result = self.guard.evaluate(now_sec)
-        self._publish_status_if_due(now_sec, result, True)
+        self._publish_status_if_changed(result)
         response.success = True
         response.message = (
             "emergency stop latched" if request.data else "emergency stop cleared")
         return response
 
-    def _on_clear_localization_fault(self, _request, response):
-        now_sec = self._now_sec()
-        fresh_nonzero_command = (
-            self._last_command_components is not None
-            and self.guard.command_is_fresh(now_sec)
-            and any(value != 0.0 for value in self._last_command_components)
-        )
-        if fresh_nonzero_command:
-            response.success = False
-            response.message = "stop navigation before clearing localization fault"
-        elif self.guard.clear_localization_fault(now_sec):
-            response.success = True
-            response.message = (
-                "localization fault cleared after caller-verified navigation "
-                "stop and pose reset"
-            )
-        else:
-            response.success = False
-            response.message = "fresh raw and fused odometry required"
-        self._publish_status_if_due(
-            now_sec, self.guard.evaluate(now_sec), True)
-        return response
-
     def _publish_zero_command(self):
         self._safe_publisher.publish(self._zero_command)
+
+    def _publish_ackermann(self, twist):
+        """Convert Twist to AckermannDriveStamped and publish to /ackermann_cmd."""
+        speed = float(twist.linear.x)
+        angular = float(twist.angular.z)
+        if abs(speed) < 0.001:
+            steering = 0.0
+        else:
+            steering = math.atan(
+                self._wheelbase * angular / speed)
+            steering = max(-self._max_steering_angle,
+                           min(self._max_steering_angle, steering))
+        msg = AckermannDriveStamped()
+        msg.header.stamp = self.get_clock().now().to_msg()
+        msg.header.frame_id = self._ackermann_frame_id
+        msg.drive.steering_angle = steering
+        msg.drive.speed = speed
+        self._ackermann_publisher.publish(msg)
 
     def _on_timer(self):
         now_sec = self._now_sec()
@@ -201,27 +214,15 @@ class SafetyNode(Node):
         else:
             command = self._zero_command
         self._safe_publisher.publish(command)
-        self._publish_status_if_due(now_sec, result)
+        self._publish_ackermann(command)
+        self._publish_status_if_changed(result)
 
-    def _publish_status_if_due(self, now_sec, result, force=False):
+    def _publish_status_if_changed(self, result):
         reason = result["reason"]
-        changed = reason != self._last_status_reason
-        blocked_repeat_due = (
-            not result["allowed"]
-            and (
-                self._last_blocked_status_at is None
-                or now_sec - self._last_blocked_status_at >= 1.0
-            )
-        )
-        if force and changed:
-            blocked_repeat_due = True
-        if changed or blocked_repeat_due:
-            self._status_publisher.publish(String(data=reason))
-            self._last_status_reason = reason
-            if not result["allowed"]:
-                self._last_blocked_status_at = now_sec
-            else:
-                self._last_blocked_status_at = None
+        if reason == self._last_status_reason:
+            return
+        self._status_publisher.publish(String(data=reason))
+        self._last_status_reason = reason
 
 
 def main(args=None):

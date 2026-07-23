@@ -6,7 +6,9 @@
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-22，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点历史导航验证已完成，但新航点实测、VLM 后端部署和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+截至 2026-07-23，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点历史导航验证已完成，但新航点实测、VLM 后端部署和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+
+已完成四轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~67%（idle 状态）：origincar_base 从 66.7% 降至 8.7%（轮询→定时器），cmd_vel_to_ackermann 已合并入 safety_node（省一个 Python 进程），safety_node 回归纯心跳超时。
 
 ## 高层架构
 
@@ -15,12 +17,13 @@
 - **导航层**：Nav2 Waypoint Follower + Smac Hybrid（DUBIN）+ Regulated Pure Pursuit；禁止 Spin recovery 和原地旋转。
 - **避障感知层**：YDLIDAR `/scan` 直接进入 obstacle/inflation costmap；无消费者的 `obstacle_detector_2` 默认关闭，仅保留诊断开关。
 - **定位层**：STM32 轮式里程计 + IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
-- **控制层**：`/cmd_vel` 经 fail-closed `smartcar_safety` 输出 `/cmd_vel_safe`，再转换为 OriginCar 阿克曼命令。
+- **控制层**：`/cmd_vel` 经 fail-closed `smartcar_safety` 直接输出 `/ackermann_cmd`（内部 Twist→Ackermann 转换，`use_safety_ackermann:=true` 时跳过独立转换器节点）。安全节点只做三件事：指令消毒、急停锁存、传感器心跳超时。
 
 核心约束：
 
 - LiDAR 不做 SLAM 或静态地图定位；必须允许通过连续扫描匹配生成激光里程计并融合进 EKF，同时继续进入 obstacle/inflation costmap。激光里程计不得直接发布 `odom_combined -> base_footprint` TF，EKF 是唯一 TF owner。
-- 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。
+- 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。安全节点直接发布 `/ackermann_cmd`，`use_safety_ackermann:=true` 时跳过独立的 `cmd_vel_to_ackermann_drive` 节点。
+- 安全节点 odom 回调有 50ms 节流（`odom_throttle_interval_sec`），有效 odom 看门狗窗口 = `odom_timeout + throttle_interval + timer_period`（最坏 ~450ms，0.15 m/s 下 ~6.8 cm）。`raw_odom_timeout_sec` 已参数化。
 - 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发不是当前 release 依赖；TTS consumer 已提供但默认关闭，不属于任务或运动门禁依赖。
 - 发车时车辆手动置于 P 区原点，车头朝 `+X`；任务 reset 不能替代物理复位。
 - 未经用户明确授权，不得启动实体相机、发布非零速度或进行实车运动测试。

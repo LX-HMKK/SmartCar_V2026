@@ -18,6 +18,7 @@ def generate_launch_description():
     imu_config = Path(bringup_dir, 'config', 'imu.yaml')
 
     carto_slam = LaunchConfiguration('carto_slam')
+    skip_converter = LaunchConfiguration('skip_converter')
     input_topic = LaunchConfiguration('input_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
     use_imu_filter = LaunchConfiguration('use_imu_filter')
@@ -48,6 +49,7 @@ def generate_launch_description():
 
     declarations = [
         DeclareLaunchArgument('carto_slam', default_value='false'),
+        DeclareLaunchArgument('skip_converter', default_value='false'),
         DeclareLaunchArgument(
             'input_topic', default_value='/cmd_vel_safe',
             description='Twist input topic for chassis conversion'),
@@ -87,6 +89,7 @@ def generate_launch_description():
             os.path.join(launch_dir, 'base_serial.launch.py')),
         launch_arguments={
             'akmcar': 'true',
+            'skip_converter': skip_converter,
             'input_topic': input_topic,
             'use_sim_time': use_sim_time,
             'longitudinal_velocity_scale': longitudinal_velocity_scale,
