@@ -1,5 +1,42 @@
 # 变更日志
 
+## 2026-07-24 - QR→VLM 确定性倒车与后置方向门
+
+### 实现
+
+- 任务从分段 `FollowWaypoints` 改为逐航点 `NavigateToPose`；每个 goal 预生成 UUID，并与方向、generation 和方向门租约绑定。
+- 路线校验强制 start/QR 正向、QR 后两个出站 corridor 与 VLM 倒车、VLM 后至 return 正向；全正向或越界方向 YAML 会被拒绝。
+- planner 保持唯一 `DUBIN`，未采用 `REEDS_SHEPP` 或 `reverse_penalty`。reverse goal 使用专用 BT 和 `ComputeReversePathToPose` 插件：实际 TF 起点与目标航向临时加 π，规划后恢复路径航向。
+- 反向插件拒绝错误 frame、非有限数据、非单位四元数、端点偏差、正向投影、cusp、超曲率和 costmap 无效路径，并以 0.5 Hz 重规划。
+- 移除运行时 `behavior_server` 和 `waypoint_follower`；lifecycle 节点收敛为 controller、planner、BT navigator、velocity smoother。
+
+### 安全链
+
+```text
+controller_server -> /cmd_vel_nav
+velocity_smoother -> /cmd_vel_candidate
+direction_guard -> /cmd_vel
+smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
+```
+
+- 新增 C++ `direction_guard_node`，默认 STOP。`Prepare/Activate/Renew/Stop` 租约绑定 boot epoch、lease ID、generation 和 action UUID。
+- 错速度符号、非法 Twist、过期候选、过期许可或身份重放会立即输出完整零并锁存故障；取消顺序为撤销租约、取消 action、确认终态、等待原始 `/odom` 六轴停稳。
+- `/root/nav_test.sh` 改为急停锁存且 `autostart_mission:=false`，只准备系统和 RViz，不再自动发车。
+
+### 验证与部署
+
+- 提交 `8103b37` 已通过有线 `root@192.168.128.10` 部署到 `/root/ros2_ws`。
+- 本地根合同 `134/134`；safety 主机测试 `39/39`；task 主机测试 40 项中 38 项通过、2 项因 Windows 无 ROS 跳过。
+- RDK 清除历史 xunit 后，`smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 为 `108 tests, 0 errors, 0 failures, 0 skipped`。
+- RDK smoke 验证 BT 插件加载、四个 lifecycle 节点激活、速度话题唯一所有者，以及无方向租约时非零候选在 `/cmd_vel` 和 `/cmd_vel_safe` 上保持精确零。全程未启动实体底盘或相机。
+
+### 未完成与已知风险
+
+- 实体 QR→VLM 倒车尚未验证；`minimum_turning_radius: 0.55` 仍是未标定规划假设，只能表述为软件“倒车或停车”。
+- 当前固定端姿下，`c_corner_1 -> c_corner_2` 和 `c_corner_4 -> b_corridor_return_enter` 两个正向 DUBIN 段存在约 4.31 m / 4.25 m 的兜圈风险。几何候选航向约为 `38°` / `-135°`，尚未写入 YAML，需现场确认。
+- `scripts/deploy/nav_test.sh` 仍是会自动解除急停并 start 的历史副本，不得部署或执行；`scripts/monitor_mission.py` 当前也不能作为零速安全判据，后续必须单独修复或删除。
+- Nav2 启动封装仍保留 `use_waypoint_follower` 等已失效或被固定参数链路旁路的旧参数；运行时不会启动 `waypoint_follower`，后续需连同包依赖和未使用的 `FollowWaypoints` 分类器清理。
+
 ## 2026-07-23 - 纯导航任务类型 `nav` 与一键测试脚本
 
 ### 背景
@@ -11,7 +48,7 @@
 - **`waypoints.py`**: `ALLOWED_TASKS` 新增 `"nav"`，状态机接受 `nav` 替代 `qr`/`vlm`（`start → (qr|nav) → corridor* → (vlm|nav) → loop+ → corridor* → return`），`_navigation_segments` 不拆分 nav 航点段。
 - **`nav_only.yaml`**: 新增纯导航航点文件，qr/vlm → nav（直通不触发视觉），11 航点覆盖完整 P→A→B→C→B→P 路线。
 - **`mission.py`**: `"nav"` task 作为 pass-through（`OperationResult(True, "ok")`），不调用任何服务。
-- **`/root/nav_test.sh`**: 一键全流程脚本（清理→构建→启动→等就绪→RViz→发车），使用 `use_vision:=false use_camera:=false nav_only.yaml`。
+- **`/root/nav_test.sh`**: 当时的一键全流程脚本（清理→构建→启动→等就绪→RViz→发车）；2026-07-24 已修订为急停锁存、等待人工发车。
 - **`/root/monitor_mission.py`**: rclpy 实时监控（任务状态、odom 位姿、cmd_vel、耗时）。
 - **`/tmp/kill_all.sh`**: RDK 端快速清理所有 ROS 进程的脚本。
 
@@ -33,7 +70,7 @@ pkill -9 -f "ros2 launch"
 - `nav_only.yaml` 通过 `validate_waypoints` 校验（11 waypoints）✅
 - 全系统启动，8/8 lifecycle active ✅
 - RViz 正常显示 ✅
-- 任务启动成功，waypoint_follower 处理航点 ✅
+- 任务启动成功，`waypoint_follower` 处理航点 ✅（历史实现；2026-07-24 已改为逐点 guarded `NavigateToPose`）
 
 ### 修改文件
 
@@ -235,7 +272,7 @@ safety_node 剩余 44% 是 Python ARM64 解释器开销（rclpy 回调调度 + G
 ## 2026-07-22 - 统一九点任务路线与官方场地参考层
 
 - 删除 68 点 `full_course_route`、独立纯导航 launch/runner/probe、专用 Nav2 配置及对应测试，只保留 `default_waypoints.yaml`。
-- 路线调整为 P -> QR 留距位 -> 出站通道 -> C 区四角（角 1 触发 VLM 并朝左）-> 回程通道 -> P；QR/VLM/返程按三段 `FollowWaypoints` 提交。
+- 路线调整为 P -> QR 留距位 -> 出站通道 -> C 区四角（角 1 触发 VLM 并朝左）-> 回程通道 -> P；当时按三段 `FollowWaypoints` 提交，2026-07-24 已改为逐点 guarded `NavigateToPose`。
 - 新增官方规则图 Marker 参考层和 RViz Interactive Marker 编辑器，可直接拖动位置、旋转航向并右键保存/撤销/重载；编辑器不启动运动栈且默认锁存急停。
 - `pull-route` 替换为只回传唯一语义路线的 `pull-waypoints`。
 
@@ -389,7 +426,7 @@ safety_node 剩余 44% 是 Python ARM64 解释器开销（rclpy 回调调度 + G
 - 新增视觉服务接口、二维码识别和端侧 VLM 服务，统一执行 8 秒请求期限与兜底返回。
 - 新增 fail-closed 速度安全门、定位故障锁存、急停和复位接口。
 - 新增 Smac Hybrid（DUBIN）+ Regulated Pure Pursuit 阿克曼导航配置，禁止 Spin 和原地旋转。
-- 新增五子任务状态机、`FollowWaypoints` 调用、QR/VLM 语义航点、停止与复位流程。
+- 新增五子任务状态机、`FollowWaypoints` 调用、QR/VLM 语义航点、停止与复位流程（历史初版；2026-07-24 已替换 action 协议）。
 - 新增 `smartcar_system.launch.py` 完整系统入口和合成传感器无硬件 smoke。
 
 ### 加固

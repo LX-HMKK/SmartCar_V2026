@@ -4,17 +4,19 @@
 
 ## 软件里程碑
 
-当前软件基线包含可选 RF2O、一份 9 点语义任务路线、官方规则图参考层、RViz 可拖拽航点编辑器，以及语音/二维码/图生文三个独立媒体入口。2026-07-19 记录的 RDK 全量结果 `578 tests, 0 errors, 0 failures, 90 skipped` 属于删除旧纯导航链之前的历史基线；当前版本需重新完成 RDK 构建与 smoke。版本内容见 [`CHANGELOG.md`](CHANGELOG.md)。这些结果不包含真实传感器、云端 API、音频或车辆运动验收。
+当前软件基线包含可选 RF2O、一份 11 点语义任务路线、官方规则图参考层、RViz 可拖拽航点编辑器，以及语音/二维码/图生文三个独立媒体入口。QR→VLM 段已实现确定性倒车：任务逐点发送 `NavigateToPose`，专用 BT 用虚拟航向调用唯一的 DUBIN planner，后置方向门将动作 UUID 与速度方向租约绑定。2026-07-24 已部署提交 `8103b37`；本地根合同 `134/134`，RDK 四个核心包 `108 tests, 0 errors, 0 failures, 0 skipped`。这些结果不包含实体倒车、真实相机、云端 API、音频或完整赛道运动验收。
 
 ## 当前边界
 
-软件代码已经覆盖底盘安全门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。删除旧纯导航链之前的自动化测试和 RDK 合成传感器 smoke 曾通过；当前 9 点路线版本仍需在 RDK 上重新构建并运行 smoke。
+软件代码已经覆盖底盘安全门、后置方向门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。RDK 合成传感器 smoke 已验证 BT 插件可加载、四个 Nav2 lifecycle 节点可激活、未授权的非零候选速度无法越过方向门，并确认无物理底盘输出消费者。
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
-- 唯一的 9 点语义路线来自官方规则图推算且保持 `calibrated: false`，必须现场实测后才能授权运动。
-- `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参尚未实测。
-- 转向、轮速、陀螺仪标定尚未完成。
+- 唯一的 11 点语义路线来自官方规则图推算且保持 `calibrated: false`，必须现场实测后才能授权运动。
+- `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参已测量并接入；更换或重装传感器后必须重新确认。
+- 轮速和陀螺仪标定已完成；转向比例与偏置仍未完成。
+- QR→VLM 倒车仅完成软件与无底盘验证，`minimum_turning_radius: 0.55` 仍是未标定假设。
+- 当前正向 DUBIN 路线在 `c_corner_1 -> c_corner_2` 和 `c_corner_4 -> b_corridor_return_enter` 存在明显兜圈风险；候选航向尚未写入路线，首次测试不得无人看守跑完整圈。
 - RF2O 无地图连续扫描匹配已作为可选激光里程计接入，默认关闭，且已通过 RDK Humble/aarch64 构建；真实雷达时间同步、外参、协方差、漂移、异常观测拒绝和轮速/IMU 退化回退仍未实测。
 - 火山 Ark VLM 与火山 TTS 已提供可选适配器，但凭据、现场网络、模型可用性和扬声器尚未验收；默认均禁用。
 - 使用火山云端后端前必须确认比赛规则允许公网且赛场网络稳定；否则需准备并实测端侧 VLM 备用方案。
@@ -29,6 +31,8 @@
 - RDK X5 8G，TROS ROS 2 Humble，环境入口由 `~/source_env.sh` 统一提供。
 - OriginCar 阿克曼底盘，`/odom`、`/imu/data_raw` 和可选 `/odom_laser` 经 EKF 输出 `/odom_combined`。
 - YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；没有静态地图、`map_server`、AMCL 或 SLAM。
+- 导航固定使用单一 Smac Hybrid `DUBIN` planner；倒车 BT 只接受全程严格反向、无 cusp、曲率和端点均合规的路径。
+- 速度链为 `/cmd_vel_nav -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，错误方向或过期租约只能得到完整零输出。
 - `obstacle_detector_2`、Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
 - 本地 Windows 通过 WSL rsync 同步到 RDK 的单一工作空间 `/root/ros2_ws`。
 
@@ -38,9 +42,9 @@
 src/origincar/                 vendor 底盘、IMU、EKF、YDLIDAR 与消息包
 src/third_party/obstacle_detector_2/  LiDAR 障碍物提取
 src/third_party/rf2o_laser_odometry/  可选无地图 scan-to-scan 激光里程计
-src/smartcar_interfaces/       ReadQr、DescribeScene 服务接口
-src/smartcar_safety/           fail-closed /cmd_vel 安全门
-src/smartcar_nav2/             Nav2 配置、RPP、Smac Hybrid、航点
+src/smartcar_interfaces/       视觉服务与方向租约接口
+src/smartcar_safety/           后置方向门和 fail-closed 速度安全门
+src/smartcar_nav2/             Nav2、反向 BT、RPP、Smac Hybrid、航点
 src/smartcar_vision/           zbar 与有界 VLM 服务
 src/smartcar_speech/           可选火山 TTS 与本地音频播放
 src/smartcar_task/             五子任务状态机
@@ -77,11 +81,11 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-19 最近一次已记录的全工作区结果为 18 个包构建通过，`578 tests, 0 errors, 0 failures, 90 skipped`。该结果来自删除旧纯导航链之前，不能作为当前 9 点路线版本的验证证据；当前版本须重新执行上述构建和测试。`ydlidar_ros2_driver`、`origincar_bringup`、`origincar_description` 的继承源码全量 lint 为显式 opt-in；需要清理 vendor 风格债务时使用 `colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不影响默认功能测试。
+2026-07-24 有线 RDK 验证中，`smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 构建通过，清除历史 xunit 后为 `108 tests, 0 errors, 0 failures, 0 skipped`；其中含方向门 C++ 单测、反向路径合同、ROS action adapter 和两组无底盘 launch smoke。该结果只覆盖本次倒车改动的核心包，不替代全工作区或实车验收。`ydlidar_ros2_driver`、`origincar_bringup`、`origincar_description` 的继承源码全量 lint 为显式 opt-in；需要清理 vendor 风格债务时使用 `colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON`。
 
 ## 无硬件 smoke
 
-`smartcar_bringup` 的 launch test 使用合成 `/scan`、`/odom`、`/odom_combined` 和静态 TF，关闭底盘、LiDAR、障碍物驱动、实体相机和语音节点，并在 Nav2 激活前锁存急停。它验证 Nav2 lifecycle、vision/task 服务、任务 `IDLE`、硬件节点隔离和 `/cmd_vel_safe` 精确全零：
+`smartcar_bringup` 的 launch test 使用合成 `/scan`、`/odom`、`/odom_combined` 和静态 TF，关闭底盘、LiDAR、障碍物驱动、实体相机和语音节点，并在 Nav2 激活前锁存急停。它验证 `controller_server`、`planner_server`、`bt_navigator`、`velocity_smoother` 四个 lifecycle 节点、vision/task 服务、任务 `IDLE`、硬件节点隔离和 `/cmd_vel_safe` 精确全零。`smartcar_nav2` 的独立 launch test 还验证未授权非零 `/cmd_vel_candidate` 在 `/cmd_vel` 与 `/cmd_vel_safe` 上始终为零。
 
 ```bash
 source ~/source_env.sh
@@ -110,7 +114,16 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整编辑命令、HDMI 的 `DISPLAY`/`XAUTHORITY` 设置和单文件 `pull-waypoints` 同步方式见 [`docs/deployment/field-test-entrypoints.md`](docs/deployment/field-test-entrypoints.md)。
 
-真实相机默认使用 Aurora RGB；关闭相机但保留服务时需要提供合成或外部图像话题：
+无视觉导航测试使用已部署的 `/root/nav_test.sh`。脚本完成清理、增量构建、启动和 RViz 准备，但明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车：
+
+```bash
+ssh root@192.168.128.10
+bash /root/nav_test.sh
+```
+
+首次测试必须车轮离地并由现场人员持续观察；确认 RViz 后才可人工 reset、解除急停并 start。当前只验证到 VLM 后立即急停，不得在两处正向航向风险修正前运行无人看守的完整路线。
+
+真实相机默认使用 USB 驱动；Aurora 和 MIPI 保留为备选。关闭相机但保留服务时需要提供合成或外部图像话题：
 
 ```bash
 ros2 launch smartcar_bringup smartcar_system.launch.py \
@@ -137,7 +150,7 @@ ros2 service call /smartcar/safety/emergency_stop \
   std_srvs/srv/SetBool "{data: false}"
 ```
 
-`reset` 只接受已停止导航的状态，内部顺序为停止导航、调用 `/set_pose`、等待新的有限 `/odom_combined`、清除定位故障。车辆必须物理位于 P 区原点且车头朝 `+X`。`bringup_coord.yaml` 目前是校准记录，不会被 launch 自动读取。
+`reset` 只接受已停止导航的状态，内部顺序为撤销方向租约、确认 action 终态与原始里程计六轴停稳、调用 `/set_pose`，再等待新的有限 `/odom_combined` 接近原点。车辆必须物理位于 P 区原点且车头朝 `+X`；reset 不能替代物理复位。
 
 ## 录包与诊断
 
@@ -146,12 +159,14 @@ ros2 service call /smartcar/safety/emergency_stop \
 ```bash
 ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
   /scan /odom /odom_laser /odom_combined /imu/data_raw /imu/data \
-  /cmd_vel /cmd_vel_safe /ackermann_cmd /PowerVoltage \
-  /tf /tf_static /smartcar/safety/status /smartcar/task/state \
+  /cmd_vel_nav /cmd_vel_candidate /cmd_vel /cmd_vel_safe \
+  /ackermann_cmd /PowerVoltage \
+  /tf /tf_static /smartcar/direction_guard/status \
+  /smartcar/safety/status /smartcar/task/state \
   /barcode /smartcar/output/text /smartcar/output/speech \
   /smartcar/speech/status
 ```
 
-关键输出：`/cmd_vel_safe`、`/smartcar/safety/status`、`/smartcar/task/state`、`/smartcar/vision/read_qr`、`/smartcar/vision/describe_scene`、`/smartcar/speech/status`。
+关键输出：`/cmd_vel_candidate`、`/cmd_vel`、`/cmd_vel_safe`、`/ackermann_cmd`、`/smartcar/direction_guard/status`、`/smartcar/safety/status`、`/smartcar/task/state`、`/smartcar/vision/read_qr`、`/smartcar/vision/describe_scene`、`/smartcar/speech/status`。
 
 更多设计与部署细节见 [`docs/deployment/rdk-environment-setup.md`](docs/deployment/rdk-environment-setup.md)、[`docs/deployment/field-test-entrypoints.md`](docs/deployment/field-test-entrypoints.md) 和 [`docs/智慧医疗挑战赛_技术方案_本地部署版.md`](docs/智慧医疗挑战赛_技术方案_本地部署版.md)。

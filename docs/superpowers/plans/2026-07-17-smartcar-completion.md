@@ -10,6 +10,8 @@
 
 **Software milestone status (2026-07-18):** Tasks 1-8 are implemented and verified. Local root contracts: 108 passed. RDK: 15 packages built; full `colcon test` result is 508 tests, 0 errors, 0 failures, 90 generated-code skips. The no-hardware smoke uses synthetic sensors, asserts emergency stop before Nav2 activation, and never publishes a nonzero velocity. Ground motion remains blocked by placeholder waypoints, unmeasured extrinsics/steering, undeployed VLM model, and the five explicit physical gates.
 
+> **Superseded implementation note (2026-07-24):** This file is retained as the 2026-07-18 implementation record, not as a current runbook. The release now uses per-waypoint guarded `NavigateToPose`, a single DUBIN planner, a virtual-heading reverse BT, and a post-smoother direction guard. Runtime `behavior_server`, `waypoint_follower`, `FollowWaypoints`, the old `/cmd_vel -> /cmd_vel_safe` diagram, `minimum_turning_radius=0.40`, and `/smartcar/safety/clear_localization_fault` references below are historical. Current evidence is local `134/134` plus RDK core-package `108/108`; physical reverse motion and the full route remain unverified. Use [`../../deployment/rdk-environment-setup.md`](../../deployment/rdk-environment-setup.md) for current commands and safety gates.
+
 ## Global Constraints
 
 - Target hardware is OriginCar + RDK X5 8G running ROS2 Humble.

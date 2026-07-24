@@ -1,6 +1,6 @@
-# 场地航点编辑与三个媒体分项入口
+# 场地航点、倒车测试与三个媒体分项入口
 
-更新时间：2026-07-22
+更新时间：2026-07-24
 
 本文用于 RDK X5 上的场地航点标定，以及语音、二维码、图生文三个互相隔离的 bench 入口。仓库只保留一份任务路线：
 
@@ -31,25 +31,27 @@ src/smartcar_tools/config/reference/competition_field_route_example.png
 
 因此它是“规则图先验参考”，不是静态地图定位。
 
-## 2. 唯一的 9 点任务路线
+## 2. 唯一的 11 点任务路线
 
 当前未实测基线顺序为：
 
 ```text
 p_start
   -> a_task_observe       QR 任务点留距位
+  -> b_corridor_enter     倒车进入出站通道
   -> b_corridor_out       出站通道口
-  -> c_corner_1           VLM，车头朝规则图左侧
+  -> c_corner_1           倒车抵达 VLM
   -> c_corner_2
   -> c_corner_3
   -> c_corner_4
+  -> b_corridor_return_enter
   -> b_corridor_return    回程通道口
   -> p_finish
 ```
 
-QR 观察位距离规则图任务标志约 0.89 m，避免驶得过近。C 区四角取自官方环道中线尺寸，角 1 航向为 `-180 deg` 并触发图生文。任务状态机按 QR、VLM、返回 P 分成三个 `FollowWaypoints` action，通道和其余角点作为段内途经点，避免每个点单独创建 action。
+QR 观察位距离规则图任务标志约 0.89 m，避免驶得过近。当前 `c_corner_1` 航向约为 `+60 deg` 并触发图生文。方向模式由语义状态机强制：start/QR 为 `forward`，QR 后两个出站 corridor 与 VLM 为 `reverse`，VLM 后的 loop、回程 corridor 和 return 为 `forward`；全正向配置会被拒绝。任务为每个非起点航点独立发送受方向租约保护的 `NavigateToPose`，不再使用 `FollowWaypoints`。
 
-这些数值仍是规则图推算值，文件保持 `calibrated: false`。只有实车逐段验证完成后，才能显式开启 `waypoints_calibrated=true` 运动门禁。
+这些数值仍是规则图推算值，文件保持 `calibrated: false`。`minimum_turning_radius: 0.55` 也尚未实车标定。无障碍解析 Dubins 下，`c_corner_1 -> c_corner_2` 和 `c_corner_4 -> b_corridor_return_enter` 两段当前端姿分别会产生约 4.31 m 和 4.25 m 的兜行路径，因此不能把“倒车软件合同通过”表述成“全路线有效”。几何候选航向约为 `c_corner_2=38 deg`、`b_corridor_return_enter=-135 deg`，尚未写入 YAML，必须结合现场障碍和转向标定确认。
 
 ## 3. RViz 直接拖拽编辑
 
@@ -64,14 +66,9 @@ python scripts/sync_to_rdk.py push
 ssh root@172.16.25.27
 source ~/source_env.sh
 cd /root/ros2_ws
-# 从仍含旧纯导航入口的版本升级时，仅清理这两个包的生成目录一次，
-# 避免 setuptools/ament 在 install 中保留已删除的 launch 和脚本。
-rm -rf /root/ros2_ws/build/smartcar_tools \
-  /root/ros2_ws/install/smartcar_tools \
-  /root/ros2_ws/build/smartcar_nav2 \
-  /root/ros2_ws/install/smartcar_nav2
 colcon build --symlink-install --packages-select \
-  smartcar_task smartcar_tools smartcar_nav2 \
+  smartcar_interfaces smartcar_safety smartcar_nav2 \
+  smartcar_task smartcar_tools \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
 
@@ -115,7 +112,34 @@ ros2 run smartcar_tools waypoint_viz --ros-args \
   -p waypoints_file:=/root/ros2_ws/src/smartcar_nav2/config/waypoints/default_waypoints.yaml
 ```
 
-## 4. 独立语音测试
+## 4. 无视觉倒车测试
+
+RDK 已部署 `/root/nav_test.sh`。它会清理旧 ROS 进程、增量构建、启动 `nav_only.yaml` 和 RViz，但明确锁存急停且不自动开始任务：
+
+```bash
+bash /root/nav_test.sh
+```
+
+检查 P 点、航向、障碍物、物理急停和车轮离地条件后，人工执行：
+
+```bash
+source ~/source_env.sh
+ros2 service call /smartcar/task/reset std_srvs/srv/Trigger "{}"
+ros2 service call /smartcar/safety/emergency_stop \
+  std_srvs/srv/SetBool "{data: false}"
+ros2 service call /smartcar/task/start std_srvs/srv/Trigger "{}"
+```
+
+首次只验证 P→QR 的正向符号和 QR→VLM 的负速度；抵达 VLM 立即锁存急停。当前两处正向端姿风险未修正，不得直接跑完整圈。紧急停车：
+
+```bash
+ros2 service call /smartcar/safety/emergency_stop \
+  std_srvs/srv/SetBool "{data: true}"
+# ROS2 CLI 无响应时：
+pkill -9 -f "ros2 launch"
+```
+
+## 5. 独立语音测试
 
 该入口只启动火山 TTS consumer，不启动底盘、Nav2、视觉或任务：
 
@@ -134,7 +158,7 @@ ros2 run smartcar_tools speech_probe --text '语音分项测试'
 
 该测试会访问网络并实际播放音频，不能纳入无硬件 smoke。
 
-## 5. 独立二维码测试
+## 6. 独立二维码测试
 
 单张图片回放不打开实体相机：
 
@@ -152,10 +176,10 @@ ros2 run smartcar_tools qr_probe --timeout-sec 3
 
 ```bash
 ros2 launch smartcar_tools qr_test.launch.py \
-  input_source:=camera camera_driver:=aurora
+  input_source:=camera camera_driver:=usb
 ```
 
-## 6. 独立图生文与 HDMI UI
+## 7. 独立图生文与 HDMI UI
 
 该入口启动相机或单图回放、VLM 服务和 PyQt5 UI，不启动语音、底盘、Nav2 或任务。先配置 HDMI 环境：
 
@@ -183,13 +207,13 @@ ros2 launch smartcar_tools vlm_test.launch.py \
 
 ```bash
 ros2 launch smartcar_tools vlm_test.launch.py \
-  input_source:=camera camera_driver:=aurora \
+  input_source:=camera camera_driver:=usb \
   display:=:0 xauthority:=/var/run/lightdm/root/:0
 ```
 
 云端 VLM 必须确认比赛规则允许公网，并在赛场网络下完成成功率和 8 秒时限验收；回放或兜底文案不能证明真实后端可用。
 
-## 7. 验证边界
+## 8. 验证边界
 
 本地无硬件检查：
 
@@ -199,4 +223,4 @@ python -m unittest discover -s src/smartcar_task/test -v
 python -m unittest discover -s src/smartcar_tools/test -v
 ```
 
-这些测试只能证明路线合同、编辑器隔离、文件写回和媒体回放接口。官方参考层不能证明现场尺寸、外参、定位漂移或路线可通行；完成外参、转向、物理急停和航点实测前，不得表述为已具备竞赛现场运行条件。
+2026-07-24 当前软件证据为本地根合同 `134/134`、RDK 核心四包 `108/108`；其中验证了反向 BT 插件加载、方向租约、速度话题唯一所有者和无许可完整零输出。这些测试不能证明实体倒车、有效转弯半径、现场障碍净空、定位漂移或完整路线可通行；完成转向、物理急停、倒车段和航点实测前，不得表述为已具备竞赛现场运行条件。

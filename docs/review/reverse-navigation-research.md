@@ -1,6 +1,39 @@
-# 逆向导航技术方案研究报告
+# 逆向导航技术方案研究报告（历史方案）
 
-> **日期**: 2026-07-24 | **作者**: LX-HMKK | **状态**: 方案设计阶段，尚未实施
+> **日期**: 2026-07-24 | **作者**: LX-HMKK | **状态**: 研究过程已归档；推荐的 Orientation Flip 未采用
+
+> **当前实现修订（2026-07-24）**：本文第 1 节之后保留的是实施前调研，不得作为当前部署步骤。实际 release 使用逐点 guarded `NavigateToPose`、单一 DUBIN planner、虚拟航向反向 BT 和动作 UUID 方向租约门；不使用 `REEDS_SHEPP`、`reverse_penalty`、目标朝向翻转、`FollowWaypoints` 或开环倒车。权威运行步骤见 [`../deployment/rdk-environment-setup.md`](../deployment/rdk-environment-setup.md)。
+
+## 0. 最终实施结果
+
+### 0.1 当前链路
+
+1. `validate_waypoints()` 强制 start/QR 正向、QR 后 outbound corridor 与 VLM 倒车、VLM 后至 return 正向。
+2. `smartcar_task` 为每个非起点航点创建一个 `NavigateToPose` goal，并预先生成 UUID。
+3. 正向 goal 使用普通 BT；反向 goal 使用 `navigate_to_pose_reverse_w_replanning_and_recovery.xml`。
+4. `ComputeReversePathToPose` 从 TF 获取实际起点，把起点与目标 yaw 临时加 π，显式 `use_start=true` 调用唯一 DUBIN planner，再把路径姿态恢复 π。
+5. 路径在交给 RPP 前验证 frame、finite、单位四元数、端点、严格反向投影、无 cusp、曲率上限和 global costmap 有效性。
+6. 任务依次执行方向门 `Prepare -> send goal(UUID) -> Activate -> Renew`；结束或取消时先 `Stop`，再取消 action、确认终态和原始 `/odom` 六轴停稳。
+
+```text
+controller_server -> /cmd_vel_nav
+velocity_smoother -> /cmd_vel_candidate
+direction_guard -> /cmd_vel
+smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
+```
+
+方向门默认 STOP；只有 boot epoch、lease ID、generation、action UUID 全部匹配且速度符号正确时才会透传。由此提供的软件属性是“要求倒车时只能倒车，否则停车”。
+
+### 0.2 验证边界
+
+- 本地根合同 `134/134`；RDK 核心四包 `108 tests, 0 errors, 0 failures, 0 skipped`。
+- RDK 无底盘 smoke 已验证插件可加载、lifecycle 可激活、话题所有者唯一、无许可非零候选无法越过方向门。
+- 未启动实体底盘或相机，未进行实际倒车，因此不能宣称物理路线可用。
+- `minimum_turning_radius: 0.55` 尚未标定。当前端姿下两个后续正向段存在明显兜圈：`c_corner_1 -> c_corner_2` 约 4.31 m，`c_corner_4 -> b_corridor_return_enter` 约 4.25 m；这不否定 QR→VLM 倒车几何，但阻止完整路线验收。
+
+### 0.3 历史正文阅读规则
+
+下文的 Orientation Flip、回程通道倒车、`/cmd_vel_smooth`、`FollowWaypoints`、Plan B `REEDS_SHEPP` 和“自动发车”内容仅记录当时分析。它们均不是当前接口或测试命令。
 
 ## 1. 研究背景
 

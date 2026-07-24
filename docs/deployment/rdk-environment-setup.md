@@ -1,8 +1,8 @@
 # RDK X5 部署与运行手册
 
-更新时间：2026-07-22
+更新时间：2026-07-24
 
-目标板：无线 `root@172.16.25.27`；有线备用 `root@192.168.128.10`
+目标板：无线地址由现场 DHCP 决定；2026-07-24 有线验证地址为 `root@192.168.128.10`
 
 工作空间：`/root/ros2_ws`
 
@@ -11,7 +11,7 @@
 RDK 的 ROS 2 环境入口是 `/opt/tros/humble/setup.bash`。仓库提供的 `~/source_env.sh` 会加载 TROS 和 `/root/ros2_ws/install`，日常只使用这一入口：
 
 ```bash
-ssh root@172.16.25.27
+ssh root@192.168.128.10
 source ~/source_env.sh
 ```
 
@@ -52,7 +52,7 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-19 历史验证结果：18 个包构建通过，清除旧 xunit 后的全量结果为 `578 tests, 0 errors, 0 failures, 90 skipped`；其中仍包含后来删除的 68 点路线和独立纯导航测试链，不能作为当前 9 点路线版本的验证证据。当前版本须重新执行上述构建、测试和 smoke。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
+2026-07-24 当前证据：本地根合同 `134/134`；有线 RDK 上 `smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 构建通过，清除历史 xunit 后为 `108 tests, 0 errors, 0 failures, 0 skipped`。该结果覆盖方向门、反向路径插件、任务 action adapter 和无底盘 launch smoke，不包含实体倒车或完整工作区验收。三个 vendor-only 包的继承源码全量 lint 默认为关闭，避免旧版权和格式问题污染功能测试；显式检查使用：
 
 ```bash
 colcon build --cmake-args -DSMARTCAR_ENABLE_VENDOR_LINT=ON
@@ -68,8 +68,8 @@ colcon test --packages-select \
 2. 关闭底盘、LiDAR、障碍物、RF2O、实体相机和语音节点。
 3. 启动合成 `/scan`、`/odom`、`/odom_combined` 与静态 TF。
 4. 在 Nav2 lifecycle 激活前锁存急停。
-5. 验证七个 Nav2 节点 active、vision/task 服务存在、任务为 `IDLE`。
-6. 连续验证 `/cmd_vel_safe` 六个字段精确为零。
+5. 验证 `controller_server`、`planner_server`、`bt_navigator`、`velocity_smoother` 四个 Nav2 节点 active，vision/task 服务存在且任务为 `IDLE`。
+6. 连续验证 `/cmd_vel_safe` 六个字段精确为零，`/ackermann_cmd` 没有底盘消费者。
 7. 验证底盘、EKF、IMU、YDLIDAR、robot_state_publisher 和相机节点未启动。
 
 ```bash
@@ -79,7 +79,7 @@ colcon test --packages-select smartcar_bringup
 colcon test-result --test-result-base build/smartcar_bringup --verbose
 ```
 
-该测试不发布非零速度。安全门压制非零命令的逻辑由 `smartcar_safety` 单元测试覆盖。
+该 bringup 测试不发布非零速度。`smartcar_nav2` 的独立隔离 launch test 会向 `/cmd_vel_nav` 注入软件测试命令，确认它可到达 `/cmd_vel_candidate`，但在没有方向租约时 `/cmd_vel` 和 `/cmd_vel_safe` 始终保持完整零；测试域中没有底盘节点或 `/ackermann_cmd` 消费者。
 
 仅查看视觉和任务服务时可手工启动最小 bench：
 
@@ -122,7 +122,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 | `use_laser_odometry` | `false` | 可选 RF2O `/scan` -> `/odom_laser` |
 | `use_imu_filter` | `false` | 可选 Madgwick `/imu/data`；EKF 使用 `/imu/data_raw` |
 | `use_robot_description` | `false` | 可选 URDF、robot/joint state publisher，用于 RViz 车型显示 |
-| `use_safety` | `true` | `/cmd_vel` 到 `/cmd_vel_safe` 安全门 |
+| `use_safety` | `true` | 启动后置方向门与 `/cmd_vel` 到 `/cmd_vel_safe` 安全门 |
 | `safety_emergency_stop_on_start` | `false` | 节点创建时立即锁存急停 |
 | `use_nav` | `true` | Nav2 |
 | `nav_autostart` | `true` | 自动激活 Nav2 lifecycle |
@@ -132,19 +132,23 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 | `use_speech` | `false` | 可选火山 TTS 与本地播放器 |
 | `autostart_mission` | `false` | 不自动开始任务 |
 
-`smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。`use_laser_odometry=true` 时必须同时启用底盘和 LiDAR；任务自动启动还会要求 `laser_odometry_calibrated=true`。默认精简配置不启动无消费者的 obstacle extractor、Madgwick、URDF 车型发布和 Nav2 path smoother；完整任务仍按需启动 `waypoint_follower`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
+`smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。`use_laser_odometry=true` 时必须同时启用底盘和 LiDAR；任务自动启动还会要求 `laser_odometry_calibrated=true`。默认精简配置不启动无消费者的 obstacle extractor、Madgwick、URDF 车型发布、Nav2 path smoother、`behavior_server` 或 `waypoint_follower`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
+
+当前 Nav2 启动封装仍声明并转发 `use_waypoint_follower`，但该参数不再控制任何运行时节点；`params_file`、BT XML 和 `waypoints_file` 等旧入口也有部分被 `nav2_params_fixed.yaml` 固定链路旁路。部署时以构建生成的固定参数文件、当前 BT 和任务节点加载的航点为准，不得通过这些遗留参数推断实际配置已经生效。
 
 ## 5. 校准数据与运动门禁
 
-以下值均需实测：
+当前校准状态：
 
-- `base_footprint -> base_link`：`base_x/base_y/base_z/base_roll/base_pitch/base_yaw`
-- `base_link -> laser`：`laser_x/laser_y/laser_z/laser_roll/laser_pitch/laser_yaw`
-- `base_link -> camera`：`camera_x/camera_y/camera_z/camera_roll/camera_pitch/camera_yaw`
+- 已测量 `base_footprint -> base_link`：`(0.0841, 0, 0.03)`。
+- 已测量 `base_link -> laser`：`(-0.05, 0, 0.23)`，`laser_yaw=1.5708`。
+- 已测量 `base_link -> camera`：`(0.1205, 0, 0.11)`。
+- 已验证 `gyro_z_bias=0.000853` 和 `longitudinal_velocity_scale=1.03`。
+- 尚未完成 `steering_command_scale` / `steering_command_offset` 和有效 `minimum_turning_radius` 标定。
 - 激光里程计：RF2O `/odom_laser` 时间戳/协方差、`base_link -> laser` 外参、异常观测拒绝和退化回退阈值。
-- 五子任务语义航点：`src/smartcar_nav2/config/waypoints/default_waypoints.yaml`
+- 五子任务 11 点语义航点：`src/smartcar_nav2/config/waypoints/default_waypoints.yaml`
 - 官方规则图参考尺寸：`src/smartcar_tools/config/routes/field_geometry.yaml`
-- 转向、轮速、陀螺仪参数：`origincar_base` launch 参数
+- 转向参数和实车转弯半径：`origincar_base` 与 Nav2 参数
 
 `src/smartcar_bringup/config/bringup_coord.yaml` 当前只是协调和审计记录，不会自动写入 launch。运行时必须通过 launch 参数或后续实测参数文件提供真实值。
 
@@ -172,9 +176,32 @@ operator_approved
 
 代码接入和 RDK 构建通过不等于完成标定。`use_laser_odometry` 默认 `false`，首次启用前必须用实测数据验证时间戳、外参、协方差、漂移、异常观测拒绝和回退；完成后才可设置 `laser_odometry_calibrated=true`。复位服务为 `/smartcar/localization/reset_laser_odometry`。
 
-## 6. 航点编辑与三个媒体分项测试
+## 6. 航点、倒车与三个媒体分项测试
 
-仓库只保留 `default_waypoints.yaml` 一份 9 点语义路线：P -> QR 留距位 -> 出站通道 -> C 区角 1/VLM -> 角 2 -> 角 3 -> 角 4 -> 回程通道 -> P。它明确标记 `calibrated: false`，规则图推算不能替代现场实测。
+仓库只保留 `default_waypoints.yaml` 一份 11 点语义路线：P -> QR 留距位 -> 两个出站通道点 -> C 区角 1/VLM -> 角 2 -> 角 3 -> 角 4 -> 两个回程通道点 -> P。它明确标记 `calibrated: false`，规则图推算不能替代现场实测。
+
+路线方向合同是固定的：start/QR 为 `forward`；QR 后两个出站 corridor 和 VLM 为 `reverse`；VLM 后至 return 全部为 `forward`。任务为每个非起点航点独立发送 `NavigateToPose`，不使用 `FollowWaypoints`。`validate_waypoints()` 会拒绝全正向或方向越界的 YAML。
+
+倒车使用单一 DUBIN planner 和专用 BT：插件从 TF 获取实际起点，把起点/目标 yaw 临时加 π 后规划，再恢复路径 yaw；路径必须 frame、端点、四元数、反向投影、无 cusp 和曲率全部合规。随后动作 UUID 绑定的方向租约只允许负 `linear.x` 通过后置方向门。这里的保证是“严格倒车，否则完整零输出”，不是“实车路线已经通过”。
+
+速度链和唯一所有者：
+
+```text
+controller_server -> /cmd_vel_nav
+velocity_smoother -> /cmd_vel_candidate
+direction_guard -> /cmd_vel
+smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
+```
+
+首次无视觉测试使用：
+
+```bash
+bash /root/nav_test.sh
+```
+
+脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。必须先确认物理急停、车辆周围、RViz、P 点朝向和车轮离地条件，再人工 reset、解除急停、start。当前只测试到 VLM 后立即急停；`minimum_turning_radius: 0.55` 未标定，且 `c_corner_1 -> c_corner_2`、`c_corner_4 -> b_corridor_return_enter` 两个正向段存在解析兜圈风险，未修正前不得无人看守跑完整圈。
+
+只允许把仓库根目录的 `scripts/nav_test.sh` 部署为 `/root/nav_test.sh`。`scripts/deploy/nav_test.sh` 是仍会解除急停并自动 start 的历史副本，在清理前不得复制或执行。当前 `scripts/monitor_mission.py` 也不能作为安全判据：其消息类型和格式化逻辑尚未与当前话题合同同步；安全确认必须直接观察下述 ROS 话题和物理状态。
 
 `smartcar_tools` 提供以下隔离入口：
 
@@ -199,13 +226,10 @@ ros2 service call /smartcar/task/reset std_srvs/srv/Trigger "{}"
 
 `reset` 的前置条件和顺序：
 
-1. 导航 worker 与 FollowWaypoints action 已确认停止。
+1. 方向租约已撤销，`NavigateToPose` action 已确认终态，原始 `/odom` 六轴连续停稳。
 2. 车辆物理位于 P 区原点，车头朝 `+X`。
 3. 调用 robot_localization `/set_pose`。
-4. 等待更新且有限的 `/odom_combined` 接近原点。
-5. 调用 `/smartcar/safety/clear_localization_fault`。
-
-不要直接调用 clear service 绕过 task reset。
+4. 等待更新且有限的 `/odom_combined` 接近原点后返回 `IDLE`。
 
 ## 8. 急停与故障恢复
 
@@ -216,18 +240,28 @@ ros2 service call /smartcar/safety/emergency_stop \
   std_srvs/srv/SetBool "{data: true}"
 ```
 
-解除急停前必须确认车辆周围安全、导航目标已取消且 `/cmd_vel_safe` 为零：
+解除急停前必须同时确认：物理急停可触达；任务没有未确认 action；`/smartcar/direction_guard/status` 为 `stopped`；`/smartcar/safety/status` 只报告预期的 `emergency_stop` 而非传感器故障；`/cmd_vel`、`/cmd_vel_safe` 和最终 `/ackermann_cmd.drive.speed` 连续为零；速度话题没有竞争发布者。仅看 `/cmd_vel_safe` 或第三方监控界面的“0”不充分。
+
+```bash
+ros2 topic echo /smartcar/direction_guard/status --once
+ros2 topic echo /smartcar/safety/status --once
+ros2 topic echo /ackermann_cmd
+ros2 topic info /cmd_vel --verbose
+ros2 topic info /ackermann_cmd --verbose
+```
+
+确认完成后才可解除：
 
 ```bash
 ros2 service call /smartcar/safety/emergency_stop \
   std_srvs/srv/SetBool "{data: false}"
 ```
 
-`/smartcar/task/stop` 不等于急停。串口断线、无新鲜 `/scan`、无新鲜原始/融合里程计、非法速度或定位故障都会让安全门 fail-closed。底盘进程关闭时会复用当前串口发送一次零命令；仍必须准备人工可触达的物理急停。
+`/smartcar/task/stop` 不等于急停。串口断线、无新鲜 `/scan`、无新鲜原始/融合里程计或非法速度都会让安全门 fail-closed。底盘进程关闭时会复用当前串口发送一次零命令；仍必须准备人工可触达的物理急停。
 
 ## 9. 视觉、火山 VLM 与语音合成
 
-相机选择：`camera_driver:=aurora|usb|mipi`。默认 Aurora 只启用 15 FPS RGB，关闭 depth/IR/point cloud。
+相机选择：`camera_driver:=usb|aurora|mipi`。当前默认 USB；Aurora 和 MIPI 仅作备选。
 
 `vision.yaml` 默认 `vlm_backend_mode: disabled`，因此未选择后端时 DescribeScene 返回兜底文案。`vision_volcengine.yaml` 是显式启用的火山 Ark 配置：它使用 Python 3 标准库调用 OpenAI-compatible HTTPS 接口，不需要安装 Ark SDK，且仍由外层无 shell 命令后端强制终止。整个请求包含图像等待、JPEG 编码和后端推理，共享硬上限 8 秒；公网响应过慢时按既有合同返回“检测到人物立牌”。
 
@@ -286,8 +320,10 @@ VFH 备用避障和 YOLO 自动触发未纳入当前 release；人物描述由�
 mkdir -p /root/ros2_ws/bags
 ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
   /scan /odom /odom_laser /odom_combined /imu/data_raw /imu/data \
-  /cmd_vel /cmd_vel_safe /ackermann_cmd /PowerVoltage \
-  /tf /tf_static /smartcar/safety/status /smartcar/task/state \
+  /cmd_vel_nav /cmd_vel_candidate /cmd_vel /cmd_vel_safe \
+  /ackermann_cmd /PowerVoltage \
+  /tf /tf_static /smartcar/direction_guard/status \
+  /smartcar/safety/status /smartcar/task/state \
   /barcode /smartcar/output/text /smartcar/output/speech \
   /smartcar/speech/status
 ```
@@ -300,19 +336,24 @@ ros2 topic hz /odom
 ros2 topic hz /odom_laser
 ros2 topic hz /odom_combined
 ros2 topic echo /smartcar/safety/status
+ros2 topic echo /smartcar/direction_guard/status
 ros2 topic echo /smartcar/task/state
+ros2 topic echo /ackermann_cmd
+ros2 topic info /cmd_vel --verbose
+ros2 topic info /ackermann_cmd --verbose
 ros2 service list | grep /smartcar
-ros2 action list | grep follow_waypoints
+ros2 action list | grep navigate_to_pose
 ```
 
 ## 11. 物理测试顺序
 
 1. 自动化测试和无硬件 smoke 全部通过。
-2. 测量外参，完成转向、轮速和 IMU 标定；如启用 RF2O，单独完成激光里程计数据质量和回退验证。
+2. 复核现有外参、轮速和陀螺仪标定，完成转向比例、偏置和有效转弯半径标定；如启用 RF2O，单独完成激光里程计数据质量和回退验证。
 3. 用 `waypoint_editor.launch.py` 对照官方参考层标定唯一语义路线，现场逐点复核期间保持 `calibrated: false`。
 4. 人工物理急停可用，车轮离地测试。
 5. 低速直线、低速转向、急停、串口断线分别验证。
-6. 通过正式任务链按 QR 段、VLM 段、返程段和 `0.15 m/s` 全程逐级验证。
-7. 最后进行视觉、语音和完整五子任务联调。
+6. 先在车轮离地条件下验证正向租约只出正速度、QR→VLM 租约只出负速度以及 STOP 立即归零。
+7. 低速地面只跑 P→QR→VLM，抵达 VLM 立即急停；完成两处正向航向修正后，再按 `0.15 m/s` 逐段验证完整路线。
+8. 最后进行视觉、语音和完整五子任务联调。
 
 在上述步骤完成前，软件状态只能称为“代码合同完成、待物理标定与实车验证”。
