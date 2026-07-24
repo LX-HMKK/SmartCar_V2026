@@ -5,7 +5,7 @@ safety_node:
     odom_timeout_sec: 0.35
     raw_odom_timeout_sec: 0.25
     odom_throttle_interval_sec: 0.05
-    minimum_voltage: 0.0
+    minimum_voltage: 10.0
     publish_frequency_hz: 20.0
     require_scan: true
     require_odom: true

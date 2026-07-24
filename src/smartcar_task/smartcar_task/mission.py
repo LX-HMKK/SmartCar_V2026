@@ -261,24 +261,34 @@ class Mission:
     @staticmethod
     def _navigation_segments(waypoints):
         segment = []
+        segment_direction = None
         for waypoint in waypoints:
             if not segment and waypoint.task == "start":
                 continue  # car already at start, skip zero-length nav
+            if segment and waypoint.direction != segment_direction:
+                yield tuple(segment)
+                segment.clear()
+                segment_direction = None
             segment.append(waypoint)
+            if segment_direction is None:
+                segment_direction = waypoint.direction
             if waypoint.task in {"qr", "vlm", "return"}:
                 yield tuple(segment)
                 segment.clear()
+                segment_direction = None
         if segment:
             yield tuple(segment)
 
     def _navigate(self, generation, segment):
+        reverse_direction = segment and segment[0].direction == "reverse"
         self._set_state(MissionState.NAVIGATING, generation)
         attempts = self._config.navigation_retries + 1
         last_status = "navigation_failed"
         for attempt in range(attempts):
             if self._stop_requested.is_set():
                 return self._finish_stopped(generation)
-            result = self._navigator.navigate(segment)
+            result = self._navigator.navigate(
+                segment, reverse_direction=reverse_direction)
             if self._stop_requested.is_set():
                 return self._finish_stopped(generation)
             if result.success:

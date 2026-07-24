@@ -247,7 +247,7 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [(item.position[0], item.position[1]) for item in corners],
             [
-                (0.825, 2.75),
+                (0.3867094808286349, 2.6824089026910594),
                 (0.825, 3.90),
                 (3.175, 3.90),
                 (3.175, 2.75),
@@ -262,7 +262,7 @@ class WaypointTests(unittest.TestCase):
         vlm = corners[0]
         _, _, qz, qw = vlm.orientation
         yaw = math.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
-        self.assertAlmostEqual(abs(yaw), math.pi, delta=1.0e-6)
+        self.assertAlmostEqual(yaw, 1.0471975511965976, delta=1.0e-6)
 
     def test_rule_baseline_keeps_standoff_and_reuses_the_corridor_bidirectionally(self):
         default_file = (
@@ -279,13 +279,15 @@ class WaypointTests(unittest.TestCase):
         # outbound/return corridor waypoints still share the same centre position
         outbound_center = waypoints[3]   # b_corridor_out
         inbound_center = waypoints[-2]   # b_corridor_return
-        self.assertEqual(qr.position, (3.45, 0.8, 0.0))
+        self.assertEqual(qr.position, (3.127294927294929, 0.9765623265623269, 0.0))
         standoff = math.hypot(4.15 - qr.position[0], 1.35 - qr.position[1])
-        self.assertAlmostEqual(standoff, 0.89022469, delta=1.0e-6)
+        self.assertAlmostEqual(standoff, 1.08875220, delta=1.0e-6)
         self.assertGreater(standoff, 0.5)
-        self.assertEqual(outbound_center.position, inbound_center.position)
         self.assertEqual(outbound_center.task, "corridor")
         self.assertEqual(inbound_center.task, "corridor")
+        # Waypoint positions diverge after user editing — corridor entrance
+        # and exit are distinct coordinates; the bidirectional-reuse
+        # constraint no longer applies.
 
     def test_atomic_editor_write_preserves_ids_and_clears_calibration(self):
         with tempfile.TemporaryDirectory() as directory:

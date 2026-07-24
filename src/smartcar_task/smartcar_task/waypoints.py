@@ -18,6 +18,7 @@ ALLOWED_TASKS = frozenset({
     "return",
     "nav",       # pure navigation pass-through (no vision/media subtask)
 })
+ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
 ORIGIN_TOLERANCE = 1e-9
 QUATERNION_NORM_TOLERANCE = 1e-3
 WAYPOINT_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
@@ -29,6 +30,7 @@ class Waypoint:
     position: tuple
     orientation: tuple
     task: str
+    direction: str = "forward"
     id: str = ""
 
 
@@ -76,6 +78,11 @@ def _parse_waypoint(raw, index):
     if not isinstance(task, str) or task not in ALLOWED_TASKS:
         raise ValueError(f"waypoints[{index}] has unknown task {task!r}")
 
+    direction = item.get("direction", "forward")
+    if not isinstance(direction, str) or direction not in ALLOWED_DIRECTIONS:
+        raise ValueError(
+            f"waypoints[{index}] has unknown direction {direction!r}")
+
     pose = _mapping(item.get("pose"), f"waypoints[{index}].pose")
     position = _components(
         _mapping(
@@ -103,6 +110,7 @@ def _parse_waypoint(raw, index):
         position=position,
         orientation=orientation,
         task=task,
+        direction=direction,
         id=waypoint_id.strip(),
     )
 
@@ -143,6 +151,7 @@ def _waypoint_mapping(waypoint, index=None):
             "orientation": {"x": qx, "y": qy, "z": qz, "w": qw},
         },
         "task": waypoint.task,
+        "direction": waypoint.direction,
     }
 
 
@@ -221,6 +230,8 @@ def validate_waypoints(waypoints):
             "mission order must be start, (qr|nav), corridor transit(s), "
             "(vlm|nav), at least three loop corners, corridor transit(s), return"
         )
+    if waypoints[0].direction != "forward":
+        raise ValueError("start waypoint direction must be forward")
     if not _is_origin_position(waypoints[0]) or not _faces_positive_x(
         waypoints[0]
     ):

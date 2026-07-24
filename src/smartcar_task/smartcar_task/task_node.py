@@ -151,7 +151,12 @@ class RosNavigator:
                 return False
         return self._client.wait_for_server(timeout_sec=float(timeout_sec))
 
-    def navigate(self, waypoints):
+    def navigate(self, waypoints, reverse_direction=False):
+        # reverse_direction is computed by mission.py from the waypoint
+        # direction field.  It is currently unused (the planner selects
+        # reverse motion via REEDS_SHEPP cost optimisation and the
+        # controller obeys via allow_reversing).  Reserved for future
+        # per-segment planner parameter switching.
         waypoints = tuple(waypoints)
         if not waypoints:
             return OperationResult(False, "navigation_segment_empty")
@@ -167,12 +172,13 @@ class RosNavigator:
                 pose.pose.position.y,
                 pose.pose.position.z,
             ) = waypoint.position
+            qx, qy, qz, qw = waypoint.orientation
             (
                 pose.pose.orientation.x,
                 pose.pose.orientation.y,
                 pose.pose.orientation.z,
                 pose.pose.orientation.w,
-            ) = waypoint.orientation
+            ) = (qx, qy, qz, qw)
             goal.poses.append(pose)
 
         with self._condition:

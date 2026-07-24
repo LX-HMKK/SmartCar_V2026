@@ -70,7 +70,7 @@ class FakeNavigator:
     def wait_ready(self, _timeout_sec):
         return self.ready
 
-    def navigate(self, segment):
+    def navigate(self, segment, reverse_direction=False):
         self.calls.append(tuple(segment))
         self.active = True
         if self.on_navigate is not None:
@@ -90,7 +90,7 @@ class FakeNavigator:
 
 
 class UnconfirmedNavigator(FakeNavigator):
-    def navigate(self, segment):
+    def navigate(self, segment, reverse_direction=False):
         self.calls.append(tuple(segment))
         self.active = True
         return OperationResult(False, "cancel_unconfirmed")
@@ -185,7 +185,7 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(mission.state, MissionState.COMPLETED)
         self.assertEqual(
             self.navigator.calls,
-            [tuple(items[:2]), tuple(items[2:4]), tuple(items[4:])],
+            [tuple(items[1:2]), tuple(items[2:4]), tuple(items[4:])],
         )
         self.assertEqual(vision.ready_calls, [(True, True)])
         self.assertEqual(self.output.text, ["WARD-A", "person description"])
@@ -218,7 +218,7 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(result.status, "navigation_failed:planner_failed")
         self.assertEqual(
             navigator.calls,
-            [tuple(items[:2]), tuple(items[2:]), tuple(items[2:])],
+            [tuple(items[1:2]), tuple(items[2:]), tuple(items[2:])],
         )
         self.assertEqual(len(vision.qr_calls), 1)
         self.assertEqual(vision.vlm_calls, [])
@@ -237,7 +237,7 @@ class MissionTests(unittest.TestCase):
         result = mission.execute(items)
 
         self.assertFalse(result.success)
-        self.assertEqual(navigator.calls, [tuple(items), tuple(items)])
+        self.assertEqual(navigator.calls, [tuple(items[1:]), tuple(items[1:])])
         self.assertEqual(vision.qr_calls, [])
 
     def test_navigation_retries_once_before_continuing(self):
@@ -372,7 +372,7 @@ class MissionTests(unittest.TestCase):
             OperationResult(False, "failed_2"),
         ])
         mission = self.make_mission(navigator=navigator)
-        result = mission.execute([waypoint("start")])
+        result = mission.execute([waypoint("return")])
         self.assertFalse(result.success)
         self.assertEqual(mission.state, MissionState.FAILED)
 
@@ -389,13 +389,70 @@ class MissionTests(unittest.TestCase):
         navigator = UnconfirmedNavigator()
         mission = self.make_mission(navigator=navigator)
 
-        result = mission.execute([waypoint("start")])
+        result = mission.execute([waypoint("return")])
 
         self.assertFalse(result.success)
         self.assertTrue(navigator.is_active())
         self.assertTrue(mission.request_stop())
         self.assertFalse(navigator.is_active())
         self.assertEqual(navigator.cancel_calls, 1)
+
+    def test_direction_boundary_splits_navigation_segments(self):
+        """Reverse segment between forward segments yields 3 FollowWaypoints calls."""
+        def wp(task, x=0.0, direction="forward"):
+            return Waypoint(
+                frame_id="odom_combined",
+                position=(x, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task=task,
+                direction=direction,
+            )
+
+        items = [
+            wp("start", 0.0),
+            wp("qr", 1.0),                       # forward (default)
+            wp("corridor", 2.0, "reverse"),       # reverse start
+            wp("corridor", 3.0, "reverse"),       # still reverse
+            wp("vlm", 4.0, "reverse"),            # reverse end
+            wp("loop", 5.0),                      # back to forward (default)
+            wp("loop", 6.0),
+            wp("loop", 7.0),
+            wp("corridor", 8.0),
+            wp("return", 9.0),
+        ]
+
+        vision = FakeVision(
+            qr_results=[OperationResult(True, "ok", "WARD-C")],
+            vlm_results=[OperationResult(True, "ok", "person")],
+        )
+        mission = self.make_mission(vision=vision)
+        result = mission.execute(items)
+
+        self.assertTrue(result.success, result.status)
+        # Segment 1: qr (forward, task boundary)
+        # Segment 2: corridor(2.0), corridor(3.0), vlm(4.0) (reverse, task boundary)
+        # Segment 3: loop(5.0-7.0), corridor(8.0), return(9.0) (forward, task boundary)
+        self.assertEqual(len(self.navigator.calls), 3)
+        self.assertEqual(self.navigator.calls[0], tuple(items[1:2]))
+        self.assertEqual(self.navigator.calls[1], tuple(items[2:5]))
+        self.assertEqual(self.navigator.calls[2], tuple(items[5:]))
+        self.assertEqual(mission.state, MissionState.COMPLETED)
+
+    def test_consecutive_reverse_segments_do_not_split(self):
+        """Two consecutive waypoints with same reverse direction stay together."""
+        items = [
+            Waypoint("odom_combined", (0.0, 0.0, 0.0), (0., 0., 0., 1.), "start", "forward"),
+            Waypoint("odom_combined", (1.0, 0.0, 0.0), (0., 0., 0., 1.), "qr", "forward"),
+        ]
+        vision = FakeVision(
+            qr_results=[OperationResult(True, "ok", "WARD-D")],
+        )
+        mission = self.make_mission(vision=vision)
+        result = mission.execute(items)
+
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(len(self.navigator.calls), 1)
+        self.assertEqual(self.navigator.calls[0], tuple(items[1:]))
 
 
 if __name__ == "__main__":

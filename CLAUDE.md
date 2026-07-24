@@ -6,7 +6,7 @@
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-23，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。新增 `”nav”` 任务类型支持跳过视觉的纯导航全路线测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动。QR/VLM 后端部署和完整任务测试尚未完成，不得表述为”已具备竞赛现场运行条件”。
+截至 2026-07-24，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。新增 `”nav”` 任务类型支持跳过视觉的纯导航全路线测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动。QR/VLM 后端部署和完整任务测试尚未完成，不得表述为”已具备竞赛现场运行条件”。
 
 已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
@@ -14,7 +14,7 @@
 
 - **任务决策层**：`smartcar_task` 管理五子任务、语义航点、`FollowWaypoints`、停止与复位。
 - **视觉层**：`smartcar_vision` 使用 `zbar_ros` 识别二维码；图生文请求包含图像等待、JPEG 编码和后端推理，统一受 8 秒硬期限约束并提供兜底文案。
-- **导航层**：Nav2 Waypoint Follower + Smac Hybrid（DUBIN）+ Regulated Pure Pursuit；禁止 Spin recovery 和原地旋转。
+- **导航层**：Nav2 Waypoint Follower + Smac Hybrid（REEDS_SHEPP，`allow_reversing: true`）+ Regulated Pure Pursuit；BT RateController 0.5 Hz 避免 RDK X5 规划竞态；禁止 Spin recovery 和原地旋转（但允许 QR→VLM 段直线倒车）。
 - **避障感知层**：YDLIDAR `/scan` 直接进入 obstacle/inflation costmap；无消费者的 `obstacle_detector_2` 默认关闭，仅保留诊断开关。
 - **定位层**：STM32 轮式里程计 + IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
 - **控制层**：`/cmd_vel` 经 fail-closed `smartcar_safety`（C++ 默认，Python 备选）直接输出 `/ackermann_cmd`（内部 Twist→Ackermann 转换，`use_safety_ackermann:=true` 时跳过独立转换器节点）。安全节点只做三件事：指令消毒、急停锁存、传感器心跳超时。
@@ -59,13 +59,12 @@ python -m unittest discover -s src/smartcar_safety/test -v
 python -m unittest discover -s src/smartcar_vision/test -v
 python -m unittest discover -s src/smartcar_speech/test -v
 python -m unittest discover -s src/smartcar_task/test -v
-# ↑ 已知: test_mission 中 5 个测试预存失败（segment splitting 逻辑变更，不影响功能）
 python -m unittest discover -s src/smartcar_tools/test -v
 python scripts/sync_to_rdk.py push --dry-run
 python scripts/sync_to_rdk.py push
 ```
 
-本地仓库的 `src/` 和 `config/` 是权威源。日常使用 `push` 镜像到 RDK `/root/ros2_ws`；`init-vendor` 仅用于首次 bootstrap 或明确要求的 vendor 重建。
+本地仓库的 `src/` 和 `config/` 是权威源。日常使用 `push` 镜像到 RDK `/root/ros2_ws`；`init-vendor` 仅用于首次 bootstrap 或明确要求的 vendor 重建。**⚠ `push` 默认含 `--delete`，会删除 RDK 端本地源不存在的文件——在 RDK 上直接改过的文件（如航点 YAML）会被静默覆盖，务必先 `pull` 或手动备份。**
 
 ## RDK 构建与验证
 
@@ -82,7 +81,7 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-19 最新证据：本地根合同 130/130；RDK 18 个包构建通过，`578 tests, 0 errors, 0 failures, 90 skipped`；严格无硬件 smoke 连续 3 轮通过。smoke 必须关闭底盘、LiDAR 驱动、障碍物驱动、RF2O、实体相机和语音节点，使用合成传感器，并在 Nav2 激活前锁存急停。
+2026-07-24 最新证据：本地根合同 131/131；待实车验证倒车段。
 
 vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不要把继承源码的历史格式债务混入默认功能测试。
 
@@ -115,15 +114,17 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - **`cmd_vel_to_ackermann_drive` 竞争**：直接往 `/ackermann_cmd` pub 时，必须先 kill 该节点，否则 safety_node 20Hz 零值覆盖你的指令（车不动或抖动）。
 - **`velocity_smoother` 生命周期卡死**：激活后偶发 `get_state` 服务无响应。解决：`ros2 daemon stop` → `kill -9` 所有 ROS 进程 → `ros2 daemon start` → 重启 launch。
 - **2D LiDAR 无法区分高度**：锥桶上窄下宽——雷达看到的是上半窄截面，车体下半蹭宽底。通过非对称 footprint（后轴原点）+ `obstacle_min_range=0.25` 滤车身 + 膨胀半径补偿，不能根本解决。物理上需 3D 感知或更谨慎的锥桶摆放。
-- **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.35` 已修复。
+- **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.50` 已修复。
 - **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版”IntegrationClock 导致 EKF pose/速度冲突”的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
 - **Nav2 参数链路 (2026-07-23 修复)**：Nav2 1.1.20 (TROS Humble) 的 `RewrittenYaml` chain 存在 bug——`ParameterFile` 输出被 YDLIDAR 驱动参数覆盖，导致 `controller_server` 加载默认 DWB 而非 RPP。修复方案：`CMakeLists.txt` 自动生成 `nav2_params_fixed.yaml`（BT 路径硬编码），`navigation_launch.py` 直接使用该文件。任何对 `nav2_params.yaml` 的修改会在 `colcon build` 时自动同步到 fixed 文件。不可手动创建/编辑 `nav2_params_fixed.yaml`。
-- **重启必须彻底杀旧进程**：多次 kill/restart 循环会残留旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等），占用 `/dev/ttyUSB0` 串口并消耗 CPU。必须执行完整清理：`pkill -9` 全部 ROS 节点可执行文件 → `ros2 daemon stop` → `sleep 1` → `ros2 daemon start` → `ros2 launch`。仅靠 `ctrl-c` 或部分 pkill 不可靠。
+- **重启必须彻底杀旧进程**：多次 kill/restart 循环会残留旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等），占用 `/dev/ttyUSB0` 串口并消耗 CPU。**推荐使用 `bash scripts/ros_cleanup.sh` 一键清理**；手动方式：`pkill -9` 全部 ROS 节点可执行文件 → `ros2 daemon stop` → `sleep 1` → `ros2 daemon start` → `ros2 launch`。仅靠 `ctrl-c` 或部分 pkill 不可靠。
 - **任务起点航点 (2026-07-23 修复)**：`mission.py` 在构建导航段时跳过 `task=start` 的航点，避免 planner 对零长度路径 (0,0)→(0,0) 规划失败。发车前必须将车辆手动置于 P 点原点，车头朝 +X。
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - **一键导航测试脚本 (2026-07-23)**：`/root/nav_test.sh` 全自动执行清理→构建→启动→等就绪→RViz→发车，使用 `nav_only.yaml` 和 `use_vision:=false`。RDK 上 `setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &` 即可启动。配套监控 `/root/monitor_mission.py`（`python3 /root/monitor_mission.py`）实时显示任务状态、位姿和速度。
-- **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `/tmp/kill_all.sh`。
+- **倒车导航设计 (2026-07-24)**：QR→VLM 段（通道）必须倒车。方案：`Waypoint.direction: "reverse"` 标记航点 → `_navigation_segments()` 按方向边界拆分 → 每段独立 `FollowWaypoints` 调用。不做朝向翻转——靠 `reverse_penalty: 0.5`（REEDS_SHEPP 倒车原语比正向便宜 50%）让规划器在目标位于后方时自然选择倒车路径。到 VLM 点时 heading ≈ 60°，下一正向段无缝衔接（x'=+1.27 > 0）。`allow_reversing: true` + `min_velocity: [-0.15, 0.0, -0.75]` + `use_rotate_to_heading: false`（阿克曼不原地旋转）。STM32 负速度已由 `int16_t` 编码验证兼容，实际倒车运动待实车验证。
+- **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
+- **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
 
 ### 航点编辑与可视化
 
@@ -148,6 +149,15 @@ ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<path_to_yaml
 ```bash
 ros2 run smartcar_tools odom_diag --ros-args -p duration_sec:=30.0
 # 输出 /odom、/odom_combined、/scan 速率和间隔统计，以及 EKF 诊断警告
+```
+
+电压监控（记录 `/PowerVoltage` 到日志，支持离线分析）：
+
+```bash
+ros2 run smartcar_tools voltage_monitor
+# 日志: /tmp/voltage_history.log（时间戳 + 电压值，10 万行自动轮转）
+# 实时查看: tail -f /tmp/voltage_history.log
+# 当前值:   ros2 topic echo /PowerVoltage --once
 ```
 
 ### 纯导航全路线测试（无视觉）

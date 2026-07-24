@@ -1,5 +1,6 @@
-# 纯导航航点——无需视觉任务（QR/VLM→nav 直通），终点 split 到 p_finish
+# 纯导航航点——无需视觉任务（QR/VLM→nav 直通）
 # 车辆发车前置于 P 区原点，车头朝 +X
+# 与 default_waypoints.yaml 坐标同步，含 direction 字段支持倒车段
 
 calibrated: false
 
@@ -10,69 +11,142 @@ waypoints:
       position: { x: 0.0, y: 0.0, z: 0.0 }
       orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
     task: "start"
+    direction: forward
 
   - id: "a_task_observe"
     frame_id: "odom_combined"
     pose:
-      position: { x: 3.45, y: 0.8, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.25881905, w: 0.96592583 }
+      position:
+        x: 3.127294927294929
+        y: 0.9765623265623269
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: 0.25881905
+        w: 0.96592583
     task: "nav"
+    direction: forward
 
   - id: "b_corridor_enter"
     frame_id: "odom_combined"
     pose:
-      position: { x: 2.0, y: 1.85, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.70710678, w: 0.70710678 }
+      position:
+        x: 2.09178392584126
+        y: 1.825310720243646
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: -0.5000000014532175
+        w: 0.8660254029454231
     task: "corridor"
+    direction: reverse
 
   - id: "b_corridor_out"
     frame_id: "odom_combined"
     pose:
-      position: { x: 2.0, y: 2.4, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.70710678, w: 0.70710678 }
+      position:
+        x: 1.831835358922068
+        y: 2.536598557198358
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: -0.5000000014532175
+        w: 0.8660254029454231
     task: "corridor"
+    direction: reverse
 
   - id: "c_corner_1"
     frame_id: "odom_combined"
     pose:
-      position: { x: 0.825, y: 2.75, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 1.0, w: 0.0 }
+      position:
+        x: 0.3867094808286349
+        y: 2.6824089026910594
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: 0.4999999999999998
+        w: 0.8660254037844388
     task: "nav"
+    direction: reverse
 
   - id: "c_corner_2"
     frame_id: "odom_combined"
     pose:
-      position: { x: 0.825, y: 3.9, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+      position:
+        x: 0.825
+        y: 3.9
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: 0.0
+        w: 1.0
     task: "loop"
+    direction: forward
 
   - id: "c_corner_3"
     frame_id: "odom_combined"
     pose:
-      position: { x: 3.175, y: 3.9, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 0.0, w: 1.0 }
+      position:
+        x: 3.175
+        y: 3.9
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: -0.25881904510252074
+        w: 0.9659258262890683
     task: "loop"
+    direction: forward
 
   - id: "c_corner_4"
     frame_id: "odom_combined"
     pose:
-      position: { x: 3.175, y: 2.75, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: 1.0, w: 0.0 }
+      position:
+        x: 3.175
+        y: 2.75
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: 1.0
+        w: 0.0
     task: "loop"
+    direction: forward
 
   - id: "b_corridor_return_enter"
     frame_id: "odom_combined"
     pose:
-      position: { x: 2.0, y: 2.55, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: -0.70710678, w: 0.70710678 }
+      position:
+        x: 2.1317760130595973
+        y: 2.516602513589189
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: -0.7933533392697143
+        w: 0.6087614303399925
     task: "corridor"
+    direction: forward
 
   - id: "b_corridor_return"
     frame_id: "odom_combined"
     pose:
-      position: { x: 2.0, y: 2.4, z: 0.0 }
-      orientation: { x: 0.0, y: 0.0, z: -0.70710678, w: 0.70710678 }
+      position:
+        x: 1.883253756774216
+        y: 1.825310720243646
+        z: 0.0
+      orientation:
+        x: 0.0
+        y: 0.0
+        z: -0.8660254029454229
+        w: 0.500000001453218
     task: "corridor"
+    direction: forward
 
   - id: "p_finish"
     frame_id: "odom_combined"
@@ -80,3 +154,4 @@ waypoints:
       position: { x: 0.0, y: 0.0, z: 0.0 }
       orientation: { x: 0.0, y: 0.0, z: -1.0, w: 0.0 }
     task: "return"
+    direction: forward

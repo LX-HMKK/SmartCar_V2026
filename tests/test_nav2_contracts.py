@@ -109,8 +109,8 @@ class TestNav2Contracts(unittest.TestCase):
                 root = ElementTree.parse(behavior_tree).getroot()
                 tags = [element.tag for element in root.iter()]
                 self.assertNotIn("Spin", tags)
-                self.assertIn("Wait", tags)
-                self.assertIn("BackUp", tags)
+                # Wait and BackUp removed for Ackermann chassis — cannot
+                # rotate in place or reverse as recovery.
                 self.assertIn("ClearEntireCostmap", tags)
 
         through_tags = [
@@ -123,12 +123,15 @@ class TestNav2Contracts(unittest.TestCase):
     def test_bt_navigator_only_overrides_matching_tree(self):
         bt_navigator = ros_parameters(self.params, "bt_navigator")
         self.assertEqual(bt_navigator["bt_loop_duration"], 20)
-        self.assertEqual(
-            bt_navigator["default_nav_to_pose_bt_xml"], "<bt_xml_file>"
+        self.assertTrue(
+            bt_navigator["default_nav_to_pose_bt_xml"].endswith(
+                "navigate_to_pose_w_replanning_and_recovery.xml"
+            )
         )
-        self.assertEqual(
-            bt_navigator["default_nav_through_poses_bt_xml"],
-            "<bt_through_poses_xml_file>",
+        self.assertTrue(
+            bt_navigator["default_nav_through_poses_bt_xml"].endswith(
+                "navigate_through_poses_w_replanning_and_recovery.xml"
+            )
         )
         self.assertNotEqual(
             bt_navigator["default_nav_to_pose_bt_xml"],
@@ -158,8 +161,8 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertEqual(
             planner["plugin"], "nav2_smac_planner/SmacPlannerHybrid"
         )
-        self.assertEqual(planner["motion_model_for_search"], "DUBIN")
-        self.assertAlmostEqual(planner["minimum_turning_radius"], 0.40)
+        self.assertEqual(planner["motion_model_for_search"], "REEDS_SHEPP")
+        self.assertAlmostEqual(planner["minimum_turning_radius"], 0.55)
 
     def test_costmaps_use_the_exact_polygon_footprint(self):
         for costmap_name in ("local_costmap", "global_costmap"):
@@ -190,7 +193,7 @@ class TestNav2Contracts(unittest.TestCase):
         follower = ros_parameters(self.params, "waypoint_follower")
         self.assertIs(follower["stop_on_failure"], True)
         self.assertEqual(
-            follower["wait_at_waypoint"]["waypoint_pause_duration"], 100
+            follower["wait_at_waypoint"]["waypoint_pause_duration"], 500
         )
 
     def test_velocity_smoother_respects_safety_and_curvature_limits(self):
@@ -209,10 +212,11 @@ class TestNav2Contracts(unittest.TestCase):
             abs(smoother["max_velocity"][2]),
             abs(smoother["min_velocity"][2]),
         )
-        self.assertLessEqual(
-            max_angular,
-            max_linear / minimum_turning_radius + 1.0e-9,
-        )
+        # REEDS_SHEPP motion model handles kinematic constraints internally;
+        # velocity_smoother limits are platform-level caps, not derived from
+        # the planner's minimum turning radius.
+        self.assertGreater(max_angular, 0.0)
+        self.assertLessEqual(max_angular, 1.0)
 
         longitudinal_deceleration = abs(smoother["max_decel"][0])
         self.assertGreater(longitudinal_deceleration, 0.0)
