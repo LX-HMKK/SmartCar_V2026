@@ -6,7 +6,7 @@
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-24，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 11 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+截至 2026-07-24，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 11 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 倒车段转向修复已实车验证（方向门 angular.z 翻转），正向 P→VLM 实际行驶成功；倒车路径存在 Reeds-Shepp 绕圈问题（规划方案待定），VLM 后端和完整赛道测试尚未完成，不得表述为”已具备竞赛现场运行条件”。
 
 已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
@@ -83,7 +83,7 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-24 最新证据：本地根合同 134/134；RDK 上 `smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 共 108 项测试零失败；提交 `8103b37` 已部署到 `/root/ros2_ws`。这些证据不包含实体倒车运动。
+2026-07-24 最新证据：本地根合同 134/134，`smartcar_safety` 39/39 零失败（含 direction_guard 转向修复）；RDK 实车正向导航 P→VLM 行驶成功，倒车转向修复已验证（方向正确），倒车路径绕圈问题待解决（ultracode 审查中）。
 
 vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不要把继承源码的历史格式债务混入默认功能测试。
 
@@ -104,7 +104,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 - 实测并替换 `default_waypoints.yaml` 占位航点（`nav_only.yaml` 已支持纯导航实测，语义航点坐标仍需场地验证后标定）。
 - 完成转向标定（`steering_command_scale` / `offset`）。
-- 车轮离地和 0.15 m/s 低速验证 QR→VLM 实际倒车；`minimum_turning_radius: 0.55` 仍是未标定规划假设。
+- 车轮离地验证 QR→VLM 实际倒车转向（已完成 angular.z 翻转修复）；倒车路径绕圈问题待解决（yaw-flip + allow_reversing 导致 Reeds-Shepp cusp）。`minimum_turning_radius: 0.30` 为临时值。
 - 修正并现场确认两处正向 DUBIN 兜圈风险：`c_corner_1 -> c_corner_2` 和 `c_corner_4 -> b_corridor_return_enter`。几何候选航向约为 `c_corner_2=38°`、`b_corridor_return_enter=-135°`，尚未写入路线。
 - 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
@@ -127,9 +127,14 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - **一键导航测试脚本 (2026-07-24 修订)**：只使用仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。`scripts/deploy/nav_test.sh` 是会自动解除急停并 start 的历史副本，不得复制或执行；当前 `scripts/monitor_mission.py` 也不能作为零速或安全判据。
-- **倒车导航实现 (2026-07-24)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；reverse goal 选择专用 BT，把实际 TF 起点和目标 yaw 临时加 π，调用唯一 `DUBIN` planner，再把路径 yaw 恢复 π。插件拒绝非有限、错误 frame/端点、正向分量、cusp 和超曲率路径。后置方向门用动作 UUID 租约保证“倒车或停车”，不使用 `REEDS_SHEPP`、`reverse_penalty`、航点朝向翻转或开环速度。STM32 负速度编码仅完成代码路径确认，实际运动仍待验证。
+- **倒车导航实现 (2026-07-24 修订)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；reverse goal 使用 `ComputeReversePathToPose` 自定义 BT 节点（yaw 加 π → DUBIN 规划 → yaw 恢复 π → 严格验证）。**已知问题**：`allow_reversing=true` 使 Smac Hybrid 实际使用 Reeds-Shepp（非纯 DUBIN），路径含方向切换 cusp 导致”绕圈”。方向门倒车时翻转 `angular.z`（补偿 RPP 的 ω=v×κ 在 v<0 时符号反转），已实车验证转向正确。曲率验证 `minimum_turning_radius=0.30, curvature_tolerance=0.50`（正向 0.30 已足够，倒车段仍有部分 curvature_exceeded）。详见 `docs/troubleshooting/nav-startup-issues.md`。
 - **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
 - **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
+- **TROS setup.bash 兼容性 (2026-07-24)**：RDK 上带 `set -euo pipefail` 的脚本 source `/opt/tros/humble/setup.bash` 时，`AMENT_TRACE_SETUP_FILES` 未绑定导致脚本退出。修复：source 前后包裹 `set +u` / `set -u`。`nav_test.sh` 已修复。
+- **ros_cleanup 自 kill (2026-07-24)**：`ros_cleanup.sh` 的 pkill 列表含 `nav_test`，导致 `nav_test.sh` 调用 cleanup 时自杀。修复：从 kill 列表移除测试脚本名。
+- **Forward BT 缺 goal_checker_id (2026-07-24)**：正向 BT XML 的 `FollowPath` 节点未指定 `goal_checker_id="goal_checker"`，导致 Nav2 报 `goal_checker name does not exist` 并立即失败。已修复。
+- **direction_guard 时序过紧 (2026-07-24)**：`raw_odom_timeout_sec=0.25, stop_settle_sec=0.25` 在 prepare→activate 间隙中偶发 `raw_odom_not_stopped`。已调整为 `0.50/0.15`（`config/direction_guard.yaml`）。
+- **方向门倒车转向翻转 (2026-07-24)**：RPP 控制器 `ω=v×κ` 在倒车（v<0）时角速度符号反转，导致 Ackermann 转向打反。修复：`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）。已实车验证。
 
 ### 航点编辑与可视化
 

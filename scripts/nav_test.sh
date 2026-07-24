@@ -11,7 +11,11 @@ LOG=/tmp/bringup.log
 GEOM=/root/ros2_ws/src/smartcar_tools/config/routes/field_geometry.yaml
 WP=/root/ros2_ws/src/smartcar_nav2/config/waypoints/nav_only.yaml
 
+# TROS humble setup.bash has unbound AMENT_TRACE_SETUP_FILES — disable
+# nounset around the source to avoid script exit under set -euo pipefail.
+set +u
 source "$SOURCE_ENV"
+set -u
 cd "$WORKSPACE"
 export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
 
@@ -37,6 +41,7 @@ echo "  motion_model: $(grep motion_model_for_search "$FIXED_YAML" | xargs)"
 echo "  allow_reversing: $(grep allow_reversing "$FIXED_YAML" | xargs)"
 echo "  yaw_goal_tolerance: $(grep yaw_goal_tolerance "$FIXED_YAML" | xargs)"
 echo "  min_velocity: $(grep 'min_velocity:' "$FIXED_YAML" | xargs)"
+echo "  current_goal_checker: $(grep current_goal_checker "$FIXED_YAML" | xargs)"
 
 # ---- 4. 先验地图 + 航点 ----
 banner "[4/7] 可视化"

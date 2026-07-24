@@ -1,5 +1,64 @@
 # 变更日志
 
+## 2026-07-24 - 纯导航启动链修复与倒车转向实车验证
+
+### 背景
+
+2026-07-24 无线连接 RDK `172.16.24.193`，历经 6 轮发车调试，修复了纯导航任务从脚本启动到实际行驶的 7 项阻塞问题。正向 P→VLM 行驶成功（4/5 导航段），倒车 Ackermann 转向修复实车验证通过。
+
+### 启动与脚本修复 (R1-R2)
+
+- **TROS setup.bash 兼容性**：`nav_test.sh` 的 `set -euo pipefail` 在 source `/opt/tros/humble/setup.bash` 时遭遇 `AMENT_TRACE_SETUP_FILES` unbound variable，脚本静默退出。修复：source 前后包裹 `set +u` / `set -u`。
+- **ros_cleanup 自 kill**：清理脚本 pkill 列表含 `nav_test`，`nav_test.sh` 调用 cleanup 时被自己杀掉。修复：从 kill 列表移除测试脚本名。
+
+### BT 与 Nav2 配置修复 (R3-R5)
+
+- **Forward BT 缺 goal_checker_id**：正向 XML 的 `FollowPath` 节点未指定 `goal_checker_id="goal_checker"`，Nav2 报 `goal_checker name does not exist` 并立即失败。
+- **nav2_params 缺 current_goal_checker**：虽然 `goal_checker_plugins` 定义了插件列表，但 `current_goal_checker` 参数缺失。Nav2 的 `goal_checker_selector` BT 节点负责动态设置此参数；如 BT 树不含该节点则需在 params 中显式声明。
+- **倒车 curvature 超限**：`minimum_turning_radius=0.55, curvature_tolerance=0.20` 计算的 `max_curvature≈2.018 rad/m`，反向路径首段被拒。调整为 `0.30/0.50`（max_curvature≈3.833 rad/m）。
+
+### 方向门修复 (R6-R7)
+
+- **direction_guard 时序过紧**：`raw_odom_timeout_sec=0.25, stop_settle_sec=0.25` 在 prepare→activate 间隙中偶发 `raw_odom_not_stopped`。调整为 `0.50/0.15`。
+- **倒车 Ackermann 转向打反（实车验证）**：**根因**：Nav2 RPP 控制器的角速度公式 `ω=v×κ` 在倒车（v<0）时符号反转——向左的路径曲率产生向右的角速度指令。**修复**：`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）。**实车结果**：倒车段 (2.94,0.89)→(2.09,1.83) 成功完成，转向方向正确。
+
+### 实车测试结果
+
+| 段 | 起→止 | 方向 | 结果 |
+|----|-------|------|------|
+| 1 | (0.00,0.00)→(3.13,0.98) | 正向 | ✅（Planner 首试超时后重试成功） |
+| 2 | (2.94,0.89)→(2.09,1.83) | 倒车 | ✅（转向正确，但路径绕圈） |
+| 3 | (2.11,1.74)→(1.83,2.54) | 正向 | ✅ |
+| 4 | (1.87,2.44)→(0.39,2.68) | 正向 | ✅ |
+| 5 | (0.65,2.80)→(0.39,2.68) | 倒车 | ❌ curvature_exceeded @ segment 8-10 |
+
+### 待解决问题
+
+- **倒车路径绕圈**：yaw-flip + `allow_reversing=true` 使 Smac Hybrid 实际使用 Reeds-Shepp（含方向切换 cusp），路径出现"绕一圈"行为。直接线性路径方案待 ultracode 审查后实施。
+- **后段倒车 curvature_exceeded**：`minimum_turning_radius=0.30` 仍不足以通过所有反向段曲率验证。
+
+### 文档
+
+- CLAUDE.md：更新项目状态、待完成项、5 项新增已知问题
+- 新增 `docs/troubleshooting/nav-startup-issues.md`（8 项完整问题日志）
+- 新增 `docs/troubleshooting/nav-launch-rules.md`（启动/监控/应急操作规则）
+- 新增 memory `nav-startup-fixes-2026-07-24.md`
+
+### 修改文件 (10 files, +346/-11)
+
+- `scripts/nav_test.sh` — TROS 兼容 + goal_checker 验证
+- `scripts/ros_cleanup.sh` — 移除 nav_test 自 kill
+- `src/smartcar_nav2/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml` — +goal_checker_id
+- `src/smartcar_nav2/config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml` — 曲率参数调整
+- `src/smartcar_nav2/config/nav2_params.yaml` — +current_goal_checker, turning_radius 0.30
+- `src/smartcar_safety/config/direction_guard.yaml` — 时序参数调整
+- `src/smartcar_safety/src/direction_guard.cpp` — 倒车 angular.z 翻转（+16 行）
+- `CLAUDE.md` — 更新
+- `docs/troubleshooting/nav-startup-issues.md` — 新增
+- `docs/troubleshooting/nav-launch-rules.md` — 新增
+
+---
+
 ## 2026-07-24 - QR→VLM 确定性倒车与后置方向门
 
 ### 实现

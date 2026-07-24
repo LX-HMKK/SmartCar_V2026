@@ -19,7 +19,7 @@ PROCS=(
   task_node field_reference_node waypoint_viz waypoint_editor_node
   waypoint_drag_editor
   rviz2 zbar_ros barcode_reader hobot_usb_cam
-  nav_test full_test go_test run_test
+  full_test go_test run_test
 )
 for name in "${PROCS[@]}"; do
   pkill -9 -f "$name" 2>/dev/null || true

@@ -85,6 +85,7 @@ controller_server:
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["goal_checker", "reverse_goal_checker"]
+    current_goal_checker: "goal_checker"
     controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
@@ -213,7 +214,7 @@ planner_server:
       angle_quantization_bins: 72
       analytic_expansion_ratio: 3.5
       analytic_expansion_max_length: 3.0
-      minimum_turning_radius: 0.55
+      minimum_turning_radius: 0.30
       non_straight_penalty: 1.2
       cost_penalty: 2.0
       retrospective_penalty: 0.015

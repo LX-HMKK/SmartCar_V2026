@@ -250,6 +250,14 @@ TwistComponents DirectionGuard::on_candidate(const TwistComponents &candidate,
   if (std::abs(candidate[0]) <= config_.direction_epsilon) {
     return zero_command();
   }
+  // Ackermann reverse: ang.z sign flip needed because
+  // pure-pursuit uses w = v * kappa, and v < 0 inverts steering.
+  // Flip angular.z so physical steering matches path curvature.
+  if (direction_ == MotionDirection::Reverse) {
+    auto corrected = candidate;
+    corrected[5] = -corrected[5];
+    return corrected;
+  }
   return candidate;
 }
 
@@ -312,6 +320,14 @@ TwistComponents DirectionGuard::evaluate(double now_sec) {
   }
   if (std::abs(candidate[0]) <= config_.direction_epsilon) {
     return zero_command();
+  }
+  // Ackermann reverse: ang.z sign flip needed because
+  // pure-pursuit uses w = v * kappa, and v < 0 inverts steering.
+  // Flip angular.z so physical steering matches path curvature.
+  if (direction_ == MotionDirection::Reverse) {
+    auto corrected = candidate;
+    corrected[5] = -corrected[5];
+    return corrected;
   }
   return candidate;
 }
