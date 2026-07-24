@@ -25,6 +25,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             "smartcar_safety",
             "std_msgs",
             "std_srvs",
+            "unique_identifier_msgs",
             "python3-yaml",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
@@ -41,7 +42,12 @@ class TaskLaunchContractTests(unittest.TestCase):
         source = NODE.read_text(encoding="utf-8")
         for token in (
             "ActionClient(",
-            'node, FollowWaypoints, "/follow_waypoints"',
+            "NavigateToPose,",
+            '"/navigate_to_pose"',
+            '"/smartcar/direction_guard/prepare"',
+            '"/smartcar/direction_guard/activate"',
+            '"/smartcar/direction_guard/renew"',
+            '"/smartcar/direction_guard/stop"',
             '"/smartcar/task/start"',
             '"/smartcar/task/stop"',
             '"/smartcar/task/reset"',
@@ -53,12 +59,14 @@ class TaskLaunchContractTests(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_follow_waypoints_goal_contains_each_segment_pose(self):
+    def test_navigate_to_pose_goal_is_uuid_and_direction_bound(self):
         source = NODE.read_text(encoding="utf-8")
-        self.assertIn("waypoints = tuple(waypoints)", source)
-        self.assertIn("for waypoint in waypoints:", source)
-        self.assertIn("goal.poses.append(pose)", source)
-        self.assertNotIn("goal.poses = [pose]", source)
+        self.assertIn("goal = NavigateToPose.Goal()", source)
+        self.assertIn("goal.pose.header.frame_id = waypoint.frame_id", source)
+        self.assertIn("goal.behavior_tree = behavior_tree", source)
+        self.assertIn("goal, goal_uuid=action_uuid", source)
+        self.assertIn("motion_direction(reverse_direction)", source)
+        self.assertNotIn("FollowWaypoints", source)
 
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = NODE.read_text(encoding="utf-8")

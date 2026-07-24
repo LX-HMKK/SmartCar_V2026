@@ -11,9 +11,16 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_task.mission import OperationResult  # noqa: E402
 from smartcar_task.protocols import (  # noqa: E402
+    MOTION_FORWARD,
+    MOTION_REVERSE,
+    MotionDirectionProtocol,
     classify_follow_waypoints_result,
+    classify_navigate_to_pose_result,
+    motion_direction,
+    navigation_behavior_tree,
     odometry_matches_origin,
     run_reset_sequence,
+    twist_is_stopped,
 )
 
 
@@ -52,6 +59,175 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertFalse(classify_follow_waypoints_result(6, []).success)
 
+    def test_navigate_to_pose_result_and_behavior_tree_selection(self):
+        self.assertTrue(classify_navigate_to_pose_result(4).success)
+        self.assertEqual(
+            classify_navigate_to_pose_result(5).status,
+            "navigation_canceled",
+        )
+        self.assertEqual(
+            classify_navigate_to_pose_result(6).status,
+            "navigation_status_6",
+        )
+        self.assertEqual(motion_direction(False), MOTION_FORWARD)
+        self.assertEqual(motion_direction(True), MOTION_REVERSE)
+        self.assertEqual(navigation_behavior_tree(False, "ignored.xml"), "")
+        self.assertEqual(
+            navigation_behavior_tree(True, "reverse.xml"), "reverse.xml")
+        with self.assertRaises(ValueError):
+            navigation_behavior_tree(True, "")
+
+    def test_motion_direction_protocol_binds_direction_generation_and_uuid(self):
+        calls = []
+        action_uuid = object()
+
+        class Guard:
+            @staticmethod
+            def stop(lease):
+                calls.append(("stop", lease))
+                return OperationResult(True, "stopped")
+
+            @staticmethod
+            def prepare(lease):
+                calls.append(("prepare", lease))
+                return OperationResult(True, "prepared"), 17, 23
+
+            @staticmethod
+            def activate(lease):
+                calls.append(("activate", lease))
+                return OperationResult(True, "active")
+
+            @staticmethod
+            def renew(lease):
+                calls.append(("renew", lease))
+                return OperationResult(True, "renewed")
+
+        def wait_stopped():
+            calls.append(("settled", None))
+            return OperationResult(True, "stopped")
+
+        protocol = MotionDirectionProtocol(Guard(), wait_stopped)
+        result, lease = protocol.prepare(
+            MOTION_REVERSE, 9, action_uuid)
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(
+            [name for name, _value in calls],
+            ["stop", "settled", "prepare"],
+        )
+        provisional = calls[0][1]
+        self.assertEqual(provisional.direction, MOTION_REVERSE)
+        self.assertEqual(provisional.generation, 9)
+        self.assertIs(provisional.action_uuid, action_uuid)
+        self.assertEqual(provisional.boot_epoch, 0)
+        self.assertEqual(provisional.lease_id, 0)
+        self.assertEqual(lease.boot_epoch, 17)
+        self.assertEqual(lease.lease_id, 23)
+
+        self.assertTrue(protocol.activate(lease).success)
+        self.assertTrue(protocol.renew(lease).success)
+        self.assertTrue(protocol.stop(lease).success)
+        self.assertEqual(
+            [name for name, _value in calls],
+            [
+                "stop", "settled", "prepare", "activate", "renew",
+                "stop", "settled",
+            ],
+        )
+        for name, identity in calls[3:6]:
+            self.assertIn(name, {"activate", "renew", "stop"})
+            self.assertEqual(identity, lease)
+
+    def test_motion_direction_protocol_never_prepares_before_stop_barrier(self):
+        calls = []
+
+        class Guard:
+            @staticmethod
+            def stop(_lease):
+                calls.append("stop")
+                return OperationResult(False, "transport_timeout")
+
+            @staticmethod
+            def prepare(_lease):
+                calls.append("prepare")
+                return OperationResult(True, "prepared"), 1, 1
+
+        protocol = MotionDirectionProtocol(
+            Guard(),
+            lambda: calls.append("settled") or OperationResult(True, "ok"),
+        )
+        result, lease = protocol.prepare(MOTION_FORWARD, 1, object())
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "direction_stop:transport_timeout")
+        self.assertIsNone(lease)
+        self.assertEqual(calls, ["stop"])
+
+    def test_motion_direction_protocol_only_retries_stop_barrier_response(self):
+        calls = []
+        now = [0.0]
+
+        class Guard:
+            prepare_results = [
+                OperationResult(False, "stop_barrier_not_ready"),
+                OperationResult(False, "stop_barrier_not_ready"),
+                OperationResult(True, "prepared"),
+            ]
+
+            @staticmethod
+            def stop(_lease):
+                calls.append("stop")
+                return OperationResult(True, "stopped")
+
+            @classmethod
+            def prepare(cls, lease):
+                calls.append((
+                    "prepare", lease.generation, lease.action_uuid))
+                return cls.prepare_results.pop(0), 4, 8
+
+        def sleep(seconds):
+            calls.append(("sleep", seconds))
+            now[0] += seconds
+
+        protocol = MotionDirectionProtocol(
+            Guard(),
+            lambda: calls.append("settled") or OperationResult(True, "ok"),
+            prepare_timeout_sec=0.2,
+            prepare_retry_period_sec=0.05,
+            monotonic=lambda: now[0],
+            sleep=sleep,
+        )
+        action_uuid = object()
+        result, lease = protocol.prepare(MOTION_REVERSE, 3, action_uuid)
+
+        self.assertTrue(result.success, result.status)
+        prepare_calls = [call for call in calls if isinstance(call, tuple)
+                         and call[0] == "prepare"]
+        self.assertEqual(len(prepare_calls), 3)
+        self.assertTrue(all(call[1] == 3 for call in prepare_calls))
+        self.assertTrue(all(call[2] is action_uuid for call in prepare_calls))
+        self.assertEqual(lease.boot_epoch, 4)
+        self.assertEqual(lease.lease_id, 8)
+
+    def test_cancel_order_can_revoke_before_action_cancel_then_settle(self):
+        calls = []
+
+        class Guard:
+            @staticmethod
+            def stop(_lease):
+                calls.append("revoke")
+                return OperationResult(True, "stopped")
+
+        protocol = MotionDirectionProtocol(
+            Guard(),
+            lambda: calls.append("settle") or OperationResult(True, "ok"),
+        )
+        identity = protocol.provisional(MOTION_REVERSE, 5, object())
+
+        self.assertTrue(protocol.revoke(identity).success)
+        calls.append("action_cancel")
+        self.assertTrue(protocol.settle().success)
+
+        self.assertEqual(calls, ["revoke", "action_cancel", "settle"])
+
     def test_origin_verification_rejects_wrong_frame_nonfinite_and_far_pose(self):
         self.assertTrue(odometry_matches_origin(odometry()))
         wrong_frame = odometry()
@@ -62,6 +238,28 @@ class ProtocolTests(unittest.TestCase):
         self.assertFalse(odometry_matches_origin(nonfinite))
         self.assertFalse(odometry_matches_origin(odometry(x=0.5)))
         self.assertFalse(odometry_matches_origin(odometry(yaw=0.5)))
+
+    def test_stop_barrier_checks_all_six_raw_odom_twist_axes(self):
+        def twist(linear=(0.0, 0.0, 0.0), angular=(0.0, 0.0, 0.0)):
+            return SimpleNamespace(
+                linear=SimpleNamespace(
+                    x=linear[0], y=linear[1], z=linear[2]),
+                angular=SimpleNamespace(
+                    x=angular[0], y=angular[1], z=angular[2]),
+            )
+
+        self.assertTrue(twist_is_stopped(twist(), 0.01, 0.05))
+        for value in (
+            twist(linear=(0.011, 0.0, 0.0)),
+            twist(linear=(0.0, -0.011, 0.0)),
+            twist(linear=(0.0, 0.0, 0.011)),
+            twist(angular=(0.051, 0.0, 0.0)),
+            twist(angular=(0.0, -0.051, 0.0)),
+            twist(angular=(0.0, 0.0, 0.051)),
+            twist(linear=(math.nan, 0.0, 0.0)),
+        ):
+            with self.subTest(value=value):
+                self.assertFalse(twist_is_stopped(value, 0.01, 0.05))
 
     def test_reset_sequence_is_ordered_and_stops_on_each_failure(self):
         calls = []

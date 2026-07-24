@@ -1,0 +1,10 @@
+uint8 FORWARD=1
+uint8 REVERSE=2
+uint8 direction
+uint64 generation
+unique_identifier_msgs/UUID action_uuid
+---
+bool success
+string status
+uint64 boot_epoch
+uint64 lease_id

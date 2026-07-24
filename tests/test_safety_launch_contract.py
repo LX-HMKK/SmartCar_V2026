@@ -122,6 +122,30 @@ class SafetyLaunchContractTests(unittest.TestCase):
             launch_argument_default(tree, "emergency_stop_on_start"),
             "false",
         )
+
+    def test_safety_launch_always_starts_one_direction_guard(self):
+        tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
+        self.assertIn("direction_guard_config_file", string_values(tree))
+        source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
+        self.assertEqual(source.count('executable="direction_guard_node"'), 1)
+        self.assertIn('name="direction_guard"', source)
+        self.assertIn('"direction_guard.yaml"', source)
+        direction_block = source.split(
+            'executable="direction_guard_node"', 1)[0].rsplit("Node(", 1)[1]
+        self.assertNotIn("condition=", direction_block)
+
+    def test_python_fallback_still_consumes_guarded_cmd_vel(self):
+        safety_node = (
+            REPOSITORY_ROOT
+            / "src"
+            / "smartcar_safety"
+            / "smartcar_safety"
+            / "safety_node.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            'Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS',
+            safety_node,
+        )
         source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
         self.assertIn(
             '"emergency_stop_on_start": emergency_stop_on_start',

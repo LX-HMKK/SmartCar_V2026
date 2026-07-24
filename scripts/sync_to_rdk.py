@@ -45,7 +45,7 @@ REMOTE_WAYPOINTS = f"{REMOTE_WS}/{WAYPOINTS_RELATIVE_PATH.as_posix()}"
 
 EXCLUDES = [
     "**/.git/", "build/", "install/", "log/",
-    "__pycache__/", "*.pyc", ".vscode/", ".idea/",
+    "__pycache__/", "**/.pytest_cache/", "*.pyc", ".vscode/", ".idea/",
     "*.bak", "*.orig",
 ]
 VENDOR_EXCLUDES = [

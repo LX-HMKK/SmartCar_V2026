@@ -14,7 +14,7 @@ try:
     from action_msgs.msg import GoalStatus
     from geometry_msgs.msg import PoseWithCovarianceStamped
     from nav_msgs.msg import Odometry
-    from nav2_msgs.action import FollowWaypoints
+    from nav2_msgs.action import NavigateToPose
     import rclpy
     from rclpy.action import ActionServer, CancelResponse
     from rclpy.callback_groups import ReentrantCallbackGroup
@@ -22,6 +22,7 @@ try:
     from robot_localization.srv import SetPose
 
 
+    from smartcar_task.mission import OperationResult
     from smartcar_task.task_node import RosLocalization, RosNavigator
     from smartcar_task.waypoints import Waypoint
 
@@ -56,16 +57,60 @@ class RosAdapterTests(unittest.TestCase):
         if rclpy.ok():
             rclpy.shutdown()
 
-    def test_follow_waypoints_success_and_cancel_reach_terminal_results(self):
+    def test_guarded_navigate_to_pose_binds_direction_bt_and_uuid(self):
         modes = ["success", "cancel"]
-        received_poses = []
+        received_goals = []
+
+        class FakeDirectionGuard:
+            def __init__(self):
+                self.calls = []
+                self.activations = 0
+                self.events = []
+
+            @staticmethod
+            def wait_ready(_timeout_sec):
+                return True
+
+            def wait_stopped(self):
+                self.events.append("settle")
+                return OperationResult(True, "stopped")
+
+            def stop(self, lease):
+                self.calls.append(("stop", lease))
+                self.events.append("revoke")
+                return OperationResult(True, "stopped")
+
+            def prepare(self, lease):
+                self.calls.append(("prepare", lease))
+                return OperationResult(True, "prepared"), 7, 100 + lease.generation
+
+            def activate(self, lease):
+                self.calls.append(("activate", lease))
+                self.events.append("activate")
+                self.activations += 1
+                return OperationResult(True, "active")
+
+            def renew(self, lease):
+                self.calls.append(("renew", lease))
+                return OperationResult(True, "renewed")
+
+        direction_guard = FakeDirectionGuard()
 
         def execute(goal_handle):
-            received_poses.append(tuple(
-                (pose.header.frame_id, pose.pose.position.x)
-                for pose in goal_handle.request.poses
-            ))
             mode = modes.pop(0)
+            goal_index = len(received_goals) + 1
+            received_goals.append((
+                goal_handle.request.pose.header.frame_id,
+                goal_handle.request.pose.pose.position.x,
+                goal_handle.request.behavior_tree,
+                bytes(goal_handle.goal_id.uuid),
+            ))
+            deadline = time.monotonic() + 2.0
+            while (
+                direction_guard.activations < goal_index
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.005)
             if mode == "success":
                 goal_handle.succeed()
             else:
@@ -75,13 +120,14 @@ class RosAdapterTests(unittest.TestCase):
                     and time.monotonic() < deadline
                 ):
                     time.sleep(0.01)
+                direction_guard.events.append("action_cancel")
                 goal_handle.canceled()
-            return FollowWaypoints.Result()
+            return NavigateToPose.Result()
 
         action_server = ActionServer(
             self.server_node,
-            FollowWaypoints,
-            "/follow_waypoints",
+            NavigateToPose,
+            "/navigate_to_pose",
             execute_callback=execute,
             cancel_callback=lambda _request: CancelResponse.ACCEPT,
             callback_group=ReentrantCallbackGroup(),
@@ -90,15 +136,14 @@ class RosAdapterTests(unittest.TestCase):
         navigator = RosNavigator(
             self.client_node,
             ReentrantCallbackGroup(),
+            direction_guard=direction_guard,
+            reverse_behavior_tree="/tmp/reverse.xml",
             navigation_timeout_sec=3.0,
             goal_response_timeout_sec=1.0,
             cancel_timeout_sec=2.0,
-        )
-        item = Waypoint(
-            frame_id="odom_combined",
-            position=(0.0, 0.0, 0.0),
-            orientation=(0.0, 0.0, 0.0, 1.0),
-            task="start",
+            direction_renew_period_sec=0.1,
+            direction_prepare_timeout_sec=0.5,
+            direction_prepare_retry_period_sec=0.01,
         )
         endpoint = Waypoint(
             frame_id="odom_combined",
@@ -106,14 +151,22 @@ class RosAdapterTests(unittest.TestCase):
             orientation=(0.0, 0.0, 0.0, 1.0),
             task="qr",
         )
-        segment = (item, endpoint)
 
         self.assertTrue(navigator.wait_ready(1.0))
-        success = navigator.navigate(segment)
+        success = navigator.navigate(endpoint)
         self.assertTrue(success.success, success.status)
         self.assertEqual(
-            received_poses[0],
-            (("odom_combined", 0.0), ("odom_combined", 1.0)),
+            received_goals[0][:3],
+            ("odom_combined", 1.0, ""),
+        )
+        prepare_calls = [
+            lease for name, lease in direction_guard.calls
+            if name == "prepare"
+        ]
+        self.assertEqual(prepare_calls[0].direction, 1)
+        self.assertEqual(
+            bytes(prepare_calls[0].action_uuid.uuid),
+            received_goals[0][3],
         )
 
         class LateCancelFuture:
@@ -131,18 +184,46 @@ class RosAdapterTests(unittest.TestCase):
 
         outcome = []
         worker = threading.Thread(
-            target=lambda: outcome.append(navigator.navigate(segment)))
+            target=lambda: outcome.append(navigator.navigate(
+                endpoint, reverse_direction=True)))
         worker.start()
         deadline = time.monotonic() + 1.0
-        while not navigator.is_active() and time.monotonic() < deadline:
+        while (
+            (
+                not navigator.is_active()
+                or direction_guard.activations < 2
+            )
+            and time.monotonic() < deadline
+        ):
             time.sleep(0.01)
         self.assertTrue(navigator.is_active())
+        self.assertEqual(direction_guard.activations, 2)
         self.assertTrue(navigator.cancel())
         worker.join(timeout=2.0)
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(outcome[0].status, "navigation_canceled")
-        self.assertEqual(len(received_poses[1]), 2)
+        self.assertEqual(received_goals[1][2], "/tmp/reverse.xml")
+        prepare_calls = [
+            lease for name, lease in direction_guard.calls
+            if name == "prepare"
+        ]
+        self.assertEqual(prepare_calls[1].direction, 2)
+        self.assertEqual(
+            bytes(prepare_calls[1].action_uuid.uuid),
+            received_goals[1][3],
+        )
+        final_activate = len(direction_guard.events) - 1 - list(reversed(
+            direction_guard.events)).index("activate")
+        revoke_after_activate = direction_guard.events.index(
+            "revoke", final_activate + 1)
+        action_cancel = direction_guard.events.index(
+            "action_cancel", revoke_after_activate + 1)
+        settle_after_cancel = direction_guard.events.index(
+            "settle", action_cancel + 1)
+        self.assertLess(final_activate, revoke_after_activate)
+        self.assertLess(revoke_after_activate, action_cancel)
+        self.assertLess(action_cancel, settle_after_cancel)
         self.assertFalse(navigator.is_active())
         self.assertEqual(GoalStatus.STATUS_CANCELED, 5)
 

@@ -1,6 +1,6 @@
 #!/bin/bash
 # ============================================================
-# SmartCar 纯导航全流程测试（含先验地图+航点可视化+REEDS_SHEPP 倒车）
+# SmartCar 纯导航安全测试（DUBIN 虚拟倒车 + 方向门）
 # 用法: bash /root/nav_test.sh
 # ============================================================
 set -euo pipefail
@@ -25,9 +25,9 @@ sleep 1
 # ---- 2. 构建 ----
 banner "[2/7] 构建"
 colcon build --symlink-install \
-  --packages-select smartcar_nav2 smartcar_task \
+  --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  --allow-overriding smartcar_nav2 smartcar_task 2>&1 | tail -5
+  --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8
 echo "  ✓ 构建完成"
 
 # ---- 3. 参数验证 ----
@@ -46,14 +46,14 @@ sleep 2
 echo "  ✓ field_reference + waypoint_viz 已启动"
 
 # ---- 5. 启动系统 ----
-banner "[5/7] 启动系统 (REEDS_SHEPP + 倒车)"
+banner "[5/7] 启动系统 (DUBIN + 强制倒车，急停锁存)"
 true > "$LOG"
 ros2 launch smartcar_bringup smartcar_system.launch.py \
   use_base:=true use_lidar:=true use_obstacle:=false \
   use_laser_odometry:=false use_safety:=true use_nav:=true \
   nav_autostart:=true use_camera:=false use_vision:=false \
   use_task:=true autostart_mission:=false camera_driver:=usb \
-  safety_emergency_stop_on_start:=false \
+  safety_emergency_stop_on_start:=true \
   waypoints_calibrated:=true extrinsics_calibrated:=true \
   steering_calibrated:=true emergency_stop_ready:=true \
   operator_approved:=true waypoints_file:="$WP" \
@@ -77,22 +77,19 @@ done
 sleep 5
 echo "  ✓ 全部 lifecycle active"
 
-# ---- 7. RViz + 发车 ----
-banner "[7/7] RViz + 发车"
+# ---- 7. RViz + 等待人工发车 ----
+banner "[7/7] RViz + 人工确认"
 pkill -9 -f rviz2 2>/dev/null || true
 sleep 1
 rviz2 -d "$WORKSPACE/src/smartcar_tools/rviz/navigation.rviz" &
 sleep 3
 echo "  ✓ RViz 已启动"
 
-ros2 service call /smartcar/task/reset std_srvs/srv/Trigger "{}" 2>&1 | grep "success"
-ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool "{data: false}" 2>&1 | grep "success"
-ros2 service call /smartcar/task/start std_srvs/srv/Trigger "{}" 2>&1 | grep "success"
-
 echo ""
 echo "╔══════════════════════════════════════════════╗"
-echo "║  导航任务已启动 (REEDS_SHEPP + 倒车)         ║"
+echo "║  系统已就绪，急停仍锁存，车辆不会自动发车    ║"
 echo "║  监控: ros2 topic echo /smartcar/task/state  ║"
 echo "║  日志: tail -f /tmp/bringup.log               ║"
+echo "║  确认后手动 reset、解除急停、start            ║"
 echo "║  急停: pkill -9 -f 'ros2 launch'             ║"
 echo "╚══════════════════════════════════════════════╝"

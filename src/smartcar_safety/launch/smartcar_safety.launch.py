@@ -17,6 +17,8 @@ from launch_ros.actions import Node
 def generate_launch_description():
     package_dir = get_package_share_directory("smartcar_safety")
     config_file = LaunchConfiguration("config_file")
+    direction_guard_config_file = LaunchConfiguration(
+        "direction_guard_config_file")
     require_scan = LaunchConfiguration("require_scan")
     require_odom = LaunchConfiguration("require_odom")
     require_raw_odom = LaunchConfiguration("require_raw_odom")
@@ -40,6 +42,12 @@ def generate_launch_description():
             "config_file",
             default_value=os.path.join(package_dir, "config", "safety.yaml"),
             description="Safety node parameter file",
+        ),
+        DeclareLaunchArgument(
+            "direction_guard_config_file",
+            default_value=os.path.join(
+                package_dir, "config", "direction_guard.yaml"),
+            description="Direction guard parameter file",
         ),
         DeclareLaunchArgument(
             "require_scan",
@@ -70,6 +78,13 @@ def generate_launch_description():
             "use_cpp",
             default_value="true",
             description="Use C++ safety_node (false = Python fallback)",
+        ),
+        Node(
+            package="smartcar_safety",
+            executable="direction_guard_node",
+            name="direction_guard",
+            output="screen",
+            parameters=[direction_guard_config_file],
         ),
         # C++ implementation (default).
         Node(

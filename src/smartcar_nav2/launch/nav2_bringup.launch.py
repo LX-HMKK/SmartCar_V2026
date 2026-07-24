@@ -17,7 +17,6 @@ def generate_launch_description():
     bt_through_poses_xml_file = LaunchConfiguration(
         'bt_through_poses_xml_file')
     autostart = LaunchConfiguration('autostart')
-    use_waypoint_follower = LaunchConfiguration('use_waypoint_follower')
     use_respawn = LaunchConfiguration('use_respawn')
 
     declare_use_sim_time = DeclareLaunchArgument(
@@ -48,10 +47,6 @@ def generate_launch_description():
         'autostart', default_value='true',
         description='Automatically startup the nav2 stack')
 
-    declare_use_waypoint_follower = DeclareLaunchArgument(
-        'use_waypoint_follower', default_value='true',
-        description='Start FollowWaypoints support for the mission task')
-
     declare_use_respawn = DeclareLaunchArgument(
         'use_respawn', default_value='False',
         description='Whether to respawn if a node crashes')
@@ -73,7 +68,6 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'params_file': params_file,
             'autostart': autostart,
-            'use_waypoint_follower': use_waypoint_follower,
             'use_respawn': use_respawn,
         }.items())
 
@@ -83,7 +77,6 @@ def generate_launch_description():
         declare_bt_xml_file,
         declare_bt_through_poses_xml_file,
         declare_autostart,
-        declare_use_waypoint_follower,
         declare_use_respawn,
         nav2_launch,
     ])

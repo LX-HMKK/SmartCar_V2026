@@ -1,0 +1,7 @@
+uint64 boot_epoch
+uint64 lease_id
+uint64 generation
+unique_identifier_msgs/UUID action_uuid
+---
+bool success
+string status

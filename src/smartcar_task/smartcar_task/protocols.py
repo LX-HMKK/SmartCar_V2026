@@ -1,11 +1,15 @@
 """Pure protocol checks shared by ROS mission adapters and tests."""
+from dataclasses import dataclass
 import math
+import time
 
 from smartcar_task.mission import OperationResult
 
 
 STATUS_SUCCEEDED = 4
 STATUS_CANCELED = 5
+MOTION_FORWARD = 1
+MOTION_REVERSE = 2
 
 
 def classify_follow_waypoints_result(status, missed_waypoints):
@@ -22,11 +26,173 @@ def classify_follow_waypoints_result(status, missed_waypoints):
     return OperationResult(False, f"navigation_status_{int(status)}")
 
 
+def classify_navigate_to_pose_result(status):
+    if int(status) == STATUS_SUCCEEDED:
+        return OperationResult(True, "ok")
+    if int(status) == STATUS_CANCELED:
+        return OperationResult(False, "navigation_canceled")
+    return OperationResult(False, f"navigation_status_{int(status)}")
+
+
+def motion_direction(reverse_direction):
+    return MOTION_REVERSE if bool(reverse_direction) else MOTION_FORWARD
+
+
+def navigation_behavior_tree(reverse_direction, reverse_behavior_tree):
+    if not reverse_direction:
+        return ""
+    value = str(reverse_behavior_tree).strip()
+    if not value:
+        raise ValueError("reverse_behavior_tree must not be empty")
+    return value
+
+
+@dataclass(frozen=True)
+class MotionLease:
+    direction: int
+    generation: int
+    action_uuid: object
+    boot_epoch: int = 0
+    lease_id: int = 0
+
+    def __post_init__(self):
+        if self.direction not in (MOTION_FORWARD, MOTION_REVERSE):
+            raise ValueError("unknown motion direction")
+        if int(self.generation) <= 0:
+            raise ValueError("motion generation must be positive")
+        if int(self.boot_epoch) < 0 or int(self.lease_id) < 0:
+            raise ValueError("motion lease identifiers must be nonnegative")
+
+
+def _stage_result(stage, result):
+    if result.success:
+        return result
+    return OperationResult(False, f"direction_{stage}:{result.status}")
+
+
+class MotionDirectionProtocol:
+    """Fail-closed lease protocol independent of ROS message transport."""
+
+    def __init__(
+        self,
+        guard,
+        wait_stopped,
+        prepare_timeout_sec=1.0,
+        prepare_retry_period_sec=0.02,
+        monotonic=time.monotonic,
+        sleep=time.sleep,
+    ):
+        self._guard = guard
+        self._wait_stopped = wait_stopped
+        self._prepare_timeout_sec = float(prepare_timeout_sec)
+        self._prepare_retry_period_sec = float(prepare_retry_period_sec)
+        if (
+            not math.isfinite(self._prepare_timeout_sec)
+            or self._prepare_timeout_sec <= 0.0
+            or not math.isfinite(self._prepare_retry_period_sec)
+            or self._prepare_retry_period_sec <= 0.0
+        ):
+            raise ValueError("direction prepare timing must be finite and positive")
+        self._monotonic = monotonic
+        self._sleep = sleep
+
+    @staticmethod
+    def provisional(direction, generation, action_uuid):
+        return MotionLease(
+            direction=int(direction),
+            generation=int(generation),
+            action_uuid=action_uuid,
+        )
+
+    def prepare(self, direction, generation, action_uuid):
+        provisional = self.provisional(direction, generation, action_uuid)
+        revoked = self.revoke(provisional)
+        if not revoked.success:
+            return revoked, None
+        settled = self.settle()
+        if not settled.success:
+            return settled, None
+        deadline = self._monotonic() + self._prepare_timeout_sec
+        while True:
+            result, boot_epoch, lease_id = self._guard.prepare(provisional)
+            if result.success:
+                break
+            if result.status != "stop_barrier_not_ready":
+                return _stage_result("prepare", result), None
+            now = self._monotonic()
+            if now >= deadline:
+                return OperationResult(
+                    False, "direction_prepare:stop_barrier_timeout"), None
+            self._sleep(min(
+                self._prepare_retry_period_sec,
+                max(0.0, deadline - now),
+            ))
+        try:
+            lease = MotionLease(
+                direction=provisional.direction,
+                generation=provisional.generation,
+                action_uuid=provisional.action_uuid,
+                boot_epoch=int(boot_epoch),
+                lease_id=int(lease_id),
+            )
+        except (TypeError, ValueError, OverflowError) as error:
+            return OperationResult(
+                False,
+                f"direction_prepare_invalid:{type(error).__name__}",
+            ), None
+        if lease.boot_epoch == 0 or lease.lease_id == 0:
+            return OperationResult(
+                False, "direction_prepare_invalid:zero_identity"), None
+        return OperationResult(True, "ok"), lease
+
+    def activate(self, lease):
+        return _stage_result("activate", self._guard.activate(lease))
+
+    def renew(self, lease):
+        return _stage_result("renew", self._guard.renew(lease))
+
+    def revoke(self, lease):
+        return _stage_result("stop", self._guard.stop(lease))
+
+    def settle(self):
+        return _stage_result("settle", self._wait_stopped())
+
+    def stop(self, lease):
+        revoked = self.revoke(lease)
+        if not revoked.success:
+            return revoked
+        return self.settle()
+
+
 def _finite(values):
     try:
         return all(math.isfinite(float(value)) for value in values)
     except (TypeError, ValueError, OverflowError):
         return False
+
+
+def twist_is_stopped(twist, linear_tolerance, angular_tolerance):
+    linear_limit = float(linear_tolerance)
+    angular_limit = float(angular_tolerance)
+    linear = (
+        twist.linear.x,
+        twist.linear.y,
+        twist.linear.z,
+    )
+    angular = (
+        twist.angular.x,
+        twist.angular.y,
+        twist.angular.z,
+    )
+    return (
+        math.isfinite(linear_limit)
+        and math.isfinite(angular_limit)
+        and linear_limit >= 0.0
+        and angular_limit >= 0.0
+        and _finite(linear + angular)
+        and all(abs(float(value)) <= linear_limit for value in linear)
+        and all(abs(float(value)) <= angular_limit for value in angular)
+    )
 
 
 def _yaw_from_quaternion(x, y, z, w):

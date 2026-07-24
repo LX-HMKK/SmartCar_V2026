@@ -22,9 +22,10 @@ sleep 1
 
 echo "=== [2/5] 构建 ==="
 cd /root/ros2_ws
-colcon build --symlink-install --packages-select smartcar_nav2 smartcar_task \
+colcon build --symlink-install \
+  --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  --allow-overriding smartcar_nav2 smartcar_task 2>&1 | tail -3
+  --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8
 
 echo "=== [3/5] 可视化节点 ==="
 ros2 run smartcar_tools field_reference_node --ros-args -p geometry_file:="$GEOM" &

@@ -280,30 +280,35 @@ class Mission:
             yield tuple(segment)
 
     def _navigate(self, generation, segment):
-        reverse_direction = segment and segment[0].direction == "reverse"
         self._set_state(MissionState.NAVIGATING, generation)
-        attempts = self._config.navigation_retries + 1
-        last_status = "navigation_failed"
-        for attempt in range(attempts):
-            if self._stop_requested.is_set():
-                return self._finish_stopped(generation)
-            result = self._navigator.navigate(
-                segment, reverse_direction=reverse_direction)
-            if self._stop_requested.is_set():
-                return self._finish_stopped(generation)
-            if result.success:
-                return result
-            last_status = result.status
-            if self._navigator.is_active():
-                return self._fail(
-                    generation,
-                    f"navigation_not_terminal:{last_status}",
+        for waypoint in segment:
+            attempts = self._config.navigation_retries + 1
+            last_status = "navigation_failed"
+            for attempt in range(attempts):
+                if self._stop_requested.is_set():
+                    return self._finish_stopped(generation)
+                result = self._navigator.navigate(
+                    waypoint,
+                    reverse_direction=waypoint.direction == "reverse",
                 )
-            if attempt + 1 < attempts and not self._interruptible_sleep(
-                self._config.navigation_retry_delay_sec
-            ):
-                return self._finish_stopped(generation)
-        return self._fail(generation, f"navigation_failed:{last_status}")
+                if self._stop_requested.is_set():
+                    return self._finish_stopped(generation)
+                if result.success:
+                    break
+                last_status = result.status
+                if self._navigator.is_active():
+                    return self._fail(
+                        generation,
+                        f"navigation_not_terminal:{last_status}",
+                    )
+                if attempt + 1 < attempts and not self._interruptible_sleep(
+                    self._config.navigation_retry_delay_sec
+                ):
+                    return self._finish_stopped(generation)
+            else:
+                return self._fail(
+                    generation, f"navigation_failed:{last_status}")
+        return OperationResult(True, "ok")
 
     def _run_qr(self, generation):
         self._set_state(MissionState.RUNNING_QR, generation)

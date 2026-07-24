@@ -61,6 +61,45 @@ class VisionServiceInterfaceContractTests(unittest.TestCase):
             ),
         )
 
+    def test_prepare_motion_binds_direction_generation_and_action(self) -> None:
+        self.assertEqual(
+            service_fields("PrepareMotion.srv"),
+            (
+                [
+                    "uint8 FORWARD=1",
+                    "uint8 REVERSE=2",
+                    "uint8 direction",
+                    "uint64 generation",
+                    "unique_identifier_msgs/UUID action_uuid",
+                ],
+                [
+                    "bool success",
+                    "string status",
+                    "uint64 boot_epoch",
+                    "uint64 lease_id",
+                ],
+            ),
+        )
+
+    def test_motion_lease_operations_require_the_complete_identity(self) -> None:
+        identity = [
+            "uint64 boot_epoch",
+            "uint64 lease_id",
+            "uint64 generation",
+            "unique_identifier_msgs/UUID action_uuid",
+        ]
+        response = ["bool success", "string status"]
+        for service_name in (
+            "ActivateMotion.srv",
+            "RenewMotion.srv",
+            "StopMotion.srv",
+        ):
+            with self.subTest(service=service_name):
+                self.assertEqual(
+                    service_fields(service_name),
+                    (identity, response),
+                )
+
 
 if __name__ == "__main__":
     unittest.main()

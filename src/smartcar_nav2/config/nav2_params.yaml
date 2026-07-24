@@ -10,6 +10,62 @@ bt_navigator:
     default_server_timeout: 10
     default_nav_to_pose_bt_xml: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
+    # Setting plugin_lib_names replaces Nav2's defaults, so retain the full
+    # 1.1.20 list and append the project reverse-path node.
+    plugin_lib_names:
+      - nav2_compute_path_to_pose_action_bt_node
+      - nav2_compute_path_through_poses_action_bt_node
+      - nav2_compute_and_track_route_bt_node
+      - nav2_compute_route_bt_node
+      - nav2_smooth_path_action_bt_node
+      - nav2_follow_path_action_bt_node
+      - nav2_spin_action_bt_node
+      - nav2_wait_action_bt_node
+      - nav2_assisted_teleop_action_bt_node
+      - nav2_back_up_action_bt_node
+      - nav2_drive_on_heading_bt_node
+      - nav2_clear_costmap_service_bt_node
+      - nav2_is_stuck_condition_bt_node
+      - nav2_goal_reached_condition_bt_node
+      - nav2_initial_pose_received_condition_bt_node
+      - nav2_goal_updated_condition_bt_node
+      - nav2_globally_updated_goal_condition_bt_node
+      - nav2_is_path_valid_condition_bt_node
+      - nav2_reinitialize_global_localization_service_bt_node
+      - nav2_rate_controller_bt_node
+      - nav2_distance_controller_bt_node
+      - nav2_speed_controller_bt_node
+      - nav2_truncate_path_action_bt_node
+      - nav2_truncate_path_local_action_bt_node
+      - nav2_get_pose_from_path_action_bt_node
+      - nav2_goal_updater_node_bt_node
+      - nav2_recovery_node_bt_node
+      - nav2_pipeline_sequence_bt_node
+      - nav2_round_robin_node_bt_node
+      - nav2_transform_available_condition_bt_node
+      - nav2_time_expired_condition_bt_node
+      - nav2_path_expiring_timer_condition
+      - nav2_distance_traveled_condition_bt_node
+      - nav2_single_trigger_bt_node
+      - nav2_goal_updated_controller_bt_node
+      - nav2_is_battery_low_condition_bt_node
+      - nav2_navigate_through_poses_action_bt_node
+      - nav2_navigate_to_pose_action_bt_node
+      - nav2_remove_passed_goals_action_bt_node
+      - nav2_planner_selector_bt_node
+      - nav2_controller_selector_bt_node
+      - nav2_goal_checker_selector_bt_node
+      - nav2_progress_checker_selector_bt_node
+      - nav2_smoother_selector_bt_node
+      - nav2_controller_cancel_bt_node
+      - nav2_path_longer_on_approach_bt_node
+      - nav2_wait_cancel_bt_node
+      - nav2_spin_cancel_bt_node
+      - nav2_assisted_teleop_cancel_bt_node
+      - nav2_back_up_cancel_bt_node
+      - nav2_drive_on_heading_cancel_bt_node
+      - nav2_is_battery_charging_condition_bt_node
+      - smartcar_compute_reverse_path_to_pose_action_bt_node
 
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:
@@ -28,7 +84,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["goal_checker"]
+    goal_checker_plugins: ["goal_checker", "reverse_goal_checker"]
     controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
@@ -38,6 +94,11 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.50
+      stateful: false
+    reverse_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.12
+      yaw_goal_tolerance: 0.25
       stateful: false
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
@@ -72,7 +133,9 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.03
-      footprint: "[[0.168, 0.112], [0.168, -0.112], [-0.168, -0.112], [-0.168, 0.112]]"
+      # Real rear-axle-origin body envelope measured on the car.
+      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.10, -0.13], [-0.10, 0.13]]"
+      footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -105,7 +168,10 @@ global_costmap:
       width: 10
       height: 10
       resolution: 0.05
-      footprint: "[[0.168, 0.112], [0.168, -0.112], [-0.168, -0.112], [-0.168, 0.112]]"
+      # pi-invariant hull of the real footprint. This keeps virtual-yaw
+      # reverse planning collision-equivalent to the physical vehicle.
+      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
@@ -141,8 +207,9 @@ planner_server:
       max_iterations: 100000
       max_on_approach_iterations: 1000
       max_planning_time: 3.0
-      motion_model_for_search: "REEDS_SHEPP"
-      reverse_penalty: 0.5
+      # Forward-only search. Reverse paths are generated by rotating the
+      # vehicle headings by pi in the reverse BT node, then restoring them.
+      motion_model_for_search: "DUBIN"
       angle_quantization_bins: 72
       analytic_expansion_ratio: 3.5
       analytic_expansion_max_length: 3.0
@@ -153,33 +220,6 @@ planner_server:
       lookup_table_size: 20.0
       cache_obstacle_heuristic: false
       smooth_path: true
-
-behavior_server:
-  ros__parameters:
-    use_sim_time: false
-    costmap_topic: local_costmap/costmap_raw
-    footprint_topic: local_costmap/published_footprint
-    cycle_frequency: 10.0
-    behavior_plugins: ["backup", "wait"]
-    backup:
-      plugin: "nav2_behaviors/BackUp"
-    wait:
-      plugin: "nav2_behaviors/Wait"
-    global_frame: odom_combined
-    robot_base_frame: base_footprint
-    transform_timeout: 0.1
-    simulate_ahead_time: 2.0
-
-waypoint_follower:
-  ros__parameters:
-    use_sim_time: false
-    loop_rate: 20
-    stop_on_failure: true
-    waypoint_task_executor_plugin: "wait_at_waypoint"
-    wait_at_waypoint:
-      plugin: "nav2_waypoint_follower::WaitAtWaypoint"
-      enabled: true
-      waypoint_pause_duration: 500
 
 velocity_smoother:
   ros__parameters:

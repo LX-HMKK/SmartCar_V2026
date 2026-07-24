@@ -59,6 +59,7 @@ def valid_document():
                     },
                 },
                 "task": "corridor",
+                "direction": "reverse",
             },
             {
                 "id": "c_corner_1",
@@ -68,6 +69,7 @@ def valid_document():
                     "orientation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0},
                 },
                 "task": "vlm",
+                "direction": "reverse",
             },
             {
                 "id": "c_corner_2",
@@ -141,6 +143,13 @@ class WaypointTests(unittest.TestCase):
         self.assertAlmostEqual(waypoints[1].orientation[2], 0.2588190451)
         self.assertAlmostEqual(waypoints[1].orientation[3], 0.9659258263)
         self.assertEqual(waypoints[1].task, "qr")
+        self.assertEqual(
+            [item.direction for item in waypoints],
+            [
+                "forward", "forward", "reverse", "reverse", "forward",
+                "forward", "forward", "forward", "forward",
+            ],
+        )
 
     def test_rejects_malformed_documents_and_missing_fields(self):
         malformed_documents = (
@@ -229,8 +238,44 @@ class WaypointTests(unittest.TestCase):
             document["waypoints"][2], document["waypoints"][3] = (
                 document["waypoints"][3], document["waypoints"][2]
             )
+            document["waypoints"][3]["direction"] = "forward"
             with self.assertRaisesRegex(ValueError, "sequence|order|out-of"):
                 load_waypoints(self.write_document(directory, document))
+
+    def test_direction_window_is_mandatory_and_nav_only_uses_same_contract(self):
+        with tempfile.TemporaryDirectory() as directory:
+            all_forward = valid_document()
+            for waypoint in all_forward["waypoints"]:
+                waypoint["direction"] = "forward"
+            with self.assertRaisesRegex(ValueError, "direction must be reverse"):
+                load_waypoints(self.write_document(directory, all_forward))
+
+            wrong_qr = valid_document()
+            wrong_qr["waypoints"][1]["direction"] = "reverse"
+            with self.assertRaisesRegex(ValueError, "direction must be forward"):
+                load_waypoints(self.write_document(directory, wrong_qr))
+
+            wrong_after_vlm = valid_document()
+            wrong_after_vlm["waypoints"][4]["direction"] = "reverse"
+            with self.assertRaisesRegex(ValueError, "direction must be forward"):
+                load_waypoints(self.write_document(directory, wrong_after_vlm))
+
+        nav_only_file = (
+            PACKAGE_ROOT.parent
+            / "smartcar_nav2"
+            / "config"
+            / "waypoints"
+            / "nav_only.yaml"
+        )
+        nav_only = load_waypoints(nav_only_file)
+        self.assertEqual(
+            [item.direction for item in nav_only],
+            [
+                "forward", "forward", "reverse", "reverse", "reverse",
+                "forward", "forward", "forward", "forward", "forward",
+                "forward",
+            ],
+        )
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
         waypoints = load_waypoints(

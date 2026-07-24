@@ -24,7 +24,6 @@ from launch.actions import (
     OpaqueFunction,
     SetEnvironmentVariable,
 )
-from launch.conditions import IfCondition
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 from launch_ros.descriptions import ParameterFile
@@ -34,7 +33,6 @@ from nav2_common.launch import RewrittenYaml
 CORE_LIFECYCLE_NODES = (
     'controller_server',
     'planner_server',
-    'behavior_server',
     'bt_navigator',
     'velocity_smoother',
 )
@@ -52,16 +50,11 @@ def _as_bool(context, substitution, name):
 def _lifecycle_manager_actions(
     context,
     *,
-    use_waypoint_follower,
     use_sim_time,
     autostart,
     log_level,
 ):
     lifecycle_nodes = list(CORE_LIFECYCLE_NODES)
-    if _as_bool(
-        context, use_waypoint_follower, 'use_waypoint_follower'
-    ):
-        lifecycle_nodes.insert(4, 'waypoint_follower')
 
     parameters = [{
         'use_sim_time': use_sim_time,
@@ -85,7 +78,6 @@ def generate_launch_description():
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
-    use_waypoint_follower = LaunchConfiguration('use_waypoint_follower')
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
 
@@ -123,11 +115,6 @@ def generate_launch_description():
         default_value='true',
         description='Automatically startup the nav2 stack',
     )
-    declare_use_waypoint_follower_cmd = DeclareLaunchArgument(
-        'use_waypoint_follower',
-        default_value='true',
-        description='Start FollowWaypoints support for the mission task',
-    )
     declare_use_respawn_cmd = DeclareLaunchArgument(
         'use_respawn',
         default_value='False',
@@ -161,32 +148,9 @@ def generate_launch_description():
                 remappings=remappings,
             ),
             Node(
-                package='nav2_behaviors',
-                executable='behavior_server',
-                name='behavior_server',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings + [('cmd_vel', 'cmd_vel_nav')],
-            ),
-            Node(
                 package='nav2_bt_navigator',
                 executable='bt_navigator',
                 name='bt_navigator',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings,
-            ),
-            Node(
-                condition=IfCondition(use_waypoint_follower),
-                package='nav2_waypoint_follower',
-                executable='waypoint_follower',
-                name='waypoint_follower',
                 output='screen',
                 respawn=use_respawn,
                 respawn_delay=2.0,
@@ -205,7 +169,7 @@ def generate_launch_description():
                 arguments=['--ros-args', '--log-level', log_level],
                 remappings=remappings + [
                     ('cmd_vel', 'cmd_vel_nav'),
-                    ('cmd_vel_smoothed', 'cmd_vel'),
+                    ('cmd_vel_smoothed', 'cmd_vel_candidate'),
                 ],
             ),
         ],
@@ -214,7 +178,6 @@ def generate_launch_description():
     lifecycle_manager = OpaqueFunction(
         function=_lifecycle_manager_actions,
         kwargs={
-            'use_waypoint_follower': use_waypoint_follower,
             'use_sim_time': use_sim_time,
             'autostart': autostart,
             'log_level': log_level,
@@ -227,7 +190,6 @@ def generate_launch_description():
     launch_description.add_action(declare_use_sim_time_cmd)
     launch_description.add_action(declare_params_file_cmd)
     launch_description.add_action(declare_autostart_cmd)
-    launch_description.add_action(declare_use_waypoint_follower_cmd)
     launch_description.add_action(declare_use_respawn_cmd)
     launch_description.add_action(declare_log_level_cmd)
     launch_description.add_action(load_nodes)

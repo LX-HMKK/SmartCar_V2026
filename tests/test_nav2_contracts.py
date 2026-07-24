@@ -22,6 +22,12 @@ BT_THROUGH_POSES_FILE = (
     / "behavior_trees"
     / "navigate_through_poses_w_replanning_and_recovery.xml"
 )
+BT_REVERSE_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_reverse_w_replanning_and_recovery.xml"
+)
 WAYPOINTS_FILE = (
     PACKAGE_ROOT / "config" / "waypoints" / "default_waypoints.yaml"
 )
@@ -29,11 +35,17 @@ NAVIGATION_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "navigation_launch.py"
 NAV2_BRINGUP_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "nav2_bringup.launch.py"
 SAFE_OUTPUT_ZERO_DEADLINE_SEC = 0.40
 
-EXPECTED_FOOTPRINT = [
-    [0.168, 0.112],
-    [0.168, -0.112],
-    [-0.168, -0.112],
-    [-0.168, 0.112],
+EXPECTED_LOCAL_FOOTPRINT = [
+    [0.27, 0.13],
+    [0.27, -0.13],
+    [-0.10, -0.13],
+    [-0.10, 0.13],
+]
+EXPECTED_GLOBAL_FOOTPRINT = [
+    [0.27, 0.13],
+    [0.27, -0.13],
+    [-0.27, -0.13],
+    [-0.27, 0.13],
 ]
 UNSUPPORTED_HUMBLE_RPP_KEYS = {
     "max_linear_vel",
@@ -90,21 +102,14 @@ class TestNav2Contracts(unittest.TestCase):
             WAYPOINTS_FILE.read_text(encoding="utf-8")
         )["waypoints"]
 
-    def test_behavior_server_uses_ackermann_safe_plugins(self):
+    def test_unused_motion_servers_are_removed(self):
         self.assertNotIn("recoveries_server", self.params)
-        behavior = ros_parameters(self.params, "behavior_server")
-        self.assertEqual(
-            behavior["behavior_plugins"],
-            ["backup", "wait"],
-        )
-        self.assertEqual(behavior["backup"]["plugin"], "nav2_behaviors/BackUp")
-        self.assertEqual(behavior["wait"]["plugin"], "nav2_behaviors/Wait")
-        self.assertNotIn("drive_on_heading", behavior)
-        self.assertNotIn("spin", behavior)
+        self.assertNotIn("behavior_server", self.params)
+        self.assertNotIn("waypoint_follower", self.params)
         self.assertNotIn("nav2_recoveries", yaml.safe_dump(self.params))
 
     def test_behavior_tree_has_no_in_place_rotation(self):
-        for behavior_tree in (BT_FILE, BT_THROUGH_POSES_FILE):
+        for behavior_tree in (BT_FILE, BT_THROUGH_POSES_FILE, BT_REVERSE_FILE):
             with self.subTest(behavior_tree=behavior_tree.name):
                 root = ElementTree.parse(behavior_tree).getroot()
                 tags = [element.tag for element in root.iter()]
@@ -143,7 +148,14 @@ class TestNav2Contracts(unittest.TestCase):
 
     def test_controller_uses_humble_rpp_contract(self):
         controller = ros_parameters(self.params, "controller_server")
-        self.assertEqual(controller["goal_checker_plugins"], ["goal_checker"])
+        self.assertEqual(
+            controller["goal_checker_plugins"],
+            ["goal_checker", "reverse_goal_checker"],
+        )
+        self.assertLessEqual(
+            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.12)
+        self.assertLessEqual(
+            controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.25)
         self.assertNotIn("goal_checker_plugin", controller)
 
         rpp = controller["FollowPath"]
@@ -161,15 +173,23 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertEqual(
             planner["plugin"], "nav2_smac_planner/SmacPlannerHybrid"
         )
-        self.assertEqual(planner["motion_model_for_search"], "REEDS_SHEPP")
+        self.assertEqual(planner["motion_model_for_search"], "DUBIN")
+        self.assertNotIn("reverse_penalty", planner)
         self.assertAlmostEqual(planner["minimum_turning_radius"], 0.55)
 
-    def test_costmaps_use_the_exact_polygon_footprint(self):
-        for costmap_name in ("local_costmap", "global_costmap"):
-            costmap = self.params[costmap_name][costmap_name]["ros__parameters"]
-            self.assertNotIn("robot_radius", costmap)
-            self.assertIsInstance(costmap["footprint"], str)
-            self.assertEqual(ast.literal_eval(costmap["footprint"]), EXPECTED_FOOTPRINT)
+    def test_costmaps_use_real_and_virtual_yaw_safe_footprints(self):
+        local = self.params["local_costmap"]["local_costmap"]["ros__parameters"]
+        global_costmap = self.params["global_costmap"]["global_costmap"][
+            "ros__parameters"
+        ]
+        self.assertEqual(
+            ast.literal_eval(local["footprint"]), EXPECTED_LOCAL_FOOTPRINT)
+        self.assertEqual(
+            ast.literal_eval(global_costmap["footprint"]),
+            EXPECTED_GLOBAL_FOOTPRINT,
+        )
+        self.assertEqual(local["footprint_padding"], 0.03)
+        self.assertEqual(global_costmap["footprint_padding"], 0.03)
 
     def test_rpp_inflation_model_matches_both_costmaps(self):
         rpp = ros_parameters(self.params, "controller_server")["FollowPath"]
@@ -189,13 +209,6 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertLessEqual(rpp["cost_scaling_dist"], min(inflation_radii))
 
-    def test_waypoint_follower_defers_semantic_waits_to_mission(self):
-        follower = ros_parameters(self.params, "waypoint_follower")
-        self.assertIs(follower["stop_on_failure"], True)
-        self.assertEqual(
-            follower["wait_at_waypoint"]["waypoint_pause_duration"], 500
-        )
-
     def test_velocity_smoother_respects_safety_and_curvature_limits(self):
         smoother = ros_parameters(self.params, "velocity_smoother")
         self.assertGreater(smoother["velocity_timeout"], 0.0)
@@ -212,7 +225,7 @@ class TestNav2Contracts(unittest.TestCase):
             abs(smoother["max_velocity"][2]),
             abs(smoother["min_velocity"][2]),
         )
-        # REEDS_SHEPP motion model handles kinematic constraints internally;
+        # DUBIN handles kinematic constraints in both real and virtual poses;
         # velocity_smoother limits are platform-level caps, not derived from
         # the planner's minimum turning radius.
         self.assertGreater(max_angular, 0.0)
@@ -231,13 +244,17 @@ class TestNav2Contracts(unittest.TestCase):
         source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
         calls = launch_calls_by_package(source)
         input_remapping = ("cmd_vel", "cmd_vel_nav")
-        output_remapping = ("cmd_vel_smoothed", "cmd_vel")
+        output_remapping = ("cmd_vel_smoothed", "cmd_vel_candidate")
 
-        for package in ("nav2_controller", "nav2_behaviors"):
-            self.assertEqual(len(calls[package]), 1)
-            self.assertTrue(
-                all(input_remapping in remappings for remappings in calls[package])
+        self.assertEqual(len(calls["nav2_controller"]), 1)
+        self.assertTrue(
+            all(
+                input_remapping in remappings
+                for remappings in calls["nav2_controller"]
             )
+        )
+        self.assertNotIn("nav2_behaviors", calls)
+        self.assertNotIn("nav2_waypoint_follower", calls)
 
         self.assertEqual(len(calls["nav2_velocity_smoother"]), 1)
         self.assertTrue(
@@ -256,7 +273,7 @@ class TestNav2Contracts(unittest.TestCase):
         calls = launch_calls_by_package(source)
         self.assertNotIn("nav2_smoother", calls)
         self.assertNotIn("smoother_server", source)
-        self.assertIn("use_waypoint_follower", source)
+        self.assertNotIn("use_waypoint_follower", source)
         self.assertNotIn("use_composition", source)
 
     def test_waypoints_are_valid_and_fit_the_rolling_global_costmap(self):
@@ -299,6 +316,7 @@ class TestNav2Contracts(unittest.TestCase):
     def test_package_declares_direct_runtime_and_test_dependencies(self):
         root = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()
         exec_dependencies = {element.text for element in root.findall("exec_depend")}
+        direct_dependencies = {element.text for element in root.findall("depend")}
         test_dependencies = {element.text for element in root.findall("test_depend")}
         self.assertTrue(
             {
@@ -321,7 +339,7 @@ class TestNav2Contracts(unittest.TestCase):
                 "geometry_msgs",
                 "tf2_ros",
                 "smartcar_safety",
-            }.issubset(test_dependencies)
+            }.issubset(test_dependencies | direct_dependencies)
         )
 
 

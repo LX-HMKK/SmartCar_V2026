@@ -8,9 +8,20 @@ task_node:
     operator_approved: false
     server_wait_timeout_sec: 5.0
     navigation_timeout_sec: 120.0
-    goal_response_timeout_sec: 5.0
+    goal_response_timeout_sec: 2.0
     cancel_timeout_sec: 3.0
     stop_timeout_sec: 5.0
+    reverse_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml"
+    direction_service_timeout_sec: 0.08
+    direction_lease_timeout_sec: 0.25
+    direction_prepare_timeout_sec: 1.0
+    direction_prepare_retry_period_sec: 0.02
+    direction_renew_period_sec: 0.10
+    direction_stop_timeout_sec: 2.0
+    direction_stop_dwell_sec: 0.25
+    direction_stop_linear_tolerance: 0.01
+    direction_stop_angular_tolerance: 0.05
+    direction_odom_stale_timeout_sec: 0.25
     navigation_retries: 1
     navigation_retry_delay_sec: 0.25
     qr_settle_sec: 2.0

@@ -1,0 +1,12 @@
+direction_guard:
+  ros__parameters:
+    candidate_timeout_sec: 0.15
+    permit_timeout_sec: 0.25
+    prepare_timeout_sec: 5.0
+    raw_odom_timeout_sec: 0.25
+    stop_settle_sec: 0.25
+    stop_linear_speed_threshold: 0.01
+    stop_angular_speed_threshold: 0.05
+    zero_epsilon: 0.000001
+    direction_epsilon: 0.0001
+    publish_frequency_hz: 20.0

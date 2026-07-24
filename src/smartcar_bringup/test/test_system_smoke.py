@@ -42,9 +42,7 @@ FIXTURE_ARGUMENT = "--system-smoke-fixture"
 MANAGED_NODES = (
     "controller_server",
     "planner_server",
-    "behavior_server",
     "bt_navigator",
-    "waypoint_follower",
     "velocity_smoother",
 )
 ZERO_COMPONENTS = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
@@ -292,8 +290,18 @@ class TestSystemSmoke(unittest.TestCase):
             name for name in names if any(value in name for value in forbidden)
         ])
         self.assertEqual(
-            self.node.get_publishers_info_by_topic("/ackermann_cmd"), []
+            self.node.get_subscriptions_info_by_topic("/ackermann_cmd"), []
         )
+        publishers = self.node.get_publishers_info_by_topic(
+            "/ackermann_cmd"
+        )
+        owners = sorted(
+            f"{info.node_namespace.rstrip('/')}/{info.node_name}".replace(
+                "//", "/"
+            )
+            for info in publishers
+        )
+        self.assertEqual(owners, ["/safety_node"])
 
     def test_services_exist_and_task_remains_idle(self):
         clients = (
@@ -369,11 +377,16 @@ class TestSystemSmoke(unittest.TestCase):
 
     def test_safety_status_reports_emergency_stop(self):
         statuses = []
+        qos = QoSProfile(
+            depth=1,
+            reliability=ReliabilityPolicy.RELIABLE,
+            durability=DurabilityPolicy.TRANSIENT_LOCAL,
+        )
         subscription = self.node.create_subscription(
             String,
             "/smartcar/safety/status",
             lambda message: statuses.append(message.data),
-            10,
+            qos,
         )
         try:
             self.assertTrue(

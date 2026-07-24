@@ -184,12 +184,15 @@ def validate_waypoints(waypoints):
 
     state = "start"
     for i, task in enumerate(tasks):
+        expected_direction = None
         if state == "start":
             if task != "start":
                 raise ValueError(f"waypoint {i}: expected start, got {task}")
+            expected_direction = "forward"
             state = "before_loop"
         elif state == "before_loop":
             if task in ("qr", "nav"):
+                expected_direction = "forward"
                 state = "outbound_corridor"
             else:
                 raise ValueError(
@@ -197,8 +200,9 @@ def validate_waypoints(waypoints):
                 )
         elif state == "outbound_corridor":
             if task == "corridor":
-                continue  # stay in outbound_corridor
+                expected_direction = "reverse"
             elif task in ("vlm", "nav"):
+                expected_direction = "reverse"
                 state = "loop"
             else:
                 raise ValueError(
@@ -206,8 +210,9 @@ def validate_waypoints(waypoints):
                 )
         elif state == "loop":
             if task == "loop":
-                continue  # stay in loop
+                expected_direction = "forward"
             elif task == "corridor":
+                expected_direction = "forward"
                 state = "return_corridor"
             else:
                 raise ValueError(
@@ -215,8 +220,9 @@ def validate_waypoints(waypoints):
                 )
         elif state == "return_corridor":
             if task == "corridor":
-                continue  # stay in return_corridor
+                expected_direction = "forward"
             elif task == "return":
+                expected_direction = "forward"
                 state = "done"
             else:
                 raise ValueError(
@@ -225,13 +231,16 @@ def validate_waypoints(waypoints):
                 )
         elif state == "done":
             raise ValueError(f"waypoint {i}: unexpected {task} after return")
+        if waypoints[i].direction != expected_direction:
+            raise ValueError(
+                f"waypoint {i}: direction must be {expected_direction}, "
+                f"got {waypoints[i].direction}"
+            )
     if state != "done":
         raise ValueError(
             "mission order must be start, (qr|nav), corridor transit(s), "
             "(vlm|nav), at least three loop corners, corridor transit(s), return"
         )
-    if waypoints[0].direction != "forward":
-        raise ValueError("start waypoint direction must be forward")
     if not _is_origin_position(waypoints[0]) or not _faces_positive_x(
         waypoints[0]
     ):
