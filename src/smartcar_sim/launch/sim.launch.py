@@ -170,25 +170,18 @@ def generate_launch_description():
         parameters=[{"use_sim_time": True}],
     )
 
-    # ── Direction guard (enforces forward/reverse per waypoint) ──
-    direction_guard = Node(
-        package="smartcar_safety",
-        executable="direction_guard_node",
-        name="direction_guard",
-        parameters=[{
-            "use_sim_time": True,
-            "direction_lease_timeout_sec": 0.50,
-            "direction_prepare_timeout_sec": 1.0,
-            "raw_odom_timeout_sec": 0.50,
-            "stop_settle_sec": 0.15,
-        }],
-    )
+    # ── Direction guard: SKIP in simulation (no lease needed) ──
+    # The real system requires forward/reverse leases per waypoint.
+    # In simulation, we bypass this and let Nav2 control velocity directly.
 
     # ── Safety node (C++, sim mode: skip STM32 heartbeat) ──
     safety_node = Node(
         package="smartcar_safety",
         executable="safety_node_cpp",
         name="safety_node",
+        remappings=[
+            ("/cmd_vel", "/cmd_vel_smoothed"),  # 绕过 direction_guard
+        ],
         parameters=[PathJoinSubstitution([pkg_safety, "config", "safety.yaml"]), {
             "use_sim_time": True,
             "use_safety_ackermann": False,  # Output Twist, not Ackermann
@@ -265,9 +258,8 @@ def generate_launch_description():
         odom_combined_relay,
         # Start navigation stack after EKF
         TimerAction(period=12.0, actions=[nav2_launch]),
-        # Direction guard + safety
-        TimerAction(period=10.0, actions=[direction_guard]),
-        TimerAction(period=10.0, actions=[safety_node]),
+        # Safety node (no direction_guard in sim)
+        TimerAction(period=8.0, actions=[safety_node]),
         # Auto-train node (embedded navigation test + parameter tuning)
         TimerAction(period=20.0, actions=[
             Node(
