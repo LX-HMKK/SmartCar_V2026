@@ -351,7 +351,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "waypoints_calibrated", default_value="false"),
         DeclareLaunchArgument(
-            "extrinsics_calibrated", default_value="false"),
+            "extrinsics_calibrated", default_value="true"),
         DeclareLaunchArgument(
             "steering_calibrated", default_value="false"),
         DeclareLaunchArgument(

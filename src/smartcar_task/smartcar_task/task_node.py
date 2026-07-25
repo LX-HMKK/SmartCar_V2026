@@ -191,12 +191,14 @@ class RosDirectionGuard:
 
     def wait_ready(self, timeout_sec):
         deadline = time.monotonic() + max(0.0, float(timeout_sec))
+        poll_interval = 0.5
         for client in self._clients:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0 or not client.wait_for_service(
-                timeout_sec=remaining
-            ):
-                return False
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                if client.wait_for_service(timeout_sec=min(poll_interval, remaining)):
+                    break
         return True
 
     def _on_odom(self, message):
@@ -373,8 +375,15 @@ class RosNavigator:
             max(0.0, deadline - time.monotonic())
         ):
             return False
-        return self._client.wait_for_server(
-            timeout_sec=max(0.0, deadline - time.monotonic()))
+        poll_interval = 0.5
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return False
+            if self._client.wait_for_server(
+                timeout_sec=min(poll_interval, remaining)
+            ):
+                return True
 
     def navigate(self, waypoint, reverse_direction=False):
         try:
@@ -1118,7 +1127,7 @@ class TaskNode(Node):
         self.declare_parameter("use_laser_odometry", False)
         self.declare_parameter("laser_odometry_calibrated", False)
         self.declare_parameter("autostart_mission", False)
-        self.declare_parameter("server_wait_timeout_sec", 5.0)
+        self.declare_parameter("server_wait_timeout_sec", 30.0)
         self.declare_parameter("navigation_timeout_sec", 120.0)
         self.declare_parameter("goal_response_timeout_sec", 2.0)
         self.declare_parameter("cancel_timeout_sec", 3.0)
@@ -1288,9 +1297,11 @@ class TaskNode(Node):
         )
 
         self._autostart_timer = None
+        self._autostart_retries = 0
+        self._autostart_max_retries = 60
         if bool(self.get_parameter("autostart_mission").value):
             self._autostart_timer = self.create_timer(
-                0.5,
+                3.0,
                 self._on_autostart,
                 callback_group=self._service_group,
             )
@@ -1368,12 +1379,25 @@ class TaskNode(Node):
         return response
 
     def _on_autostart(self):
-        if self._autostart_timer is not None:
-            self.destroy_timer(self._autostart_timer)
-            self._autostart_timer = None
+        self._autostart_retries += 1
         success, message = self._start_worker()
-        if not success:
-            self.get_logger().error(f"Mission autostart failed: {message}")
+        if success:
+            if self._autostart_timer is not None:
+                self.destroy_timer(self._autostart_timer)
+                self._autostart_timer = None
+            self.get_logger().info("Mission autostarted")
+            return
+        if self._autostart_retries >= self._autostart_max_retries:
+            if self._autostart_timer is not None:
+                self.destroy_timer(self._autostart_timer)
+                self._autostart_timer = None
+            self.get_logger().error(
+                f"Mission autostart failed after "
+                f"{self._autostart_retries} attempts: {message}")
+        else:
+            self.get_logger().warn(
+                f"Mission autostart attempt {self._autostart_retries}/"
+                f"{self._autostart_max_retries}: {message}")
 
     def stop_for_shutdown(self):
         accepted = self._mission.request_stop()

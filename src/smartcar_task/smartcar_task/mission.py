@@ -48,7 +48,7 @@ def _count(name, value):
 
 @dataclass(frozen=True)
 class MissionConfig:
-    server_wait_timeout_sec: float = 5.0
+    server_wait_timeout_sec: float = 30.0
     navigation_retries: int = 1
     navigation_retry_delay_sec: float = 0.25
     qr_settle_sec: float = 2.0
