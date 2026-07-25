@@ -268,8 +268,16 @@ def generate_launch_description():
         # Direction guard + safety
         TimerAction(period=10.0, actions=[direction_guard]),
         TimerAction(period=10.0, actions=[safety_node]),
-        # Task node starts last
-        TimerAction(period=15.0, actions=[task_node]),
+        # Auto-train node (embedded navigation test + parameter tuning)
+        TimerAction(period=20.0, actions=[
+            Node(
+                package="smartcar_sim",
+                executable="auto_train.py",
+                name="auto_train",
+                parameters=[{"use_sim_time": True}],
+                output="screen",
+            )
+        ]),
         # RViz
         rviz,
     ])

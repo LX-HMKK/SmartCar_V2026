@@ -25,6 +25,7 @@ install(
   PROGRAMS
     scripts/odom_relay.py
     scripts/odom_combined_relay.py
+    scripts/auto_train.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
