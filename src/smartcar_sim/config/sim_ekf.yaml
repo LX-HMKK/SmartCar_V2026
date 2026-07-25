@@ -13,9 +13,11 @@ robot_ekf:
     two_d_mode: true
 
     # 坐标系
+    # Gazebo publishes odom with child_frame_id="origincar/base_footprint"
+    # Identity TF origincar/base_footprint→base_footprint bridges to Nav2
     map_frame: map
     odom_frame: odom_combined
-    base_link_frame: base_footprint
+    base_link_frame: origincar/base_footprint
     world_frame: odom_combined
 
     # 发布 odom_combined → base_footprint 的 TF

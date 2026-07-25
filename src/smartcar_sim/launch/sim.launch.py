@@ -60,18 +60,7 @@ def generate_launch_description():
         name="gz_server_headless",
     )
 
-    # ── Spawn robot ──
-    spawn_robot = Node(
-        package="ros_gz_sim",
-        executable="create",
-        arguments=[
-            "-name", "origincar",
-            "-topic", "robot_description",
-            "-x", "0.0", "-y", "0.0", "-z", "0.03", "-Y", "0.0",
-            "-file", PathJoinSubstitution([pkg_sim, "models", "origincar", "model.sdf"]),
-        ],
-        output="screen",
-    )
+    # Robot is embedded in world file via <include> — no spawn needed
 
     # ── Robot state publisher (TF: base_footprint → base_link → laser) ──
     # We provide a minimal URDF matching the SDF for the TF tree
@@ -119,6 +108,14 @@ def generate_launch_description():
         package="tf2_ros",
         executable="static_transform_publisher",
         arguments=["-0.05", "0", "0.23", "0", "0", "0", "base_link", "laser_link"],
+        parameters=[{"use_sim_time": True}],
+    )
+
+    # Identity TF: Gazebo spawn namespace → nav2 frames
+    tf_ns = Node(
+        package="tf2_ros",
+        executable="static_transform_publisher",
+        arguments=["0", "0", "0", "0", "0", "0", "origincar/base_footprint", "base_footprint"],
         parameters=[{"use_sim_time": True}],
     )
 
@@ -232,9 +229,7 @@ def generate_launch_description():
         tf_base,
         tf_laser,
         gz_bridge,
-        # Spawn robot after bridge is ready
-        TimerAction(period=3.0, actions=[spawn_robot]),
-        # Start EKF after robot spawn
+        # Start EKF after sim stable
         TimerAction(period=2.0, actions=[ekf_node]),
         # Start navigation stack after EKF
         TimerAction(period=2.0, actions=[nav2_launch]),
