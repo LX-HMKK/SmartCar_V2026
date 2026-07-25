@@ -24,8 +24,8 @@ robot_ekf:
     publish_tf: true
 
     # ===== 传感器输入 =====
-    # 输入 0: /odom (Gazebo 地面真值)
-    odom0: /odom
+    # 输入 0: /odom_clean (NaN 过滤后的 Gazebo 地面真值)
+    odom0: /odom_clean
     odom0_config:
       - true   # x
       - true   # y
@@ -43,7 +43,7 @@ robot_ekf:
       - false  # ay
       - false  # az
 
-    # 输入 1: /imu (Gazebo IMU)
+    # 输入 1: /imu (Gazebo IMU) — 暂时禁用，避免 NaN 污染 EKF 状态
     imu0: /imu
     imu0_config:
       - false  # x
@@ -51,16 +51,16 @@ robot_ekf:
       - false  # z
       - false  # roll
       - false  # pitch
-      - false  # yaw       # yaw from IMU is unreliable → disabled
+      - false  # yaw
       - false  # vx
       - false  # vy
       - false  # vz
       - false  # vroll
       - false  # vpitch
-      - true   # vyaw      # 融合角速度
+      - false  # vyaw      # 禁用：IMU 可能发布 NaN
       - false  # ax
       - false  # ay
-      - true   # az        # 融合线加速度（仅 z）
+      - false  # az        # 禁用：IMU 可能发布 NaN
 
     # ===== 过程噪声 =====
     # 仿真里程计精度极高，给传感器更多信任

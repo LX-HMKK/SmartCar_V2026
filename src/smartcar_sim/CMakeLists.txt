@@ -20,4 +20,12 @@ install(
   DESTINATION share/${PROJECT_NAME}
 )
 
+# Install Python executables (ros2 run smartcar_sim odom_relay.py)
+install(
+  PROGRAMS
+    scripts/odom_relay.py
+    scripts/odom_combined_relay.py
+  DESTINATION lib/${PROJECT_NAME}
+)
+
 ament_package()

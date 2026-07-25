@@ -152,14 +152,22 @@ def generate_launch_description():
         output="screen",
     )
 
-    # ── EKF: fuse /odom + /imu → /odom_combined ──
-    ekf_params = PathJoinSubstitution([pkg_sim, "config", "sim_ekf.yaml"])
+    # ── Odom NaN 过滤中继：/odom → /odom_clean ──
+    # Gazebo AckermannSteering 初始发布 NaN 四元数，本节点过滤后转发
+    odom_relay = Node(
+        package="smartcar_sim",
+        executable="odom_relay.py",
+        name="odom_relay",
+        parameters=[{"use_sim_time": True}],
+    )
 
-    ekf_node = Node(
-        package="robot_localization",
-        executable="ekf_node",
-        name="robot_ekf",
-        parameters=[ekf_params, {"use_sim_time": True}],
+    # ── Odom combined relay: /odom_clean → /odom_combined + TF ──
+    # 绕过 EKF，直接用 Gazebo 地面真值里程计
+    odom_combined_relay = Node(
+        package="smartcar_sim",
+        executable="odom_combined_relay.py",
+        name="odom_combined_relay",
+        parameters=[{"use_sim_time": True}],
     )
 
     # ── Direction guard (enforces forward/reverse per waypoint) ──
@@ -252,8 +260,9 @@ def generate_launch_description():
         tf_base,
         tf_laser,
         gz_bridge,
-        # Start EKF after sim stable (wait for Gazebo odom to settle, avoid NaN)
-        TimerAction(period=10.0, actions=[ekf_node]),
+        # Odom relay: filter NaN, then forward to odom_combined (no EKF)
+        odom_relay,
+        odom_combined_relay,
         # Start navigation stack after EKF
         TimerAction(period=12.0, actions=[nav2_launch]),
         # Direction guard + safety
