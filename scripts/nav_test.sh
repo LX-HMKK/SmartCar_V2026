@@ -3,7 +3,7 @@
 # SmartCar 纯导航安全测试（DUBIN 虚拟倒车 + 方向门）
 # 用法: bash /root/nav_test.sh [--autostart] [--no-rviz]
 # ============================================================
-set -euo pipefail
+set -uo pipefail
 
 SOURCE_ENV=/root/source_env.sh
 WORKSPACE=/root/ros2_ws
@@ -12,7 +12,7 @@ GEOM=/root/ros2_ws/src/smartcar_tools/config/routes/field_geometry.yaml
 WP=/root/ros2_ws/src/smartcar_nav2/config/waypoints/nav_only.yaml
 
 # TROS humble setup.bash has unbound AMENT_TRACE_SETUP_FILES — disable
-# nounset around the source to avoid script exit under set -euo pipefail.
+# nounset around the source to avoid script exit under set -uo pipefail.
 set +u
 source "$SOURCE_ENV"
 set -u
@@ -37,33 +37,64 @@ export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
 
 banner() { echo ""; echo "=== $* ==="; }
 
+die()  { echo "✗ $*"; exit 1; }
+
 # ---- 1. 清理 ----
 banner "[1/7] 彻底清理"
-bash /usr/local/bin/ros_cleanup 2>/dev/null || true
-rm -f /dev/shm/fastrtps_port* /dev/shm/fastdds_port* 2>/dev/null || true
+pkill -9 -f 'ros2 launch'      2>/dev/null || true
+pkill -9 -f 'ros2 run'         2>/dev/null || true
+pkill -9 -f 'navigation'       2>/dev/null || true
+pkill -9 -f 'controller_server' 2>/dev/null || true
+pkill -9 -f 'planner_server'   2>/dev/null || true
+pkill -9 -f 'bt_navigator'     2>/dev/null || true
+pkill -9 -f 'velocity_smoother' 2>/dev/null || true
+pkill -9 -f 'lifecycle_manager' 2>/dev/null || true
+pkill -9 -f 'ekf_node'         2>/dev/null || true
+pkill -9 -f 'task_node'        2>/dev/null || true
+pkill -9 -f 'safety_node'      2>/dev/null || true
+pkill -9 -f 'ydlidar'          2>/dev/null || true
+pkill -9 -f 'field_reference'  2>/dev/null || true
+pkill -9 -f 'waypoint_viz'     2>/dev/null || true
+pkill -9 -f 'static_transform' 2>/dev/null || true
+sleep 2
+rm -f /dev/shm/fastrtps_port*   2>/dev/null || true
+rm -f /dev/shm/fastdds_port*    2>/dev/null || true
+rm -f /dev/shm/*ros2*           2>/dev/null || true
+rm -f /dev/shm/*fast*           2>/dev/null || true
+ros2 daemon stop 2>/dev/null || true
 sleep 1
+ros2 daemon start 2>/dev/null || true
+echo "  ✓ 清理完成"
 
 # ---- 2. 构建 ----
 banner "[2/7] 构建"
 colcon build --symlink-install \
   --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8
+  --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8 \
+  || die "构建失败"
 echo "  ✓ 构建完成"
 
 # ---- 3. 参数验证 ----
 banner "[3/7] 参数验证"
 FIXED_YAML="$WORKSPACE/install/smartcar_nav2/share/smartcar_nav2/config/nav2_params_fixed.yaml"
-echo "  motion_model: $(grep motion_model_for_search "$FIXED_YAML" | xargs)"
-echo "  allow_reversing: $(grep allow_reversing "$FIXED_YAML" | xargs)"
-echo "  yaw_goal_tolerance: $(grep yaw_goal_tolerance "$FIXED_YAML" | xargs)"
-echo "  min_velocity: $(grep 'min_velocity:' "$FIXED_YAML" | xargs)"
-echo "  current_goal_checker: $(grep current_goal_checker "$FIXED_YAML" | xargs)"
+if [ -f "$FIXED_YAML" ]; then
+  echo "  motion_model: $(grep motion_model_for_search "$FIXED_YAML" | xargs)"
+  echo "  allow_reversing: $(grep allow_reversing "$FIXED_YAML" | xargs)"
+  echo "  yaw_goal_tolerance: $(grep yaw_goal_tolerance "$FIXED_YAML" | xargs)"
+  echo "  min_velocity: $(grep 'min_velocity:' "$FIXED_YAML" | xargs)"
+  echo "  current_goal_checker: $(grep current_goal_checker "$FIXED_YAML" | xargs)"
+else
+  echo "  ⚠ nav2_params_fixed.yaml 未找到，将使用默认参数"
+fi
 
 # ---- 4. 先验地图 + 航点 ----
 banner "[4/7] 可视化"
-ros2 run smartcar_tools field_reference_node --ros-args -p geometry_file:="$GEOM" &
-ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:="$WP" &
+pkill -9 -f field_reference_node 2>/dev/null || true
+pkill -9 -f waypoint_viz 2>/dev/null || true
+sleep 1
+ros2 run smartcar_tools field_reference_node --ros-args -r __ns:=/smartcar &>/tmp/field_ref.log &
+ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:="$WP" &>/tmp/waypoint_viz.log &
 sleep 2
 echo "  ✓ field_reference + waypoint_viz 已启动"
 
@@ -111,13 +142,13 @@ if $NO_RVIZ; then
   banner "[7/7] 跳过 RViz"
   echo "  - RViz 已禁用 (--no-rviz)"
 else
+  pkill -9 -f rviz2 2>/dev/null || true
+  sleep 1
   if $AUTOSTART; then
     banner "[7/7] RViz + 自动发车"
   else
     banner "[7/7] RViz + 等待人工发车"
   fi
-  pkill -9 -f rviz2 2>/dev/null || true
-  sleep 1
   rviz2 -d "$WORKSPACE/src/smartcar_tools/rviz/navigation.rviz" &
   sleep 3
   echo "  ✓ RViz 已启动"

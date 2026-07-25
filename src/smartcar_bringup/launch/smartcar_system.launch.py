@@ -121,7 +121,6 @@ def _validate_configuration(context):
         "use_base",
         "use_safety",
         "use_nav",
-        "use_vision",
         "use_task",
         "nav_autostart",
     )
@@ -226,6 +225,20 @@ def generate_launch_description():
                 for name in sensor_calib_names
             },
         }.items(),
+    )
+    field_reference = Node(
+        package="smartcar_tools",
+        executable="field_reference_node",
+        name="field_reference",
+        namespace="/smartcar",
+        output="screen",
+    )
+    waypoint_markers = Node(
+        package="smartcar_tools",
+        executable="waypoint_viz",
+        name="waypoint_viz",
+        parameters=[{"waypoints_file": waypoints_file}],
+        output="screen",
     )
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -395,6 +408,8 @@ def generate_launch_description():
         OpaqueFunction(function=_validate_configuration),
         base,
         navigation,
+        field_reference,
+        waypoint_markers,
         OpaqueFunction(function=_vision_and_camera_actions),
         speech,
         task,

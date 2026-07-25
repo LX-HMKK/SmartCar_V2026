@@ -1,6 +1,6 @@
 task_node:
   ros__parameters:
-    autostart_mission: false
+    autostart_mission: true
     waypoints_calibrated: false
     extrinsics_calibrated: false
     steering_calibrated: false
