@@ -47,14 +47,14 @@ def generate_launch_description():
     world_path = PathJoinSubstitution([pkg_sim, "worlds", PythonExpression(["'", world, ".world'"])])
 
     gz_server = ExecuteProcess(
-        cmd=["gz", "sim", "-r", "-s", world_path],
+        cmd=["ign", "gazebo", "-r", "-v", "3", world_path],
         output="screen",
         condition=UnlessCondition(headless),
         name="gz_server",
     )
 
     gz_server_headless = ExecuteProcess(
-        cmd=["gz", "sim", "-r", "-s", "--headless-rendering", world_path],
+        cmd=["ign", "gazebo", "-r", "-s", "-v", "3", world_path],
         output="screen",
         condition=IfCondition(headless),
         name="gz_server_headless",

@@ -176,6 +176,46 @@
     </link>
   </model>
 
+  <!-- ===== ZONE-A CONE OBSTACLES (0.3×0.3m cubes, randomly placeable) =====
+    A 区随机锥桶群。调参时修改 <pose> 调整位置，或注释掉部分锥桶测试不同密度。
+  -->
+  <model name="cone_a1"><static>true</static><pose>0.8 0.4 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+    </link></model>
+  <model name="cone_a2"><static>true</static><pose>1.5 0.3 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+    </link></model>
+  <model name="cone_a3"><static>true</static><pose>2.2 0.5 0.15 0 0 0.3</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+    </link></model>
+  <model name="cone_a4"><static>true</static><pose>1.0 0.8 0.15 0 0 0.5</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+    </link></model>
+  <model name="cone_a5"><static>true</static><pose>1.8 0.9 0.15 0 0 -0.3</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+    </link></model>
+  <model name="cone_a6"><static>true</static><pose>2.8 0.7 0.15 0 0 0.7</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+    </link></model>
+
   <!-- ===== WAYPOINT VISUALIZATION MARKERS ===== -->
   <model name="wp_corner_1"><static>true</static><pose>0.387 2.682 0.01 0 0 1.0472</pose>
     <link name="link"><visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.01</length></cylinder></geometry><material><ambient>0 0 1 1</ambient></material></visual></link></model>
