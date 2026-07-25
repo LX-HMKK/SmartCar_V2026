@@ -19,6 +19,19 @@
     name="ignition::gazebo::systems::UserCommands">
   </plugin>
 
+  <!-- Physics -->
+  <plugin
+    filename="ignition-gazebo-physics-system"
+    name="ignition::gazebo::systems::Physics">
+  </plugin>
+
+  <!-- Sensors (LiDAR + IMU) -->
+  <plugin
+    filename="ignition-gazebo-sensors-system"
+    name="ignition::gazebo::systems::Sensors">
+    <render_engine>ogre</render_engine>
+  </plugin>
+
   <!-- Scene broadcaster -->
   <plugin
     filename="ignition-gazebo-scene-broadcaster-system"
@@ -215,6 +228,12 @@
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
       <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
     </link></model>
+
+  <!-- ===== ROBOT ===== -->
+  <include>
+    <pose>0 0 0.03 0 0 0</pose>
+    <uri>model://origincar</uri>
+  </include>
 
   <!-- ===== WAYPOINT VISUALIZATION MARKERS ===== -->
   <model name="wp_corner_1"><static>true</static><pose>0.387 2.682 0.01 0 0 1.0472</pose>
