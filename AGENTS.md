@@ -92,7 +92,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ### 已完成
 
-- ✅ 陀螺仪零偏标定：`gyro_z_bias = 0.000853`（参数链路已打通至 `smartcar_system.launch.py` 默认值）。
+- ✅ 陀螺仪零偏标定：`gyro_z_bias = 0.000614`（30 分钟稳态复标，参数链路已打通至 `smartcar_system.launch.py` 默认值）。
 - ✅ 外参测量（URDF + 微调）：`base_footprint→base_link (0.0841,0,0.03)`、`base_link→laser (-0.05,0,0.23)`、`base_link→camera (0.1205,0,0.11)`。
 - ✅ 轮速标定验证：`longitudinal_velocity_scale = 1.03` 实测通过。
 - ✅ P → 任务发布点导航：0.15 m/s，5 航点，约 35s 完成，自动锁停。2D LiDAR 避障通过锥桶膨胀补偿（local inflation 0.55 / global 0.65）+ footprint 自过滤可用。
@@ -126,7 +126,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - **一键导航测试脚本 (2026-07-24 修订)**：只使用仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。`scripts/deploy/nav_test.sh` 是会自动解除急停并 start 的历史副本，不得复制或执行；当前 `scripts/monitor_mission.py` 也不能作为零速或安全判据。
-- **倒车导航实现 (2026-07-24)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；reverse goal 选择专用 BT，把实际 TF 起点和目标 yaw 临时加 π，调用唯一 `DUBIN` planner，再把路径 yaw 恢复 π。插件拒绝非有限、错误 frame/端点、正向分量、cusp 和超曲率路径。后置方向门用动作 UUID 租约保证“倒车或停车”，不使用 `REEDS_SHEPP`、`reverse_penalty`、航点朝向翻转或开环速度。STM32 负速度编码仅完成代码路径确认，实际运动仍待验证。
+- **倒车导航实现 (2026-07-25 修订)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；QR 方向切换点使用 `0.12 m / 0.15 rad` 精确正向 BT，Smac 近似终点 `tolerance=0.0`；reverse goal 把实际 TF 起点和目标 yaw 临时加 π，调用唯一 `DUBIN` planner，再把路径 yaw 恢复 π。插件拒绝非有限、错误 frame/端点、正向分量、cusp 和超曲率路径。后置方向门用动作 UUID 租约保证“倒车或停车”，不使用 `REEDS_SHEPP`、`reverse_penalty`、航点朝向翻转或开环速度。负速度与倒车 `angular.z` 翻转已在首个 reverse goal 上实车确认，精确交接与完整路线仍待复测。
 - **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
 - **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
 

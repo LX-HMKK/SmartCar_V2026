@@ -28,8 +28,20 @@ BT_REVERSE_FILE = (
     / "behavior_trees"
     / "navigate_to_pose_reverse_w_replanning_and_recovery.xml"
 )
+BT_PRECISE_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_precise_w_replanning_and_recovery.xml"
+)
 WAYPOINTS_FILE = (
     PACKAGE_ROOT / "config" / "waypoints" / "default_waypoints.yaml"
+)
+NAV_ONLY_WAYPOINTS_FILE = (
+    PACKAGE_ROOT / "config" / "waypoints" / "nav_only.yaml"
+)
+BRINGUP_COORD_FILE = (
+    ROOT / "src" / "smartcar_bringup" / "config" / "bringup_coord.yaml"
 )
 NAVIGATION_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "navigation_launch.py"
 NAV2_BRINGUP_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "nav2_bringup.launch.py"
@@ -60,6 +72,30 @@ UNSUPPORTED_HUMBLE_RPP_KEYS = {
 
 def ros_parameters(config, node_name):
     return config[node_name]["ros__parameters"]
+
+
+def planar_yaw(orientation):
+    return math.atan2(
+        2.0
+        * (
+            orientation["w"] * orientation["z"]
+            + orientation["x"] * orientation["y"]
+        ),
+        1.0
+        - 2.0
+        * (
+            orientation["y"] * orientation["y"]
+            + orientation["z"] * orientation["z"]
+        ),
+    )
+
+
+def waypoint_by_id(document, waypoint_id):
+    return next(
+        waypoint
+        for waypoint in document["waypoints"]
+        if waypoint["id"] == waypoint_id
+    )
 
 
 def launch_calls_by_package(source):
@@ -101,6 +137,15 @@ class TestNav2Contracts(unittest.TestCase):
         cls.waypoints = yaml.safe_load(
             WAYPOINTS_FILE.read_text(encoding="utf-8")
         )["waypoints"]
+        cls.default_waypoint_document = yaml.safe_load(
+            WAYPOINTS_FILE.read_text(encoding="utf-8")
+        )
+        cls.nav_only_waypoint_document = yaml.safe_load(
+            NAV_ONLY_WAYPOINTS_FILE.read_text(encoding="utf-8")
+        )
+        cls.bringup_coord = yaml.safe_load(
+            BRINGUP_COORD_FILE.read_text(encoding="utf-8")
+        )
 
     def test_unused_motion_servers_are_removed(self):
         self.assertNotIn("recoveries_server", self.params)
@@ -109,7 +154,12 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("nav2_recoveries", yaml.safe_dump(self.params))
 
     def test_behavior_tree_has_no_in_place_rotation(self):
-        for behavior_tree in (BT_FILE, BT_THROUGH_POSES_FILE, BT_REVERSE_FILE):
+        for behavior_tree in (
+            BT_FILE,
+            BT_PRECISE_FILE,
+            BT_THROUGH_POSES_FILE,
+            BT_REVERSE_FILE,
+        ):
             with self.subTest(behavior_tree=behavior_tree.name):
                 root = ElementTree.parse(behavior_tree).getroot()
                 tags = [element.tag for element in root.iter()]
@@ -150,8 +200,23 @@ class TestNav2Contracts(unittest.TestCase):
         controller = ros_parameters(self.params, "controller_server")
         self.assertEqual(
             controller["goal_checker_plugins"],
-            ["goal_checker", "reverse_goal_checker"],
+            ["goal_checker", "precise_goal_checker", "reverse_goal_checker"],
         )
+        precise = controller["precise_goal_checker"]
+        self.assertEqual(
+            precise["plugin"], "nav2_controller::SimpleGoalChecker"
+        )
+        self.assertLess(
+            precise["xy_goal_tolerance"],
+            controller["goal_checker"]["xy_goal_tolerance"],
+        )
+        self.assertLess(
+            precise["yaw_goal_tolerance"],
+            controller["goal_checker"]["yaw_goal_tolerance"],
+        )
+        self.assertAlmostEqual(precise["xy_goal_tolerance"], 0.12)
+        self.assertAlmostEqual(precise["yaw_goal_tolerance"], 0.15)
+        self.assertIs(precise["stateful"], False)
         self.assertLessEqual(
             controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.12)
         self.assertLessEqual(
@@ -175,7 +240,19 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(planner["motion_model_for_search"], "DUBIN")
         self.assertNotIn("reverse_penalty", planner)
-        self.assertAlmostEqual(planner["minimum_turning_radius"], 0.55)
+        # Controller goal checkers target path.poses.back(), so a nonzero
+        # planner fallback could bypass the precise QR waypoint envelope.
+        self.assertEqual(planner["tolerance"], 0.0)
+        minimum_turning_radius = planner["minimum_turning_radius"]
+        self.assertAlmostEqual(minimum_turning_radius, 0.55)
+
+        calibration = self.bringup_coord["calibration"]
+        wheelbase = float(calibration["wheelbase"])
+        max_steering_angle = float(calibration["max_steering_angle"])
+        required_steering_angle = math.atan(
+            wheelbase / minimum_turning_radius
+        )
+        self.assertLessEqual(required_steering_angle, max_steering_angle)
 
     def test_costmaps_use_real_and_virtual_yaw_safe_footprints(self):
         local = self.params["local_costmap"]["local_costmap"]["ros__parameters"]
@@ -312,6 +389,131 @@ class TestNav2Contracts(unittest.TestCase):
                     abs(goal_position["y"] - start_position["y"]),
                     global_costmap["height"] / 2.0 - margin_y,
                 )
+
+    def test_precise_reverse_handoff_geometry_matches_both_routes(self):
+        default = self.default_waypoint_document
+        nav_only = self.nav_only_waypoint_document
+        self.assertEqual(
+            [waypoint["id"] for waypoint in default["waypoints"]],
+            [waypoint["id"] for waypoint in nav_only["waypoints"]],
+        )
+        for default_waypoint, nav_waypoint in zip(
+            default["waypoints"], nav_only["waypoints"]
+        ):
+            with self.subTest(waypoint=default_waypoint["id"]):
+                self.assertEqual(
+                    default_waypoint["pose"], nav_waypoint["pose"]
+                )
+                self.assertEqual(
+                    default_waypoint["direction"],
+                    nav_waypoint["direction"],
+                )
+                self.assertEqual(
+                    default_waypoint.get("goal_profile", "standard"),
+                    nav_waypoint.get("goal_profile", "standard"),
+                )
+
+        precise_ids = [
+            waypoint["id"]
+            for waypoint in default["waypoints"]
+            if waypoint.get("goal_profile", "standard") == "precise"
+        ]
+        self.assertEqual(precise_ids, ["a_task_observe"])
+        qr = waypoint_by_id(default, "a_task_observe")
+        corridor_enter = waypoint_by_id(default, "b_corridor_enter")
+        corridor_out = waypoint_by_id(default, "b_corridor_out")
+        self.assertEqual(qr["direction"], "forward")
+        self.assertEqual(corridor_enter["direction"], "reverse")
+        self.assertEqual(corridor_out["direction"], "reverse")
+
+        qr_yaw = planar_yaw(qr["pose"]["orientation"])
+        corridor_yaw = planar_yaw(
+            corridor_enter["pose"]["orientation"]
+        )
+        self.assertAlmostEqual(qr_yaw, math.radians(30.0), delta=1.0e-6)
+        self.assertAlmostEqual(
+            corridor_yaw, math.radians(-70.0), delta=1.0e-6
+        )
+        self.assertAlmostEqual(
+            math.remainder(corridor_yaw - qr_yaw, 2.0 * math.pi),
+            math.radians(-100.0),
+            delta=1.0e-6,
+        )
+
+        corridor_position = corridor_enter["pose"]["position"]
+        corridor_out_position = corridor_out["pose"]["position"]
+        motion_yaw = math.atan2(
+            corridor_out_position["y"] - corridor_position["y"],
+            corridor_out_position["x"] - corridor_position["x"],
+        )
+        reverse_body_tangent = math.remainder(
+            motion_yaw - math.pi, 2.0 * math.pi
+        )
+        tangent_error = abs(
+            math.remainder(
+                corridor_yaw - reverse_body_tangent, 2.0 * math.pi
+            )
+        )
+        self.assertLess(tangent_error, math.radians(0.1))
+
+        radius = ros_parameters(self.params, "planner_server")["GridBased"][
+            "minimum_turning_radius"
+        ]
+        qr_position = qr["pose"]["position"]
+        virtual_qr_yaw = qr_yaw + math.pi
+        virtual_corridor_yaw = corridor_yaw + math.pi
+        goal_left_center = (
+            corridor_position["x"]
+            - radius * math.sin(virtual_corridor_yaw),
+            corridor_position["y"]
+            + radius * math.cos(virtual_corridor_yaw),
+        )
+        precise = ros_parameters(self.params, "controller_server")[
+            "precise_goal_checker"
+        ]
+        yaw_tolerance = precise["yaw_goal_tolerance"]
+        yaw_lower = virtual_qr_yaw - yaw_tolerance
+        yaw_upper = virtual_qr_yaw + yaw_tolerance
+        candidate_yaws = [yaw_lower, yaw_upper]
+
+        # The start-circle distance can have an interior extremum. Include
+        # every stationary angle in the accepted yaw interval, not just its
+        # endpoints, so future waypoint edits cannot evade this contract.
+        center_dx = goal_left_center[0] - qr_position["x"]
+        center_dy = goal_left_center[1] - qr_position["y"]
+        stationary_yaw = math.atan2(center_dx, -center_dy)
+        for base_yaw in (stationary_yaw, stationary_yaw + math.pi):
+            first_turn = math.ceil(
+                (yaw_lower - base_yaw) / (2.0 * math.pi)
+            )
+            last_turn = math.floor(
+                (yaw_upper - base_yaw) / (2.0 * math.pi)
+            )
+            candidate_yaws.extend(
+                base_yaw + turn * 2.0 * math.pi
+                for turn in range(first_turn, last_turn + 1)
+            )
+
+        center_distances = []
+        for start_yaw in candidate_yaws:
+            start_right_center = (
+                qr_position["x"] + radius * math.sin(start_yaw),
+                qr_position["y"] - radius * math.cos(start_yaw),
+            )
+            center_distances.append(
+                math.hypot(
+                    goal_left_center[0] - start_right_center[0],
+                    goal_left_center[1] - start_right_center[1],
+                )
+            )
+
+        # Reverse triangle inequality covers any accepted XY error vector.
+        # This only locks a conservative RSL tangent margin at the configured
+        # yaw interval; it is not a complete Dubins shortest-path proof.
+        conservative_center_distance = (
+            min(center_distances) - precise["xy_goal_tolerance"]
+        )
+        self.assertGreater(conservative_center_distance, 2.0 * radius)
 
     def test_package_declares_direct_runtime_and_test_dependencies(self):
         root = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()

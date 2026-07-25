@@ -150,6 +150,43 @@ class WaypointTests(unittest.TestCase):
                 "forward", "forward", "forward", "forward",
             ],
         )
+        self.assertEqual(
+            [item.goal_profile for item in waypoints],
+            ["standard"] * len(waypoints),
+        )
+
+    def test_goal_profile_parses_precise_and_rejects_invalid_values(self):
+        document = valid_document()
+        document["waypoints"][1]["goal_profile"] = "precise"
+        with tempfile.TemporaryDirectory() as directory:
+            waypoints = load_waypoints(
+                self.write_document(directory, document))
+
+        self.assertEqual(waypoints[1].goal_profile, "precise")
+        self.assertEqual(
+            [item.goal_profile for item in waypoints[2:]],
+            ["standard"] * (len(waypoints) - 2),
+        )
+
+        for invalid in ("", "unknown", None, True):
+            document = valid_document()
+            document["waypoints"][1]["goal_profile"] = invalid
+            with tempfile.TemporaryDirectory() as directory:
+                with self.subTest(invalid=invalid):
+                    with self.assertRaisesRegex(
+                        ValueError, "unknown goal_profile"
+                    ):
+                        load_waypoints(
+                            self.write_document(directory, document))
+
+        reverse_precise = valid_document()
+        reverse_precise["waypoints"][2]["goal_profile"] = "precise"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                ValueError, "reverse goals must use the standard profile"
+            ):
+                load_waypoints(
+                    self.write_document(directory, reverse_precise))
 
     def test_rejects_malformed_documents_and_missing_fields(self):
         malformed_documents = (
@@ -276,6 +313,12 @@ class WaypointTests(unittest.TestCase):
                 "forward",
             ],
         )
+        self.assertEqual(nav_only[1].goal_profile, "precise")
+        self.assertTrue(all(
+            item.goal_profile == "standard"
+            for index, item in enumerate(nav_only)
+            if index != 1
+        ))
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
         waypoints = load_waypoints(
@@ -336,7 +379,9 @@ class WaypointTests(unittest.TestCase):
 
     def test_atomic_editor_write_preserves_ids_and_clears_calibration(self):
         with tempfile.TemporaryDirectory() as directory:
-            path = self.write_document(directory, valid_document())
+            document = valid_document()
+            document["waypoints"][1]["goal_profile"] = "precise"
+            path = self.write_document(directory, document)
             template, waypoints = load_waypoint_document(path)
             template["calibrated"] = True
             write_waypoints_atomic(path, template, waypoints)
@@ -347,6 +392,11 @@ class WaypointTests(unittest.TestCase):
             [item["id"] for item in written["waypoints"]],
             [item.id for item in waypoints],
         )
+        self.assertEqual(
+            [item["goal_profile"] for item in written["waypoints"]],
+            [item.goal_profile for item in waypoints],
+        )
+        self.assertEqual(written["waypoints"][1]["goal_profile"], "precise")
 
     def test_atomic_editor_write_rejects_nonfinite_in_memory_coordinates(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -396,6 +446,12 @@ class WaypointTests(unittest.TestCase):
                 "p_finish",
             ],
         )
+        self.assertEqual(waypoints[1].goal_profile, "precise")
+        self.assertTrue(all(
+            item.goal_profile == "standard"
+            for index, item in enumerate(waypoints)
+            if index != 1
+        ))
 
 
 if __name__ == "__main__":

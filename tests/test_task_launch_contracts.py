@@ -2,12 +2,15 @@
 from pathlib import Path
 import unittest
 
+import yaml
+
 
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "smartcar_task"
 NODE = PACKAGE / "smartcar_task" / "task_node.py"
 LAUNCH = PACKAGE / "launch" / "smartcar_task.launch.py"
 PACKAGE_XML = PACKAGE / "package.xml"
+TASK_CONFIG = PACKAGE / "config" / "task.yaml"
 
 
 class TaskLaunchContractTests(unittest.TestCase):
@@ -67,6 +70,25 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("goal, goal_uuid=action_uuid", source)
         self.assertIn("motion_direction(reverse_direction)", source)
         self.assertNotIn("FollowWaypoints", source)
+
+    def test_precise_forward_behavior_tree_is_wired_from_config(self):
+        parameters = yaml.safe_load(
+            TASK_CONFIG.read_text(encoding="utf-8")
+        )["task_node"]["ros__parameters"]
+        precise_tree = parameters["precise_forward_behavior_tree"]
+        self.assertTrue(
+            precise_tree.endswith(
+                "navigate_to_pose_precise_w_replanning_and_recovery.xml"
+            )
+        )
+
+        source = NODE.read_text(encoding="utf-8")
+        self.assertIn('"precise_forward_behavior_tree"', source)
+        self.assertIn("goal_profile=waypoint.goal_profile", source)
+        self.assertIn(
+            "self.get_parameter(\"precise_forward_behavior_tree\").value",
+            source,
+        )
 
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = NODE.read_text(encoding="utf-8")

@@ -167,7 +167,15 @@ def generate_launch_description():
         "laser_roll", "laser_pitch", "laser_yaw",
     )
     extrinsic_defaults = {
+        "base_x": "0.0841",
+        "base_z": "0.03",
+        "laser_x": "-0.05",
+        "laser_z": "0.23",
         "laser_yaw": "1.5708",
+    }
+    camera_extrinsic_defaults = {
+        "camera_x": "0.1205",
+        "camera_z": "0.11",
     }
     sensor_calib_names = (
         "longitudinal_velocity_scale",
@@ -375,7 +383,9 @@ def generate_launch_description():
         for name in extrinsic_names
     )
     declarations.extend(
-        DeclareLaunchArgument(name, default_value="0.0")
+        DeclareLaunchArgument(
+            name, default_value=camera_extrinsic_defaults.get(name, "0.0")
+        )
         for name in (
             "camera_x", "camera_y", "camera_z",
             "camera_roll", "camera_pitch", "camera_yaw",

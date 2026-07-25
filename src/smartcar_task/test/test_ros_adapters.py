@@ -58,7 +58,7 @@ class RosAdapterTests(unittest.TestCase):
             rclpy.shutdown()
 
     def test_guarded_navigate_to_pose_binds_direction_bt_and_uuid(self):
-        modes = ["success", "cancel"]
+        modes = ["success", "success", "cancel"]
         received_goals = []
 
         class FakeDirectionGuard:
@@ -138,6 +138,7 @@ class RosAdapterTests(unittest.TestCase):
             ReentrantCallbackGroup(),
             direction_guard=direction_guard,
             reverse_behavior_tree="/tmp/reverse.xml",
+            precise_forward_behavior_tree="/tmp/precise-forward.xml",
             navigation_timeout_sec=3.0,
             goal_response_timeout_sec=1.0,
             cancel_timeout_sec=2.0,
@@ -169,6 +170,36 @@ class RosAdapterTests(unittest.TestCase):
             received_goals[0][3],
         )
 
+        precise_endpoint = Waypoint(
+            frame_id="odom_combined",
+            position=(1.1, 0.0, 0.0),
+            orientation=(0.0, 0.0, 0.0, 1.0),
+            task="qr",
+            goal_profile="precise",
+        )
+        precise = navigator.navigate(precise_endpoint)
+        self.assertTrue(precise.success, precise.status)
+        self.assertEqual(
+            received_goals[1][:3],
+            ("odom_combined", 1.1, "/tmp/precise-forward.xml"),
+        )
+        prepare_calls = [
+            lease for name, lease in direction_guard.calls
+            if name == "prepare"
+        ]
+        self.assertEqual(prepare_calls[1].direction, 1)
+        self.assertEqual(
+            bytes(prepare_calls[1].action_uuid.uuid),
+            received_goals[1][3],
+        )
+
+        invalid_reverse = navigator.navigate(
+            precise_endpoint, reverse_direction=True)
+        self.assertFalse(invalid_reverse.success)
+        self.assertIn("reverse goals must use the standard profile",
+                      invalid_reverse.status)
+        self.assertEqual(len(received_goals), 2)
+
         class LateCancelFuture:
             @staticmethod
             def result():
@@ -191,27 +222,27 @@ class RosAdapterTests(unittest.TestCase):
         while (
             (
                 not navigator.is_active()
-                or direction_guard.activations < 2
+                or direction_guard.activations < 3
             )
             and time.monotonic() < deadline
         ):
             time.sleep(0.01)
         self.assertTrue(navigator.is_active())
-        self.assertEqual(direction_guard.activations, 2)
+        self.assertEqual(direction_guard.activations, 3)
         self.assertTrue(navigator.cancel())
         worker.join(timeout=2.0)
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(outcome[0].status, "navigation_canceled")
-        self.assertEqual(received_goals[1][2], "/tmp/reverse.xml")
+        self.assertEqual(received_goals[2][2], "/tmp/reverse.xml")
         prepare_calls = [
             lease for name, lease in direction_guard.calls
             if name == "prepare"
         ]
-        self.assertEqual(prepare_calls[1].direction, 2)
+        self.assertEqual(prepare_calls[2].direction, 2)
         self.assertEqual(
-            bytes(prepare_calls[1].action_uuid.uuid),
-            received_goals[1][3],
+            bytes(prepare_calls[2].action_uuid.uuid),
+            received_goals[2][3],
         )
         final_activate = len(direction_guard.events) - 1 - list(reversed(
             direction_guard.events)).index("activate")

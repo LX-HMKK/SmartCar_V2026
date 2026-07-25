@@ -73,9 +73,28 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(motion_direction(True), MOTION_REVERSE)
         self.assertEqual(navigation_behavior_tree(False, "ignored.xml"), "")
         self.assertEqual(
+            navigation_behavior_tree(
+                False,
+                "ignored.xml",
+                goal_profile="precise",
+                precise_forward_behavior_tree="precise.xml",
+            ),
+            "precise.xml",
+        )
+        self.assertEqual(
             navigation_behavior_tree(True, "reverse.xml"), "reverse.xml")
         with self.assertRaises(ValueError):
             navigation_behavior_tree(True, "")
+        with self.assertRaises(ValueError):
+            navigation_behavior_tree(
+                False, "reverse.xml", goal_profile="precise")
+        with self.assertRaises(ValueError):
+            navigation_behavior_tree(
+                True,
+                "reverse.xml",
+                goal_profile="precise",
+                precise_forward_behavior_tree="precise.xml",
+            )
 
     def test_motion_direction_protocol_binds_direction_generation_and_uuid(self):
         calls = []

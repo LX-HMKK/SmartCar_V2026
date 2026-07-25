@@ -304,6 +304,7 @@ class RosNavigator:
         callback_group,
         direction_guard,
         reverse_behavior_tree,
+        precise_forward_behavior_tree,
         navigation_timeout_sec,
         goal_response_timeout_sec,
         cancel_timeout_sec,
@@ -327,6 +328,14 @@ class RosNavigator:
         )
         self._reverse_behavior_tree = str(reverse_behavior_tree).strip()
         navigation_behavior_tree(True, self._reverse_behavior_tree)
+        self._precise_forward_behavior_tree = str(
+            precise_forward_behavior_tree).strip()
+        navigation_behavior_tree(
+            False,
+            self._reverse_behavior_tree,
+            goal_profile="precise",
+            precise_forward_behavior_tree=self._precise_forward_behavior_tree,
+        )
         self._navigation_timeout_sec = _positive_finite(
             "navigation_timeout_sec", navigation_timeout_sec)
         self._goal_response_timeout_sec = _positive_finite(
@@ -370,7 +379,12 @@ class RosNavigator:
     def navigate(self, waypoint, reverse_direction=False):
         try:
             behavior_tree = navigation_behavior_tree(
-                reverse_direction, self._reverse_behavior_tree)
+                reverse_direction,
+                self._reverse_behavior_tree,
+                goal_profile=waypoint.goal_profile,
+                precise_forward_behavior_tree=(
+                    self._precise_forward_behavior_tree),
+            )
         except ValueError as error:
             return OperationResult(False, f"navigation_config:{error}")
 
@@ -1115,6 +1129,12 @@ class TaskNode(Node):
             "config/behavior_trees/"
             "navigate_to_pose_reverse_w_replanning_and_recovery.xml",
         )
+        self.declare_parameter(
+            "precise_forward_behavior_tree",
+            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
+            "config/behavior_trees/"
+            "navigate_to_pose_precise_w_replanning_and_recovery.xml",
+        )
         self.declare_parameter("direction_service_timeout_sec", 0.08)
         self.declare_parameter("direction_lease_timeout_sec", 0.25)
         self.declare_parameter("direction_prepare_timeout_sec", 1.0)
@@ -1205,6 +1225,7 @@ class TaskNode(Node):
             self._io_group,
             self._direction_guard,
             self.get_parameter("reverse_behavior_tree").value,
+            self.get_parameter("precise_forward_behavior_tree").value,
             self.get_parameter("navigation_timeout_sec").value,
             self.get_parameter("goal_response_timeout_sec").value,
             self.get_parameter("cancel_timeout_sec").value,

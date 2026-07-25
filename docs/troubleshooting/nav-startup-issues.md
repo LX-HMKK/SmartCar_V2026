@@ -153,18 +153,18 @@ stop_settle_sec: 0.15       # 从 0.25 缩短（降低对"已停止时长"的要
 
 **根因**: `minimum_turning_radius=0.55` + `curvature_tolerance=0.20` 计算出的 `maximum_curvature = 1/0.55 + 0.20 ≈ 2.018 rad/m`。反向路径是 DUBIN planner 规划 → 朝向翻转 π → 曲率验证的产物。翻转后的路径第一段（连接起点）角变化/段长比超限。
 
-**修复** (已应用):
+**临时诊断**（已应用但不是 release 修复）:
 ```yaml
 # nav2_params.yaml
-minimum_turning_radius: 0.35  # 从 0.55 降低（允许更急弯）
+minimum_turning_radius: 0.30  # 从 0.55 临时降低
 
 # navigate_to_pose_reverse_w_replanning_and_recovery.xml
-minimum_turning_radius="0.35"   # 从 0.55 降低
-curvature_tolerance="0.40"      # 从 0.20 放宽
+minimum_turning_radius="0.30"   # 从 0.55 临时降低
+curvature_tolerance="0.50"      # 从 0.20 临时放宽
 ```
-新 `maximum_curvature = 1/0.35 + 0.40 ≈ 3.257 rad/m`，对应最小转弯半径约 0.307m。
+新 `maximum_curvature = 1/0.30 + 0.50 ≈ 3.833 rad/m`，对应约 `0.261 m` 的等效曲率半径。
 
-**注意**: `0.55` 是 CLAUDE.md 记录的"未标定规划假设"，`0.35` 仍是临时值；实车标定后应回填准确值。
+**复核（2026-07-25）**: 该参数组合破坏 `0.55 m` 合同；`R=0.30 m` 需要约 `0.562 rad` 转角，超过 safety 配置的 `0.45 rad` 上限，不能作为可驾驶配置。`curvature_exceeded` 在路径交给 RPP 和方向门之前产生，因此与 `angular.z` 补偿无关。应恢复一致的可执行半径，并保存首段路径以修正离散曲率验证，而不是继续放宽阈值。
 
 **影响文件**: `src/smartcar_nav2/config/nav2_params.yaml`, `.../behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml`
 
@@ -186,19 +186,38 @@ request for compute_path_to_pose
 
 ---
 
-## 问题 8: 倒车时方向打反（STM32 反向运动未验证）
+## 问题 8: 倒车时方向打反（现场补偿已验证）
 
 **症状**: 倒车段 (2.94, 0.89) → (2.09, 1.83) 启动后车辆移动到 (3.06, 0.30)，即向目标**相反方向**运动。
 
-**根因**: STM32 固件的负速度（倒车）指令仅完成代码路径确认，**实际倒车运动从未在硬件上验证过**（CLAUDE.md 已记录）。Ackermann 底盘倒车时转向方向可能反转，STM32 未正确处理负 `linear.x` 对应的转向逻辑。
+**现场处理**: 用户直接观察到倒车转向符号与目标相反，在 `direction_guard` 的 reverse 租约路径翻转 `angular.z` 后重新实测，首个倒车 goal 转向方向正确并返回成功。该补偿是当前实体硬件链的确认结果，应保留。
 
-**当前状态**: 此为硬件层问题，软件侧无法完全修复。正向导航段已验证可正常行驶。
+**边界**: 该验证证明当前硬件链需要转向符号补偿，不证明绕圈来自转向，也不影响更早发生的路径曲率校验。首个 goal 的绕圈另由 DUBIN 起点端姿、QR 到达容差和真实可执行转弯半径共同排查；当前没有 Reeds-Shepp planner 或可通过的 cusp。
 
 **后续必要步骤**:
-1. 实车验证 STM32 负速度指令：单独发送 `linear.x=-0.05` 观察车轮是否倒退
-2. 如倒退但转向反向，需修正 STM32 固件或控制器中的转向符号
-3. 如不退反进，需排查 STM32 速度指令解析或 PID 方向控制
-4. 验证后在 `safety.yaml` 中开启对应运动门禁
+1. 为现有补偿补齐正/倒车 x 左/右四象限 C++ 和命令链回归测试
+2. 车轮离地记录 `/cmd_vel_candidate`、`/cmd_vel`、`/ackermann_cmd` 与实物舵向
+3. 低速地面只跑首个 reverse goal，并录制实际起点 yaw、规划 Path、odom 和 action UUID
+4. 完成转向比例、偏置与真实最小转弯半径标定后再开启对应运动门禁
 
-**临时方案**: 如仅需纯导航验证，可考虑将倒车段改成正向绕行（调整航点避开 QR→VLM 倒退要求），或使用 `nav_only.yaml` 跳过视觉相关段。
-```
+**禁止的替代方案**: 不得通过删除已验证的 `angular.z` 补偿、切换 `REEDS_SHEPP` 或继续降低规划半径来掩盖绕圈。
+
+---
+
+## 问题 9: QR 成功端姿使首个倒车 DUBIN goal 绕行
+
+**症状**: 车辆已能按正确转向完成首个 reverse goal，但从 QR 切换到倒车后会走一段明显的大圆弧，接近目标后才报告成功并进入下一点。
+
+**根因**: QR 名义点为 `(3.13, 0.98, 30 deg)`，现场成功终态约 `(2.94, 0.89)`，位置误差约 `0.206 m`，仍在旧正向 checker 的 `0.25 m / 0.50 rad` 容差内。反向 BT 使用该实际 TF 作为虚拟 DUBIN 起点；在 `R=0.55 m` 下，成功端姿跨过短 CSC 路径的可行边界时，最短解会切换成 CCC 绕行。planner 仍是 DUBIN，严格反向校验也会拒绝 cusp，因此不能归因于 Reeds-Shepp。
+
+**软件修正（2026-07-25）**:
+
+1. 航点 schema 新增 `goal_profile`，QR 方向切换点标为 `precise`。
+2. 新增正向精确 BT，显式选择 `precise_goal_checker`；使用 `xy=0.12 m`、`yaw=0.15 rad`、`stateful=false`。
+3. `b_corridor_enter` 航向从 `-60 deg` 改为 `-70 deg`，使其与到 `b_corridor_out` 的下一段倒车切线一致。
+4. Smac `tolerance` 设为 `0.0`，禁止用附近路径端点替代原始 QR goal；ControllerServer 的 checker 目标是 `path.poses.back()`，非零 planner 回退会绕过精确包络。
+5. `minimum_turning_radius` 恢复为 `0.55 m`，反向 `curvature_tolerance` 恢复为 `0.20`；保留实车确认的倒车 `angular.z` 补偿。
+
+**离线证据**: 名义首段倒车最短路径约 `1.57 m`。对新的 QR 成功位置圆盘和航向区间进行离线采样，未再出现 CCC 最短解，最长约 `1.80 m`；相关内公切线条件在采样包络边界仍保留约 `0.011 m` 裕量。
+
+**验证边界**: 上述结果尚未经过新配置的实体复测。下一次只运行 QR 到首个 reverse goal，保存 QR 成功瞬间 `(x,y,yaw)`、planner Path、action UUID 和 `/odom`；不得直接无人看守跑完整路线。

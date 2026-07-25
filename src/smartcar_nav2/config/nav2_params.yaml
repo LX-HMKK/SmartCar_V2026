@@ -84,7 +84,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["goal_checker", "reverse_goal_checker"]
+    goal_checker_plugins: ["goal_checker", "precise_goal_checker", "reverse_goal_checker"]
     current_goal_checker: "goal_checker"
     controller_plugins: ["FollowPath"]
     progress_checker:
@@ -95,6 +95,13 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.25
       yaw_goal_tolerance: 0.50
+      stateful: false
+    # The QR pose seeds a direction change. This smaller envelope stays clear
+    # of the long-CCC handoff region found in the offline Dubins sampling.
+    precise_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.12
+      yaw_goal_tolerance: 0.15
       stateful: false
     reverse_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
@@ -203,7 +210,9 @@ planner_server:
       plugin: "nav2_smac_planner/SmacPlannerHybrid"
       downsample_costmap: false
       downsampling_factor: 1
-      tolerance: 0.20
+      # Semantic waypoints, especially the QR direction handoff, must not be
+      # replaced by a nearby planner endpoint. Fail and replan if exact is blocked.
+      tolerance: 0.0
       allow_unknown: true
       max_iterations: 100000
       max_on_approach_iterations: 1000
@@ -214,7 +223,7 @@ planner_server:
       angle_quantization_bins: 72
       analytic_expansion_ratio: 3.5
       analytic_expansion_max_length: 3.0
-      minimum_turning_radius: 0.30
+      minimum_turning_radius: 0.55
       non_straight_penalty: 1.2
       cost_penalty: 2.0
       retrospective_penalty: 0.015

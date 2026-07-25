@@ -93,7 +93,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ### 已完成
 
-- ✅ 陀螺仪零偏标定：`gyro_z_bias = 0.000853`（参数链路已打通至 `smartcar_system.launch.py` 默认值）。
+- ✅ 陀螺仪零偏标定：`gyro_z_bias = 0.000614`（30 分钟稳态复标，参数链路已打通至 `smartcar_system.launch.py` 默认值）。
 - ✅ 外参测量（URDF + 微调）：`base_footprint→base_link (0.0841,0,0.03)`、`base_link→laser (-0.05,0,0.23)`、`base_link→camera (0.1205,0,0.11)`。
 - ✅ 轮速标定验证：`longitudinal_velocity_scale = 1.03` 实测通过。
 - ✅ P → 任务发布点导航：0.15 m/s，5 航点，约 35s 完成，自动锁停。2D LiDAR 避障通过锥桶膨胀补偿（local inflation 0.55 / global 0.65）+ footprint 自过滤可用。
@@ -127,14 +127,14 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - **一键导航测试脚本 (2026-07-24 修订)**：只使用仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。`scripts/deploy/nav_test.sh` 是会自动解除急停并 start 的历史副本，不得复制或执行；当前 `scripts/monitor_mission.py` 也不能作为零速或安全判据。
-- **倒车导航实现 (2026-07-24 修订)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；reverse goal 使用 `ComputeReversePathToPose` 自定义 BT 节点（yaw 加 π → DUBIN 规划 → yaw 恢复 π → 严格验证）。**已知问题**：`allow_reversing=true` 使 Smac Hybrid 实际使用 Reeds-Shepp（非纯 DUBIN），路径含方向切换 cusp 导致”绕圈”。方向门倒车时翻转 `angular.z`（补偿 RPP 的 ω=v×κ 在 v<0 时符号反转），已实车验证转向正确。曲率验证 `minimum_turning_radius=0.30, curvature_tolerance=0.50`（正向 0.30 已足够，倒车段仍有部分 curvature_exceeded）。详见 `docs/troubleshooting/nav-startup-issues.md`。
+- **倒车导航实现 (2026-07-25 修订)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；QR 方向切换点使用 `0.12 m / 0.15 rad` 精确正向 BT，Smac 近似终点 `tolerance=0.0`；reverse goal 使用 `ComputeReversePathToPose` 自定义 BT（yaw 加 π → 唯一 DUBIN planner → yaw 恢复 π → 严格验证）。`allow_reversing=true` 只允许 RPP 沿既有反向路径输出负速度，不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；`minimum_turning_radius=0.55, curvature_tolerance=0.20` 已恢复，后段历史 `curvature_exceeded` 仍待本轮完整路线复测。详见 `docs/troubleshooting/nav-startup-issues.md`。
 - **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
 - **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
 - **TROS setup.bash 兼容性 (2026-07-24)**：RDK 上带 `set -euo pipefail` 的脚本 source `/opt/tros/humble/setup.bash` 时，`AMENT_TRACE_SETUP_FILES` 未绑定导致脚本退出。修复：source 前后包裹 `set +u` / `set -u`。`nav_test.sh` 已修复。
 - **ros_cleanup 自 kill (2026-07-24)**：`ros_cleanup.sh` 的 pkill 列表含 `nav_test`，导致 `nav_test.sh` 调用 cleanup 时自杀。修复：从 kill 列表移除测试脚本名。
 - **Forward BT 缺 goal_checker_id (2026-07-24)**：正向 BT XML 的 `FollowPath` 节点未指定 `goal_checker_id="goal_checker"`，导致 Nav2 报 `goal_checker name does not exist` 并立即失败。已修复。
 - **direction_guard 时序过紧 (2026-07-24)**：`raw_odom_timeout_sec=0.25, stop_settle_sec=0.25` 在 prepare→activate 间隙中偶发 `raw_odom_not_stopped`。已调整为 `0.50/0.15`（`config/direction_guard.yaml`）。
-- **方向门倒车转向翻转 (2026-07-24)**：RPP 控制器 `ω=v×κ` 在倒车（v<0）时角速度符号反转，导致 Ackermann 转向打反。修复：`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）。已实车验证。
+- **方向门倒车转向翻转 (2026-07-24)**：用户在实体车上观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
 
 ### 航点编辑与可视化
 

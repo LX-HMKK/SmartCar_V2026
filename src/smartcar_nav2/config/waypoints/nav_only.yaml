@@ -27,6 +27,7 @@ waypoints:
         w: 0.96592583
     task: "nav"
     direction: forward
+    goal_profile: precise
 
   - id: "b_corridor_enter"
     frame_id: "odom_combined"
@@ -38,8 +39,8 @@ waypoints:
       orientation:
         x: 0.0
         y: 0.0
-        z: -0.5000000014532175
-        w: 0.8660254029454231
+        z: -0.573576436351046
+        w: 0.8191520442889918
     task: "corridor"
     direction: reverse
 

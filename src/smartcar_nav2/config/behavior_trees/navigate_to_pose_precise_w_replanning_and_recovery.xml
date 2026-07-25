@@ -1,0 +1,23 @@
+<!-- Precise forward handoff tree: no backup, wait, spin, or in-place rotation. -->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigatePreciseRecovery">
+      <PipelineSequence name="NavigatePreciseWithReplanning">
+        <RateController hz="0.5">
+          <RecoveryNode number_of_retries="1" name="ComputePrecisePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-PreciseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPrecisePath">
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="precise_goal_checker"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-PreciseContext" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="ClearPreciseCostmapsRecovery">
+        <ClearEntireCostmap name="ClearLocalCostmap-PreciseSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

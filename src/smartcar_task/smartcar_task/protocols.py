@@ -38,13 +38,29 @@ def motion_direction(reverse_direction):
     return MOTION_REVERSE if bool(reverse_direction) else MOTION_FORWARD
 
 
-def navigation_behavior_tree(reverse_direction, reverse_behavior_tree):
-    if not reverse_direction:
-        return ""
-    value = str(reverse_behavior_tree).strip()
-    if not value:
-        raise ValueError("reverse_behavior_tree must not be empty")
-    return value
+def navigation_behavior_tree(
+    reverse_direction,
+    reverse_behavior_tree,
+    goal_profile="standard",
+    precise_forward_behavior_tree="",
+):
+    profile = str(goal_profile).strip()
+    if profile not in {"standard", "precise"}:
+        raise ValueError(f"unknown goal profile {profile!r}")
+    if reverse_direction:
+        if profile != "standard":
+            raise ValueError("reverse goals must use the standard profile")
+        value = str(reverse_behavior_tree).strip()
+        if not value:
+            raise ValueError("reverse_behavior_tree must not be empty")
+        return value
+    if profile == "precise":
+        value = str(precise_forward_behavior_tree).strip()
+        if not value:
+            raise ValueError(
+                "precise_forward_behavior_tree must not be empty")
+        return value
+    return ""
 
 
 @dataclass(frozen=True)

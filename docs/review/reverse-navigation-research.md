@@ -10,10 +10,11 @@
 
 1. `validate_waypoints()` 强制 start/QR 正向、QR 后 outbound corridor 与 VLM 倒车、VLM 后至 return 正向。
 2. `smartcar_task` 为每个非起点航点创建一个 `NavigateToPose` goal，并预先生成 UUID。
-3. 正向 goal 使用普通 BT；反向 goal 使用 `navigate_to_pose_reverse_w_replanning_and_recovery.xml`。
+3. 普通正向 goal 使用默认 BT；QR 方向切换点使用精确正向 BT；反向 goal 使用 `navigate_to_pose_reverse_w_replanning_and_recovery.xml`。
 4. `ComputeReversePathToPose` 从 TF 获取实际起点，把起点与目标 yaw 临时加 π，显式 `use_start=true` 调用唯一 DUBIN planner，再把路径姿态恢复 π。
 5. 路径在交给 RPP 前验证 frame、finite、单位四元数、端点、严格反向投影、无 cusp、曲率上限和 global costmap 有效性。
-6. 任务依次执行方向门 `Prepare -> send goal(UUID) -> Activate -> Renew`；结束或取消时先 `Stop`，再取消 action、确认终态和原始 `/odom` 六轴停稳。
+6. 方向门在 reverse 租约下翻转 `angular.z`；这是用户针对实体车辆倒车转向打反进行现场 A/B 后确认有效的硬件链补偿，当前不得依据通用模型推导删除。
+7. 任务依次执行方向门 `Prepare -> send goal(UUID) -> Activate -> Renew`；结束或取消时先 `Stop`，再取消 action、确认终态和原始 `/odom` 六轴停稳。
 
 ```text
 controller_server -> /cmd_vel_nav
@@ -30,6 +31,8 @@ smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
 - RDK 无底盘 smoke 已验证插件可加载、lifecycle 可激活、话题所有者唯一、无许可非零候选无法越过方向门。
 - 未启动实体底盘或相机，未进行实际倒车，因此不能宣称物理路线可用。
 - `minimum_turning_radius: 0.55` 尚未标定。当前端姿下两个后续正向段存在明显兜圈：`c_corner_1 -> c_corner_2` 约 4.31 m，`c_corner_4 -> b_corridor_return_enter` 约 4.25 m；这不否定 QR→VLM 倒车几何，但阻止完整路线验收。
+
+> **2026-07-25 现场证据与软件修正**：后续已确认负速度和上述 `angular.z` 补偿能在首个 reverse goal 上产生正确实体转向；同时观察到 goal 成功前绕圈。绕圈复核为 DUBIN 方向切换起点端姿、宽松 QR 到达容差和不可执行的临时曲率参数共同问题，不是 `allow_reversing` 将 planner 切换成 Reeds-Shepp，也不是 cusp。现已为 QR 增加 `0.12 m / 0.15 rad` 精确到点 profile，将首个倒车点航向改为与下一倒车段相切的 `-70 deg`，并恢复 `R=0.55 / curvature_tolerance=0.20`；新配置仍待实体复测。历史正文中的 REEDS_SHEPP 只是一项未采用候选。
 
 ### 0.3 历史正文阅读规则
 

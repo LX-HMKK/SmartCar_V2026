@@ -14,6 +14,12 @@ FORWARD_BT_FILE = (
     / "behavior_trees"
     / "navigate_to_pose_w_replanning_and_recovery.xml"
 )
+PRECISE_FORWARD_BT_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_precise_w_replanning_and_recovery.xml"
+)
 REVERSE_BT_FILE = (
     PACKAGE_ROOT
     / "config"
@@ -34,6 +40,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertEqual(planner["motion_model_for_search"], "DUBIN")
         self.assertNotIn("reverse_penalty", planner)
         self.assertAlmostEqual(planner["minimum_turning_radius"], 0.55)
+        self.assertEqual(planner["tolerance"], 0.0)
 
         forward_tags = {
             element.tag for element in ElementTree.parse(FORWARD_BT_FILE).iter()
@@ -55,8 +62,16 @@ class TestReverseNavigationContracts(unittest.TestCase):
         reverse_compute = root.find(".//ComputeReversePathToPose")
         self.assertIsNotNone(reverse_compute)
         self.assertEqual(reverse_compute.attrib["planner_id"], "GridBased")
-        self.assertEqual(
-            float(reverse_compute.attrib["minimum_turning_radius"]), 0.55
+        planner_radius = self.params["planner_server"]["ros__parameters"][
+            "GridBased"
+        ]["minimum_turning_radius"]
+        reverse_radius = float(
+            reverse_compute.attrib["minimum_turning_radius"]
+        )
+        self.assertAlmostEqual(reverse_radius, planner_radius)
+        self.assertAlmostEqual(reverse_radius, 0.55)
+        self.assertAlmostEqual(
+            float(reverse_compute.attrib["curvature_tolerance"]), 0.20
         )
         self.assertLessEqual(
             float(reverse_compute.attrib["goal_position_tolerance"]), 0.12
@@ -80,6 +95,39 @@ class TestReverseNavigationContracts(unittest.TestCase):
             reverse["yaw_goal_tolerance"], forward["yaw_goal_tolerance"]
         )
         self.assertIs(reverse["stateful"], False)
+
+    def test_precise_forward_tree_uses_registered_goal_checker(self):
+        root = ElementTree.parse(PRECISE_FORWARD_BT_FILE).getroot()
+        tags = [element.tag for element in root.iter()]
+        self.assertIn("RateController", tags)
+        self.assertIn("ComputePathToPose", tags)
+        self.assertIn("FollowPath", tags)
+        self.assertNotIn("ComputeReversePathToPose", tags)
+        for forbidden in ("Spin", "BackUp", "Wait"):
+            self.assertNotIn(forbidden, tags)
+
+        compute = root.find(".//ComputePathToPose")
+        self.assertIsNotNone(compute)
+        planner_id = compute.attrib["planner_id"]
+        self.assertEqual(planner_id, "GridBased")
+        planner = self.params["planner_server"]["ros__parameters"][planner_id]
+        self.assertEqual(planner["tolerance"], 0.0)
+
+        follow = root.find(".//FollowPath")
+        self.assertIsNotNone(follow)
+        self.assertEqual(follow.attrib["controller_id"], "FollowPath")
+        checker_id = follow.attrib["goal_checker_id"]
+        self.assertEqual(checker_id, "precise_goal_checker")
+
+        controller = self.params["controller_server"]["ros__parameters"]
+        self.assertIn(checker_id, controller["goal_checker_plugins"])
+        precise = controller[checker_id]
+        self.assertEqual(
+            precise["plugin"], "nav2_controller::SimpleGoalChecker"
+        )
+        self.assertAlmostEqual(precise["xy_goal_tolerance"], 0.12)
+        self.assertAlmostEqual(precise["yaw_goal_tolerance"], 0.15)
+        self.assertIs(precise["stateful"], False)
 
     def test_bt_plugin_list_retains_required_nav2_nodes(self):
         plugins = set(
@@ -148,6 +196,11 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn("BT_PLUGIN_EXPORT", cmake)
         self.assertIn("test_reverse_path_utils", cmake)
         self.assertIn("test_reverse_navigation_contracts.py", cmake)
+        self.assertTrue(PRECISE_FORWARD_BT_FILE.is_file())
+        self.assertIn("install(DIRECTORY launch config maps", cmake)
+        self.assertNotIn(
+            f'PATTERN "{PRECISE_FORWARD_BT_FILE.name}" EXCLUDE', cmake
+        )
 
 
 if __name__ == "__main__":

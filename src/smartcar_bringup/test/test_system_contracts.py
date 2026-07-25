@@ -37,6 +37,17 @@ def launch_default(path, name):
     raise AssertionError(f"launch argument {name!r} not found")
 
 
+def assigned_literal(path, name):
+    tree = ast.parse(path.read_text(encoding="utf-8"))
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Assign) or len(node.targets) != 1:
+            continue
+        target = node.targets[0]
+        if isinstance(target, ast.Name) and target.id == name:
+            return ast.literal_eval(node.value)
+    raise AssertionError(f"assignment {name!r} not found")
+
+
 class SystemContractTests(unittest.TestCase):
     def test_system_exposes_all_switches_and_never_autostarts_motion(self):
         expected_defaults = {
@@ -221,6 +232,44 @@ class SystemContractTests(unittest.TestCase):
             "laser_odometry_calibrated",
         ):
             self.assertIs(gates[name], False)
+
+    def test_competition_system_defaults_match_measured_calibration(self):
+        config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
+        base = config["extrinsics"]["base_to_link"]
+        laser = config["extrinsics"]["link_to_laser"]
+        camera = config["extrinsics"]["link_to_camera"]
+
+        extrinsic_defaults = assigned_literal(SYSTEM, "extrinsic_defaults")
+        camera_defaults = assigned_literal(
+            SYSTEM, "camera_extrinsic_defaults"
+        )
+        expected_base = dict(zip(
+            ("base_x", "base_y", "base_z"),
+            (str(value) for value in base["xyz"]),
+        ))
+        expected_laser = dict(zip(
+            ("laser_x", "laser_y", "laser_z"),
+            (str(value) for value in laser["xyz"]),
+        ))
+        expected_laser.update(dict(zip(
+            ("laser_roll", "laser_pitch", "laser_yaw"),
+            (str(value) for value in laser["rpy"]),
+        )))
+        expected_camera = dict(zip(
+            ("camera_x", "camera_y", "camera_z"),
+            (str(value) for value in camera["xyz"]),
+        ))
+
+        for name, expected in {**expected_base, **expected_laser}.items():
+            with self.subTest(name=name):
+                self.assertEqual(extrinsic_defaults.get(name, "0.0"), expected)
+        for name, expected in expected_camera.items():
+            with self.subTest(name=name):
+                self.assertEqual(camera_defaults.get(name, "0.0"), expected)
+        self.assertEqual(
+            launch_default(SYSTEM, "gyro_z_bias"),
+            str(config["calibration"]["gyro_z_bias"]),
+        )
 
     def test_bringup_declares_direct_runtime_and_test_dependencies(self):
         source = PACKAGE_XML.read_text(encoding="utf-8")

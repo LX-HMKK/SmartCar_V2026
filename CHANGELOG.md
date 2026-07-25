@@ -1,5 +1,27 @@
 # 变更日志
 
+## 2026-07-25 - 收敛 QR 到倒车段的方向切换端姿
+
+### 原因
+
+- 现场首个倒车 goal 从 QR 实际终态约 `(2.94, 0.89)` 出发，而名义 QR 点为 `(3.13, 0.98)`；旧正向 checker 的 `0.25 m / 0.50 rad` 容差允许约 `0.206 m` 的位置误差直接成功。
+- 反向 BT 使用成功瞬间的实际 TF 作为 DUBIN 起点。在 `minimum_turning_radius=0.55 m` 下，起点端姿跨过短 CSC 路径的可行边界时，最短解会切换为约 3 m 以上的 CCC 绕行，因此车辆看似已经接近目标仍会继续绕圈。
+- 该问题与现场确认有效的倒车 `angular.z` 符号补偿无关，也不是 `REEDS_SHEPP` 或 cusp。
+
+### 修正
+
+- 航点新增 `goal_profile: standard|precise`；QR 方向切换点使用专用正向 BT 和 `precise_goal_checker`，容差为 `0.12 m / 0.15 rad`，且 `stateful=false`。
+- `b_corridor_enter` 航向从 `-60 deg` 调整为 `-70 deg`，与它到下一倒车点 `b_corridor_out` 的反向行驶切线一致；`default_waypoints.yaml` 与 `nav_only.yaml` 同步。
+- Smac `tolerance` 从 `0.20 m` 改为 `0.0`，禁止 planner 用附近路径端点替代原始语义航点；否则 controller 会对 `path.poses.back()` 判成功并绕过 QR 精确包络。
+- 规划半径恢复并锁定为物理可执行的 `0.55 m`，反向路径曲率容差恢复为 `0.20`；不采用现场诊断用的 `0.30/0.50`。
+- 保留倒车租约下经实车确认的 `angular.z` 翻转，并增加正向透传、倒车正负角速度及定时重发的 C++ 回归覆盖。
+- 完整系统预检发现顶层 launch 只默认了 LiDAR yaw，实测平移外参未进入运行 TF；现将 base、LiDAR、camera 的 measured 外参设为竞赛车入口默认值，并以协调配置合同锁定。陀螺零偏同步为最新 30 分钟稳态复标值 `0.000614`。
+
+### 验证边界
+
+- 离线解析与容差采样表明，新名义端姿的首段倒车最短路径约 `1.57 m`；在 `0.12 m / 0.15 rad` 成功包络采样内未再出现 CCC 最短解，最长约 `1.80 m`。
+- 这只是软件与几何证据。新的 QR 精确到点能力、首个 reverse goal 和后段 `curvature_exceeded` 仍须按车轮离地、`0.15 m/s` 低速地面的顺序复测。
+
 ## 2026-07-24 - 纯导航启动链修复与倒车转向实车验证
 
 ### 背景
@@ -15,12 +37,12 @@
 
 - **Forward BT 缺 goal_checker_id**：正向 XML 的 `FollowPath` 节点未指定 `goal_checker_id="goal_checker"`，Nav2 报 `goal_checker name does not exist` 并立即失败。
 - **nav2_params 缺 current_goal_checker**：虽然 `goal_checker_plugins` 定义了插件列表，但 `current_goal_checker` 参数缺失。Nav2 的 `goal_checker_selector` BT 节点负责动态设置此参数；如 BT 树不含该节点则需在 params 中显式声明。
-- **倒车 curvature 超限**：`minimum_turning_radius=0.55, curvature_tolerance=0.20` 计算的 `max_curvature≈2.018 rad/m`，反向路径首段被拒。调整为 `0.30/0.50`（max_curvature≈3.833 rad/m）。
+- **倒车 curvature 超限诊断**：`minimum_turning_radius=0.55, curvature_tolerance=0.20` 时反向路径首段被拒；现场临时调整为 `0.30/0.50` 以放行诊断。2026-07-25 复核确认该组合超过执行链转角能力并破坏 release 合同，不是可发布修复。
 
 ### 方向门修复 (R6-R7)
 
 - **direction_guard 时序过紧**：`raw_odom_timeout_sec=0.25, stop_settle_sec=0.25` 在 prepare→activate 间隙中偶发 `raw_odom_not_stopped`。调整为 `0.50/0.15`。
-- **倒车 Ackermann 转向打反（实车验证）**：**根因**：Nav2 RPP 控制器的角速度公式 `ω=v×κ` 在倒车（v<0）时符号反转——向左的路径曲率产生向右的角速度指令。**修复**：`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）。**实车结果**：倒车段 (2.94,0.89)→(2.09,1.83) 成功完成，转向方向正确。
+- **倒车 Ackermann 转向打反（实车验证）**：用户在实体车上观察到倒车转向符号与目标相反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一倒车段 (2.94,0.89)→(2.09,1.83) 转向方向正确并成功完成。该补偿记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
 
 ### 实车测试结果
 
@@ -28,14 +50,14 @@
 |----|-------|------|------|
 | 1 | (0.00,0.00)→(3.13,0.98) | 正向 | ✅（Planner 首试超时后重试成功） |
 | 2 | (2.94,0.89)→(2.09,1.83) | 倒车 | ✅（转向正确，但路径绕圈） |
-| 3 | (2.11,1.74)→(1.83,2.54) | 正向 | ✅ |
-| 4 | (1.87,2.44)→(0.39,2.68) | 正向 | ✅ |
+| 3 | (2.11,1.74)→(1.83,2.54) | 倒车 | ✅ |
+| 4 | (1.87,2.44)→(0.39,2.68) | 倒车 | ✅ |
 | 5 | (0.65,2.80)→(0.39,2.68) | 倒车 | ❌ curvature_exceeded @ segment 8-10 |
 
 ### 待解决问题
 
-- **倒车路径绕圈**：yaw-flip + `allow_reversing=true` 使 Smac Hybrid 实际使用 Reeds-Shepp（含方向切换 cusp），路径出现"绕一圈"行为。直接线性路径方案待 ultracode 审查后实施。
-- **后段倒车 curvature_exceeded**：`minimum_turning_radius=0.30` 仍不足以通过所有反向段曲率验证。
+- **倒车路径绕圈（2026-07-25 已做软件修正，待实车复测）**：planner 始终是 DUBIN；`allow_reversing=true` 不会切换 planner，严格反向校验也不会放过 cusp。现已为 QR 方向切换点启用 `0.12 m / 0.15 rad` 精确 checker，并将首个倒车点航向改为 `-70 deg`；仍需录制实际起点和规划 Path 验证。
+- **后段倒车 curvature_exceeded**：`minimum_turning_radius=0.30` / `curvature_tolerance=0.50` 是不可发布的临时诊断值；应恢复一致的物理半径并修正路径验证，而不是继续放宽。
 
 ### 文档
 
