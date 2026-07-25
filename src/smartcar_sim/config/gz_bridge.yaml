@@ -22,8 +22,8 @@
   gz_type_name: "gz.msgs.LaserScan"
   direction: GZ_TO_ROS
 
-# Command velocity: ROS2 → Gazebo (safety_node → /cmd_vel_safe)
-- ros_topic_name: "/cmd_vel_safe"
+# Command velocity: ROS2 → Gazebo (velocity_smoother → cmd_vel_smoothed, bypass safety)
+- ros_topic_name: "/cmd_vel_smoothed"
   gz_topic_name: "/model/origincar/cmd_vel"
   ros_type_name: "geometry_msgs/msg/Twist"
   gz_type_name: "gz.msgs.Twist"

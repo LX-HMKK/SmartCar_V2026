@@ -174,22 +174,9 @@ def generate_launch_description():
     # The real system requires forward/reverse leases per waypoint.
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
-    # ── Safety node (C++, sim mode: skip STM32 heartbeat) ──
-    safety_node = Node(
-        package="smartcar_safety",
-        executable="safety_node_cpp",
-        name="safety_node",
-        remappings=[
-            ("/cmd_vel", "/cmd_vel_smoothed"),  # 绕过 direction_guard
-        ],
-        parameters=[PathJoinSubstitution([pkg_safety, "config", "safety.yaml"]), {
-            "use_sim_time": True,
-            "use_safety_ackermann": False,  # Output Twist, not Ackermann
-            "emergency_stop_on_start": False,
-            "minimum_voltage": 0.0,  # Skip voltage check in sim
-            "odom_timeout_sec": 5.0,  # Generous timeout for sim
-        }],
-    )
+    # ── Safety bypass: simulation doesn't need safety_node ──
+    # cmd_vel chain: controller → velocity_smoother → /cmd_vel_smoothed → bridge → Gazebo
+    # No direction_guard or safety_node (both block velocity without real hardware)
 
     # ── Nav2 ──
     nav2_params = PathJoinSubstitution([pkg_nav2, "config", "nav2_params.yaml"])
@@ -258,8 +245,6 @@ def generate_launch_description():
         odom_combined_relay,
         # Start navigation stack after EKF
         TimerAction(period=12.0, actions=[nav2_launch]),
-        # Safety node (no direction_guard in sim)
-        TimerAction(period=8.0, actions=[safety_node]),
         # Auto-train node (embedded navigation test + parameter tuning)
         TimerAction(period=20.0, actions=[
             Node(
