@@ -190,7 +190,8 @@ exec rviz2 -d /root/ros2_ws/src/smartcar_tools/rviz/navigation.rviz
 RVEOF
 chmod +x /tmp/start_rviz.sh
 
-pkill -9 -f rviz2 2>/dev/null || true
+OLD_RVIZ=$(ps -C rviz2 -o pid= --no-headers 2>/dev/null || true)
+[ -n "$OLD_RVIZ" ] && kill -9 $OLD_RVIZ 2>/dev/null || true
 sleep 1
 nohup /tmp/start_rviz.sh > "$LOG_DIR/rviz.log" 2>&1 &
 RVIZ_PID=$!
@@ -247,5 +248,5 @@ echo "|                                                            |"
 echo "|  紧急停车:                                                  |"
 echo '|    ros2 service call /smartcar/safety/emergency_stop \    |'
 echo '|      std_srvs/srv/SetBool "{data: true}"                  |'
-echo '|  或: pkill -9 -f "ros2 launch"                             |'
+echo '|  或: bash /usr/local/bin/ros_cleanup                        |'
 echo "+============================================================+"

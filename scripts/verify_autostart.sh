@@ -310,9 +310,15 @@ kill -9 "$VIZ_PID1" "$VIZ_PID2" 2>/dev/null || true
 if [ -x "$CLEANUP_BIN" ]; then
   bash "$CLEANUP_BIN"
 else
-  pkill -9 -f "ros2 launch" 2>/dev/null || true
-  pkill -9 -f "field_reference" 2>/dev/null || true
-  pkill -9 -f "waypoint_viz" 2>/dev/null || true
+  # Fallback: kill known ROS binaries by PID (ps -C, not pkill -f)
+  for bin in controller_server planner_server bt_navigator velocity_smoother lifecycle_manager safety_node_cpp direction_guard_node task_node origincar_base_node ydlidar_ros2_driver ekf_node field_reference_node waypoint_viz rviz2 ros2_daemon; do
+    PIDS=$(ps -C "$bin" -o pid= --no-headers 2>/dev/null || true)
+    [ -n "$PIDS" ] && kill -9 $PIDS 2>/dev/null || true
+  done
+  # Python nodes
+  for pid in $(pgrep -f "python3.*(ros2|smartcar|nav2|origincar)" 2>/dev/null || true); do
+    kill -9 "$pid" 2>/dev/null || true
+  done
   sleep 1
   rm -f /dev/shm/fastrtps_port* /dev/shm/fastdds_port* 2>/dev/null || true
 fi

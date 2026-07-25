@@ -71,7 +71,7 @@ echo "║    ros2 service call /smartcar/task/start std_srvs/srv/Trigger \"{}\""
 echo "║                                              ║"
 echo "║  紧急停车：                                   ║"
 echo "║    ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool \"{data: true}\""
-echo "║    pkill -9 -f 'ros2 launch'                 ║"
+echo "║    bash /usr/local/bin/ros_cleanup            ║"
 echo "║  日志: tail -f /tmp/bringup_safe.log          ║"
 echo "╚══════════════════════════════════════════════╝"
 

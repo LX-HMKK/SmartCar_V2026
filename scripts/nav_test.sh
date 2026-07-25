@@ -41,29 +41,11 @@ die()  { echo "✗ $*"; exit 1; }
 
 # ---- 1. 清理 ----
 banner "[1/7] 彻底清理"
-pkill -9 -f 'ros2 launch'      2>/dev/null || true
-pkill -9 -f 'ros2 run'         2>/dev/null || true
-pkill -9 -f 'navigation'       2>/dev/null || true
-pkill -9 -f 'controller_server' 2>/dev/null || true
-pkill -9 -f 'planner_server'   2>/dev/null || true
-pkill -9 -f 'bt_navigator'     2>/dev/null || true
-pkill -9 -f 'velocity_smoother' 2>/dev/null || true
-pkill -9 -f 'lifecycle_manager' 2>/dev/null || true
-pkill -9 -f 'ekf_node'         2>/dev/null || true
-pkill -9 -f 'task_node'        2>/dev/null || true
-pkill -9 -f 'safety_node'      2>/dev/null || true
-pkill -9 -f 'ydlidar'          2>/dev/null || true
-pkill -9 -f 'field_reference'  2>/dev/null || true
-pkill -9 -f 'waypoint_viz'     2>/dev/null || true
-pkill -9 -f 'static_transform' 2>/dev/null || true
-sleep 2
-rm -f /dev/shm/fastrtps_port*   2>/dev/null || true
-rm -f /dev/shm/fastdds_port*    2>/dev/null || true
-rm -f /dev/shm/*ros2*           2>/dev/null || true
-rm -f /dev/shm/*fast*           2>/dev/null || true
-ros2 daemon stop 2>/dev/null || true
-sleep 1
-ros2 daemon start 2>/dev/null || true
+if [ -x /usr/local/bin/ros_cleanup ]; then
+  bash /usr/local/bin/ros_cleanup
+else
+  bash /root/ros2_ws/scripts/ros_cleanup.sh
+fi
 echo "  ✓ 清理完成"
 
 # ---- 2. 构建 ----
@@ -90,13 +72,12 @@ fi
 
 # ---- 4. 先验地图 + 航点 ----
 banner "[4/7] 可视化"
-pkill -9 -f field_reference_node 2>/dev/null || true
-pkill -9 -f waypoint_viz 2>/dev/null || true
-sleep 1
 ros2 run smartcar_tools field_reference_node --ros-args -r __ns:=/smartcar &>/tmp/field_ref.log &
+VIZ_PID1=$!
 ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:="$WP" &>/tmp/waypoint_viz.log &
+VIZ_PID2=$!
 sleep 2
-echo "  ✓ field_reference + waypoint_viz 已启动"
+echo "  ✓ field_reference + waypoint_viz 已启动 (PIDs: $VIZ_PID1 $VIZ_PID2)"
 
 # ---- 5. 启动系统 ----
 if $AUTOSTART; then
@@ -142,7 +123,8 @@ if $NO_RVIZ; then
   banner "[7/7] 跳过 RViz"
   echo "  - RViz 已禁用 (--no-rviz)"
 else
-  pkill -9 -f rviz2 2>/dev/null || true
+  OLD_RVIZ=$(ps -C rviz2 -o pid= --no-headers 2>/dev/null || true)
+  [ -n "$OLD_RVIZ" ] && kill -9 $OLD_RVIZ 2>/dev/null || true
   sleep 1
   if $AUTOSTART; then
     banner "[7/7] RViz + 自动发车"
@@ -164,5 +146,6 @@ else
 fi
 echo "║  监控: ros2 topic echo /smartcar/task/state  ║"
 echo "║  日志: tail -f /tmp/bringup.log               ║"
-echo "║  急停: pkill -9 -f 'ros2 launch'             ║"
+echo "║  急停: ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool '{data: true}' ║"
+echo "║  硬杀: bash /usr/local/bin/ros_cleanup        ║"
 echo "╚══════════════════════════════════════════════╝"
