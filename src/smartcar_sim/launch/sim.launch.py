@@ -202,6 +202,7 @@ def generate_launch_description():
         name="task_node",
         parameters=[PathJoinSubstitution([pkg_task, "config", "task.yaml"]), {
             "use_sim_time": True,
+            "waypoints_file": PathJoinSubstitution([pkg_nav2, "config", "waypoints", "nav_only.yaml"]),
             "waypoints_calibrated": True,
             "extrinsics_calibrated": True,
             "steering_calibrated": True,
