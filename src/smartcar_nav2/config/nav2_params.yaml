@@ -105,8 +105,8 @@ controller_server:
       stateful: false
     reverse_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.12
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.25
+      yaw_goal_tolerance: 0.50
       stateful: false
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
@@ -128,7 +128,7 @@ controller_server:
       regulated_linear_scaling_min_radius: 0.9
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
-      allow_reversing: true
+      allow_reversing: false
 
 local_costmap:
   local_costmap:
