@@ -50,12 +50,6 @@
     <cast_shadows>true</cast_shadows>
   </light>
 
-  <!-- ===== ROBOT (embedded, avoids spawn connection issues) ===== -->
-  <include>
-    <pose>0 0 0.03 0 0 0</pose>
-    <uri>model://origincar</uri>
-  </include>
-
   <!-- ===== GROUND PLANE ===== -->
   <model name="ground_plane">
     <static>true</static>

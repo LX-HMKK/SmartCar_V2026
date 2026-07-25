@@ -51,6 +51,7 @@ def generate_launch_description():
         output="screen",
         condition=UnlessCondition(headless),
         name="gz_server",
+        additional_env={"IGN_RELAY": "1"},
     )
 
     gz_server_headless = ExecuteProcess(
@@ -58,6 +59,7 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(headless),
         name="gz_server_headless",
+        additional_env={"IGN_RELAY": "1"},
     )
 
     # Robot is embedded in world file via <include> — no spawn needed
@@ -130,6 +132,7 @@ def generate_launch_description():
             "config_file": bridge_params,
         }],
         output="screen",
+        additional_env={"IGN_RELAY": "1"},
     )
 
     # ── EKF: fuse /odom + /imu → /odom_combined ──
