@@ -1,0 +1,52 @@
+# ros_gz_bridge parameter bridge configuration
+# Bridges Gazebo topics ↔ ROS2 topics for simulation
+
+# Clock: Gazebo → ROS2
+- ros_topic_name: "/clock"
+  gz_topic_name: "/clock"
+  ros_type_name: "rosgraph_msgs/msg/Clock"
+  gz_type_name: "gz.msgs.Clock"
+  direction: GZ_TO_ROS
+
+# Odometry: Gazebo → ROS2 (ground truth from Ackermann plugin)
+- ros_topic_name: "/odom"
+  gz_topic_name: "/model/origincar/odometry"
+  ros_type_name: "nav_msgs/msg/Odometry"
+  gz_type_name: "gz.msgs.Odometry"
+  direction: GZ_TO_ROS
+
+# LiDAR scan: Gazebo → ROS2
+- ros_topic_name: "/scan"
+  gz_topic_name: "/world/track/model/origincar/link/laser_link/sensor/lidar_sensor/scan"
+  ros_type_name: "sensor_msgs/msg/LaserScan"
+  gz_type_name: "gz.msgs.LaserScan"
+  direction: GZ_TO_ROS
+
+# IMU: Gazebo → ROS2
+- ros_topic_name: "/imu"
+  gz_topic_name: "/world/track/model/origincar/link/base_link/sensor/imu_sensor/imu"
+  ros_type_name: "sensor_msgs/msg/Imu"
+  gz_type_name: "gz.msgs.IMU"
+  direction: GZ_TO_ROS
+
+# Command velocity: ROS2 → Gazebo
+# safety_node (use_safety_ackermann:=false) publishes Twist to /cmd_vel_safe
+- ros_topic_name: "/cmd_vel_safe"
+  gz_topic_name: "/model/origincar/cmd_vel"
+  ros_type_name: "geometry_msgs/msg/Twist"
+  gz_type_name: "gz.msgs.Twist"
+  direction: ROS_TO_GZ
+
+# Joint states: Gazebo → ROS2
+- ros_topic_name: "/joint_states"
+  gz_topic_name: "/world/track/model/origincar/joint_state"
+  ros_type_name: "sensor_msgs/msg/JointState"
+  gz_type_name: "gz.msgs.Model"
+  direction: GZ_TO_ROS
+
+# TF: Gazebo → ROS2
+- ros_topic_name: "/tf"
+  gz_topic_name: "/model/origincar/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS

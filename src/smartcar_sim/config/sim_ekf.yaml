@@ -1,0 +1,98 @@
+# EKF 配置——仿真模式
+# 融合 Gazebo 地面真值里程计 (/odom) + IMU (/imu) → /odom_combined
+# 匹配真实 RDK 的 odom_combined 输出约定
+
+robot_ekf:
+  ros__parameters:
+    use_sim_time: true
+
+    # 发布频率 (Hz)
+    frequency: 50.0
+
+    # 2D 模式 (x, y, yaw)
+    two_d_mode: true
+
+    # 坐标系
+    map_frame: map
+    odom_frame: odom_combined
+    base_link_frame: base_footprint
+    world_frame: odom_combined
+
+    # 发布 odom_combined → base_footprint 的 TF
+    publish_tf: true
+
+    # ===== 传感器输入 =====
+    # 输入 0: /odom (Gazebo 地面真值)
+    odom0: /odom
+    odom0_config:
+      - true   # x
+      - true   # y
+      - false  # z
+      - false  # roll
+      - false  # pitch
+      - true   # yaw
+      - true   # vx
+      - false  # vy
+      - false  # vz
+      - false  # vroll
+      - false  # vpitch
+      - true   # vyaw
+      - false  # ax
+      - false  # ay
+      - false  # az
+
+    # 输入 1: /imu (Gazebo IMU)
+    imu0: /imu
+    imu0_config:
+      - false  # x
+      - false  # y
+      - false  # z
+      - false  # roll
+      - false  # pitch
+      - false  # yaw       # yaw from IMU is unreliable → disabled
+      - false  # vx
+      - false  # vy
+      - false  # vz
+      - false  # vroll
+      - false  # vpitch
+      - true   # vyaw      # 融合角速度
+      - false  # ax
+      - false  # ay
+      - true   # az        # 融合线加速度（仅 z）
+
+    # ===== 过程噪声 =====
+    # 仿真里程计精度极高，给传感器更多信任
+    process_noise_covariance:
+      - 0.05   # x
+      - 0.0
+      - 0.05   # y
+      - 0.0
+      - 0.0
+      - 0.05   # yaw
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.01   # vx
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.01   # vyaw
+
+    # ===== 初始协方差 =====
+    initial_estimate_covariance:
+      - 1e-9   # x
+      - 0.0
+      - 1e-9   # y
+      - 0.0
+      - 0.0
+      - 1e-9   # yaw
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1e-9   # vx
+      - 0.0
+      - 0.0
+      - 0.0
+      - 0.0
+      - 1e-9   # vyaw

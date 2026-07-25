@@ -1,0 +1,252 @@
+<?xml version="1.0" ?>
+<sdf version="1.8">
+<model name="origincar">
+  <!-- OriginCar Ackermann robot for Gazebo Fortress
+       Dimensions: wheelbase=0.189m, track=0.189m, wheel_r=0.03m
+       Rear-axle origin (base_footprint) -->
+
+  <!-- ===== BASE FOOTPRINT (rear axle, origin) ===== -->
+  <link name="base_footprint"/>
+
+  <!-- ===== BASE LINK (chassis center, 0.0841m forward of rear axle) ===== -->
+  <link name="base_link">
+    <pose>0.0841 0 0.03 0 0 0</pose>
+    <inertial>
+      <mass>2.5</mass>
+      <inertia>
+        <ixx>0.05</ixx><iyy>0.08</iyy><izz>0.08</izz>
+      </inertia>
+    </inertial>
+    <visual name="body_visual">
+      <geometry><box><size>0.276 0.164 0.08</size></box></geometry>
+      <material>
+        <ambient>0.2 0.2 0.8 1</ambient>
+        <diffuse>0.2 0.2 0.8 1</diffuse>
+      </material>
+    </visual>
+    <collision name="body_collision">
+      <geometry><box><size>0.276 0.164 0.06</size></box></geometry>
+    </collision>
+
+    <sensor name="imu_sensor" type="imu">
+      <topic>/imu</topic>
+      <update_rate>100</update_rate>
+      <imu>
+        <angular_velocity>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.0003</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.0003</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.0003</stddev></noise></z>
+        </angular_velocity>
+        <linear_acceleration>
+          <x><noise type="gaussian"><mean>0</mean><stddev>0.01</stddev></noise></x>
+          <y><noise type="gaussian"><mean>0</mean><stddev>0.01</stddev></noise></y>
+          <z><noise type="gaussian"><mean>0</mean><stddev>0.01</stddev></noise></z>
+        </linear_acceleration>
+      </imu>
+    </sensor>
+  </link>
+
+  <!-- ===== LASER LINK ===== -->
+  <link name="laser_link">
+    <pose>0.0341 0 0.26 0 0 0</pose>
+    <inertial>
+      <mass>0.001</mass>
+      <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>
+    </inertial>
+    <visual name="laser_visual">
+      <geometry><cylinder><radius>0.02</radius><length>0.04</length></cylinder></geometry>
+      <material><ambient>0.5 0.5 0.5 1</ambient></material>
+    </visual>
+    <sensor name="lidar_sensor" type="gpu_lidar">
+      <topic>/scan</topic>
+      <update_rate>10</update_rate>
+      <ray>
+        <scan>
+          <horizontal>
+            <samples>360</samples>
+            <resolution>1</resolution>
+            <min_angle>-3.14159</min_angle>
+            <max_angle>3.14159</max_angle>
+          </horizontal>
+        </scan>
+        <range><min>0.1</min><max>12.0</max><resolution>0.01</resolution></range>
+      </ray>
+      <always_on>1</always_on>
+      <visualize>0</visualize>
+    </sensor>
+  </link>
+
+  <!-- ===== STEERING KNUCKLES (invisible) ===== -->
+  <link name="up_left_steer_link">
+    <pose>0.1049 0.0945 0.03 0 0 0</pose>
+    <inertial>
+      <mass>0.001</mass>
+      <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>
+    </inertial>
+  </link>
+
+  <link name="up_right_steer_link">
+    <pose>0.1049 -0.0945 0.03 0 0 0</pose>
+    <inertial>
+      <mass>0.001</mass>
+      <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>
+    </inertial>
+  </link>
+
+  <!-- ===== WHEELS ===== -->
+  <!-- Rear-left -->
+  <link name="down_left_Link">
+    <pose>-0.0841 0.0945 0.03 0 0 0</pose>
+    <inertial>
+      <mass>0.05</mass>
+      <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
+    </inertial>
+    <visual name="down_left_visual">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <material><ambient>0.1 0.1 0.1 1</ambient></material>
+    </visual>
+    <collision name="down_left_collision">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+    </collision>
+  </link>
+
+  <!-- Rear-right -->
+  <link name="down_right_Link">
+    <pose>-0.0841 -0.0945 0.03 0 0 0</pose>
+    <inertial>
+      <mass>0.05</mass>
+      <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
+    </inertial>
+    <visual name="down_right_visual">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <material><ambient>0.1 0.1 0.1 1</ambient></material>
+    </visual>
+    <collision name="down_right_collision">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+    </collision>
+  </link>
+
+  <!-- Front-left wheel -->
+  <link name="up_left_Link">
+    <pose>0 0 0 0 0 0</pose>
+    <inertial>
+      <mass>0.05</mass>
+      <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
+    </inertial>
+    <visual name="up_left_visual">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <material><ambient>0.1 0.1 0.1 1</ambient></material>
+    </visual>
+    <collision name="up_left_collision">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+    </collision>
+  </link>
+
+  <!-- Front-right wheel -->
+  <link name="up_right_Link">
+    <pose>0 0 0 0 0 0</pose>
+    <inertial>
+      <mass>0.05</mass>
+      <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
+    </inertial>
+    <visual name="up_right_visual">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <material><ambient>0.1 0.1 0.1 1</ambient></material>
+    </visual>
+    <collision name="up_right_collision">
+      <geometry><cylinder><radius>0.03</radius><length>0.025</length></cylinder></geometry>
+      <surface><friction><ode><mu>1.0</mu><mu2>1.0</mu2></ode></friction></surface>
+    </collision>
+  </link>
+
+  <!-- ===== JOINTS ===== -->
+  <!-- base_footprint → base_link (fixed, offset handled by pose) -->
+  <joint name="base_footprint_joint" type="fixed">
+    <parent>base_footprint</parent>
+    <child>base_link</child>
+  </joint>
+
+  <!-- base_link → laser_link (fixed) -->
+  <joint name="laser_joint" type="fixed">
+    <parent>base_link</parent>
+    <child>laser_link</child>
+  </joint>
+
+  <!-- REAR: base_link → wheel (rotation only) -->
+  <joint name="down_left_joint" type="revolute">
+    <parent>base_link</parent>
+    <child>down_left_Link</child>
+    <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+  </joint>
+
+  <joint name="down_right_joint" type="revolute">
+    <parent>base_link</parent>
+    <child>down_right_Link</child>
+    <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+  </joint>
+
+  <!-- FRONT STEERING: base_link → steer_link (revolute around Z) -->
+  <joint name="up_left_steer_joint" type="revolute">
+    <parent>base_link</parent>
+    <child>up_left_steer_link</child>
+    <axis><xyz>0 0 1</xyz>
+      <limit><lower>-0.45</lower><upper>0.45</upper></limit></axis>
+  </joint>
+
+  <joint name="up_right_steer_joint" type="revolute">
+    <parent>base_link</parent>
+    <child>up_right_steer_link</child>
+    <axis><xyz>0 0 1</xyz>
+      <limit><lower>-0.45</lower><upper>0.45</upper></limit></axis>
+  </joint>
+
+  <!-- FRONT WHEEL ROTATION: steer_link → wheel_link (revolute around Y) -->
+  <joint name="up_left_joint" type="revolute">
+    <parent>up_left_steer_link</parent>
+    <child>up_left_Link</child>
+    <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+  </joint>
+
+  <joint name="up_right_joint" type="revolute">
+    <parent>up_right_steer_link</parent>
+    <child>up_right_Link</child>
+    <axis><xyz>0 1 0</xyz><limit><lower>-1e16</lower><upper>1e16</upper></limit></axis>
+  </joint>
+
+  <!-- ===== PLUGINS ===== -->
+  <plugin filename="ignition-gazebo-ackermann-steering-system"
+          name="ignition::gazebo::systems::AckermannSteering">
+    <left_joint>up_left_joint</left_joint>
+    <right_joint>up_right_joint</right_joint>
+    <left_steering_joint>up_left_steer_joint</left_steering_joint>
+    <right_steering_joint>up_right_steer_joint</right_steering_joint>
+    <wheel_base>0.189</wheel_base>
+    <wheel_separation>0.189</wheel_separation>
+    <wheel_radius>0.03</wheel_radius>
+    <max_steering_angle>0.45</max_steering_angle>
+    <odom_publish_frequency>50</odom_publish_frequency>
+    <topic>/cmd_vel</topic>
+    <odom_topic>/odom</odom_topic>
+  </plugin>
+
+  <plugin filename="ignition-gazebo-joint-state-publisher-system"
+          name="ignition::gazebo::systems::JointStatePublisher">
+    <joint_name>down_left_joint</joint_name>
+    <joint_name>down_right_joint</joint_name>
+    <joint_name>up_left_steer_joint</joint_name>
+    <joint_name>up_right_steer_joint</joint_name>
+    <joint_name>up_left_joint</joint_name>
+    <joint_name>up_right_joint</joint_name>
+    <update_rate>50</update_rate>
+  </plugin>
+
+  <plugin filename="ignition-gazebo-user-commands-system"
+          name="ignition::gazebo::systems::UserCommands"/>
+
+  <plugin filename="ignition-gazebo-scene-broadcaster-system"
+          name="ignition::gazebo::systems::SceneBroadcaster"/>
+</model>
+</sdf>

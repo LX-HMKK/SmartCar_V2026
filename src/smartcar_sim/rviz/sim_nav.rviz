@@ -1,0 +1,153 @@
+Panels:
+  - Class: rviz_common/Displays
+    Name: Displays
+  - Class: rviz_common/Views
+    Name: Views
+
+Visualization Manager:
+  Class: ""
+  Displays:
+    # ── Grid ──
+    - Class: rviz_default_plugins/Grid
+      Name: Grid
+      Reference Frame: odom_combined
+      Plane Cell Count: 20
+      Cell Size: 0.5
+      Color: 125; 125; 125
+
+    # ── Robot Model ──
+    - Class: rviz_default_plugins/RobotModel
+      Name: RobotModel
+      Description Source: Topic
+      Description Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /robot_description
+      Visual Enabled: true
+
+    # ── TF ──
+    - Class: rviz_default_plugins/TF
+      Name: TF
+      Frame Timeout: 15
+      All Enabled: false
+      Frames:
+        base_footprint:
+          Value: true
+        base_link:
+          Value: true
+        laser_link:
+          Value: true
+
+    # ── LaserScan ──
+    - Class: rviz_default_plugins/LaserScan
+      Name: LaserScan
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        Value: /scan
+      Size (m): 0.02
+      Style: Points
+      Color: 255; 0; 0
+      Decay Time: 0.5
+
+    # ── Local Costmap ──
+    - Class: rviz_default_plugins/Map
+      Name: LocalCostmap
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /local_costmap/costmap
+      Color Scheme: costmap
+      Draw Behind: true
+
+    # ── Global Costmap ──
+    - Class: rviz_default_plugins/Map
+      Name: GlobalCostmap
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /global_costmap/costmap
+      Color Scheme: costmap
+      Draw Behind: true
+      Enabled: false
+
+    # ── Global Plan (smoothed) ──
+    - Class: rviz_default_plugins/Path
+      Name: Plan
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /plan
+      Color: 0; 255; 0
+      Line Style: Dashed
+      Line Width: 0.03
+
+    # ── Local Path (RPP) ──
+    - Class: rviz_default_plugins/Path
+      Name: LocalPlan
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /local_plan
+      Color: 255; 255; 0
+      Line Width: 0.05
+
+    # ── Odometry ──
+    - Class: rviz_default_plugins/Odometry
+      Name: Odometry
+      Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        Value: /odom_combined
+      Color: 0; 170; 255
+      Position Tolerance: 0.1
+      Angle Tolerance: 0.1
+      Keep: 100
+
+    # ── Waypoint Markers ──
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Waypoints
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/waypoints/markers
+
+  Enabled: true
+  Global Options:
+    Background Color: 48; 48; 48
+    Fixed Frame: odom_combined
+    Frame Limit: 50
+  Name: root
+  Tools:
+    - Class: rviz_default_plugins/Interact
+    - Class: rviz_default_plugins/MoveCamera
+    - Class: rviz_default_plugins/Select
+    - Class: rviz_default_plugins/Measure
+    - Class: rviz_default_plugins/SetInitialPose
+    - Class: rviz_default_plugins/SetGoal
+
+  Views:
+    Current:
+      Class: rviz_default_plugins/Orbit
+      Name: Current View
+      Target Frame: base_footprint
+      Distance: 4.0
+      Yaw: 0.0
+      Pitch: 0.785
+    Saved:
+      - Class: rviz_default_plugins/TopDownOrtho
+        Name: Top View
+        Target Frame: odom_combined
+        Yaw: 0.0
+
+Window Geometry:
+  Height: 900
+  Width: 1400
