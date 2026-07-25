@@ -13,6 +13,7 @@ from launch.actions import (
     DeclareLaunchArgument,
     IncludeLaunchDescription,
     RegisterEventHandler,
+    SetEnvironmentVariable,
     TimerAction,
     ExecuteProcess,
 )
@@ -37,6 +38,19 @@ def generate_launch_description():
     pkg_safety = get_package_share_directory("smartcar_safety")
     pkg_task = get_package_share_directory("smartcar_task")
 
+    # ── DDS 配置：UDP 回环 + SHM，绕过 WSL2 网络层阻断 ──
+    dds_config = PathJoinSubstitution([pkg_sim, "config", "dds", "loopback_fastdds.xml"])
+    sim_env = {
+        "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
+        "FASTRTPS_DEFAULT_PROFILES_FILE": str(dds_config),
+    }
+
+    # 清理残留 SHM 文件，避免端口冲突
+    shm_cleanup = ExecuteProcess(
+        cmd=["bash", "-c", "rm -f /dev/shm/fastrtps_port* /dev/shm/fastdds_port*"],
+        name="shm_cleanup",
+    )
+
     # ── Launch arguments ──
     world = LaunchConfiguration("world", default="track")
     headless = LaunchConfiguration("headless", default="false")
@@ -51,7 +65,6 @@ def generate_launch_description():
         output="screen",
         condition=UnlessCondition(headless),
         name="gz_server",
-        additional_env={"IGN_RELAY": "1"},
     )
 
     gz_server_headless = ExecuteProcess(
@@ -59,7 +72,12 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(headless),
         name="gz_server_headless",
-        additional_env={"IGN_RELAY": "1"},
+    )
+
+    # DDS 环境变量：所有 ROS2 节点使用 FastDDS 共享内存
+    set_rmw = SetEnvironmentVariable("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
+    set_fastdds = SetEnvironmentVariable(
+        "FASTRTPS_DEFAULT_PROFILES_FILE", str(dds_config)
     )
 
     # Robot is embedded in world file via <include> — no spawn needed
@@ -132,7 +150,6 @@ def generate_launch_description():
             "config_file": bridge_params,
         }],
         output="screen",
-        additional_env={"IGN_RELAY": "1"},
     )
 
     # ── EKF: fuse /odom + /imu → /odom_combined ──
@@ -226,21 +243,24 @@ def generate_launch_description():
         DeclareLaunchArgument("headless", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
         DeclareLaunchArgument("autostart", default_value="false"),
+        shm_cleanup,
+        set_rmw,
+        set_fastdds,
         gz_server,
         gz_server_headless,
         robot_state_pub,
         tf_base,
         tf_laser,
         gz_bridge,
-        # Start EKF after sim stable
-        TimerAction(period=2.0, actions=[ekf_node]),
+        # Start EKF after sim stable (wait for Gazebo odom to settle, avoid NaN)
+        TimerAction(period=10.0, actions=[ekf_node]),
         # Start navigation stack after EKF
-        TimerAction(period=2.0, actions=[nav2_launch]),
+        TimerAction(period=12.0, actions=[nav2_launch]),
         # Direction guard + safety
-        TimerAction(period=5.0, actions=[direction_guard]),
-        TimerAction(period=5.0, actions=[safety_node]),
+        TimerAction(period=10.0, actions=[direction_guard]),
+        TimerAction(period=10.0, actions=[safety_node]),
         # Task node starts last
-        TimerAction(period=8.0, actions=[task_node]),
+        TimerAction(period=15.0, actions=[task_node]),
         # RViz
         rviz,
     ])
