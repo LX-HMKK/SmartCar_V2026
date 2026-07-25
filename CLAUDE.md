@@ -49,7 +49,7 @@ scripts/                             RDK 同步与环境脚本
 tests/                               仓库级合同测试
 ```
 
-权威运行手册为 `docs/deployment/rdk-environment-setup.md`；软件完工证据见 `docs/superpowers/plans/2026-07-17-smartcar-completion.md`。早期设计/spec 保留决策过程，若与当前实现冲突，以代码、README 和部署手册为准。
+权威运行手册为 `docs/deployment/rdk-environment-setup.md`。若文档与当前实现冲突，以代码、README 和部署手册为准。
 
 ## 本地开发与同步
 

@@ -361,7 +361,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "gyro_z_scale", default_value="1.0"),
         DeclareLaunchArgument(
-            "gyro_z_bias", default_value="0.000853"),
+            "gyro_z_bias", default_value="0.000614"),
         DeclareLaunchArgument(
             "steering_command_scale", default_value="0.5"),
         DeclareLaunchArgument(
