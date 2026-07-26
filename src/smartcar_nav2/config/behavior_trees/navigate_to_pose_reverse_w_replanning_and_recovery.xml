@@ -29,8 +29,7 @@
           <FollowPath
             path="{path}"
             controller_id="FollowPath"
-            goal_checker_id="reverse_goal_checker"
-            allow_reversing="true"/>
+            goal_checker_id="reverse_goal_checker"/>
           <ClearEntireCostmap
             name="ClearLocalCostmap-ReverseContext"
             service_name="local_costmap/clear_entirely_local_costmap"/>

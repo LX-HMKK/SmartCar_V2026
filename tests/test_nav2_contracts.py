@@ -167,6 +167,8 @@ class TestNav2Contracts(unittest.TestCase):
                 # Wait and BackUp removed for Ackermann chassis — cannot
                 # rotate in place or reverse as recovery.
                 self.assertIn("ClearEntireCostmap", tags)
+                for follow_path in root.iter("FollowPath"):
+                    self.assertNotIn("allow_reversing", follow_path.attrib)
 
         through_tags = [
             element.tag
@@ -430,14 +432,20 @@ class TestNav2Contracts(unittest.TestCase):
         corridor_yaw = planar_yaw(
             corridor_enter["pose"]["orientation"]
         )
-        self.assertAlmostEqual(qr_yaw, math.radians(30.0), delta=1.0e-6)
+        start = waypoint_by_id(default, "p_start")
+        start_position = start["pose"]["position"]
+        qr_position = qr["pose"]["position"]
+        direct_arrival_yaw = math.atan2(
+            qr_position["y"] - start_position["y"],
+            qr_position["x"] - start_position["x"],
+        )
+        self.assertAlmostEqual(qr_yaw, direct_arrival_yaw, delta=1.0e-6)
         self.assertAlmostEqual(
             corridor_yaw, math.radians(-70.0), delta=1.0e-6
         )
-        self.assertAlmostEqual(
-            math.remainder(corridor_yaw - qr_yaw, 2.0 * math.pi),
-            math.radians(-100.0),
-            delta=1.0e-6,
+        self.assertLess(
+            abs(math.remainder(corridor_yaw - qr_yaw, 2.0 * math.pi)),
+            math.radians(90.0),
         )
 
         corridor_position = corridor_enter["pose"]["position"]

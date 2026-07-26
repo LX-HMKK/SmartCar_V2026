@@ -128,7 +128,7 @@ controller_server:
       regulated_linear_scaling_min_radius: 0.9
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
-      allow_reversing: false
+      allow_reversing: true
 
 local_costmap:
   local_costmap:

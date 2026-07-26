@@ -24,8 +24,8 @@ waypoints:
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.25881905
-      w: 0.96592583
+      z: 0.15076091589065388
+      w: 0.9885702535681575
   task: qr
   direction: forward
   goal_profile: precise
