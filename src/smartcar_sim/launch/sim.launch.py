@@ -3,14 +3,23 @@
 
 用法：
     ros2 launch smartcar_sim sim.launch.py
-    ros2 launch smartcar_sim sim.launch.py world:=track   # 使用 track.world
-    ros2 launch smartcar_sim sim.launch.py headless:=true  # 无 GUI 模式
+    ros2 launch smartcar_sim sim.launch.py world:=track              # 使用 track.world
+    ros2 launch smartcar_sim sim.launch.py headless:=true            # headless 模式（无 Gazebo GUI，有 RViz）
+    ros2 launch smartcar_sim sim.launch.py headless:=true use_rviz:=false  # 纯 headless（无 GUI + 无 RViz）
+
+模式说明：
+    headless:=false（默认）: Gazebo GUI + ogre 渲染引擎，适合可视化调试
+    headless:=true           : Gazebo server-only (-s)，无 GUI 窗口，适合自动化/CI
+    use_rviz（默认 false）   : 独立于 headless，控制是否启动 RViz2 导航可视化
+    headless:=false + use_rviz:=true : 同时启动 Gazebo GUI + RViz（高 CPU 负载，调试专用）
+    headless:=true  + use_rviz:=true : Gazebo 无窗口 + RViz 可视化（推荐开发组合）
 """
 
 import os
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    GroupAction,
     IncludeLaunchDescription,
     RegisterEventHandler,
     SetEnvironmentVariable,
@@ -21,100 +30,73 @@ from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
-    Command,
-    FindExecutable,
     LaunchConfiguration,
     PathJoinSubstitution,
     PythonExpression,
 )
 from launch_ros.actions import Node
-from launch_ros.substitutions import FindPackageShare
 from ament_index_python.packages import get_package_share_directory
 
 
 def generate_launch_description():
     pkg_sim = get_package_share_directory("smartcar_sim")
     pkg_nav2 = get_package_share_directory("smartcar_nav2")
-    pkg_safety = get_package_share_directory("smartcar_safety")
     pkg_task = get_package_share_directory("smartcar_task")
 
-    # ── DDS 配置：UDP 回环 + SHM，绕过 WSL2 网络层阻断 ──
-    dds_config = PathJoinSubstitution([pkg_sim, "config", "dds", "loopback_fastdds.xml"])
-    sim_env = {
-        "RMW_IMPLEMENTATION": "rmw_fastrtps_cpp",
-        "FASTRTPS_DEFAULT_PROFILES_FILE": str(dds_config),
-    }
+    # Fast DDS works reliably when WSL2 uses NAT networking. Mirrored networking
+    # creates an extra loopback0 interface and policy routes that break Fast DDS
+    # discovery. ROS_LOCALHOST_ONLY keeps simulation traffic inside WSL. Do not
+    # inject a custom locator profile: it can split multi-process discovery.
 
-    # 清理残留 SHM 文件，避免端口冲突
-    shm_cleanup = ExecuteProcess(
-        cmd=["bash", "-c", "rm -f /dev/shm/fastrtps_port* /dev/shm/fastdds_port*"],
-        name="shm_cleanup",
+    # ── 清理残留 SHM/临时文件（必须在 DDS/进程启动前执行）──
+    # 修复原因：PathJoinSubstitution 返回 Substitution 对象，在
+    # ExecuteProcess 的 cmd 参数中可能未正确解析。改用 os.path.join
+    # 直接构造字符串路径，与 dds_config 的处理方式保持一致。
+    cleanup_script = os.path.join(pkg_sim, "scripts", "sim_cleanup.sh")
+    rviz_launcher = os.path.join(pkg_sim, "scripts", "wait_for_wslg.sh")
+    sim_cleanup = ExecuteProcess(
+        cmd=["bash", cleanup_script],
+        name="sim_cleanup",
     )
 
     # ── Launch arguments ──
     world = LaunchConfiguration("world", default="track")
     headless = LaunchConfiguration("headless", default="false")
-    use_rviz = LaunchConfiguration("use_rviz", default="true")
+    use_rviz = LaunchConfiguration("use_rviz", default="false")
     autostart = LaunchConfiguration("autostart", default="false")
 
     # ── Gazebo ──
+    # 注意：gz_server 和 gz_server_headless 互斥，只启动其中一个。
+    # headless:=false → 带 GUI（ogre 渲染）；headless:=true → server-only (-s)。
     world_path = PathJoinSubstitution([pkg_sim, "worlds", PythonExpression(["'", world, ".world'"])])
 
     gz_server = ExecuteProcess(
-        cmd=["ign", "gazebo", "-r", "-v", "3", world_path],
+        cmd=["ign", "gazebo", "-r", "-v", "3", "--render-engine", "ogre", world_path],
         output="screen",
         condition=UnlessCondition(headless),
         name="gz_server",
     )
 
     gz_server_headless = ExecuteProcess(
-        cmd=["ign", "gazebo", "-r", "-s", "-v", "3", world_path],
+        cmd=["ign", "gazebo", "-r", "-s", "-v", "3", "--render-engine", "ogre", world_path],
         output="screen",
         condition=IfCondition(headless),
         name="gz_server_headless",
     )
 
-    # DDS 环境变量：所有 ROS2 节点使用 FastDDS 共享内存
+    # DDS environment applies to every process launched below.
     set_rmw = SetEnvironmentVariable("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
-    set_fastdds = SetEnvironmentVariable(
-        "FASTRTPS_DEFAULT_PROFILES_FILE", str(dds_config)
-    )
+    set_localhost = SetEnvironmentVariable("ROS_LOCALHOST_ONLY", "1")
 
     # Robot is embedded in world file via <include> — no spawn needed
 
-    # ── Robot state publisher (TF: base_footprint → base_link → laser) ──
-    # We provide a minimal URDF matching the SDF for the TF tree
-    robot_description = """
-    <?xml version="1.0"?>
-    <robot name="origincar">
-      <link name="base_footprint"/>
-      <link name="base_link">
-        <visual><geometry><box size="0.276 0.164 0.08"/></geometry></visual>
-      </link>
-      <link name="laser_link"/>
-      <joint name="base_footprint_joint" type="fixed">
-        <parent link="base_footprint"/>
-        <child link="base_link"/>
-        <origin xyz="0.0841 0 0.03" rpy="0 0 0"/>
-      </joint>
-      <joint name="laser_joint" type="fixed">
-        <parent link="base_link"/>
-        <child link="laser_link"/>
-        <origin xyz="-0.05 0 0.23" rpy="0 0 0"/>
-      </joint>
-    </robot>
-    """
-
-    robot_state_pub = Node(
-        package="robot_state_publisher",
-        executable="robot_state_publisher",
-        parameters=[{
-            "robot_description": robot_description,
-            "use_sim_time": True,
-        }],
-    )
-
     # ── Static TF publishers (match real system) ──
+    # TF chain: odom_combined → base_footprint (odom_combined_relay, /tf)
+    #           base_footprint → base_link (static, /tf_static)
+    #           base_link → laser_link (static, /tf_static)
+    # Note: robot_state_publisher is intentionally NOT used here — all joints are
+    # fixed, and having both RSP (/tf) and static_transform_publisher (/tf_static)
+    # publish the same frames causes TF lookup conflicts in ROS2 Humble.
     # base_footprint → base_link
     tf_base = Node(
         package="tf2_ros",
@@ -131,11 +113,14 @@ def generate_launch_description():
         parameters=[{"use_sim_time": True}],
     )
 
-    # Identity TF: Gazebo spawn namespace → nav2 frames
-    tf_ns = Node(
+    # Identity TF: ROS laser_link → Gazebo LiDAR sensor frame.
+    # Gazebo publishes /scan with frame_id "origincar/laser_link/lidar_sensor"
+    # but Nav2 uses "laser_link". Keep laser_link attached to base_link and add
+    # the Gazebo sensor as its child so the TF tree has one parent per frame.
+    tf_lidar = Node(
         package="tf2_ros",
         executable="static_transform_publisher",
-        arguments=["0", "0", "0", "0", "0", "0", "origincar/base_footprint", "base_footprint"],
+        arguments=["0", "0", "0", "0", "0", "0", "laser_link", "origincar/laser_link/lidar_sensor"],
         parameters=[{"use_sim_time": True}],
     )
 
@@ -175,7 +160,7 @@ def generate_launch_description():
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
     # ── Safety bypass: simulation doesn't need safety_node ──
-    # cmd_vel chain: controller → velocity_smoother → /cmd_vel_smoothed → bridge → Gazebo
+    # cmd_vel chain: controller → /cmd_vel_nav → velocity_smoother → /cmd_vel_candidate → bridge → Gazebo
     # No direction_guard or safety_node (both block velocity without real hardware)
 
     # ── Nav2 ──
@@ -216,36 +201,42 @@ def generate_launch_description():
         }],
     )
 
-    # ── RViz ──
-    rviz_config = PathJoinSubstitution([pkg_sim, "rviz", "sim_nav.rviz"])
-    rviz = Node(
-        package="rviz2",
-        executable="rviz2",
-        arguments=["-d", rviz_config],
-        parameters=[{"use_sim_time": True}],
-        condition=IfCondition(use_rviz),
+    # ── Waypoint visualizer (publishes MarkerArray for RViz) ──
+    waypoint_viz = Node(
+        package="smartcar_tools",
+        executable="waypoint_viz",
+        name="waypoint_viz",
+        parameters=[{
+            "use_sim_time": True,
+            "waypoints_file": PathJoinSubstitution([pkg_nav2, "config", "waypoints", "nav_only.yaml"]),
+            "publish_rate": 1.0,
+        }],
     )
 
-    return LaunchDescription([
-        DeclareLaunchArgument("world", default_value="track"),
-        DeclareLaunchArgument("headless", default_value="false"),
-        DeclareLaunchArgument("use_rviz", default_value="true"),
-        DeclareLaunchArgument("autostart", default_value="false"),
-        shm_cleanup,
-        set_rmw,
-        set_fastdds,
+    # ── RViz ──
+    # 独立于 headless 模式，由 use_rviz:=true 控制。
+    # headless 只影响 Gazebo GUI，不影响 RViz。
+    rviz_config = PathJoinSubstitution([pkg_sim, "rviz", "sim_nav.rviz"])
+    rviz = ExecuteProcess(
+        cmd=["bash", rviz_launcher, rviz_config],
+        output="screen",
+        condition=IfCondition(use_rviz),
+        name="rviz_when_wslg_ready",
+    )
+
+    start_after_cleanup = GroupAction(actions=[
         gz_server,
         gz_server_headless,
-        robot_state_pub,
         tf_base,
         tf_laser,
+        tf_lidar,
         gz_bridge,
-        # Odom relay: filter NaN, then forward to odom_combined (no EKF)
         odom_relay,
         odom_combined_relay,
-        # Start navigation stack after EKF
+        waypoint_viz,
+        # Nav2 延迟 12s 启动（等 Gazebo /clock 发布 + bridge 桥接就绪）
         TimerAction(period=12.0, actions=[nav2_launch]),
-        # Auto-train node (embedded navigation test + parameter tuning)
+        # Auto-train 延迟 20s 启动
         TimerAction(period=20.0, actions=[
             Node(
                 package="smartcar_sim",
@@ -255,6 +246,26 @@ def generate_launch_description():
                 output="screen",
             )
         ]),
-        # RViz
-        rviz,
+        # RViz 延迟 8s 启动（等 Gazebo + odom_combined TF frame 就绪）
+        # 修复原因：原 5s 在 Gazebo 启动耗时长时不够，/clock 未发布
+        # → RViz 一直停在 "No tf data. Fixed frame [odom_combined] does not exist"
+        TimerAction(period=8.0, actions=[rviz]),
+    ])
+
+    return LaunchDescription([
+        DeclareLaunchArgument("world", default_value="track"),
+        DeclareLaunchArgument("headless", default_value="false"),
+        DeclareLaunchArgument("use_rviz", default_value="false"),
+        DeclareLaunchArgument("autostart", default_value="false"),
+        set_rmw,
+        set_localhost,
+        # ExecuteProcess is asynchronous. Register the handler first so no
+        # Gazebo or ROS process can start until cleanup has actually exited.
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=sim_cleanup,
+                on_exit=[start_after_cleanup],
+            )
+        ),
+        sim_cleanup,
     ])

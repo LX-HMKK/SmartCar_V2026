@@ -20,9 +20,12 @@
 
   <exec_depend>ros_gz_sim</exec_depend>
   <exec_depend>ros_gz_bridge</exec_depend>
+  <exec_depend>rmw_fastrtps_cpp</exec_depend>
+  <exec_depend>rviz2</exec_depend>
   <exec_depend>smartcar_nav2</exec_depend>
   <exec_depend>smartcar_task</exec_depend>
   <exec_depend>smartcar_safety</exec_depend>
+  <exec_depend>smartcar_tools</exec_depend>
 
   <test_depend>ament_copyright</test_depend>
   <test_depend>ament_flake8</test_depend>

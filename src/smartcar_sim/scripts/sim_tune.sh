@@ -53,6 +53,7 @@ if [ ! -d "$WS/src/smartcar_sim" ]; then
     rsync -a --exclude='build/' --exclude='install/' --exclude='log/' --exclude='.git/' \
         "$SRC/" "$WS/src/"
 fi
+source "${WS}/src/smartcar_sim/scripts/sim_env.sh"
 
 # ── Step 4: Build ──
 if [ "$NO_BUILD" = false ]; then

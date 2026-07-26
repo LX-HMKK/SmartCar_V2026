@@ -1,11 +1,18 @@
 # AGENTS.md
 
 本文件为 Codex（Codex.ai/code）提供本仓库的操作指导。
+
+> 同步基线：2026-07-26。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
 ## 项目背景与当前状态
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
 截至 2026-07-24，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 11 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+
+截至 2026-07-26，`feat/gazebo-simulation` 分支还包含 WSL2 Ubuntu-22.04 +
+Ignition Gazebo 6.18 仿真。WSL 必须使用 NAT 网络；mirrored 模式会破坏
+Fast DDS discovery。仿真已验证 Gazebo/RViz/TF/Nav2 正常，P→QR 约 22 秒、
+QR→VLM 约 48 秒完成。该证据只覆盖 Gazebo 模型，不属于实体倒车或现场验收。
 
 已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
@@ -44,6 +51,7 @@ src/smartcar_speech/                 可选火山 TTS consumer
 src/smartcar_task/                   五子任务状态机
 src/smartcar_bringup/                分层和完整系统 launch
 src/smartcar_tools/                  场地参考、航点编辑、媒体入口与里程计诊断
+src/smartcar_sim/                    WSL2 Gazebo 仿真、RViz 与自动导航验证
 scripts/                             RDK 同步与环境脚本
 tests/                               仓库级合同测试
 ```
@@ -65,6 +73,16 @@ python scripts/sync_to_rdk.py push --dry-run
 python scripts/sync_to_rdk.py push
 ```
 
+WSL 仿真统一使用 `docs/deployment/wsl-simulation.md`。关键约束：
+
+- `%USERPROFILE%\.wslconfig` 使用 `networkingMode=nat`，修改后执行
+  `wsl.exe --shutdown`。
+- 使用默认 `rmw_fastrtps_cpp` + `ROS_LOCALHOST_ONLY=1`，不得设置旧 Fast DDS
+  loopback profile。
+- 推荐通过安装空间的 `sim_start.sh --headless --rviz` 启动；该脚本会清理残留
+  并等待 WSLg。
+- 仿真会自动向 Gazebo 发布非零速度，但不得连接实体底盘、相机或 RDK 驱动。
+
 本地仓库的 `src/` 和 `config/` 是权威源。日常使用 `push` 镜像到 RDK `/root/ros2_ws`；`init-vendor` 仅用于首次 bootstrap 或明确要求的 vendor 重建。**⚠ `push` 默认含 `--delete`，会删除 RDK 端本地源不存在的文件——在 RDK 上直接改过的文件（如航点 YAML）会被静默覆盖，务必先 `pull` 或手动备份。**
 
 ## RDK 构建与验证
@@ -82,7 +100,9 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-24 最新证据：本地根合同 134/134；RDK 上 `smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 共 108 项测试零失败；提交 `8103b37` 已部署到 `/root/ros2_ws`。这些证据不包含实体倒车运动。
+2026-07-26 当前分支证据：WSL 仿真合同 6/6，通过完整 Gazebo 导航验证；本地根合同 143 项中 141 项通过。两项已知失败均尚未解决：`reverse_goal_checker.xy_goal_tolerance=0.25` 超出合同上限 `0.12`，以及顶层 `smartcar_system.launch.py` 的 `extrinsics_calibrated` 默认值为 `true`。这两项必须在合并或部署前修复，不得把当前失败套件表述为全绿。
+
+2026-07-24 RDK 历史证据：`smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 共 108 项测试零失败；提交 `8103b37` 已部署到 `/root/ros2_ws`。这些证据不包含实体倒车运动，也不覆盖当前仿真分支的两项本地合同失败。
 
 vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDOR_LINT=ON`，不要把继承源码的历史格式债务混入默认功能测试。
 
@@ -109,7 +129,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
 - 0.30 m/s 运动异常尚未完成单变量复测；历史 EKF 超期发生在发车前，不能归因于车速。已实施首批调度修复，仍须现场分级验证。
 
-五个运动门禁默认为 `false`，仅对应项目实测完成后显式开启。
+五个运动门禁的合同要求均默认为 `false`，仅对应项目实测完成后显式开启。当前仿真分支顶层 launch 中 `extrinsics_calibrated=true` 是已知配置回归，不代表外参门禁已获授权；合并或部署前必须恢复为 `false` 并让合同测试通过。
 
 ### 已知问题与避坑指南
 

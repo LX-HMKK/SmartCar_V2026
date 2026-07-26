@@ -3,6 +3,8 @@
 set -e
 source /opt/ros/humble/setup.bash
 source /root/ros2_ws/install/setup.bash
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+source "${SCRIPT_DIR}/sim_env.sh"
 export DISPLAY=:0
 export IGN_GAZEBO_RESOURCE_PATH=/root/ros2_ws/install/smartcar_sim/share/smartcar_sim/models:$IGN_GAZEBO_RESOURCE_PATH
 

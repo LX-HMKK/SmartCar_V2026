@@ -30,7 +30,7 @@
 
     <sensor name="imu_sensor" type="imu">
       <topic>/imu</topic>
-      <update_rate>100</update_rate>
+      <update_rate>20</update_rate>  <!-- sim: EKF bypassed, IMU unused, 100→20 saves CPU -->
       <imu>
         <angular_velocity>
           <x><noise type="gaussian"><mean>0</mean><stddev>0.0003</stddev></noise></x>
@@ -227,7 +227,7 @@
     <wheel_separation>0.189</wheel_separation>
     <wheel_radius>0.03</wheel_radius>
     <max_steering_angle>0.45</max_steering_angle>
-    <odom_publish_frequency>50</odom_publish_frequency>
+    <odom_publish_frequency>30</odom_publish_frequency>  <!-- sim: match real EKF rate, 50→30 saves ~3% CPU -->
     <topic>/cmd_vel</topic>
     <odom_topic>/odom</odom_topic>
   </plugin>
@@ -240,7 +240,7 @@
     <joint_name>up_right_steer_joint</joint_name>
     <joint_name>up_left_joint</joint_name>
     <joint_name>up_right_joint</joint_name>
-    <update_rate>50</update_rate>
+    <update_rate>20</update_rate>  <!-- sim: not consumed by nav, 50→20 -->
   </plugin>
 
   <plugin filename="ignition-gazebo-user-commands-system"

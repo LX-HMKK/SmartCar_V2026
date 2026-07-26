@@ -61,6 +61,7 @@ class AutoTrain(Node):
         self._max_dist = 0.0
         self._dir_changes = 0
         self._last_progress_sign = 0
+        self._last_logged_t = -1
 
         self.get_logger().info("AutoTrain 就绪")
 
@@ -163,9 +164,14 @@ class AutoTrain(Node):
             if sign != 0:
                 self._last_progress_sign = sign
 
-        if int(elapsed) % 5 == 0 and int(elapsed) != int(elapsed - 0.5):
-            self.get_logger().info(
-                f"  t={elapsed:.0f}s dist={dist:.2f}m changes={self._dir_changes}")
+        # 节流日志：每 5 秒输出一次（用整数秒整除 + 去重）
+        t_int = int(elapsed)
+        if t_int > 0 and t_int % 5 == 0:
+            last_key = getattr(self, "_last_logged_t", -1)
+            if t_int != last_key:
+                self._last_logged_t = t_int
+                self.get_logger().info(
+                    f"  t={elapsed:.0f}s dist={dist:.2f}m changes={self._dir_changes}")
 
     def run(self):
         self.get_logger().info("="*50)

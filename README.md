@@ -35,6 +35,8 @@
 - 速度链为 `/cmd_vel_nav -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，错误方向或过期租约只能得到完整零输出。
 - `obstacle_detector_2`、Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
 - 本地 Windows 通过 WSL rsync 同步到 RDK 的单一工作空间 `/root/ros2_ws`。
+- WSL2 Ubuntu-22.04 提供 Ignition Gazebo 6.18 仿真；必须使用 NAT 网络，
+  mirrored 模式会破坏 Fast DDS discovery。
 
 主要包：
 
@@ -50,7 +52,28 @@ src/smartcar_speech/           可选火山 TTS 与本地音频播放
 src/smartcar_task/             五子任务状态机
 src/smartcar_bringup/          分层与一键系统 launch
 src/smartcar_tools/            场地参考、航点编辑、诊断和三个媒体测试入口
+src/smartcar_sim/              WSL2 Gazebo 阿克曼仿真、RViz 与自动导航验证
 ```
+
+## WSL2 Gazebo 仿真
+
+WSL 仿真复用真实 Nav2 配置，但只驱动 Gazebo 模型，不启动实体底盘、相机或
+RDK 驱动。Windows `%USERPROFILE%\.wslconfig` 必须配置
+`networkingMode=nat`；不要使用 mirrored 网络或自定义 Fast DDS locator profile。
+
+推荐入口：
+
+```powershell
+wsl.exe -d Ubuntu-22.04 -u root bash -lc '
+source /opt/ros/humble/setup.bash
+source /root/ros2_ws/install/setup.bash
+exec /root/ros2_ws/install/smartcar_sim/share/smartcar_sim/scripts/sim_start.sh --headless --rviz
+'
+```
+
+该入口会清理残留进程、等待 WSLg，并自动运行 P->QR 与 QR->VLM 两段导航。
+网络配置、构建、验证和故障排查见
+[`docs/deployment/wsl-simulation.md`](docs/deployment/wsl-simulation.md)。
 
 ## 本地开发与同步
 

@@ -14,6 +14,7 @@ Visualization Manager:
       Plane Cell Count: 20
       Cell Size: 0.5
       Color: 125; 125; 125
+      Enabled: true
 
     # ── Robot Model ──
     - Class: rviz_default_plugins/RobotModel
@@ -25,12 +26,13 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /robot_description
       Visual Enabled: true
+      Enabled: true
 
     # ── TF ──
     - Class: rviz_default_plugins/TF
       Name: TF
       Frame Timeout: 15
-      All Enabled: false
+      All Enabled: true
       Frames:
         base_footprint:
           Value: true
@@ -38,6 +40,7 @@ Visualization Manager:
           Value: true
         laser_link:
           Value: true
+      Enabled: true
 
     # ── LaserScan ──
     - Class: rviz_default_plugins/LaserScan
@@ -51,6 +54,7 @@ Visualization Manager:
       Style: Points
       Color: 255; 0; 0
       Decay Time: 0.5
+      Enabled: true
 
     # ── Local Costmap ──
     - Class: rviz_default_plugins/Map
@@ -62,6 +66,7 @@ Visualization Manager:
         Value: /local_costmap/costmap
       Color Scheme: costmap
       Draw Behind: true
+      Enabled: true
 
     # ── Global Costmap ──
     - Class: rviz_default_plugins/Map
@@ -73,7 +78,7 @@ Visualization Manager:
         Value: /global_costmap/costmap
       Color Scheme: costmap
       Draw Behind: true
-      Enabled: false
+      Enabled: true
 
     # ── Global Plan (smoothed) ──
     - Class: rviz_default_plugins/Path
@@ -84,8 +89,9 @@ Visualization Manager:
         Reliability Policy: Reliable
         Value: /plan
       Color: 0; 255; 0
-      Line Style: Dashed
-      Line Width: 0.03
+      Line Style: Solid
+      Line Width: 0.08
+      Enabled: true
 
     # ── Local Path (RPP) ──
     - Class: rviz_default_plugins/Path
@@ -95,8 +101,9 @@ Visualization Manager:
         Durability Policy: Transient Local
         Reliability Policy: Reliable
         Value: /local_plan
-      Color: 255; 255; 0
-      Line Width: 0.05
+      Color: 255; 200; 0
+      Line Width: 0.06
+      Enabled: true
 
     # ── Odometry ──
     - Class: rviz_default_plugins/Odometry
@@ -106,10 +113,14 @@ Visualization Manager:
         Durability Policy: Volatile
         Reliability Policy: Best Effort
         Value: /odom_combined
-      Color: 0; 170; 255
-      Position Tolerance: 0.1
+      Color: 100; 200; 255
+      Alpha: 0.6
+      Position Tolerance: 0.3
       Angle Tolerance: 0.1
-      Keep: 100
+      Keep: 30
+      Shaft Length: 0.05
+      Shaft Radius: 0.01
+      Enabled: true
 
     # ── Waypoint Markers ──
     - Class: rviz_default_plugins/MarkerArray
@@ -119,6 +130,7 @@ Visualization Manager:
         Durability Policy: Transient Local
         Reliability Policy: Reliable
         Value: /smartcar/waypoints/markers
+      Enabled: true
 
   Enabled: true
   Global Options:
@@ -136,17 +148,17 @@ Visualization Manager:
 
   Views:
     Current:
-      Class: rviz_default_plugins/Orbit
+      Class: rviz_default_plugins/TopDownOrtho
       Name: Current View
-      Target Frame: base_footprint
-      Distance: 4.0
+      Target Frame: odom_combined
       Yaw: 0.0
-      Pitch: 0.785
+      Scale: 8.0
     Saved:
       - Class: rviz_default_plugins/TopDownOrtho
         Name: Top View
         Target Frame: odom_combined
         Yaw: 0.0
+        Scale: 8.0
 
 Window Geometry:
   Height: 900
