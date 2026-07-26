@@ -28,6 +28,8 @@ struct ReversePathValidationResult
   bool valid{false};
   std::string reason;
   std::size_t segment_index{0};
+  double observed_value{0.0};
+  double limit{0.0};
 };
 
 bool rotateYawByPi(

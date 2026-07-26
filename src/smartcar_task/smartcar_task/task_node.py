@@ -306,6 +306,7 @@ class RosNavigator:
         callback_group,
         direction_guard,
         reverse_behavior_tree,
+        reverse_handoff_behavior_tree,
         precise_forward_behavior_tree,
         navigation_timeout_sec,
         goal_response_timeout_sec,
@@ -330,6 +331,15 @@ class RosNavigator:
         )
         self._reverse_behavior_tree = str(reverse_behavior_tree).strip()
         navigation_behavior_tree(True, self._reverse_behavior_tree)
+        self._reverse_handoff_behavior_tree = str(
+            reverse_handoff_behavior_tree).strip()
+        navigation_behavior_tree(
+            True,
+            self._reverse_behavior_tree,
+            goal_profile="reverse_handoff",
+            reverse_handoff_behavior_tree=(
+                self._reverse_handoff_behavior_tree),
+        )
         self._precise_forward_behavior_tree = str(
             precise_forward_behavior_tree).strip()
         navigation_behavior_tree(
@@ -393,6 +403,8 @@ class RosNavigator:
                 goal_profile=waypoint.goal_profile,
                 precise_forward_behavior_tree=(
                     self._precise_forward_behavior_tree),
+                reverse_handoff_behavior_tree=(
+                    self._reverse_handoff_behavior_tree),
             )
         except ValueError as error:
             return OperationResult(False, f"navigation_config:{error}")
@@ -1139,6 +1151,12 @@ class TaskNode(Node):
             "navigate_to_pose_reverse_w_replanning_and_recovery.xml",
         )
         self.declare_parameter(
+            "reverse_handoff_behavior_tree",
+            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
+            "config/behavior_trees/"
+            "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
+        )
+        self.declare_parameter(
             "precise_forward_behavior_tree",
             "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
             "config/behavior_trees/"
@@ -1234,6 +1252,7 @@ class TaskNode(Node):
             self._io_group,
             self._direction_guard,
             self.get_parameter("reverse_behavior_tree").value,
+            self.get_parameter("reverse_handoff_behavior_tree").value,
             self.get_parameter("precise_forward_behavior_tree").value,
             self.get_parameter("navigation_timeout_sec").value,
             self.get_parameter("goal_response_timeout_sec").value,

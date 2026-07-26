@@ -26,6 +26,12 @@ REVERSE_BT_FILE = (
     / "behavior_trees"
     / "navigate_to_pose_reverse_w_replanning_and_recovery.xml"
 )
+REVERSE_HANDOFF_BT_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"
+)
 
 
 class TestReverseNavigationContracts(unittest.TestCase):
@@ -51,7 +57,11 @@ class TestReverseNavigationContracts(unittest.TestCase):
     def test_reverse_tree_replans_and_validates_before_following(self):
         root = ElementTree.parse(REVERSE_BT_FILE).getroot()
         tags = [element.tag for element in root.iter()]
-        self.assertIn("RateController", tags)
+        self.assertNotIn("RateController", tags)
+        self.assertNotIn("PipelineSequence", tags)
+        self.assertIn("NavigateReverseWithFailureReplanning", {
+            element.attrib.get("name") for element in root.iter()
+        })
         self.assertIn("ComputeReversePathToPose", tags)
         self.assertIn("IsPathValid", tags)
         self.assertIn("FollowPath", tags)
@@ -95,6 +105,59 @@ class TestReverseNavigationContracts(unittest.TestCase):
             reverse["yaw_goal_tolerance"], forward["yaw_goal_tolerance"]
         )
         self.assertIs(reverse["stateful"], False)
+
+    def test_reverse_handoff_uses_dedicated_low_speed_controller(self):
+        regular_root = ElementTree.parse(REVERSE_BT_FILE).getroot()
+        handoff_root = ElementTree.parse(REVERSE_HANDOFF_BT_FILE).getroot()
+        handoff_tags = [element.tag for element in handoff_root.iter()]
+        self.assertIn("ComputeReversePathToPose", handoff_tags)
+        self.assertIn("IsPathValid", handoff_tags)
+        self.assertNotIn("ComputePathToPose", handoff_tags)
+        for forbidden in ("RateController", "PipelineSequence", "Spin", "BackUp", "Wait"):
+            self.assertNotIn(forbidden, handoff_tags)
+
+        regular_compute = regular_root.find(".//ComputeReversePathToPose")
+        handoff_compute = handoff_root.find(".//ComputeReversePathToPose")
+        self.assertIsNotNone(regular_compute)
+        self.assertIsNotNone(handoff_compute)
+        for attribute in (
+            "planner_id",
+            "minimum_turning_radius",
+            "curvature_tolerance",
+            "maximum_direction_error",
+            "start_position_tolerance",
+            "start_yaw_tolerance",
+            "goal_position_tolerance",
+            "goal_yaw_tolerance",
+            "minimum_segment_length",
+        ):
+            self.assertEqual(
+                handoff_compute.attrib[attribute],
+                regular_compute.attrib[attribute],
+            )
+
+        follow = handoff_root.find(".//FollowPath")
+        self.assertIsNotNone(follow)
+        self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
+        self.assertEqual(
+            follow.attrib["goal_checker_id"], "reverse_goal_checker")
+
+        controller = self.params["controller_server"]["ros__parameters"]
+        self.assertEqual(
+            controller["controller_plugins"],
+            ["FollowPath", "ReverseHandoff"],
+        )
+        regular = controller["FollowPath"]
+        handoff = controller["ReverseHandoff"]
+        self.assertEqual(handoff["plugin"], regular["plugin"])
+        self.assertLess(handoff["desired_linear_vel"], regular["desired_linear_vel"])
+        self.assertLess(handoff["lookahead_dist"], regular["lookahead_dist"])
+        self.assertAlmostEqual(handoff["desired_linear_vel"], 0.09)
+        self.assertAlmostEqual(handoff["lookahead_dist"], 0.25)
+        self.assertAlmostEqual(handoff["min_lookahead_dist"], 0.20)
+        self.assertIs(handoff["use_velocity_scaled_lookahead_dist"], False)
+        self.assertIs(handoff["allow_reversing"], True)
+        self.assertIs(handoff["use_rotate_to_heading"], False)
 
     def test_precise_forward_tree_uses_registered_goal_checker(self):
         root = ElementTree.parse(PRECISE_FORWARD_BT_FILE).getroot()
@@ -197,6 +260,9 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn("test_reverse_path_utils", cmake)
         self.assertIn("test_reverse_navigation_contracts.py", cmake)
         self.assertTrue(PRECISE_FORWARD_BT_FILE.is_file())
+        self.assertTrue(REVERSE_HANDOFF_BT_FILE.is_file())
+        self.assertIn("SMARTCAR_NAV2_BEHAVIOR_TREE_FILES", cmake)
+        self.assertIn(REVERSE_HANDOFF_BT_FILE.name, cmake)
         self.assertIn("install(DIRECTORY launch config maps", cmake)
         self.assertNotIn(
             f'PATTERN "{PRECISE_FORWARD_BT_FILE.name}" EXCLUDE', cmake

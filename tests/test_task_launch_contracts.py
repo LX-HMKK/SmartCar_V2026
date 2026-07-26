@@ -90,6 +90,25 @@ class TaskLaunchContractTests(unittest.TestCase):
             source,
         )
 
+    def test_reverse_handoff_behavior_tree_is_wired_from_config(self):
+        parameters = yaml.safe_load(
+            TASK_CONFIG.read_text(encoding="utf-8")
+        )["task_node"]["ros__parameters"]
+        handoff_tree = parameters["reverse_handoff_behavior_tree"]
+        self.assertTrue(
+            handoff_tree.endswith(
+                "navigate_to_pose_reverse_handoff_"
+                "w_replanning_and_recovery.xml"
+            )
+        )
+
+        source = NODE.read_text(encoding="utf-8")
+        self.assertIn('"reverse_handoff_behavior_tree"', source)
+        self.assertIn(
+            "self.get_parameter(\"reverse_handoff_behavior_tree\").value",
+            source,
+        )
+
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = NODE.read_text(encoding="utf-8")
         sequence = source[

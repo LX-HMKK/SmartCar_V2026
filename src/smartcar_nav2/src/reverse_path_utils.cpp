@@ -65,9 +65,11 @@ double angularDistance(double first, double second)
 }
 
 ReversePathValidationResult invalidResult(
-  const std::string & reason, std::size_t segment_index = 0)
+  const std::string & reason, std::size_t segment_index = 0,
+  double observed_value = 0.0, double limit = 0.0)
 {
-  return ReversePathValidationResult{false, reason, segment_index};
+  return ReversePathValidationResult{
+    false, reason, segment_index, observed_value, limit};
 }
 
 bool validOptions(const ReversePathValidationOptions & options)
@@ -201,13 +203,40 @@ ReversePathValidationResult validateReversePath(
       return invalidResult("segment_not_reverse", index);
     }
 
-    const double curvature = angularDistance(current_yaw, next_yaw) / segment_length;
-    if (!finite(curvature) || curvature > maximum_curvature) {
+  }
+
+  // Smac quantizes pose yaw to angle bins. Dividing adjacent yaw deltas by
+  // short sampled segments therefore reports false curvature spikes near the
+  // path endpoints. The circumcircle through three positions measures the
+  // actual path geometry while the projection checks above still enforce
+  // reverse-only motion and reject cusps.
+  for (std::size_t index = 1; index + 1 < path.poses.size(); ++index) {
+    const auto & previous = path.poses[index - 1];
+    const auto & current = path.poses[index];
+    const auto & next = path.poses[index + 1];
+    const double first_length = planarDistance(previous, current);
+    const double second_length = planarDistance(current, next);
+    const double chord_length = planarDistance(previous, next);
+    if (chord_length < options.minimum_segment_length) {
       return invalidResult("curvature_exceeded", index);
+    }
+
+    const double first_x =
+      current.pose.position.x - previous.pose.position.x;
+    const double first_y =
+      current.pose.position.y - previous.pose.position.y;
+    const double chord_x = next.pose.position.x - previous.pose.position.x;
+    const double chord_y = next.pose.position.y - previous.pose.position.y;
+    const double twice_area = std::abs(first_x * chord_y - first_y * chord_x);
+    const double curvature =
+      2.0 * twice_area / (first_length * second_length * chord_length);
+    if (!finite(curvature) || curvature > maximum_curvature) {
+      return invalidResult(
+        "curvature_exceeded", index, curvature, maximum_curvature);
     }
   }
 
-  return ReversePathValidationResult{true, "ok", 0};
+  return ReversePathValidationResult{true, "ok", 0, 0.0, 0.0};
 }
 
 }  // namespace smartcar_nav2

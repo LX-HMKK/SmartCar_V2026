@@ -28,6 +28,12 @@ BT_REVERSE_FILE = (
     / "behavior_trees"
     / "navigate_to_pose_reverse_w_replanning_and_recovery.xml"
 )
+BT_REVERSE_HANDOFF_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"
+)
 BT_PRECISE_FILE = (
     PACKAGE_ROOT
     / "config"
@@ -159,6 +165,7 @@ class TestNav2Contracts(unittest.TestCase):
             BT_PRECISE_FILE,
             BT_THROUGH_POSES_FILE,
             BT_REVERSE_FILE,
+            BT_REVERSE_HANDOFF_FILE,
         ):
             with self.subTest(behavior_tree=behavior_tree.name):
                 root = ElementTree.parse(behavior_tree).getroot()
@@ -224,6 +231,10 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertLessEqual(
             controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.25)
         self.assertNotIn("goal_checker_plugin", controller)
+        self.assertEqual(
+            controller["controller_plugins"],
+            ["FollowPath", "ReverseHandoff"],
+        )
 
         rpp = controller["FollowPath"]
         self.assertEqual(
@@ -234,6 +245,34 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertIs(rpp["allow_reversing"], True)
         for key in UNSUPPORTED_HUMBLE_RPP_KEYS:
             self.assertNotIn(key, rpp)
+
+        handoff = controller["ReverseHandoff"]
+        self.assertEqual(handoff["plugin"], rpp["plugin"])
+        self.assertAlmostEqual(handoff["desired_linear_vel"], 0.09)
+        self.assertAlmostEqual(handoff["lookahead_dist"], 0.25)
+        self.assertAlmostEqual(handoff["min_lookahead_dist"], 0.20)
+        self.assertIs(handoff["use_velocity_scaled_lookahead_dist"], False)
+        self.assertLess(handoff["desired_linear_vel"], rpp["desired_linear_vel"])
+        self.assertLess(handoff["lookahead_dist"], rpp["lookahead_dist"])
+        self.assertIs(handoff["use_rotate_to_heading"], False)
+        self.assertIs(handoff["allow_reversing"], True)
+        for key in UNSUPPORTED_HUMBLE_RPP_KEYS:
+            self.assertNotIn(key, handoff)
+
+    def test_reverse_handoff_tree_keeps_strict_planning_and_goal_checks(self):
+        regular = ElementTree.parse(BT_REVERSE_FILE).getroot()
+        handoff = ElementTree.parse(BT_REVERSE_HANDOFF_FILE).getroot()
+        regular_compute = regular.find(".//ComputeReversePathToPose")
+        handoff_compute = handoff.find(".//ComputeReversePathToPose")
+        self.assertIsNotNone(regular_compute)
+        self.assertIsNotNone(handoff_compute)
+        self.assertEqual(handoff_compute.attrib, regular_compute.attrib)
+
+        follow = handoff.find(".//FollowPath")
+        self.assertIsNotNone(follow)
+        self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
+        self.assertEqual(
+            follow.attrib["goal_checker_id"], "reverse_goal_checker")
 
     def test_smac_hybrid_obeys_ackermann_kinematics(self):
         planner = ros_parameters(self.params, "planner_server")["GridBased"]
@@ -421,9 +460,19 @@ class TestNav2Contracts(unittest.TestCase):
             if waypoint.get("goal_profile", "standard") == "precise"
         ]
         self.assertEqual(precise_ids, ["a_task_observe"])
+        reverse_handoff_ids = [
+            waypoint["id"]
+            for waypoint in default["waypoints"]
+            if waypoint.get("goal_profile", "standard")
+            == "reverse_handoff"
+        ]
+        self.assertEqual(reverse_handoff_ids, ["c_corner_1"])
         qr = waypoint_by_id(default, "a_task_observe")
         corridor_enter = waypoint_by_id(default, "b_corridor_enter")
         corridor_out = waypoint_by_id(default, "b_corridor_out")
+        c_corner_2 = waypoint_by_id(default, "c_corner_2")
+        return_enter = waypoint_by_id(default, "b_corridor_return_enter")
+        c_corner_1 = waypoint_by_id(default, "c_corner_1")
         self.assertEqual(qr["direction"], "forward")
         self.assertEqual(corridor_enter["direction"], "reverse")
         self.assertEqual(corridor_out["direction"], "reverse")
@@ -442,6 +491,26 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertAlmostEqual(qr_yaw, direct_arrival_yaw, delta=1.0e-6)
         self.assertAlmostEqual(
             corridor_yaw, math.radians(-70.0), delta=1.0e-6
+        )
+        self.assertAlmostEqual(
+            planar_yaw(corridor_out["pose"]["orientation"]),
+            math.radians(-70.0),
+            delta=1.0e-6,
+        )
+        self.assertAlmostEqual(
+            planar_yaw(c_corner_2["pose"]["orientation"]),
+            math.radians(38.0),
+            delta=1.0e-6,
+        )
+        self.assertAlmostEqual(
+            planar_yaw(c_corner_1["pose"]["orientation"]),
+            math.radians(60.0),
+            delta=1.0e-6,
+        )
+        self.assertAlmostEqual(
+            planar_yaw(return_enter["pose"]["orientation"]),
+            math.radians(-135.0),
+            delta=1.0e-6,
         )
         self.assertLess(
             abs(math.remainder(corridor_yaw - qr_yaw, 2.0 * math.pi)),

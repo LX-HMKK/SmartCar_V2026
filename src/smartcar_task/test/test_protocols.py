@@ -83,8 +83,30 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(
             navigation_behavior_tree(True, "reverse.xml"), "reverse.xml")
+        self.assertEqual(
+            navigation_behavior_tree(
+                True,
+                "reverse.xml",
+                goal_profile="reverse_handoff",
+                reverse_handoff_behavior_tree="reverse-handoff.xml",
+            ),
+            "reverse-handoff.xml",
+        )
         with self.assertRaises(ValueError):
             navigation_behavior_tree(True, "")
+        with self.assertRaises(ValueError):
+            navigation_behavior_tree(
+                True,
+                "reverse.xml",
+                goal_profile="reverse_handoff",
+            )
+        with self.assertRaises(ValueError):
+            navigation_behavior_tree(
+                False,
+                "reverse.xml",
+                goal_profile="reverse_handoff",
+                reverse_handoff_behavior_tree="reverse-handoff.xml",
+            )
         with self.assertRaises(ValueError):
             navigation_behavior_tree(
                 False, "reverse.xml", goal_profile="precise")

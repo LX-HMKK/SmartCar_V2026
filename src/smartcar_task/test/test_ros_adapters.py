@@ -138,6 +138,7 @@ class RosAdapterTests(unittest.TestCase):
             ReentrantCallbackGroup(),
             direction_guard=direction_guard,
             reverse_behavior_tree="/tmp/reverse.xml",
+            reverse_handoff_behavior_tree="/tmp/reverse-handoff.xml",
             precise_forward_behavior_tree="/tmp/precise-forward.xml",
             navigation_timeout_sec=3.0,
             goal_response_timeout_sec=1.0,
@@ -193,12 +194,37 @@ class RosAdapterTests(unittest.TestCase):
             received_goals[1][3],
         )
 
+        handoff_endpoint = Waypoint(
+            frame_id="odom_combined",
+            position=(1.2, 0.0, 0.0),
+            orientation=(0.0, 0.0, 0.0, 1.0),
+            task="vlm",
+            direction="reverse",
+            goal_profile="reverse_handoff",
+        )
+        handoff = navigator.navigate(
+            handoff_endpoint, reverse_direction=True)
+        self.assertTrue(handoff.success, handoff.status)
+        self.assertEqual(
+            received_goals[2][:3],
+            ("odom_combined", 1.2, "/tmp/reverse-handoff.xml"),
+        )
+        prepare_calls = [
+            lease for name, lease in direction_guard.calls
+            if name == "prepare"
+        ]
+        self.assertEqual(prepare_calls[2].direction, 2)
+        self.assertEqual(
+            bytes(prepare_calls[2].action_uuid.uuid),
+            received_goals[2][3],
+        )
+
         invalid_reverse = navigator.navigate(
             precise_endpoint, reverse_direction=True)
         self.assertFalse(invalid_reverse.success)
-        self.assertIn("reverse goals must use the standard profile",
+        self.assertIn("reverse goals must use the standard or",
                       invalid_reverse.status)
-        self.assertEqual(len(received_goals), 2)
+        self.assertEqual(len(received_goals), 3)
 
         class LateCancelFuture:
             @staticmethod

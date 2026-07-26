@@ -19,7 +19,11 @@ ALLOWED_TASKS = frozenset({
     "nav",       # pure navigation pass-through (no vision/media subtask)
 })
 ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
-ALLOWED_GOAL_PROFILES = frozenset({"standard", "precise"})
+ALLOWED_GOAL_PROFILES = frozenset({
+    "standard",
+    "precise",
+    "reverse_handoff",
+})
 ORIGIN_TOLERANCE = 1e-9
 QUATERNION_NORM_TOLERANCE = 1e-3
 WAYPOINT_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
@@ -92,9 +96,16 @@ def _parse_waypoint(raw, index):
     ):
         raise ValueError(
             f"waypoints[{index}] has unknown goal_profile {goal_profile!r}")
-    if direction == "reverse" and goal_profile != "standard":
+    if direction == "reverse" and goal_profile not in {
+        "standard",
+        "reverse_handoff",
+    }:
         raise ValueError(
-            f"waypoints[{index}] reverse goals must use the standard profile")
+            f"waypoints[{index}] reverse goals must use the standard "
+            "or reverse_handoff profile")
+    if direction != "reverse" and goal_profile == "reverse_handoff":
+        raise ValueError(
+            f"waypoints[{index}] reverse_handoff goals must be reverse")
 
     pose = _mapping(item.get("pose"), f"waypoints[{index}].pose")
     position = _components(

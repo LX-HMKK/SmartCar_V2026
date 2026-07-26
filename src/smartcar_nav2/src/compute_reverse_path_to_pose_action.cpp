@@ -86,8 +86,27 @@ BT::NodeStatus ComputeReversePathToPoseAction::on_success()
     clearPathOutput();
     RCLCPP_ERROR(
       node_->get_logger(),
-      "Rejected reverse path: %s at segment %zu",
-      validation.reason.c_str(), validation.segment_index);
+      "Rejected reverse path: %s at segment %zu/%zu (observed=%.6f, limit=%.6f)",
+      validation.reason.c_str(), validation.segment_index,
+      restored_path.poses.size(),
+      validation.observed_value, validation.limit);
+    if (
+      validation.reason == "curvature_exceeded" &&
+      validation.segment_index > 0 &&
+      validation.segment_index + 1 < restored_path.poses.size())
+    {
+      const auto & previous =
+        restored_path.poses[validation.segment_index - 1].pose.position;
+      const auto & current =
+        restored_path.poses[validation.segment_index].pose.position;
+      const auto & next =
+        restored_path.poses[validation.segment_index + 1].pose.position;
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "Rejected curvature samples: previous=(%.6f, %.6f), current=(%.6f, %.6f), "
+        "next=(%.6f, %.6f)",
+        previous.x, previous.y, current.x, current.y, next.x, next.y);
+    }
     return BT::NodeStatus::FAILURE;
   }
 

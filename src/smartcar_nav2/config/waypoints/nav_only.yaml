@@ -54,8 +54,8 @@ waypoints:
       orientation:
         x: 0.0
         y: 0.0
-        z: -0.5000000014532175
-        w: 0.8660254029454231
+        z: -0.573576436351046
+        w: 0.8191520442889918
     task: "corridor"
     direction: reverse
 
@@ -73,6 +73,7 @@ waypoints:
         w: 0.8660254037844388
     task: "nav"
     direction: reverse
+    goal_profile: reverse_handoff
 
   - id: "c_corner_2"
     frame_id: "odom_combined"
@@ -84,8 +85,8 @@ waypoints:
       orientation:
         x: 0.0
         y: 0.0
-        z: 0.0
-        w: 1.0
+        z: 0.3255681544571567
+        w: 0.9455185755993168
     task: "loop"
     direction: forward
 
@@ -129,8 +130,8 @@ waypoints:
       orientation:
         x: 0.0
         y: 0.0
-        z: -0.7933533392697143
-        w: 0.6087614303399925
+        z: -0.9238795325112867
+        w: 0.38268343236508984
     task: "corridor"
     direction: forward
 

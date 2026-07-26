@@ -1,9 +1,9 @@
-<!-- Reverse-only Ackermann tree: no spin, backup, wait, or direction changes. -->
+<!-- Reverse handoff tree: preserve strict goal checks and finish the terminal arc at low speed. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="6" name="NavigateReverseRecovery">
-      <Sequence name="NavigateReverseWithFailureReplanning">
-        <RecoveryNode number_of_retries="1" name="ComputeValidatedReversePath">
+    <RecoveryNode number_of_retries="6" name="NavigateReverseHandoffRecovery">
+      <Sequence name="NavigateReverseHandoffWithFailureReplanning">
+        <RecoveryNode number_of_retries="1" name="ComputeValidatedReverseHandoffPath">
           <Sequence>
             <ComputeReversePathToPose
               goal="{goal}"
@@ -20,25 +20,25 @@
             <IsPathValid path="{path}" server_timeout="100"/>
           </Sequence>
           <ClearEntireCostmap
-            name="ClearGlobalCostmap-ReverseContext"
+            name="ClearGlobalCostmap-ReverseHandoffContext"
             service_name="global_costmap/clear_entirely_global_costmap"/>
         </RecoveryNode>
-        <RecoveryNode number_of_retries="1" name="FollowValidatedReversePath">
+        <RecoveryNode number_of_retries="1" name="FollowValidatedReverseHandoffPath">
           <FollowPath
             path="{path}"
-            controller_id="FollowPath"
+            controller_id="ReverseHandoff"
             goal_checker_id="reverse_goal_checker"/>
           <ClearEntireCostmap
-            name="ClearLocalCostmap-ReverseContext"
+            name="ClearLocalCostmap-ReverseHandoffContext"
             service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </Sequence>
-      <Sequence name="ClearReverseCostmapsRecovery">
+      <Sequence name="ClearReverseHandoffCostmapsRecovery">
         <ClearEntireCostmap
-          name="ClearLocalCostmap-ReverseSubtree"
+          name="ClearLocalCostmap-ReverseHandoffSubtree"
           service_name="local_costmap/clear_entirely_local_costmap"/>
         <ClearEntireCostmap
-          name="ClearGlobalCostmap-ReverseSubtree"
+          name="ClearGlobalCostmap-ReverseHandoffSubtree"
           service_name="global_costmap/clear_entirely_global_costmap"/>
       </Sequence>
     </RecoveryNode>

@@ -155,7 +155,7 @@ class WaypointTests(unittest.TestCase):
             ["standard"] * len(waypoints),
         )
 
-    def test_goal_profile_parses_precise_and_rejects_invalid_values(self):
+    def test_goal_profiles_parse_and_reject_invalid_direction_pairings(self):
         document = valid_document()
         document["waypoints"][1]["goal_profile"] = "precise"
         with tempfile.TemporaryDirectory() as directory:
@@ -167,6 +167,15 @@ class WaypointTests(unittest.TestCase):
             [item.goal_profile for item in waypoints[2:]],
             ["standard"] * (len(waypoints) - 2),
         )
+
+        reverse_handoff = valid_document()
+        reverse_handoff["waypoints"][2][
+            "goal_profile"] = "reverse_handoff"
+        with tempfile.TemporaryDirectory() as directory:
+            handoff_waypoints = load_waypoints(
+                self.write_document(directory, reverse_handoff))
+        self.assertEqual(
+            handoff_waypoints[2].goal_profile, "reverse_handoff")
 
         for invalid in ("", "unknown", None, True):
             document = valid_document()
@@ -183,10 +192,21 @@ class WaypointTests(unittest.TestCase):
         reverse_precise["waypoints"][2]["goal_profile"] = "precise"
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(
-                ValueError, "reverse goals must use the standard profile"
+                ValueError,
+                "reverse goals must use the standard or reverse_handoff profile",
             ):
                 load_waypoints(
                     self.write_document(directory, reverse_precise))
+
+        forward_handoff = valid_document()
+        forward_handoff["waypoints"][1][
+            "goal_profile"] = "reverse_handoff"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                ValueError, "reverse_handoff goals must be reverse"
+            ):
+                load_waypoints(
+                    self.write_document(directory, forward_handoff))
 
     def test_rejects_malformed_documents_and_missing_fields(self):
         malformed_documents = (
@@ -314,10 +334,11 @@ class WaypointTests(unittest.TestCase):
             ],
         )
         self.assertEqual(nav_only[1].goal_profile, "precise")
+        self.assertEqual(nav_only[4].goal_profile, "reverse_handoff")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(nav_only)
-            if index != 1
+            if index not in {1, 4}
         ))
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
@@ -447,10 +468,11 @@ class WaypointTests(unittest.TestCase):
             ],
         )
         self.assertEqual(waypoints[1].goal_profile, "precise")
+        self.assertEqual(waypoints[4].goal_profile, "reverse_handoff")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(waypoints)
-            if index != 1
+            if index not in {1, 4}
         ))
 
 

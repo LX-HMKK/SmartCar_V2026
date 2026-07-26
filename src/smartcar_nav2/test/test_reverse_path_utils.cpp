@@ -90,15 +90,36 @@ TEST(ReversePathUtils, RejectsForwardSegmentAndCusp)
 TEST(ReversePathUtils, RejectsCurvatureAboveConfiguredLimit)
 {
   const auto start = makePose(0.0, 0.0, 0.0);
-  const auto goal = makePose(-0.1, 0.0, 1.0);
-  const auto path = makePath({start, goal});
+  const auto goal = makePose(-0.05, 0.05, -kPi / 2.0);
+  const auto path = makePath(
+  {
+    start,
+    makePose(-0.05, 0.0, -kPi / 4.0),
+    goal,
+  });
   smartcar_nav2::ReversePathValidationOptions options;
-  options.maximum_direction_error = 1.2;
+  options.maximum_direction_error = 0.8;
   options.goal_yaw_tolerance = 0.01;
 
   const auto result = smartcar_nav2::validateReversePath(path, start, goal, options);
   EXPECT_FALSE(result.valid);
   EXPECT_EQ(result.reason, "curvature_exceeded");
+}
+
+TEST(ReversePathUtils, IgnoresQuantizedYawSpikesOnStraightGeometry)
+{
+  const auto start = makePose(0.0, 0.0, 0.0);
+  const auto goal = makePose(-0.04, 0.0, 0.10);
+  const auto path = makePath(
+  {
+    start,
+    makePose(-0.02, 0.0, 0.05),
+    goal,
+  });
+
+  const auto result = smartcar_nav2::validateReversePath(
+    path, start, goal, smartcar_nav2::ReversePathValidationOptions());
+  EXPECT_TRUE(result.valid) << result.reason;
 }
 
 TEST(ReversePathUtils, RejectsInvalidPoseAndWrongGoal)

@@ -406,13 +406,19 @@ class MissionTests(unittest.TestCase):
 
     def test_direction_boundary_splits_navigation_segments(self):
         """Every waypoint reaches the navigator with its declared direction."""
-        def wp(task, x=0.0, direction="forward"):
+        def wp(
+            task,
+            x=0.0,
+            direction="forward",
+            goal_profile="standard",
+        ):
             return Waypoint(
                 frame_id="odom_combined",
                 position=(x, 0.0, 0.0),
                 orientation=(0.0, 0.0, 0.0, 1.0),
                 task=task,
                 direction=direction,
+                goal_profile=goal_profile,
             )
 
         items = [
@@ -420,7 +426,7 @@ class MissionTests(unittest.TestCase):
             wp("qr", 1.0),                       # forward (default)
             wp("corridor", 2.0, "reverse"),       # reverse start
             wp("corridor", 3.0, "reverse"),       # still reverse
-            wp("vlm", 4.0, "reverse"),            # reverse end
+            wp("vlm", 4.0, "reverse", "reverse_handoff"),
             wp("loop", 5.0),                      # back to forward (default)
             wp("loop", 6.0),
             wp("loop", 7.0),
@@ -451,6 +457,7 @@ class MissionTests(unittest.TestCase):
                 (items[9], False),
             ],
         )
+        self.assertEqual(items[4].goal_profile, "reverse_handoff")
         self.assertEqual(mission.state, MissionState.COMPLETED)
 
     def test_consecutive_forward_waypoints_are_submitted_individually(self):

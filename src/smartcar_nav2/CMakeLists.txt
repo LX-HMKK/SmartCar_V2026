@@ -76,9 +76,21 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
   DESTINATION "share/${PROJECT_NAME}/config"
 )
 
+set(SMARTCAR_NAV2_BEHAVIOR_TREE_FILES
+  config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_to_pose_precise_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
+)
+install(FILES ${SMARTCAR_NAV2_BEHAVIOR_TREE_FILES}
+  DESTINATION "share/${PROJECT_NAME}/config/behavior_trees"
+)
+
 install(DIRECTORY launch config maps
   DESTINATION share/${PROJECT_NAME}
   PATTERN "nav2_params_fixed.yaml" EXCLUDE
+  PATTERN "behavior_trees" EXCLUDE
 )
 
 install(DIRECTORY include/

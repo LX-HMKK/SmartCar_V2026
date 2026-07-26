@@ -43,17 +43,28 @@ def navigation_behavior_tree(
     reverse_behavior_tree,
     goal_profile="standard",
     precise_forward_behavior_tree="",
+    reverse_handoff_behavior_tree="",
 ):
     profile = str(goal_profile).strip()
-    if profile not in {"standard", "precise"}:
+    if profile not in {"standard", "precise", "reverse_handoff"}:
         raise ValueError(f"unknown goal profile {profile!r}")
     if reverse_direction:
+        if profile == "reverse_handoff":
+            value = str(reverse_handoff_behavior_tree).strip()
+            if not value:
+                raise ValueError(
+                    "reverse_handoff_behavior_tree must not be empty")
+            return value
         if profile != "standard":
-            raise ValueError("reverse goals must use the standard profile")
+            raise ValueError(
+                "reverse goals must use the standard or "
+                "reverse_handoff profile")
         value = str(reverse_behavior_tree).strip()
         if not value:
             raise ValueError("reverse_behavior_tree must not be empty")
         return value
+    if profile == "reverse_handoff":
+        raise ValueError("reverse_handoff goals must be reverse")
     if profile == "precise":
         value = str(precise_forward_behavior_tree).strip()
         if not value:

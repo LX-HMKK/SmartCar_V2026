@@ -31,6 +31,7 @@ install(
 
 install(
   PROGRAMS
+    scripts/generate_competition_field.py
     scripts/sim_cleanup.sh
     scripts/sim_start.sh
     scripts/wait_for_wslg.sh

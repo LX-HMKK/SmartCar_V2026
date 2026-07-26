@@ -1,0 +1,17 @@
+schema_version: 1
+model_name: competition_field
+
+# Collision policy is intentionally stricter than the visual field model.
+# Only the two official B-zone blocks are physical obstacles in simulation.
+collision:
+  b_zone_walls: true
+  diagnosis_room_inner_ring: false
+  c_ring_outer_boundary: false
+  field_outer_boundary: false
+
+# c_corner_2 at 38 degrees overlaps the padded global footprint by about 0.021 m
+# if the diagnosis-room inner stadium is physical. Keep it visible but non-solid
+# until the route and the measured venue boundary have both been validated.
+dimensions:
+  wall_height_m: 0.30
+  surface_thickness_m: 0.004

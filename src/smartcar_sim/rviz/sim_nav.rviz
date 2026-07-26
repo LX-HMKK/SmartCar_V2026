@@ -138,6 +138,16 @@ Visualization Manager:
         Value: /smartcar/waypoints/markers
       Enabled: true
 
+    # Complete official field geometry, display-only (not a Nav2 static map).
+    - Class: rviz_default_plugins/MarkerArray
+      Name: Official Field Reference
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/field_reference/markers
+      Enabled: true
+
   Enabled: true
   Global Options:
     Background Color: 48; 48; 48
@@ -158,13 +168,17 @@ Visualization Manager:
       Name: Current View
       Target Frame: odom_combined
       Yaw: 0.0
-      Scale: 8.0
+      Scale: 80.0
+      X: 2.0
+      Y: 2.25
     Saved:
       - Class: rviz_default_plugins/TopDownOrtho
         Name: Top View
         Target Frame: odom_combined
         Yaw: 0.0
-        Scale: 8.0
+        Scale: 80.0
+        X: 2.0
+        Y: 2.25
 
 Window Geometry:
   Height: 900

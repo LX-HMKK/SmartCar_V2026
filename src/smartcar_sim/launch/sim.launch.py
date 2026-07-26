@@ -19,6 +19,7 @@ import os
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
+    EmitEvent,
     GroupAction,
     IncludeLaunchDescription,
     RegisterEventHandler,
@@ -28,6 +29,7 @@ from launch.actions import (
 )
 from launch.conditions import IfCondition, UnlessCondition
 from launch.event_handlers import OnProcessExit
+from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
     LaunchConfiguration,
@@ -41,7 +43,7 @@ from ament_index_python.packages import get_package_share_directory
 def generate_launch_description():
     pkg_sim = get_package_share_directory("smartcar_sim")
     pkg_nav2 = get_package_share_directory("smartcar_nav2")
-    pkg_task = get_package_share_directory("smartcar_task")
+    pkg_tools = get_package_share_directory("smartcar_tools")
 
     # Fast DDS works reliably when WSL2 uses NAT networking. Mirrored networking
     # creates an extra loopback0 interface and policy routes that break Fast DDS
@@ -63,7 +65,9 @@ def generate_launch_description():
     world = LaunchConfiguration("world", default="track")
     headless = LaunchConfiguration("headless", default="false")
     use_rviz = LaunchConfiguration("use_rviz", default="false")
-    autostart = LaunchConfiguration("autostart", default="false")
+    run_route = LaunchConfiguration("run_route", default="false")
+    results_file = LaunchConfiguration(
+        "results_file", default="/tmp/auto_train_results.json")
 
     # ── Gazebo ──
     # 注意：gz_server 和 gz_server_headless 互斥，只启动其中一个。
@@ -87,6 +91,12 @@ def generate_launch_description():
     # DDS environment applies to every process launched below.
     set_rmw = SetEnvironmentVariable("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
     set_localhost = SetEnvironmentVariable("ROS_LOCALHOST_ONLY", "1")
+    model_path = os.path.join(pkg_sim, "models")
+    existing_model_path = os.environ.get("IGN_GAZEBO_RESOURCE_PATH", "")
+    set_model_path = SetEnvironmentVariable(
+        "IGN_GAZEBO_RESOURCE_PATH",
+        model_path + (f":{existing_model_path}" if existing_model_path else ""),
+    )
 
     # Robot is embedded in world file via <include> — no spawn needed
 
@@ -165,12 +175,19 @@ def generate_launch_description():
 
     # ── Nav2 ──
     nav2_params = PathJoinSubstitution([pkg_nav2, "config", "nav2_params.yaml"])
+    nav2_fixed_params = PathJoinSubstitution([
+        pkg_nav2, "config", "nav2_params_fixed.yaml"
+    ])
     bt_forward = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_w_replanning_and_recovery.xml"])
     bt_precise = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_precise_w_replanning_and_recovery.xml"])
     bt_reverse = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_reverse_w_replanning_and_recovery.xml"])
+    bt_reverse_handoff = PathJoinSubstitution([
+        pkg_nav2, "config", "behavior_trees",
+        "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
+    ])
 
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -185,22 +202,6 @@ def generate_launch_description():
         }.items(),
     )
 
-    # ── Task node ──
-    task_node = Node(
-        package="smartcar_task",
-        executable="task_node",
-        name="task_node",
-        parameters=[PathJoinSubstitution([pkg_task, "config", "task.yaml"]), {
-            "use_sim_time": True,
-            "waypoints_file": PathJoinSubstitution([pkg_nav2, "config", "waypoints", "nav_only.yaml"]),
-            "waypoints_calibrated": True,
-            "extrinsics_calibrated": True,
-            "steering_calibrated": True,
-            "emergency_stop_ready": True,
-            "operator_approved": True,
-        }],
-    )
-
     # ── Waypoint visualizer (publishes MarkerArray for RViz) ──
     waypoint_viz = Node(
         package="smartcar_tools",
@@ -210,6 +211,16 @@ def generate_launch_description():
             "use_sim_time": True,
             "waypoints_file": PathJoinSubstitution([pkg_nav2, "config", "waypoints", "nav_only.yaml"]),
             "publish_rate": 1.0,
+        }],
+    )
+    field_reference = Node(
+        package="smartcar_tools",
+        executable="field_reference_node",
+        name="field_reference",
+        parameters=[{
+            "use_sim_time": True,
+            "geometry_file": os.path.join(
+                pkg_tools, "config", "routes", "field_geometry.yaml"),
         }],
     )
 
@@ -224,6 +235,35 @@ def generate_launch_description():
         name="rviz_when_wslg_ready",
     )
 
+    auto_train = Node(
+        package="smartcar_sim",
+        executable="auto_train.py",
+        name="auto_train",
+        parameters=[{
+            "use_sim_time": True,
+            "waypoints_file": PathJoinSubstitution([
+                pkg_nav2, "config", "waypoints", "nav_only.yaml"
+            ]),
+            "forward_behavior_tree": bt_forward,
+            "precise_behavior_tree": bt_precise,
+            "reverse_behavior_tree": bt_reverse,
+            "reverse_handoff_behavior_tree": bt_reverse_handoff,
+            "nav2_params_file": nav2_fixed_params,
+            "results_file": results_file,
+        }],
+        condition=IfCondition(run_route),
+        output="screen",
+    )
+
+    auto_train_exit = RegisterEventHandler(
+        OnProcessExit(
+            target_action=auto_train,
+            on_exit=[EmitEvent(event=Shutdown(
+                reason="complete route runner exited"))],
+        ),
+        condition=IfCondition(run_route),
+    )
+
     start_after_cleanup = GroupAction(actions=[
         gz_server,
         gz_server_headless,
@@ -234,18 +274,13 @@ def generate_launch_description():
         odom_relay,
         odom_combined_relay,
         waypoint_viz,
+        field_reference,
+        auto_train_exit,
         # Nav2 延迟 12s 启动（等 Gazebo /clock 发布 + bridge 桥接就绪）
         TimerAction(period=12.0, actions=[nav2_launch]),
-        # Auto-train 延迟 20s 启动
-        TimerAction(period=20.0, actions=[
-            Node(
-                package="smartcar_sim",
-                executable="auto_train.py",
-                name="auto_train",
-                parameters=[{"use_sim_time": True}],
-                output="screen",
-            )
-        ]),
+        # Complete route runner, opt-in via run_route:=true. This name must not
+        # collide with Nav2's lifecycle autostart launch argument.
+        TimerAction(period=20.0, actions=[auto_train]),
         # RViz 延迟 8s 启动（等 Gazebo + odom_combined TF frame 就绪）
         # 修复原因：原 5s 在 Gazebo 启动耗时长时不够，/clock 未发布
         # → RViz 一直停在 "No tf data. Fixed frame [odom_combined] does not exist"
@@ -256,9 +291,12 @@ def generate_launch_description():
         DeclareLaunchArgument("world", default_value="track"),
         DeclareLaunchArgument("headless", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
-        DeclareLaunchArgument("autostart", default_value="false"),
+        DeclareLaunchArgument("run_route", default_value="false"),
+        DeclareLaunchArgument(
+            "results_file", default_value="/tmp/auto_train_results.json"),
         set_rmw,
         set_localhost,
+        set_model_path,
         # ExecuteProcess is asynchronous. Register the handler first so no
         # Gazebo or ROS process can start until cleanup has actually exited.
         RegisterEventHandler(
