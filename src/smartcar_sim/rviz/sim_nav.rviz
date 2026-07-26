@@ -113,13 +113,19 @@ Visualization Manager:
         Durability Policy: Volatile
         Reliability Policy: Best Effort
         Value: /odom_combined
-      Color: 100; 200; 255
-      Alpha: 0.6
       Position Tolerance: 0.3
       Angle Tolerance: 0.1
       Keep: 30
-      Shaft Length: 0.05
-      Shaft Radius: 0.01
+      Shape:
+        Alpha: 0.6
+        Axes Length: 0.05
+        Axes Radius: 0.004
+        Color: 100; 200; 255
+        Head Length: 0.015
+        Head Radius: 0.01
+        Shaft Length: 0.025
+        Shaft Radius: 0.004
+        Value: Arrow
       Enabled: true
 
     # ── Waypoint Markers ──
