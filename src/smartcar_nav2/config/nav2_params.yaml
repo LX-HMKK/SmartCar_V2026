@@ -8,8 +8,8 @@ bt_navigator:
     # faster than the independent 20 Hz path-controller loop.
     bt_loop_duration: 20
     default_server_timeout: 10
-    default_nav_to_pose_bt_xml: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
-    default_nav_through_poses_bt_xml: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
+    default_nav_to_pose_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
+    default_nav_through_poses_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
     # Setting plugin_lib_names replaces Nav2's defaults, so retain the full
     # 1.1.20 list and append the project reverse-path node.
     plugin_lib_names:
@@ -129,30 +129,87 @@ controller_server:
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
       allow_reversing: true
-    # The reverse-to-forward handoff must finish the planned terminal arc
-    # without the long lookahead cutting across it and requesting a direction
-    # change. Keep the normal controller unchanged for every other goal.
+    # The reverse-to-forward handoff needs closed-loop terminal pose control.
+    # The wrapper maps the real reverse path and odometry into a virtual
+    # positive-forward Ackermann problem, then maps the command back through a
+    # final reverse-only velocity and curvature guard.
     ReverseHandoff:
-      plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
-      desired_linear_vel: 0.09
-      lookahead_dist: 0.25
-      min_lookahead_dist: 0.20
-      max_lookahead_dist: 0.40
-      lookahead_time: 1.5
+      plugin: "smartcar_nav2::ReverseOnlyMPPIController"
+      time_steps: 80
+      model_dt: 0.05
+      batch_size: 800
+      iteration_count: 2
+      vx_std: 0.025
+      vy_std: 0.0
+      wz_std: 0.05
+      vx_max: 0.09
+      vx_min: 0.02
+      vy_max: 0.0
+      wz_max: 0.20
+      prune_distance: 1.0
       transform_tolerance: 0.1
-      use_velocity_scaled_lookahead_dist: false
-      min_approach_linear_velocity: 0.03
-      approach_velocity_scaling_dist: 0.30
-      max_allowed_time_to_collision_up_to_carrot: 1.0
-      use_collision_detection: true
-      use_cost_regulated_linear_velocity_scaling: true
-      cost_scaling_dist: 0.25
-      cost_scaling_gain: 1.0
-      inflation_cost_scaling_factor: 5.0
-      regulated_linear_scaling_min_radius: 0.9
-      regulated_linear_scaling_min_speed: 0.03
-      use_rotate_to_heading: false
-      allow_reversing: true
+      temperature: 0.3
+      gamma: 0.015
+      motion_model: "Ackermann"
+      visualize: false
+      retry_attempt_limit: 1
+      reset_period: 1.0
+      regenerate_noises: false
+      AckermannConstraints:
+        min_turning_r: 0.55
+      critics:
+        - ConstraintCritic
+        - CostCritic
+        - GoalCritic
+        - GoalAngleCritic
+        - PathAlignCritic
+        - PathFollowCritic
+        - PathAngleCritic
+      ConstraintCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 16.0
+      CostCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 3.81
+        critical_cost: 300.0
+        consider_footprint: true
+        collision_cost: 1000000.0
+        near_goal_distance: 0.30
+      GoalCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        threshold_to_consider: 0.70
+      GoalAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 12.0
+        threshold_to_consider: 0.70
+      PathAlignCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 8.0
+        max_path_occupancy_ratio: 0.10
+        trajectory_point_step: 2
+        threshold_to_consider: 0.30
+        offset_from_furthest: 4
+        use_path_orientations: true
+      PathFollowCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 5.0
+        offset_from_furthest: 4
+        threshold_to_consider: 0.70
+      PathAngleCritic:
+        enabled: true
+        cost_power: 1
+        cost_weight: 4.0
+        offset_from_furthest: 2
+        threshold_to_consider: 0.30
+        max_angle_to_furthest: 0.75
+        forward_preference: true
 
 local_costmap:
   local_costmap:
@@ -165,8 +222,10 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.03
-      # Real rear-axle-origin body envelope measured on the car.
-      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.10, -0.13], [-0.10, 0.13]]"
+      # pi-invariant conservative hull. MPPI evaluates the same physical body
+      # at a virtual yaw shifted by pi, so an asymmetric rear-axle footprint
+      # would swap its front and rear collision extents.
+      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
@@ -259,7 +318,9 @@ velocity_smoother:
   ros__parameters:
     use_sim_time: false
     smoothing_frequency: 20.0
-    scale_velocities: false
+    # Preserve the Ackermann curvature cone while acceleration limits ramp the
+    # command before the downstream direction guard.
+    scale_velocities: true
     feedback: "OPEN_LOOP"
     max_velocity: [0.15, 0.0, 0.75]
     min_velocity: [-0.15, 0.0, -0.75]

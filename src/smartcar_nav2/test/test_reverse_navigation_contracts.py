@@ -106,7 +106,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
         )
         self.assertIs(reverse["stateful"], False)
 
-    def test_reverse_handoff_uses_dedicated_low_speed_controller(self):
+    def test_reverse_handoff_uses_dedicated_mppi_ackermann_controller(self):
         regular_root = ElementTree.parse(REVERSE_BT_FILE).getroot()
         handoff_root = ElementTree.parse(REVERSE_HANDOFF_BT_FILE).getroot()
         handoff_tags = [element.tag for element in handoff_root.iter()]
@@ -149,15 +149,66 @@ class TestReverseNavigationContracts(unittest.TestCase):
         )
         regular = controller["FollowPath"]
         handoff = controller["ReverseHandoff"]
-        self.assertEqual(handoff["plugin"], regular["plugin"])
-        self.assertLess(handoff["desired_linear_vel"], regular["desired_linear_vel"])
-        self.assertLess(handoff["lookahead_dist"], regular["lookahead_dist"])
-        self.assertAlmostEqual(handoff["desired_linear_vel"], 0.09)
-        self.assertAlmostEqual(handoff["lookahead_dist"], 0.25)
-        self.assertAlmostEqual(handoff["min_lookahead_dist"], 0.20)
-        self.assertIs(handoff["use_velocity_scaled_lookahead_dist"], False)
-        self.assertIs(handoff["allow_reversing"], True)
-        self.assertIs(handoff["use_rotate_to_heading"], False)
+        self.assertEqual(
+            regular["plugin"],
+            "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController",
+        )
+        self.assertEqual(
+            handoff["plugin"], "smartcar_nav2::ReverseOnlyMPPIController"
+        )
+        self.assertEqual(handoff["motion_model"], "Ackermann")
+        planner_radius = self.params["planner_server"]["ros__parameters"][
+            "GridBased"
+        ]["minimum_turning_radius"]
+        self.assertAlmostEqual(
+            handoff["AckermannConstraints"]["min_turning_r"], planner_radius
+        )
+        self.assertAlmostEqual(handoff["vx_min"], 0.02)
+        self.assertAlmostEqual(handoff["vx_max"], 0.09)
+        self.assertGreater(handoff["vx_min"], 0.0)
+        self.assertLess(handoff["vx_min"], handoff["vx_max"])
+        self.assertAlmostEqual(
+            handoff["model_dt"], 1.0 / controller["controller_frequency"]
+        )
+        self.assertEqual(handoff["iteration_count"], 2)
+        self.assertLessEqual(handoff["batch_size"], 1000)
+        self.assertIs(handoff["visualize"], False)
+
+        critics = handoff["critics"]
+        self.assertIn("GoalAngleCritic", critics)
+        self.assertNotIn("PreferForwardCritic", critics)
+        goal_angle = handoff["GoalAngleCritic"]
+        self.assertIs(goal_angle["enabled"], True)
+        self.assertGreater(
+            goal_angle["cost_weight"], handoff["GoalCritic"]["cost_weight"]
+        )
+        self.assertGreaterEqual(
+            handoff["ConstraintCritic"]["cost_weight"],
+            goal_angle["cost_weight"],
+        )
+        self.assertGreater(
+            goal_angle["threshold_to_consider"],
+            controller["reverse_goal_checker"]["xy_goal_tolerance"],
+        )
+        self.assertIs(
+            handoff["PathAngleCritic"]["forward_preference"], True
+        )
+        self.assertIs(
+            handoff["PathAlignCritic"]["use_path_orientations"], True
+        )
+
+        projected_heading = (
+            handoff["vx_max"]
+            * handoff["time_steps"]
+            * handoff["model_dt"]
+            / planner_radius
+        )
+        self.assertGreater(
+            projected_heading,
+            controller["reverse_goal_checker"]["yaw_goal_tolerance"],
+        )
+        smoother = self.params["velocity_smoother"]["ros__parameters"]
+        self.assertIs(smoother["scale_velocities"], True)
 
     def test_precise_forward_tree_uses_registered_goal_checker(self):
         root = ElementTree.parse(PRECISE_FORWARD_BT_FILE).getroot()
@@ -237,13 +288,11 @@ class TestReverseNavigationContracts(unittest.TestCase):
                 "footprint"
             ]
         )
-        vertices = {(round(x, 9), round(y, 9)) for x, y in global_footprint}
-        for x, y in vertices:
-            self.assertIn((-x, -y), vertices)
-        self.assertGreaterEqual(
-            max(x for x, _y in global_footprint), max(x for x, _y in local))
-        self.assertLessEqual(
-            min(x for x, _y in global_footprint), min(x for x, _y in local))
+        self.assertEqual(local, global_footprint)
+        for footprint in (local, global_footprint):
+            vertices = {(round(x, 9), round(y, 9)) for x, y in footprint}
+            for x, y in vertices:
+                self.assertIn((-x, -y), vertices)
 
     def test_build_installs_reverse_bt_library_and_tests(self):
         cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -258,7 +307,15 @@ class TestReverseNavigationContracts(unittest.TestCase):
         )
         self.assertIn("BT_PLUGIN_EXPORT", cmake)
         self.assertIn("test_reverse_path_utils", cmake)
+        self.assertIn("test_reverse_command_filter", cmake)
         self.assertIn("test_reverse_navigation_contracts.py", cmake)
+        self.assertIn(
+            "add_library(smartcar_reverse_only_mppi_controller", cmake
+        )
+        self.assertIn("pluginlib_export_plugin_description_file(", cmake)
+        self.assertIn("reverse_only_mppi_controller_plugin.xml", cmake)
+        self.assertIn("configure_file(", cmake)
+        self.assertIn("@ONLY", cmake)
         self.assertTrue(PRECISE_FORWARD_BT_FILE.is_file())
         self.assertTrue(REVERSE_HANDOFF_BT_FILE.is_file())
         self.assertIn("SMARTCAR_NAV2_BEHAVIOR_TREE_FILES", cmake)
@@ -267,6 +324,9 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertNotIn(
             f'PATTERN "{PRECISE_FORWARD_BT_FILE.name}" EXCLUDE', cmake
         )
+        params_source = PARAMS_FILE.read_text(encoding="utf-8")
+        self.assertIn("@SMARTCAR_NAV2_SHARE_DIR@", params_source)
+        self.assertNotIn("/root/ros2_ws", params_source)
 
 
 if __name__ == "__main__":

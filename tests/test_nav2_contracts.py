@@ -56,8 +56,8 @@ SAFE_OUTPUT_ZERO_DEADLINE_SEC = 0.40
 EXPECTED_LOCAL_FOOTPRINT = [
     [0.27, 0.13],
     [0.27, -0.13],
-    [-0.10, -0.13],
-    [-0.10, 0.13],
+    [-0.27, -0.13],
+    [-0.27, 0.13],
 ]
 EXPECTED_GLOBAL_FOOTPRINT = [
     [0.27, 0.13],
@@ -205,7 +205,7 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("navigate_to_pose", bt_navigator)
         self.assertNotIn("navigate_through_poses", bt_navigator)
 
-    def test_controller_uses_humble_rpp_contract(self):
+    def test_controller_uses_rpp_and_reverse_mppi_contracts(self):
         controller = ros_parameters(self.params, "controller_server")
         self.assertEqual(
             controller["goal_checker_plugins"],
@@ -247,17 +247,69 @@ class TestNav2Contracts(unittest.TestCase):
             self.assertNotIn(key, rpp)
 
         handoff = controller["ReverseHandoff"]
-        self.assertEqual(handoff["plugin"], rpp["plugin"])
-        self.assertAlmostEqual(handoff["desired_linear_vel"], 0.09)
-        self.assertAlmostEqual(handoff["lookahead_dist"], 0.25)
-        self.assertAlmostEqual(handoff["min_lookahead_dist"], 0.20)
-        self.assertIs(handoff["use_velocity_scaled_lookahead_dist"], False)
-        self.assertLess(handoff["desired_linear_vel"], rpp["desired_linear_vel"])
-        self.assertLess(handoff["lookahead_dist"], rpp["lookahead_dist"])
-        self.assertIs(handoff["use_rotate_to_heading"], False)
-        self.assertIs(handoff["allow_reversing"], True)
-        for key in UNSUPPORTED_HUMBLE_RPP_KEYS:
-            self.assertNotIn(key, handoff)
+        self.assertEqual(
+            handoff["plugin"], "smartcar_nav2::ReverseOnlyMPPIController"
+        )
+        self.assertEqual(handoff["motion_model"], "Ackermann")
+        planner_radius = ros_parameters(self.params, "planner_server")[
+            "GridBased"
+        ]["minimum_turning_radius"]
+        self.assertAlmostEqual(
+            handoff["AckermannConstraints"]["min_turning_r"], planner_radius
+        )
+        self.assertAlmostEqual(handoff["vx_min"], 0.02)
+        self.assertAlmostEqual(handoff["vx_max"], 0.09)
+        self.assertGreater(handoff["vx_min"], 0.0)
+        self.assertLess(handoff["vx_min"], handoff["vx_max"])
+        self.assertAlmostEqual(
+            handoff["model_dt"], 1.0 / controller["controller_frequency"]
+        )
+        self.assertEqual(handoff["iteration_count"], 2)
+        self.assertLessEqual(handoff["batch_size"], 1000)
+        self.assertIs(handoff["visualize"], False)
+        self.assertIs(handoff["regenerate_noises"], False)
+
+        critics = handoff["critics"]
+        self.assertIn("ConstraintCritic", critics)
+        self.assertIn("CostCritic", critics)
+        self.assertIn("GoalCritic", critics)
+        self.assertIn("GoalAngleCritic", critics)
+        self.assertIn("PathAngleCritic", critics)
+        self.assertNotIn("PreferForwardCritic", critics)
+        goal_angle = handoff["GoalAngleCritic"]
+        self.assertIs(goal_angle["enabled"], True)
+        self.assertGreater(
+            goal_angle["cost_weight"], handoff["GoalCritic"]["cost_weight"]
+        )
+        self.assertGreaterEqual(
+            handoff["ConstraintCritic"]["cost_weight"],
+            goal_angle["cost_weight"],
+        )
+        self.assertGreater(
+            goal_angle["threshold_to_consider"],
+            controller["reverse_goal_checker"]["xy_goal_tolerance"],
+        )
+        self.assertIs(
+            handoff["PathAngleCritic"]["forward_preference"], True
+        )
+        self.assertIs(
+            handoff["PathAlignCritic"]["use_path_orientations"], True
+        )
+        self.assertIs(handoff["CostCritic"]["consider_footprint"], True)
+
+        projected_heading = (
+            handoff["vx_max"]
+            * handoff["time_steps"]
+            * handoff["model_dt"]
+            / planner_radius
+        )
+        self.assertGreater(
+            projected_heading,
+            controller["reverse_goal_checker"]["yaw_goal_tolerance"],
+        )
+
+        smoother = ros_parameters(self.params, "velocity_smoother")
+        self.assertIs(smoother["scale_velocities"], True)
 
     def test_reverse_handoff_tree_keeps_strict_planning_and_goal_checks(self):
         regular = ElementTree.parse(BT_REVERSE_FILE).getroot()
@@ -308,6 +360,25 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(local["footprint_padding"], 0.03)
         self.assertEqual(global_costmap["footprint_padding"], 0.03)
+
+    def test_reverse_mppi_wrapper_is_built_and_uses_portable_bt_paths(self):
+        cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+        params_source = PARAMS_FILE.read_text(encoding="utf-8")
+        plugin_xml = (
+            PACKAGE_ROOT / "reverse_only_mppi_controller_plugin.xml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn(
+            "add_library(smartcar_reverse_only_mppi_controller", cmake
+        )
+        self.assertIn("pluginlib_export_plugin_description_file(", cmake)
+        self.assertIn("reverse_only_mppi_controller_plugin.xml", cmake)
+        self.assertIn("test_reverse_command_filter", cmake)
+        self.assertIn("configure_file(", cmake)
+        self.assertIn("@ONLY", cmake)
+        self.assertIn("smartcar_nav2::ReverseOnlyMPPIController", plugin_xml)
+        self.assertIn("@SMARTCAR_NAV2_SHARE_DIR@", params_source)
+        self.assertNotIn("/root/ros2_ws", params_source)
 
     def test_rpp_inflation_model_matches_both_costmaps(self):
         rpp = ros_parameters(self.params, "controller_server")["FollowPath"]
@@ -607,6 +678,15 @@ class TestNav2Contracts(unittest.TestCase):
                 "nav2_smac_planner",
                 "nav2_regulated_pure_pursuit_controller",
             }.issubset(exec_dependencies)
+        )
+        self.assertTrue(
+            {
+                "nav2_core",
+                "nav2_costmap_2d",
+                "nav2_mppi_controller",
+                "pluginlib",
+                "rclcpp_lifecycle",
+            }.issubset(direct_dependencies)
         )
         self.assertTrue(
             {

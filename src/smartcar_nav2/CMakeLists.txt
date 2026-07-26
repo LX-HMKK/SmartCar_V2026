@@ -9,11 +9,16 @@ find_package(ament_cmake REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(geometry_msgs REQUIRED)
 find_package(nav2_behavior_tree REQUIRED)
+find_package(nav2_core REQUIRED)
+find_package(nav2_costmap_2d REQUIRED)
+find_package(nav2_mppi_controller REQUIRED)
 find_package(nav2_msgs REQUIRED)
 find_package(nav2_util REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(pluginlib REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(rclcpp_action REQUIRED)
+find_package(rclcpp_lifecycle REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_geometry_msgs REQUIRED)
 find_package(tf2_ros REQUIRED)
@@ -62,15 +67,43 @@ ament_target_dependencies(smartcar_compute_reverse_path_to_pose_action_bt_node
   tf2_ros
 )
 
+add_library(smartcar_reverse_only_mppi_controller SHARED
+  src/reverse_only_mppi_controller.cpp
+)
+target_include_directories(smartcar_reverse_only_mppi_controller PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(smartcar_reverse_only_mppi_controller
+  reverse_path_utils
+)
+ament_target_dependencies(smartcar_reverse_only_mppi_controller
+  geometry_msgs
+  nav2_core
+  nav2_costmap_2d
+  nav2_mppi_controller
+  nav_msgs
+  pluginlib
+  rclcpp
+  rclcpp_lifecycle
+  tf2_ros
+)
+pluginlib_export_plugin_description_file(
+  nav2_core reverse_only_mppi_controller_plugin.xml
+)
+
 # Nav2 1.1.20 (TROS Humble): RewrittenYaml chain silently drops controller
 # params in favour of YDLIDAR defaults, causing "No critics defined for
-# FollowPath".  Work around by providing a pre-resolved copy with hardcoded
-# BT-XML paths that navigation_launch.py loads directly.
-add_custom_target(generate_fixed_params ALL
-  COMMAND ${CMAKE_COMMAND} -E copy_if_different
-    "${CMAKE_CURRENT_SOURCE_DIR}/config/nav2_params.yaml"
-    "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
-  COMMENT "Generating nav2_params_fixed.yaml (RewrittenYaml bypass)"
+# FollowPath".  Work around by configuring a pre-resolved copy with the active
+# install-prefix BT-XML paths that navigation_launch.py loads directly.
+set(SMARTCAR_NAV2_SHARE_DIR
+  "${CMAKE_INSTALL_PREFIX}/share/${PROJECT_NAME}"
+)
+file(MAKE_DIRECTORY "${CMAKE_CURRENT_BINARY_DIR}/config")
+configure_file(
+  "${CMAKE_CURRENT_SOURCE_DIR}/config/nav2_params.yaml"
+  "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
+  @ONLY
 )
 install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
   DESTINATION "share/${PROJECT_NAME}/config"
@@ -100,6 +133,7 @@ install(DIRECTORY include/
 install(TARGETS
   reverse_path_utils
   smartcar_compute_reverse_path_to_pose_action_bt_node
+  smartcar_reverse_only_mppi_controller
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -112,6 +146,13 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_reverse_path_utils
     test/test_reverse_path_utils.cpp
+  )
+
+  ament_add_gtest(test_reverse_command_filter
+    test/test_reverse_command_filter.cpp
+  )
+  target_include_directories(test_reverse_command_filter PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_link_libraries(test_reverse_path_utils reverse_path_utils)
   ament_target_dependencies(test_reverse_path_utils
@@ -128,4 +169,10 @@ if(BUILD_TESTING)
 endif()
 
 ament_export_include_directories(include)
+ament_export_dependencies(
+  nav2_core
+  nav2_costmap_2d
+  nav2_mppi_controller
+  rclcpp_lifecycle
+)
 ament_package()

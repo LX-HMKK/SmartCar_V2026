@@ -1,0 +1,8 @@
+<library path="smartcar_reverse_only_mppi_controller">
+  <class
+    name="smartcar_nav2::ReverseOnlyMPPIController"
+    type="smartcar_nav2::ReverseOnlyMPPIController"
+    base_class_type="nav2_core::Controller">
+    <description>Reverse-only MPPI controller with a final Ackermann command guard.</description>
+  </class>
+</library>
