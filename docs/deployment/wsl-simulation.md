@@ -10,9 +10,10 @@
 相机、串口底盘或 RDK 驱动，也不会经过实车 `direction_guard` 和
 `smartcar_safety`。
 
-`sim.launch.py` 会在启动约 20 秒后运行 `auto_train.py`，向 Gazebo 模型发送
-非零速度，依次测试 P->QR 正向导航和 QR->VLM 导航。该入口只能在 WSL
-仿真工作区中使用，不得部署为实车启动入口。
+`sim.launch.py` 只有在显式传入 `run_route:=true` 时，才会在启动约 20 秒后运行
+`auto_train.py`。该 runner 从 `nav_only.yaml` 读取全部 10 个非起点航点，按
+`forward`、`precise`、`reverse` 选择对应 BT，并向 Gazebo 模型发送非零速度。
+该入口只能在 WSL 仿真工作区中使用，不得部署为实车启动入口。
 
 ## 2. WSL 网络配置
 
@@ -103,6 +104,9 @@ exec /root/ros2_ws/install/smartcar_sim/share/smartcar_sim/scripts/sim_start.sh 
 | `--no-rviz` | 不启动 RViz |
 | `--no-clean` | 跳过进程清理，仅用于已确认环境干净的调试 |
 
+启动完整自动路线时，在 `sim_start.sh` 后追加 `run_route:=true`；不传该参数时
+仿真只启动 Gazebo、里程计、Nav2 和 RViz，不会自动发导航目标。
+
 直接调用 `ros2 launch smartcar_sim sim.launch.py` 时不会执行启动前的进程清理，
 因此日常运行优先使用 `sim_start.sh`。
 
@@ -161,10 +165,32 @@ odom_combined -> base_footprint -> base_link -> laser_link
 ### 自动导航
 
 ```bash
+rm -f /tmp/auto_train_results.json
+ros2 launch smartcar_sim sim.launch.py \
+  headless:=false use_rviz:=true run_route:=true
 cat /tmp/auto_train_results.json
 ```
 
-验收要求：P->QR 和 QR->VLM 都为 `outcome: done`，单段耗时小于 60 秒。
+验收要求：JSON 的 `overall_outcome` 为 `completed`，包含全部 10 个非起点航点，
+每个 `outcome` 为 `succeeded`。`behavior_tree` 必须与航点方向一致；两层速度命令
+必须符合航向符号，reverse handoff 还必须满足 controller wrapper、末端航向闭环、
+速度上限和 `0.55 m` 曲率合同。
+
+### 仿真调参
+
+```bash
+python3 /root/ros2_ws/src/smartcar_sim/scripts/tune_params.py
+python3 /root/ros2_ws/src/smartcar_sim/scripts/tune_params.py \
+  --sweep precise_yaw_goal_tolerance
+bash /root/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
+```
+
+调参工具修改 Windows 源码挂载目录（或 `SMARTCAR_REPO_ROOT` 指定目录），
+`sim_tune.sh` 每次都会同步源码并构建 `smartcar_nav2` 的 fixed 参数文件；
+`--no-build` 仅保留为兼容参数但会被忽略。扫参只生成备份快照，不会把最后一个
+候选值留在源文件中。QR 相关参数对应 `precise_goal_checker`。倒车曲率约束来自
+`ReverseHandoff.AckermannConstraints.min_turning_r`、controller wrapper 输出门和
+velocity smoother 的同比例缩放，不是 reverse BT 发布的普通 YAML 参数。
 
 2026-07-26 在 WSL 2.6.3、Ubuntu-22.04、Gazebo 6.18 上的验证结果：
 
@@ -173,8 +199,11 @@ cat /tmp/auto_train_results.json
 - `ros2 node list`：约 1.2-1.35 秒。
 - Gazebo world：10 秒内完成初始化。
 - Nav2：20 秒内全部 active。
-- P->QR：约 22 秒完成。
-- QR->VLM：约 48 秒完成。
+- 完整路线前六个目标连续两轮成功；`c_corner_1` reverse handoff 分别约
+  31.96 秒和 31.80 秒完成，方向与曲率合同零违规。
+- 完整路线当前阻塞在 `c_corner_4` 航点几何：原始 `180 deg` 和单点
+  `-90 deg` 候选均在 120 秒超时。继续测试前先联合优化相邻点位置与 yaw，详见
+  `docs/review/wsl-waypoint-overnight-handoff.md`。
 - RViz/TF：窗口正常，激光帧可从 `odom_combined` 查询，日志无 transform 错误。
 
 ## 7. 症状速查
@@ -185,5 +214,6 @@ cat /tmp/auto_train_results.json
 | `ros2 node list` 为空或卡死 | shell 环境不一致或残留 DDS profile | source `sim_env.sh`，清理后重启 |
 | lifecycle manager 一直等 `get_state` | participant discovery 分裂或旧节点残留 | 确认 NAT，删除 DDS profile 环境变量，运行 `sim_cleanup.sh --kill-processes` |
 | RViz 不弹窗 | WSLg socket 尚未创建 | 使用 `sim_start.sh`；检查 `/mnt/wslg/runtime-dir/wayland-0` |
+| RViz `/plan` 不显示 | RViz 使用 `TRANSIENT_LOCAL`，而 Nav2 publisher 是 `VOLATILE` | 使用仓库内最新 `sim_nav.rviz`，确认两个 Path display 都是 `Volatile` |
 | RViz 报激光 TF 缺失 | 安装空间未更新或静态 TF 方向错误 | 增量构建 `smartcar_sim`，确认 `laser_link` 是 Gazebo sensor frame 的父帧 |
 | Gazebo 有进程但无 `/odom` | bridge 或旧 Gazebo 实例冲突 | 完整清理后重启，检查 `/tmp` 和 DDS SHM 残留 |

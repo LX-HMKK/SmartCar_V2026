@@ -33,18 +33,69 @@ def valid_manifest():
             minimum, maximum = -0.1, -0.02
         else:
             minimum, maximum = 0.02, 0.1
+        if goal_profile == "reverse_handoff":
+            minimum, maximum = -0.09, -0.02
+        checker, _xy_range, _yaw_range = (
+            VALIDATION.EXPECTED_GOAL_CONTRACTS[waypoint_id])
+        if checker == "precise_goal_checker":
+            xy_tolerance, yaw_tolerance = 0.12, 0.15
+        elif checker == "reverse_goal_checker":
+            xy_tolerance, yaw_tolerance = 0.12, 0.25
+        else:
+            xy_tolerance, yaw_tolerance = 0.25, 0.50
+        entry_yaw_error = 0.40 if goal_profile == "reverse_handoff" else 0.01
         results.append({
             "id": waypoint_id,
             "direction": direction,
             "goal_profile": goal_profile,
+            "behavior_tree": VALIDATION.EXPECTED_BEHAVIOR_TREES[waypoint_id],
             "outcome": "succeeded",
             "status": VALIDATION.SUCCEEDED_STATUS,
             "duration_sec": 1.0,
             "goal_error_m": 0.01,
             "goal_yaw_error_rad": 0.01,
+            "goal_checker": checker,
+            "xy_goal_tolerance_m": xy_tolerance,
+            "yaw_goal_tolerance_rad": yaw_tolerance,
+            "position_observer_margin_m": (
+                VALIDATION.POSITION_OBSERVER_MARGIN_M),
+            "yaw_observer_margin_rad": VALIDATION.YAW_OBSERVER_MARGIN_RAD,
+            "signed_plan_goal_yaw_error_rad": 0.0,
+            "xy_tolerance_entry_yaw_error_rad": entry_yaw_error,
+            "post_xy_elapsed_sec": 5.0,
+            "post_xy_max_goal_error_m": 0.20,
+            "post_xy_travel_m": 0.40,
+            "post_xy_controller_cmd_sample_count": 5,
+            "post_xy_controller_angular_sample_count": 4,
+            "post_xy_cmd_sample_count": 5,
+            "post_xy_angular_sample_count": 4,
+            "post_xy_yaw_error_reduction_rad": entry_yaw_error - 0.01,
             "path_messages": 1,
+            "handoff_speed_cap_mps": (
+                0.09 if goal_profile == "reverse_handoff" else None),
+            "handoff_wz_cap_radps": (
+                0.20 if goal_profile == "reverse_handoff" else None),
+            "handoff_min_turning_radius_m": (
+                0.55 if goal_profile == "reverse_handoff" else None),
+            "handoff_controller_plugin": (
+                VALIDATION.REVERSE_HANDOFF_CONTROLLER
+                if goal_profile == "reverse_handoff" else None),
+            "handoff_internal_vx_min_mps": (
+                0.02 if goal_profile == "reverse_handoff" else None),
+            "handoff_internal_vx_max_mps": (
+                0.09 if goal_profile == "reverse_handoff" else None),
+            "velocity_smoother_scale_velocities": (
+                True if goal_profile == "reverse_handoff" else None),
+            "controller_cmd_linear_min": minimum,
+            "controller_cmd_linear_max": maximum,
+            "controller_cmd_angular_abs_max": 0.10,
+            "controller_cmd_min_turning_radius_m": 0.55,
+            "controller_cmd_kinematic_violation_count": 0,
             "cmd_linear_min": minimum,
             "cmd_linear_max": maximum,
+            "cmd_angular_abs_max": 0.10,
+            "cmd_min_turning_radius_m": 0.55,
+            "cmd_kinematic_violation_count": 0,
             "contract_errors": [],
         })
     inputs = {
@@ -77,21 +128,116 @@ class SimResultValidationTests(unittest.TestCase):
         manifest["results"][1], manifest["results"][2] = (
             manifest["results"][2], manifest["results"][1])
         manifest["results"][3]["status"] = 5
+        manifest["results"][4]["behavior_tree"] = "wrong.xml"
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any("route mismatch" in error for error in errors))
         self.assertTrue(any("status must be 4" in error for error in errors))
+        self.assertTrue(any("behavior_tree must be" in error for error in errors))
 
     def test_velocity_sign_is_checked_per_direction(self):
         manifest = valid_manifest()
         manifest["results"][1]["cmd_linear_max"] = 0.05
         manifest["results"][4]["cmd_linear_min"] = -0.05
+        manifest["results"][2]["controller_cmd_linear_max"] = 0.05
+        manifest["results"][5]["controller_cmd_linear_min"] = -0.05
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(
             any("contains a forward command" in error for error in errors))
         self.assertTrue(
             any("contains a reverse command" in error for error in errors))
+        self.assertTrue(
+            any("controller contains a forward command" in error for error in errors))
+        self.assertTrue(
+            any("controller contains a reverse command" in error for error in errors))
+
+    def test_pose_tolerances_and_planned_yaw_are_strict(self):
+        manifest = valid_manifest()
+        manifest["results"][0]["goal_yaw_error_rad"] = 0.31
+        manifest["results"][1]["goal_error_m"] = 0.20
+        manifest["results"][2]["signed_plan_goal_yaw_error_rad"] = 0.20
+        manifest["results"][3]["yaw_goal_tolerance_rad"] = 0.50
+        manifest["results"][4]["position_observer_margin_m"] = 0.05
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("goal_yaw_error_rad" in error for error in errors))
+        self.assertTrue(any("goal_error_m" in error for error in errors))
+        self.assertTrue(
+            any("planned terminal yaw" in error for error in errors))
+        self.assertTrue(
+            any("yaw_goal_tolerance_rad must be within" in error for error in errors))
+        self.assertTrue(
+            any("position observer margin" in error for error in errors))
+
+    def test_tuned_goal_tolerance_is_accepted_within_safe_range(self):
+        manifest = valid_manifest()
+        precise = manifest["results"][0]
+        precise["yaw_goal_tolerance_rad"] = 0.20
+        precise["goal_yaw_error_rad"] = 0.19
+
+        self.assertEqual(
+            VALIDATION.validate_manifest(manifest, 199.0), [])
+
+    def test_reverse_handoff_proves_post_position_yaw_control(self):
+        manifest = valid_manifest()
+        handoff = manifest["results"][3]
+        handoff["post_xy_controller_cmd_sample_count"] = 0
+        handoff["post_xy_controller_angular_sample_count"] = 0
+        handoff["post_xy_cmd_sample_count"] = 0
+        handoff["post_xy_angular_sample_count"] = 0
+        handoff["post_xy_yaw_error_reduction_rad"] = 0.0
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(
+            any("controller stopped after XY entry" in error for error in errors))
+        self.assertTrue(
+            any("controller lacks post-XY steering" in error for error in errors))
+        self.assertTrue(
+            any("continue controlling after XY entry" in error for error in errors))
+        self.assertTrue(
+            any("post-XY steering" in error for error in errors))
+        self.assertTrue(
+            any("yaw did not converge" in error for error in errors))
+
+    def test_reverse_handoff_rejects_terminal_loops(self):
+        manifest = valid_manifest()
+        handoff = manifest["results"][3]
+        handoff["post_xy_max_goal_error_m"] = 1.50
+        handoff["post_xy_travel_m"] = 8.0
+        handoff["post_xy_elapsed_sec"] = 119.0
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("left the terminal area" in error for error in errors))
+        self.assertTrue(any("traveled too far" in error for error in errors))
+        self.assertTrue(any("took too long" in error for error in errors))
+
+    def test_reverse_handoff_enforces_both_command_layers(self):
+        manifest = valid_manifest()
+        handoff = manifest["results"][3]
+        handoff["controller_cmd_linear_min"] = -0.12
+        handoff["cmd_kinematic_violation_count"] = 1
+        handoff["controller_cmd_min_turning_radius_m"] = 0.40
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("exceeds speed cap" in error for error in errors))
+        self.assertTrue(
+            any("violates Ackermann curvature" in error for error in errors))
+        self.assertTrue(
+            any("observed turning radius is too small" in error for error in errors))
+
+    def test_reverse_handoff_requires_virtual_forward_runtime_config(self):
+        manifest = valid_manifest()
+        handoff = manifest["results"][3]
+        handoff["handoff_controller_plugin"] = (
+            "nav2_mppi_controller::MPPIController")
+        handoff["handoff_internal_vx_min_mps"] = -0.09
+        handoff["velocity_smoother_scale_velocities"] = False
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("virtual-forward wrapper" in error for error in errors))
+        self.assertTrue(any("vx bounds are invalid" in error for error in errors))
+        self.assertTrue(any("scale velocities together" in error for error in errors))
 
     def test_stale_or_untraceable_manifest_is_rejected(self):
         manifest = valid_manifest()

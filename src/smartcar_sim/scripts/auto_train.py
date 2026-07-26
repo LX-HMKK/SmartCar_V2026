@@ -32,6 +32,15 @@ EXPECTED_ROUTE = (
     ("b_corridor_return", "forward", "standard"),
     ("p_finish", "forward", "standard"),
 )
+VELOCITY_EPSILON = 1.0e-3
+CONFIG_TOLERANCE_EPSILON = 2.0e-3
+POSITION_OBSERVER_MARGIN_M = 1.0e-2
+YAW_OBSERVER_MARGIN_RAD = 1.0e-2
+YAW_IMPROVEMENT_EPSILON = 1.0e-2
+HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
+HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
+HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
+REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
 
 
 class AutoTrain(Node):
@@ -62,6 +71,8 @@ class AutoTrain(Node):
         self.create_subscription(
             Odometry, "/odom_combined", self._odom_cb, qos)
         self.create_subscription(
+            Twist, "/cmd_vel_nav", self._controller_cmd_cb, qos)
+        self.create_subscription(
             Twist, "/cmd_vel_candidate", self._cmd_cb, qos)
         self.create_subscription(NavPath, "/plan", self._path_cb, path_qos)
         self._action_client = ActionClient(
@@ -69,6 +80,7 @@ class AutoTrain(Node):
 
         self._latest_odom = None
         self._odom_samples = []
+        self._controller_cmd_samples = []
         self._cmd_samples = []
         self._path_messages = []
         self._results = []
@@ -98,6 +110,10 @@ class AutoTrain(Node):
 
     def _cmd_cb(self, msg):
         self._cmd_samples.append(
+            (time.monotonic(), msg.linear.x, msg.angular.z))
+
+    def _controller_cmd_cb(self, msg):
+        self._controller_cmd_samples.append(
             (time.monotonic(), msg.linear.x, msg.angular.z))
 
     def _path_cb(self, msg):
@@ -151,6 +167,42 @@ class AutoTrain(Node):
             return self._required_path("precise_behavior_tree")
         return self._required_path("forward_behavior_tree")
 
+    @staticmethod
+    def _goal_checker_for(waypoint):
+        if waypoint.get("goal_profile") == "precise":
+            return "precise_goal_checker"
+        if waypoint.get("direction") == "reverse":
+            return "reverse_goal_checker"
+        return "goal_checker"
+
+    def _goal_tolerances(self, waypoint):
+        params_path = self._required_path("nav2_params_file")
+        document = yaml.safe_load(params_path.read_text(encoding="utf-8"))
+        controller = document["controller_server"]["ros__parameters"]
+        checker_name = self._goal_checker_for(waypoint)
+        checker = controller[checker_name]
+        return (
+            checker_name,
+            float(checker["xy_goal_tolerance"]),
+            float(checker["yaw_goal_tolerance"]),
+        )
+
+    def _reverse_handoff_contract(self):
+        params_path = self._required_path("nav2_params_file")
+        document = yaml.safe_load(params_path.read_text(encoding="utf-8"))
+        controller = document["controller_server"]["ros__parameters"]
+        handoff = controller["ReverseHandoff"]
+        smoother = document["velocity_smoother"]["ros__parameters"]
+        return {
+            "plugin": str(handoff["plugin"]),
+            "vx_min": float(handoff["vx_min"]),
+            "vx_max": float(handoff["vx_max"]),
+            "wz_max": abs(float(handoff["wz_max"])),
+            "min_turning_radius": float(
+                handoff["AckermannConstraints"]["min_turning_r"]),
+            "scale_velocities": bool(smoother["scale_velocities"]),
+        }
+
     def _wait_for_odom(self, timeout_sec=10.0):
         deadline = time.monotonic() + timeout_sec
         while self._latest_odom is None and time.monotonic() < deadline:
@@ -164,11 +216,64 @@ class AutoTrain(Node):
             for first, second in zip(samples, samples[1:])
         )
 
+    @staticmethod
+    def _command_metrics(samples, minimum_turning_radius=None):
+        linear_commands = [
+            linear
+            for _, linear, _ in samples
+            if abs(linear) > VELOCITY_EPSILON
+        ]
+        angular_commands = [
+            angular
+            for _, _, angular in samples
+            if abs(angular) > VELOCITY_EPSILON
+        ]
+        radius_samples = [
+            abs(linear) / abs(angular)
+            for _, linear, angular in samples
+            if (
+                abs(linear) > VELOCITY_EPSILON
+                and abs(angular) > VELOCITY_EPSILON
+            )
+        ]
+        kinematic_violations = 0
+        if minimum_turning_radius is not None:
+            for _, linear, angular in samples:
+                if abs(linear) <= VELOCITY_EPSILON:
+                    if abs(angular) > VELOCITY_EPSILON:
+                        kinematic_violations += 1
+                    continue
+                angular_limit = (
+                    abs(linear) / float(minimum_turning_radius))
+                if abs(angular) > angular_limit + VELOCITY_EPSILON:
+                    kinematic_violations += 1
+        return {
+            "linear_min": min(linear_commands) if linear_commands else None,
+            "linear_max": max(linear_commands) if linear_commands else None,
+            "linear_abs_max": (
+                max(abs(value) for value in linear_commands)
+                if linear_commands else None
+            ),
+            "angular_abs_max": (
+                max(abs(value) for value in angular_commands)
+                if angular_commands else 0.0
+            ),
+            "positive_count": sum(
+                value > VELOCITY_EPSILON for value in linear_commands),
+            "negative_count": sum(
+                value < -VELOCITY_EPSILON for value in linear_commands),
+            "minimum_turning_radius": (
+                min(radius_samples) if radius_samples else None
+            ),
+            "kinematic_violation_count": kinematic_violations,
+        }
+
     def _send_goal(self, waypoint):
         behavior_tree = self._behavior_tree_for(waypoint)
         timeout_sec = float(self.get_parameter("goal_timeout_sec").value)
         start_time = time.monotonic()
         odom_start = len(self._odom_samples)
+        controller_cmd_start = len(self._controller_cmd_samples)
         cmd_start = len(self._cmd_samples)
         path_start = len(self._path_messages)
         start_pose = self._latest_odom
@@ -208,6 +313,7 @@ class AutoTrain(Node):
                 start_time,
                 start_pose,
                 odom_start,
+                controller_cmd_start,
                 cmd_start,
                 path_start,
             )
@@ -222,6 +328,7 @@ class AutoTrain(Node):
                 start_time,
                 start_pose,
                 odom_start,
+                controller_cmd_start,
                 cmd_start,
                 path_start,
             )
@@ -234,6 +341,7 @@ class AutoTrain(Node):
                 start_time,
                 start_pose,
                 odom_start,
+                controller_cmd_start,
                 cmd_start,
                 path_start,
             )
@@ -277,6 +385,7 @@ class AutoTrain(Node):
             start_time,
             start_pose,
             odom_start,
+            controller_cmd_start,
             cmd_start,
             path_start,
         )
@@ -290,10 +399,13 @@ class AutoTrain(Node):
         start_time,
         start_pose,
         odom_start,
+        controller_cmd_start,
         cmd_start,
         path_start,
     ):
         current = self._latest_odom or start_pose
+        goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
+            waypoint)
         position = waypoint["pose"]["position"]
         orientation = waypoint["pose"]["orientation"]
         target_yaw = math.atan2(
@@ -321,17 +433,91 @@ class AutoTrain(Node):
                 2.0 * math.pi,
             )
             goal_yaw_error = abs(signed_goal_yaw_error)
-        commands = [
-            linear
-            for _, linear, _ in self._cmd_samples[cmd_start:]
-            if abs(linear) > 1.0e-3
-        ]
-        positive_command_samples = sum(
-            linear > 1.0e-3 for linear in commands)
-        negative_command_samples = sum(
-            linear < -1.0e-3 for linear in commands)
+        goal_odom_samples = self._odom_samples[odom_start:]
+        xy_tolerance_entry = next((
+            sample
+            for sample in goal_odom_samples
+            if math.hypot(
+                sample[1] - float(position["x"]),
+                sample[2] - float(position["y"]),
+            ) <= xy_tolerance + POSITION_OBSERVER_MARGIN_M
+        ), None)
+        xy_tolerance_entry_yaw_error = None
+        xy_tolerance_entry_elapsed = None
+        post_xy_elapsed = None
+        post_xy_max_goal_error = None
+        post_xy_travel = None
+        post_xy_controller_commands = []
+        post_xy_commands = []
+        if xy_tolerance_entry is not None:
+            xy_tolerance_entry_elapsed = xy_tolerance_entry[0] - start_time
+            xy_tolerance_entry_yaw_error = abs(math.remainder(
+                xy_tolerance_entry[3] - target_yaw,
+                2.0 * math.pi,
+            ))
+            post_xy_odom = [
+                sample
+                for sample in goal_odom_samples
+                if sample[0] >= xy_tolerance_entry[0]
+            ]
+            if post_xy_odom:
+                post_xy_elapsed = (
+                    post_xy_odom[-1][0] - xy_tolerance_entry[0])
+                post_xy_max_goal_error = max(
+                    math.hypot(
+                        sample[1] - float(position["x"]),
+                        sample[2] - float(position["y"]),
+                    )
+                    for sample in post_xy_odom
+                )
+                post_xy_travel = self._travel_distance(post_xy_odom)
+            post_xy_controller_commands = [
+                sample
+                for sample
+                in self._controller_cmd_samples[controller_cmd_start:]
+                if sample[0] >= xy_tolerance_entry[0]
+                and abs(sample[1]) > VELOCITY_EPSILON
+            ]
+            post_xy_commands = [
+                sample
+                for sample in self._cmd_samples[cmd_start:]
+                if sample[0] >= xy_tolerance_entry[0]
+                and abs(sample[1]) > VELOCITY_EPSILON
+            ]
+        post_xy_controller_angular_samples = sum(
+            abs(angular) > VELOCITY_EPSILON
+            for _, _, angular in post_xy_controller_commands
+        )
+        post_xy_angular_samples = sum(
+            abs(angular) > VELOCITY_EPSILON
+            for _, _, angular in post_xy_commands
+        )
+        post_xy_yaw_error_reduction = (
+            xy_tolerance_entry_yaw_error - goal_yaw_error
+            if (
+                xy_tolerance_entry_yaw_error is not None
+                and goal_yaw_error is not None
+            ) else None
+        )
+        handoff_contract = None
+        if waypoint.get("goal_profile") == "reverse_handoff":
+            handoff_contract = self._reverse_handoff_contract()
+        minimum_turning_radius = (
+            handoff_contract["min_turning_radius"]
+            if handoff_contract is not None else None)
+        controller_metrics = self._command_metrics(
+            self._controller_cmd_samples[controller_cmd_start:],
+            minimum_turning_radius,
+        )
+        candidate_metrics = self._command_metrics(
+            self._cmd_samples[cmd_start:],
+            minimum_turning_radius,
+        )
+        positive_command_samples = candidate_metrics["positive_count"]
+        negative_command_samples = candidate_metrics["negative_count"]
         target_x = float(position["x"])
         target_y = float(position["y"])
+        direction = waypoint.get("direction", "forward")
         matching_paths = [
             (path_x, path_y, path_yaw)
             for _, path_x, path_y, path_yaw
@@ -341,12 +527,20 @@ class AutoTrain(Node):
         path_messages = len(matching_paths)
         plan_final_yaw = (
             matching_paths[-1][2] if matching_paths else None)
+        plan_execution_final_yaw = None
+        if plan_final_yaw is not None:
+            plan_execution_final_yaw = math.remainder(
+                plan_final_yaw + (math.pi if direction == "reverse" else 0.0),
+                2.0 * math.pi,
+            )
         signed_plan_goal_yaw_error = (
-            math.remainder(plan_final_yaw - target_yaw, 2.0 * math.pi)
-            if plan_final_yaw is not None else None
+            math.remainder(
+                plan_execution_final_yaw - target_yaw,
+                2.0 * math.pi,
+            )
+            if plan_execution_final_yaw is not None else None
         )
         contract_errors = []
-        direction = waypoint.get("direction", "forward")
         if outcome == "succeeded" and path_messages <= 0:
             contract_errors.append("path_missing")
         if direction == "reverse":
@@ -354,11 +548,99 @@ class AutoTrain(Node):
                 contract_errors.append("reverse_velocity_missing")
             if positive_command_samples > 0:
                 contract_errors.append("reverse_velocity_sign")
+            if controller_metrics["positive_count"] > 0:
+                contract_errors.append("reverse_controller_velocity_sign")
         if outcome == "succeeded" and direction != "reverse":
             if positive_command_samples <= 0:
                 contract_errors.append("forward_velocity_missing")
             if negative_command_samples > 0:
                 contract_errors.append("forward_velocity_sign")
+            if controller_metrics["negative_count"] > 0:
+                contract_errors.append("forward_controller_velocity_sign")
+        if outcome == "succeeded":
+            if (
+                goal_error is None
+                or goal_error > xy_tolerance + POSITION_OBSERVER_MARGIN_M
+            ):
+                contract_errors.append("goal_position_tolerance")
+            if (
+                goal_yaw_error is None
+                or goal_yaw_error > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
+            ):
+                contract_errors.append("goal_yaw_tolerance")
+            if (
+                signed_plan_goal_yaw_error is None
+                or abs(signed_plan_goal_yaw_error)
+                > 0.15 + CONFIG_TOLERANCE_EPSILON
+            ):
+                contract_errors.append("plan_goal_yaw")
+        if (
+            outcome == "succeeded"
+            and waypoint.get("goal_profile") == "reverse_handoff"
+        ):
+            speed_cap = handoff_contract["vx_max"]
+            angular_cap = handoff_contract["wz_max"]
+            if handoff_contract["plugin"] != REVERSE_HANDOFF_CONTROLLER:
+                contract_errors.append("handoff_controller_plugin")
+            if (
+                handoff_contract["vx_min"] <= 0.0
+                or handoff_contract["vx_max"] < handoff_contract["vx_min"]
+            ):
+                contract_errors.append("handoff_virtual_forward_velocity")
+            if not handoff_contract["scale_velocities"]:
+                contract_errors.append("handoff_smoother_scaling")
+            for prefix, metrics in (
+                ("handoff_controller", controller_metrics),
+                ("handoff_candidate", candidate_metrics),
+            ):
+                if (
+                    metrics["linear_abs_max"] is None
+                    or metrics["linear_abs_max"]
+                    > speed_cap + VELOCITY_EPSILON
+                ):
+                    contract_errors.append(f"{prefix}_speed_limit")
+                if metrics["angular_abs_max"] > angular_cap + VELOCITY_EPSILON:
+                    contract_errors.append(f"{prefix}_angular_limit")
+                if metrics["kinematic_violation_count"] > 0:
+                    contract_errors.append(f"{prefix}_curvature")
+            if xy_tolerance_entry_yaw_error is None:
+                contract_errors.append("handoff_xy_entry_missing")
+            elif (
+                xy_tolerance_entry_yaw_error
+                > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
+            ):
+                if not post_xy_controller_commands:
+                    contract_errors.append(
+                        "handoff_terminal_controller_control_missing")
+                if post_xy_controller_angular_samples <= 0:
+                    contract_errors.append(
+                        "handoff_terminal_controller_steering_missing")
+                if not post_xy_commands:
+                    contract_errors.append("handoff_terminal_control_missing")
+                if post_xy_angular_samples <= 0:
+                    contract_errors.append("handoff_terminal_steering_missing")
+                if (
+                    post_xy_yaw_error_reduction is None
+                    or post_xy_yaw_error_reduction
+                    <= YAW_IMPROVEMENT_EPSILON
+                ):
+                    contract_errors.append("handoff_yaw_not_converged")
+            if (
+                post_xy_max_goal_error is None
+                or post_xy_max_goal_error
+                > HANDOFF_POST_XY_MAX_POSITION_ERROR_M
+            ):
+                contract_errors.append("handoff_post_xy_position_excursion")
+            if (
+                post_xy_travel is None
+                or post_xy_travel > HANDOFF_POST_XY_MAX_TRAVEL_M
+            ):
+                contract_errors.append("handoff_post_xy_travel")
+            if (
+                post_xy_elapsed is None
+                or post_xy_elapsed > HANDOFF_POST_XY_MAX_DURATION_SEC
+            ):
+                contract_errors.append("handoff_post_xy_duration")
         if contract_errors and outcome == "succeeded":
             outcome = "contract_failed"
 
@@ -367,6 +649,7 @@ class AutoTrain(Node):
             "task": waypoint.get("task", "nav"),
             "direction": direction,
             "goal_profile": waypoint.get("goal_profile", "standard"),
+            "goal_checker": goal_checker,
             "behavior_tree": behavior_tree.name,
             "outcome": outcome,
             "status": status,
@@ -377,6 +660,40 @@ class AutoTrain(Node):
             "goal_yaw_error_rad": (
                 round(goal_yaw_error, 3)
                 if goal_yaw_error is not None else None
+            ),
+            "xy_goal_tolerance_m": round(xy_tolerance, 3),
+            "yaw_goal_tolerance_rad": round(yaw_tolerance, 3),
+            "position_observer_margin_m": POSITION_OBSERVER_MARGIN_M,
+            "yaw_observer_margin_rad": YAW_OBSERVER_MARGIN_RAD,
+            "xy_tolerance_entry_elapsed_sec": (
+                round(xy_tolerance_entry_elapsed, 3)
+                if xy_tolerance_entry_elapsed is not None else None
+            ),
+            "xy_tolerance_entry_yaw_error_rad": (
+                round(xy_tolerance_entry_yaw_error, 3)
+                if xy_tolerance_entry_yaw_error is not None else None
+            ),
+            "post_xy_elapsed_sec": (
+                round(post_xy_elapsed, 3)
+                if post_xy_elapsed is not None else None
+            ),
+            "post_xy_max_goal_error_m": (
+                round(post_xy_max_goal_error, 3)
+                if post_xy_max_goal_error is not None else None
+            ),
+            "post_xy_travel_m": (
+                round(post_xy_travel, 3)
+                if post_xy_travel is not None else None
+            ),
+            "post_xy_controller_cmd_sample_count": len(
+                post_xy_controller_commands),
+            "post_xy_controller_angular_sample_count": (
+                post_xy_controller_angular_samples),
+            "post_xy_cmd_sample_count": len(post_xy_commands),
+            "post_xy_angular_sample_count": post_xy_angular_samples,
+            "post_xy_yaw_error_reduction_rad": (
+                round(post_xy_yaw_error_reduction, 3)
+                if post_xy_yaw_error_reduction is not None else None
             ),
             "target_yaw_rad": round(target_yaw, 3),
             "final_yaw_rad": (
@@ -390,6 +707,10 @@ class AutoTrain(Node):
                 round(plan_final_yaw, 3)
                 if plan_final_yaw is not None else None
             ),
+            "plan_execution_final_yaw_rad": (
+                round(plan_execution_final_yaw, 3)
+                if plan_execution_final_yaw is not None else None
+            ),
             "signed_plan_goal_yaw_error_rad": (
                 round(signed_plan_goal_yaw_error, 3)
                 if signed_plan_goal_yaw_error is not None else None
@@ -398,8 +719,72 @@ class AutoTrain(Node):
                 self._travel_distance(self._odom_samples[odom_start:]), 3
             ),
             "path_messages": path_messages,
-            "cmd_linear_min": round(min(commands), 3) if commands else None,
-            "cmd_linear_max": round(max(commands), 3) if commands else None,
+            "handoff_speed_cap_mps": (
+                round(handoff_contract["vx_max"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_wz_cap_radps": (
+                round(handoff_contract["wz_max"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_min_turning_radius_m": (
+                round(handoff_contract["min_turning_radius"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_controller_plugin": (
+                handoff_contract["plugin"]
+                if handoff_contract is not None else None
+            ),
+            "handoff_internal_vx_min_mps": (
+                round(handoff_contract["vx_min"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_internal_vx_max_mps": (
+                round(handoff_contract["vx_max"], 3)
+                if handoff_contract is not None else None
+            ),
+            "velocity_smoother_scale_velocities": (
+                handoff_contract["scale_velocities"]
+                if handoff_contract is not None else None
+            ),
+            "controller_cmd_linear_min": (
+                round(controller_metrics["linear_min"], 3)
+                if controller_metrics["linear_min"] is not None else None
+            ),
+            "controller_cmd_linear_max": (
+                round(controller_metrics["linear_max"], 3)
+                if controller_metrics["linear_max"] is not None else None
+            ),
+            "controller_cmd_angular_abs_max": round(
+                controller_metrics["angular_abs_max"], 3),
+            "controller_cmd_min_turning_radius_m": (
+                round(controller_metrics["minimum_turning_radius"], 3)
+                if controller_metrics["minimum_turning_radius"] is not None
+                else None
+            ),
+            "controller_cmd_kinematic_violation_count": (
+                controller_metrics["kinematic_violation_count"]),
+            "controller_cmd_positive_sample_count": (
+                controller_metrics["positive_count"]),
+            "controller_cmd_negative_sample_count": (
+                controller_metrics["negative_count"]),
+            "cmd_linear_min": (
+                round(candidate_metrics["linear_min"], 3)
+                if candidate_metrics["linear_min"] is not None else None
+            ),
+            "cmd_linear_max": (
+                round(candidate_metrics["linear_max"], 3)
+                if candidate_metrics["linear_max"] is not None else None
+            ),
+            "cmd_angular_abs_max": round(
+                candidate_metrics["angular_abs_max"], 3),
+            "cmd_min_turning_radius_m": (
+                round(candidate_metrics["minimum_turning_radius"], 3)
+                if candidate_metrics["minimum_turning_radius"] is not None
+                else None
+            ),
+            "cmd_kinematic_violation_count": (
+                candidate_metrics["kinematic_violation_count"]),
             "cmd_positive_sample_count": positive_command_samples,
             "cmd_negative_sample_count": negative_command_samples,
             "contract_errors": contract_errors,
