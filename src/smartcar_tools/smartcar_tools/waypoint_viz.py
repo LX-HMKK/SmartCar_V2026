@@ -7,6 +7,7 @@ Launch: ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<path
 import math
 
 import rclpy
+from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
@@ -191,7 +192,7 @@ def main(args=None):
     node = WaypointVizNode()
     try:
         rclpy.spin(node)
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, ExternalShutdownException):
         pass
     finally:
         node.destroy_node()

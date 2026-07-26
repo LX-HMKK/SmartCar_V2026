@@ -19,6 +19,8 @@ SIM_ENV = SIM / "scripts" / "sim_env.sh"
 SIM_START = SIM / "scripts" / "sim_start.sh"
 WSLG_WAIT = SIM / "scripts" / "wait_for_wslg.sh"
 AUTO_TRAIN = SIM / "scripts" / "auto_train.py"
+ODOM_RELAY = SIM / "scripts" / "odom_relay.py"
+ODOM_COMBINED_RELAY = SIM / "scripts" / "odom_combined_relay.py"
 SIM_TUNE = SIM / "scripts" / "sim_tune.sh"
 TUNE_PARAMS = SIM / "scripts" / "tune_params.py"
 RVIZ = SIM / "rviz" / "sim_nav.rviz"
@@ -222,6 +224,20 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("wait_for_wslg.sh", launch)
         self.assertIn('[ -S "$wayland_socket" ]', wait_script)
         self.assertIn('exec rviz2 -d "$rviz_config"', wait_script)
+
+    def test_odom_relays_handle_launch_shutdown_idempotently(self) -> None:
+        for relay in (ODOM_RELAY, ODOM_COMBINED_RELAY):
+            with self.subTest(relay=relay.name):
+                source = relay.read_text(encoding="utf-8")
+                self.assertIn(
+                    "from rclpy.executors import ExternalShutdownException",
+                    source,
+                )
+                self.assertIn(
+                    "except (KeyboardInterrupt, ExternalShutdownException):",
+                    source,
+                )
+                self.assertIn("if rclpy.ok():", source)
 
     def test_start_script_rejects_mirrored_wsl_networking(self) -> None:
         source = SIM_START.read_text(encoding="utf-8")
