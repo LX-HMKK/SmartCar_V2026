@@ -17,6 +17,7 @@ install(
     worlds
     rviz
     scripts
+    maps
   DESTINATION share/${PROJECT_NAME}
   PATTERN "geo_candidates*" EXCLUDE
   PATTERN "email_body.txt" EXCLUDE

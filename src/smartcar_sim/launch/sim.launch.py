@@ -173,9 +173,9 @@ def generate_launch_description():
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
     # ── Map server: serve pre-built static occupancy map for Nav2 costmap ──
-    # Launched as a lifecycle Node (not ExecuteProcess). The node auto-activates
-    # once /clock is publishing (TimerAction(6.0) ensures Gazebo is up first).
-    # /map is consumed by static_layer in local + global costmaps.
+    # Launched as a lifecycle Node. The node enters "unconfigured" and waits for
+    # an external lifecycle transition.  activate_map (below) configures +
+    # activates it 2 s later, so /map is published before Nav2 static_layer loads.
     map_file = os.path.join(pkg_sim, "maps", "field_map.yaml")
     map_server = Node(
         package="nav2_map_server",
@@ -186,6 +186,17 @@ def generate_launch_description():
             "yaml_filename": map_file,
         }],
         output="screen",
+    )
+
+    # Explicit lifecycle activation — nav2_lifecycle_manager only manages its own
+    # bringup nodes (controller, planner, bt_navigator, smoother), not map_server.
+    activate_map = ExecuteProcess(
+        cmd=["bash", "-c",
+             "sleep 3 && "
+             "ros2 lifecycle set /map_server configure && "
+             "ros2 lifecycle set /map_server activate"],
+        output="screen",
+        name="activate_map",
     )
 
     # ── Safety bypass: simulation doesn't need safety_node ──
@@ -313,8 +324,8 @@ def generate_launch_description():
         auto_train_exit,
         # Static map server: start after Gazebo clock is publishing (6s) so the
         # lifecycle node can configure, but before Nav2 (12s) so /map is ready
-        # when static_layer loads.
-        TimerAction(period=6.0, actions=[map_server]),
+        # when static_layer loads.  activate_map fires at 6s+3s = 9s.
+        TimerAction(period=6.0, actions=[map_server, activate_map]),
         # Nav2 延迟 12s 启动（等 Gazebo /clock 发布 + bridge 桥接就绪）
         TimerAction(period=12.0, actions=[nav2_launch]),
         # Complete route runner, opt-in via run_route:=true. This name must not
