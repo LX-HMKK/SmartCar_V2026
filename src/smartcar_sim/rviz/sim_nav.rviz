@@ -77,8 +77,9 @@ Visualization Manager:
         Durability Policy: Transient Local
         Reliability Policy: Reliable
         Value: /local_costmap/costmap
-      Color Scheme: costmap
-      Draw Behind: true
+      Color Scheme: map
+      Alpha: 0.5
+      Draw Behind: false
       Enabled: true
 
     # ── Global Costmap ──
