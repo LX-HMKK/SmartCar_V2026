@@ -142,10 +142,10 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.25
-      movement_time_allowance: 15.0
+      movement_time_allowance: 8.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.35
+      xy_goal_tolerance: 0.40
       yaw_goal_tolerance: 0.50
       stateful: false
     # The QR pose seeds a direction change. This smaller envelope stays clear
@@ -163,21 +163,21 @@ controller_server:
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       desired_linear_vel: 0.15
-      lookahead_dist: 0.8
-      min_lookahead_dist: 0.5
-      max_lookahead_dist: 1.2
+      lookahead_dist: 1.0
+      min_lookahead_dist: 0.4
+      max_lookahead_dist: 1.5
       lookahead_time: 1.5
       transform_tolerance: 0.1
       use_velocity_scaled_lookahead_dist: true
       min_approach_linear_velocity: 0.05
-      approach_velocity_scaling_dist: 0.6
+      approach_velocity_scaling_dist: 0.4
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_collision_detection: true
       use_cost_regulated_linear_velocity_scaling: true
       cost_scaling_dist: 0.25
       cost_scaling_gain: 1.0
       inflation_cost_scaling_factor: 5.0
-      regulated_linear_scaling_min_radius: 0.9
+      regulated_linear_scaling_min_radius: 0.55
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
       allow_reversing: true
@@ -198,7 +198,7 @@ controller_server:
       vx_min: 0.02
       vy_max: 0.0
       wz_max: 0.20
-      prune_distance: 1.0
+      prune_distance: 0.6
       transform_tolerance: 0.1
       temperature: 0.2
       gamma: 0.015
@@ -242,7 +242,7 @@ controller_server:
       PathAlignCritic:
         enabled: true
         cost_power: 1
-        cost_weight: 18.0
+        cost_weight: 12.0
         max_path_occupancy_ratio: 0.10
         trajectory_point_step: 2
         threshold_to_consider: 0.30
@@ -260,7 +260,7 @@ controller_server:
         cost_weight: 12.0
         offset_from_furthest: 2
         threshold_to_consider: 0.30
-        max_angle_to_furthest: 0.75
+        max_angle_to_furthest: 0.55
         forward_preference: true
 
 local_costmap:
@@ -279,19 +279,23 @@ local_costmap:
       # would swap its front and rear collision extents.
       footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
       footprint_padding: 0.03
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+        enabled: true
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: true
+        enabled: false
         observation_sources: scan
         scan:
           topic: /scan
           data_type: LaserScan
           clearing: true
           marking: true
-          obstacle_max_range: 2.5
+          obstacle_max_range: 5.0
           obstacle_min_range: 0.25
-          raytrace_max_range: 3.0
+          raytrace_max_range: 5.5
           raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -308,26 +312,30 @@ global_costmap:
       global_frame: odom_combined
       robot_base_frame: base_footprint
       rolling_window: true
-      width: 10
-      height: 10
+      width: 14
+      height: 14
       resolution: 0.05
       # pi-invariant hull of the real footprint. This keeps virtual-yaw
       # reverse planning collision-equivalent to the physical vehicle.
       footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
       footprint_padding: 0.03
-      plugins: ["obstacle_layer", "inflation_layer"]
+      plugins: ["static_layer", "obstacle_layer", "inflation_layer"]
+      static_layer:
+        plugin: "nav2_costmap_2d::StaticLayer"
+        map_subscribe_transient_local: true
+        enabled: true
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
-        enabled: true
+        enabled: false
         observation_sources: scan
         scan:
           topic: /scan
           data_type: LaserScan
           clearing: true
           marking: true
-          obstacle_max_range: 2.5
+          obstacle_max_range: 5.0
           obstacle_min_range: 0.25
-          raytrace_max_range: 3.0
+          raytrace_max_range: 5.5
           raytrace_min_range: 0.0
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
@@ -347,23 +355,31 @@ planner_server:
       downsampling_factor: 1
       # Semantic waypoints, especially the QR direction handoff, must not be
       # replaced by a nearby planner endpoint. Fail and replan if exact is blocked.
-      tolerance: 0.0
+      # 0.25 m gives one full 0.1 m static-map cell of slack — enough to absorb
+      # cell-boundary occupancy without skipping waypoint geometry.
+      tolerance: 0.25
       allow_unknown: true
       max_iterations: 100000
       max_on_approach_iterations: 1000
-      max_planning_time: 3.0
+      max_planning_time: 5.0
       # Forward-only search. Reverse paths are generated by rotating the
       # vehicle headings by pi in the reverse BT node, then restoring them.
       motion_model_for_search: "DUBIN"
-      angle_quantization_bins: 72
-      analytic_expansion_ratio: 3.5
-      analytic_expansion_max_length: 3.0
+      angle_quantization_bins: 144
+      # Restored to default: intermediate zeros avoid shortcutting; too low
+      # starves analytic expansion and forces grid-edge cusps.
+      analytic_expansion_ratio: 2.0
+      analytic_expansion_max_length: 5.0
       minimum_turning_radius: 0.55
-      non_straight_penalty: 1.2
+      # Raised from 1.2 to discourage unnecessary direction changes, but not
+      # so high that the planner avoids smooth Dubins curves in favor of
+      # grid edges (which produce curvature spikes in validation).
+      non_straight_penalty: 2.0
       cost_penalty: 2.0
-      retrospective_penalty: 0.015
+      # Tuned to improve heuristic consistency and reduce dead-end expansions.
+      retrospective_penalty: 0.05
       lookup_table_size: 20.0
-      cache_obstacle_heuristic: false
+      cache_obstacle_heuristic: true
       smooth_path: true
 
 velocity_smoother:
