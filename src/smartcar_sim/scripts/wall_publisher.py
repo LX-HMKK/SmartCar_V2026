@@ -1,97 +1,99 @@
 #!/usr/bin/env python3
-"""Publish a fake LaserScan with points at B/C-zone wall positions.
+"""Publish wall obstacle points as PointCloud2 for obstacle_layer marking.
 
-Bypasses the broken static_layer → costmap pipeline (cause of "Starting point
-in lethal space!" with TROS Nav2 1.1.20).  The obstacle_layer already works;
-this node feeds it synthetic scan data so the costmap sees the walls.
-
-Wall geometry matches track.world and field_geometry.yaml.
+Bypasses static_layer which is broken in TROS Nav2 1.1.20.
+Publishes a static PointCloud2 at 1 Hz in the odom_combined frame,
+containing sample points along all B/C-zone wall edges.
+The obstacle_layer marks these as obstacles in the costmap.
 """
 import math
-import sys
 
 import rclpy
 from rclpy.node import Node
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import PointCloud2, PointField
+from sensor_msgs_py import point_cloud2
 
 
-# Field geometry (metres, origin at P-point = odom_combined origin)
-# Walls: (name, x_min, x_max, y_min, y_max)
-WALLS = [
-    ("b_zone_left",   0.0, 2.0,   1.75, 2.25),     # B-zone left
-    ("b_zone_right",  3.0, 5.0,   1.75, 2.25),     # B-zone right
-    ("c_zone_inner",  1.0, 4.0,   3.00, 3.65),     # C inner fill
-    ("c_zone_north",  0.0, 5.0,   4.15, 4.75),     # C north
-    ("c_zone_west",   0.0, 0.5,   2.50, 4.15),     # C west
-    ("c_zone_east",   4.5, 5.0,   2.50, 4.15),     # C east
+# Wall sample points in odom_combined frame (metres).
+# Wall definitions match track.world static models.
+WALLS_ODOM = [
+    # B-zone left:  x ∈ [0.0, 2.0], y ∈ [1.75, 2.25]
+    ("b_left",   0.0, 2.0,   1.75, 2.25),
+    # B-zone right: x ∈ [3.0, 5.0], y ∈ [1.75, 2.25]
+    ("b_right",  3.0, 5.0,   1.75, 2.25),
+    # C-zone inner: x ∈ [1.0, 4.0], y ∈ [3.00, 3.65]
+    ("c_inner",  1.0, 4.0,   3.00, 3.65),
+    # C-zone north: x ∈ [0.0, 5.0], y ∈ [4.15, 4.75]
+    ("c_north",  0.0, 5.0,   4.15, 4.75),
+    # C-zone west:  x ∈ [0.0, 0.5], y ∈ [2.50, 4.15]
+    ("c_west",   0.0, 0.5,   2.50, 4.15),
+    # C-zone east:  x ∈ [4.5, 5.0], y ∈ [2.50, 4.15]
+    ("c_east",   4.5, 5.0,   2.50, 4.15),
 ]
 
-
-def sample_wall_edges(x0: float, x1: float, y0: float, y1: float,
-                      step: float = 0.05) -> list[tuple[float, float]]:
-    """Generate sample points along the boundary of a rectangular wall."""
-    points: list[tuple[float, float]] = []
-    x_range = int((x1 - x0) / step) + 1
-    y_range = int((y1 - y0) / step) + 1
-    # bottom edge
-    for i in range(x_range):
-        points.append((x0 + i * step, y0))
-    # top edge
-    for i in range(x_range):
-        points.append((x0 + i * step, y1))
-    # left edge
-    for i in range(y_range):
-        points.append((x0, y0 + i * step))
-    # right edge
-    for i in range(y_range):
-        points.append((x1, y0 + i * step))
-    return points
+STEP = 0.05  # 5 cm spacing
 
 
-class WallPublisher(Node):
-    def __init__(self) -> None:
+def sample_rect(x0, x1, y0, y1):
+    """Generate dense sample points inside a rectangle."""
+    pts = []
+    nx = int((x1 - x0) / STEP) + 1
+    ny = int((y1 - y0) / STEP) + 1
+    for i in range(nx):
+        x = x0 + i * STEP
+        for j in range(ny):
+            pts.append((x, y0 + j * STEP))
+    return pts
+
+
+class WallPointCloud(Node):
+    def __init__(self):
         super().__init__("wall_publisher")
-        self._pub = self.create_publisher(LaserScan, "/scan_walls", 10)
-        self._timer = self.create_timer(0.2, self._publish)  # 5 Hz
+        self._pub = self.create_publisher(PointCloud2, "/walls_cloud", 10)
+        self._timer = self.create_timer(1.0, self._publish)  # 1 Hz
         self._points = self._build_points()
+        self._msg = self._make_cloud(self._points)
         self.get_logger().info(
-            f"Wall publisher ready: {len(self._points)} synthetic scan points"
+            f"Wall publisher ready: {len(self._points)} points"
         )
 
-    def _build_points(self) -> list[tuple[float, float]]:
-        points: list[tuple[float, float]] = []
-        for _name, x0, x1, y0, y1 in WALLS:
-            points.extend(sample_wall_edges(x0, x1, y0, y1))
-        return points
+    def _build_points(self):
+        pts = []
+        for _name, x0, x1, y0, y1 in WALLS_ODOM:
+            pts.extend(sample_rect(x0, x1, y0, y1))
+        # Add Z=0
+        return [(x, y, 0.0) for x, y in pts]
 
-    def _publish(self) -> None:
-        now = self.get_clock().now().to_msg()
-        n = len(self._points)
-        msg = LaserScan()
-        msg.header.frame_id = "laser_link"
-        msg.header.stamp = now
-        msg.angle_min = -math.pi
-        msg.angle_max = math.pi
-        msg.angle_increment = 2.0 * math.pi / max(n, 1)
-        msg.range_min = 0.02
-        msg.range_max = 8.0
-        msg.ranges = [
-            math.hypot(px, py) for px, py in self._points
+    def _make_cloud(self, points):
+        header = self._make_header("odom_combined")
+        fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
         ]
-        msg.intensities = [0.0] * n
-        self._pub.publish(msg)
+        return point_cloud2.create_cloud(header, fields, points)
+
+    def _make_header(self, frame_id):
+        from std_msgs.msg import Header
+        header = Header()
+        header.frame_id = frame_id
+        header.stamp = self.get_clock().now().to_msg()
+        return header
+
+    def _publish(self):
+        self._msg.header.stamp = self.get_clock().now().to_msg()
+        self._pub.publish(self._msg)
 
 
-def main(args=None):
-    rclpy.init(args=args)
-    node = WallPublisher()
+def main():
+    rclpy.init()
+    node = WallPointCloud()
     try:
         rclpy.spin(node)
     except KeyboardInterrupt:
         pass
-    finally:
-        node.destroy_node()
-        rclpy.shutdown()
+    node.destroy_node()
+    rclpy.shutdown()
 
 
 if __name__ == "__main__":

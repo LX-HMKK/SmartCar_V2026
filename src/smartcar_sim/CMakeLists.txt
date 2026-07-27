@@ -33,6 +33,7 @@ install(
     scripts/odom_combined_relay.py
     scripts/auto_train.py
     scripts/test_through_poses.py
+    scripts/wall_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
