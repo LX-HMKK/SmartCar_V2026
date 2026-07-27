@@ -46,12 +46,12 @@ WALLS = [
 ]
 
 # Field border: 1-cell rim around the entire field
-BORDERS = [
-    ("border_south", 0.0, 5.0,   0.0, 0.0),   # touching y=0
-    ("border_north", 0.0, 5.0,   5.0, 5.0),   # touching y=5
-    ("border_west",  0.0, 0.0,   0.0, 5.0),   # touching x=0
-    ("border_east",  5.0, 5.0,   0.0, 5.0),   # touching x=5
-]
+# DISABLED — the border has no corresponding physical wall in Gazebo.
+# Inflation from border-occupied cells extends ~0.65 m into the field,
+# blocking the robot start position at (0, 0) in odom_combined.
+# Gazebo ground-plane friction keeps the vehicle on the field; the
+# planner only needs to see the six B/C-zone walls.
+BORDERS: list[tuple[str, float, float, float, float]] = []
 
 # Corridor centre-line (decorative guide only — NOT an obstacle)
 CORRIDOR_X = 2.5
