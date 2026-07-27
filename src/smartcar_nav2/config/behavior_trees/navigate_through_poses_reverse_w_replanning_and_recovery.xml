@@ -14,7 +14,7 @@
                   path="{path}"
                   planner_id="GridBased"
                   minimum_turning_radius="0.55"
-                  curvature_tolerance="0.40"
+                  curvature_tolerance="0.55"
                   maximum_direction_error="0.60"
                   start_position_tolerance="0.50"
                   start_yaw_tolerance="0.70"
