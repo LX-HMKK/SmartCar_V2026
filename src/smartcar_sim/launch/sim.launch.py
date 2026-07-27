@@ -184,6 +184,7 @@ def generate_launch_description():
         parameters=[{
             "use_sim_time": True,
             "yaml_filename": map_file,
+            "frame_id": "odom_combined",
         }],
         output="screen",
     )
