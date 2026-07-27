@@ -129,6 +129,60 @@
       <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
     </link></model>
 
+  <!-- ===== B-ZONE WALLS =====
+    B-zone is a 0.5m transverse band at y∈[2.0,2.5]. The 1.0m corridor
+    opening sits at x∈[2.0,3.0] (center x=2.5m from west). Two static
+    walls block the non-corridor portions so LiDAR scans propagate into
+    the costmap and Smac Hybrid planner naturally routes through the gap.
+    Walls are 0.3m tall — high enough for 2D LiDAR detection, low enough
+    not to introduce spurious 3D occlusion in Gazebo visualisation.
+  -->
+  <model name="b_zone_wall_left"><static>true</static><pose>1.0 2.25 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+      <material><ambient>0.6 0.6 0.2 1</ambient><diffuse>0.6 0.6 0.2 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>2.0 0.5 0.5</size></box></geometry></collision>
+    </link></model>
+  <model name="b_zone_wall_right"><static>true</static><pose>4.0 2.25 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>2.0 0.5 0.5</size></box></geometry>
+      <material><ambient>0.6 0.6 0.2 1</ambient><diffuse>0.6 0.6 0.2 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>2.0 0.5 0.5</size></box></geometry></collision>
+    </link></model>
+
+  <!-- ===== C-ZONE RING WALLS =====
+    C-zone ring: outer 4.0×1.65m centre (2.5,3.575) → y∈[2.75,4.40],
+    inner hole 3.0×0.65m centre (2.5,3.575) → y∈[3.25,3.90].
+    Four walls constrain the planner to the ring-shaped track:
+      inner fill — blocks the centre (forces vehicles to go around)
+      north / left / right — block the field boundaries beyond the ring
+    The bottom of the ring is open toward B-zone corridor for entry/exit.
+  -->
+  <model name="c_zone_inner"><static>true</static><pose>2.5 3.575 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>3.0 0.65 0.5</size></box></geometry>
+      <material><ambient>0.2 0.6 0.6 1</ambient><diffuse>0.2 0.6 0.6 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>3.0 0.65 0.5</size></box></geometry></collision>
+    </link></model>
+  <model name="c_zone_north"><static>true</static><pose>2.5 4.7 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>5.0 0.6 0.5</size></box></geometry>
+      <material><ambient>0.2 0.6 0.6 1</ambient><diffuse>0.2 0.6 0.6 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>5.0 0.6 0.5</size></box></geometry></collision>
+    </link></model>
+  <model name="c_zone_west"><static>true</static><pose>0.25 3.575 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.5 1.65 0.5</size></box></geometry>
+      <material><ambient>0.2 0.6 0.6 1</ambient><diffuse>0.2 0.6 0.6 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.5 1.65 0.5</size></box></geometry></collision>
+    </link></model>
+  <model name="c_zone_east"><static>true</static><pose>4.75 3.575 0.15 0 0 0</pose>
+    <link name="link">
+      <visual name="v"><geometry><box><size>0.5 1.65 0.5</size></box></geometry>
+      <material><ambient>0.2 0.6 0.6 1</ambient><diffuse>0.2 0.6 0.6 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.5 1.65 0.5</size></box></geometry></collision>
+    </link></model>
+
   <!-- ===== ROBOT ===== -->
   <include>
     <pose>0 0 0.03 0 0 0</pose>

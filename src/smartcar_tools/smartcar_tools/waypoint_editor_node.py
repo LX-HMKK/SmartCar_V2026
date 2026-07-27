@@ -26,6 +26,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from smartcar_task.waypoints import (
+    is_zero_quaternion,
     load_waypoint_document,
     validate_waypoints,
     write_waypoints_atomic,
@@ -375,38 +376,40 @@ class WaypointEditorNode(Node):
 
         for index, waypoint in enumerate(self._waypoints):
             red, green, blue = TASK_COLORS[waypoint.task]
-            qx, qy, qz, qw = waypoint.orientation
-            sin_yaw = 2.0 * (qw * qz + qx * qy)
-            cos_yaw = 1.0 - 2.0 * (qy * qy + qz * qz)
-            yaw = math.atan2(sin_yaw, cos_yaw)
-            half = yaw / 2.0
-            aqx, aqy, aqz, aqw = 0.0, 0.0, math.sin(half), math.cos(half)
-
             is_selected = index == selected
             is_locked = index in (0, len(self._waypoints) - 1)
 
-            arrow = Marker()
-            arrow.header.frame_id = frame_id
-            arrow.header.stamp = stamp
-            arrow.ns = "mission_arrows"
-            arrow.id = index
-            arrow.type = Marker.ARROW
-            arrow.action = Marker.ADD
-            arrow.pose.position.x = waypoint.position[0]
-            arrow.pose.position.y = waypoint.position[1]
-            arrow.pose.position.z = 0.09
-            arrow.pose.orientation.x = aqx
-            arrow.pose.orientation.y = aqy
-            arrow.pose.orientation.z = aqz
-            arrow.pose.orientation.w = aqw
-            arrow.scale.x = 0.22
-            arrow.scale.y = 0.04
-            arrow.scale.z = 0.04
-            arrow.color.r = red
-            arrow.color.g = green
-            arrow.color.b = blue
-            arrow.color.a = 0.95
-            message.markers.append(arrow)
+            # Skip arrow for zero-quaternion (orientation-unconstrained) waypoints
+            if not is_zero_quaternion(waypoint.orientation):
+                qx, qy, qz, qw = waypoint.orientation
+                sin_yaw = 2.0 * (qw * qz + qx * qy)
+                cos_yaw = 1.0 - 2.0 * (qy * qy + qz * qz)
+                yaw = math.atan2(sin_yaw, cos_yaw)
+                half = yaw / 2.0
+                aqx, aqy, aqz, aqw = (0.0, 0.0, math.sin(half), math.cos(half))
+
+                arrow = Marker()
+                arrow.header.frame_id = frame_id
+                arrow.header.stamp = stamp
+                arrow.ns = "mission_arrows"
+                arrow.id = index
+                arrow.type = Marker.ARROW
+                arrow.action = Marker.ADD
+                arrow.pose.position.x = waypoint.position[0]
+                arrow.pose.position.y = waypoint.position[1]
+                arrow.pose.position.z = 0.09
+                arrow.pose.orientation.x = aqx
+                arrow.pose.orientation.y = aqy
+                arrow.pose.orientation.z = aqz
+                arrow.pose.orientation.w = aqw
+                arrow.scale.x = 0.22
+                arrow.scale.y = 0.04
+                arrow.scale.z = 0.04
+                arrow.color.r = red
+                arrow.color.g = green
+                arrow.color.b = blue
+                arrow.color.a = 0.95
+                message.markers.append(arrow)
 
             # sphere with selection highlight
             sphere = Marker()

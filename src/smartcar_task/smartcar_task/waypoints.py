@@ -116,18 +116,26 @@ def _parse_waypoint(raw, index):
         ("x", "y", "z"),
         f"waypoints[{index}].pose.position",
     )
-    orientation = _components(
-        _mapping(
-            pose.get("orientation"),
+    orientation_raw = pose.get("orientation")
+    if orientation_raw is None:
+        # Intermediate pass-through waypoint: no orientation at all.
+        # Treated as all-zeros (no yaw constraint).
+        orientation = (0.0, 0.0, 0.0, 0.0)
+    else:
+        orientation = _components(
+            _mapping(
+                orientation_raw,
+                f"waypoints[{index}].pose.orientation",
+            ),
+            ("x", "y", "z", "w"),
             f"waypoints[{index}].pose.orientation",
-        ),
-        ("x", "y", "z", "w"),
-        f"waypoints[{index}].pose.orientation",
-    )
-    norm = math.sqrt(sum(value * value for value in orientation))
-    if abs(norm - 1.0) > QUATERNION_NORM_TOLERANCE:
-        raise ValueError(
-            f"waypoints[{index}] orientation must have unit length")
+        )
+        norm = math.sqrt(sum(value * value for value in orientation))
+        zero_norm = norm <= QUATERNION_NORM_TOLERANCE
+        if not zero_norm and abs(norm - 1.0) > QUATERNION_NORM_TOLERANCE:
+            raise ValueError(
+                f"waypoints[{index}] orientation must have unit length"
+                f" or be all zeros (orientation unconstrained)")
 
     return Waypoint(
         frame_id=frame_id.strip(),
@@ -138,6 +146,12 @@ def _parse_waypoint(raw, index):
         id=waypoint_id.strip(),
         goal_profile=goal_profile,
     )
+
+
+def is_zero_quaternion(orientation):
+    """Check if orientation tuple is all zeros (Nav2 convention for orientation
+    unconstrained pass-through waypoints in ThroughPoses segments)."""
+    return all(abs(v) <= QUATERNION_NORM_TOLERANCE for v in orientation)
 
 
 def _is_origin_position(waypoint):
@@ -168,17 +182,23 @@ def _waypoint_mapping(waypoint, index=None):
         qx, qy, qz, qw = waypoint.orientation
     except (TypeError, ValueError) as error:
         raise ValueError(f"{label} has invalid pose dimensions") from error
-    return {
+    result = {
         "id": waypoint.id,
         "frame_id": waypoint.frame_id,
         "pose": {
             "position": {"x": x, "y": y, "z": z},
-            "orientation": {"x": qx, "y": qy, "z": qz, "w": qw},
         },
         "task": waypoint.task,
         "direction": waypoint.direction,
         "goal_profile": waypoint.goal_profile,
     }
+    # Only include orientation if it has a meaningful quaternion
+    # (non-zero norm). Intermediate pass-through waypoints omit
+    # orientation entirely.
+    orient_norm = math.sqrt(qx*qx + qy*qy + qz*qz + qw*qw)
+    if orient_norm > 1e-9:
+        result["pose"]["orientation"] = {"x": qx, "y": qy, "z": qz, "w": qw}
+    return result
 
 
 def validate_waypoints(waypoints):
@@ -203,10 +223,9 @@ def validate_waypoints(waypoints):
             raise ValueError(f"mission task {task} must occur exactly once")
 
     # validate sequence with a simple state machine:
-    #   start → (qr|nav) → corridor* → (vlm|nav) → loop+ → corridor* → return
+    #   start → (qr|nav) → corridor* → (vlm|nav) → loop* → corridor* → return
+    # loop corners are optional when C-zone ring walls constrain the path.
     loop_count = tasks.count("loop")
-    if loop_count < 3:
-        raise ValueError("mission must contain at least three loop corners")
 
     state = "start"
     for i, task in enumerate(tasks):
@@ -229,12 +248,12 @@ def validate_waypoints(waypoints):
                 expected_direction = "reverse"
             elif task in ("vlm", "nav"):
                 expected_direction = "reverse"
-                state = "loop"
+                state = "loop_or_return"
             else:
                 raise ValueError(
                     f"waypoint {i}: expected corridor or vlm/nav, got {task}"
                 )
-        elif state == "loop":
+        elif state == "loop_or_return":
             if task == "loop":
                 expected_direction = "forward"
             elif task == "corridor":
@@ -265,7 +284,7 @@ def validate_waypoints(waypoints):
     if state != "done":
         raise ValueError(
             "mission order must be start, (qr|nav), corridor transit(s), "
-            "(vlm|nav), at least three loop corners, corridor transit(s), return"
+            "(vlm|nav), optional loop corner(s), corridor transit(s), return"
         )
     if not _is_origin_position(waypoints[0]) or not _faces_positive_x(
         waypoints[0]

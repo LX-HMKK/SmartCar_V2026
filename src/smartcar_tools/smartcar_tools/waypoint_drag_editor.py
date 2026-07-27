@@ -32,6 +32,7 @@ import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from smartcar_task.waypoints import (
+    is_zero_quaternion,
     load_waypoint_document,
     validate_waypoints,
     write_waypoints_atomic,
@@ -274,12 +275,14 @@ class DragEditor:
             linewidths=edge_widths, zorder=5, picker=8, alpha=0.95,
         )
 
-        # direction arrows
+        # direction arrows (skip zero-quaternion / orientation-unconstrained waypoints)
         for arrow in self._arrows:
             arrow.remove()
         self._arrows.clear()
         arrow_len = 0.18
-        for x, y, yaw, color in zip(xs, ys, yaws, colors):
+        for w, x, y, yaw, color in zip(self._waypoints, xs, ys, yaws, colors):
+            if is_zero_quaternion(w.orientation):
+                continue
             dx = arrow_len * math.cos(yaw)
             dy = arrow_len * math.sin(yaw)
             arrow = self._ax.arrow(
@@ -367,18 +370,19 @@ class DragEditor:
                 s.color.a = 0.7 if i in (0, len(self._waypoints)-1) else 1.0
             msg.markers.append(s)
 
-            a = Marker()
-            a.header.frame_id = frame_id; a.header.stamp = stamp
-            a.ns = "mission_arrows"; a.id = i
-            a.type = Marker.ARROW; a.action = Marker.ADD
-            a.pose.position.x = w.position[0]
-            a.pose.position.y = w.position[1]
-            a.pose.position.z = 0.09
-            a.pose.orientation.z = math.sin(half)
-            a.pose.orientation.w = math.cos(half)
-            a.scale.x = 0.22; a.scale.y = 0.04; a.scale.z = 0.04
-            a.color.r = r; a.color.g = g; a.color.b = b; a.color.a = 0.95
-            msg.markers.append(a)
+            if not is_zero_quaternion(w.orientation):
+                a = Marker()
+                a.header.frame_id = frame_id; a.header.stamp = stamp
+                a.ns = "mission_arrows"; a.id = i
+                a.type = Marker.ARROW; a.action = Marker.ADD
+                a.pose.position.x = w.position[0]
+                a.pose.position.y = w.position[1]
+                a.pose.position.z = 0.09
+                a.pose.orientation.z = math.sin(half)
+                a.pose.orientation.w = math.cos(half)
+                a.scale.x = 0.22; a.scale.y = 0.04; a.scale.z = 0.04
+                a.color.r = r; a.color.g = g; a.color.b = b; a.color.a = 0.95
+                msg.markers.append(a)
 
             l = Marker()
             l.header.frame_id = frame_id; l.header.stamp = stamp

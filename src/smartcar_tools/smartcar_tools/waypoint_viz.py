@@ -11,7 +11,10 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
-from smartcar_task.waypoints import load_waypoints as load_mission_waypoints
+from smartcar_task.waypoints import (
+    is_zero_quaternion,
+    load_waypoints as load_mission_waypoints,
+)
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -41,7 +44,11 @@ def _yaw_quaternion(yaw_rad):
 
 
 def load_waypoints(path):
-    """Return validated display tuples including stable waypoint IDs."""
+    """Return validated display tuples including stable waypoint IDs.
+
+    Each tuple: (frame_id, x, y, yaw, task, waypoint_id, has_orientation).
+    has_orientation is False for zero-quaternion (unconstrained) waypoints.
+    """
     return [
         (
             item.frame_id,
@@ -50,6 +57,7 @@ def load_waypoints(path):
             _yaw_from_quaternion(item.orientation),
             item.task,
             item.id,
+            not is_zero_quaternion(item.orientation),
         )
         for item in load_mission_waypoints(path)
     ]
@@ -115,12 +123,14 @@ class WaypointVizNode(Node):
         line.color.r = 0.6
         line.color.g = 0.6
         line.color.b = 0.8
-        for _, x, y, _, _, _ in self._waypoints:
+        for _, x, y, _, _, _, _ in self._waypoints:
             line.points.append(Point(x=x, y=y, z=0.03))
         msg.markers.append(line)
 
         # ── per-waypoint sphere / arrow / label ──────────────────────
-        for i, (_fid, x, y, yaw, task, waypoint_id) in enumerate(self._waypoints):
+        for i, (_fid, x, y, yaw, task, waypoint_id, has_orient) in enumerate(
+            self._waypoints
+        ):
             r, g, b = _TASK_COLORS.get(task, _DEFAULT_COLOR)
 
             sphere = Marker()
@@ -141,29 +151,30 @@ class WaypointVizNode(Node):
             sphere.color.a = 1.0
             msg.markers.append(sphere)
 
-            arrow = Marker()
-            arrow.header.frame_id = frame_id
-            arrow.header.stamp = stamp
-            arrow.ns = "waypoint_arrows"
-            arrow.id = i
-            arrow.type = Marker.ARROW
-            arrow.action = Marker.ADD
-            arrow.pose.position.x = x
-            arrow.pose.position.y = y
-            arrow.pose.position.z = 0.09
-            qx, qy, qz, qw = _yaw_quaternion(yaw)
-            arrow.pose.orientation.x = qx
-            arrow.pose.orientation.y = qy
-            arrow.pose.orientation.z = qz
-            arrow.pose.orientation.w = qw
-            arrow.scale.x = 0.20
-            arrow.scale.y = 0.035
-            arrow.scale.z = 0.035
-            arrow.color.r = r
-            arrow.color.g = g
-            arrow.color.b = b
-            arrow.color.a = 0.95
-            msg.markers.append(arrow)
+            if has_orient:
+                arrow = Marker()
+                arrow.header.frame_id = frame_id
+                arrow.header.stamp = stamp
+                arrow.ns = "waypoint_arrows"
+                arrow.id = i
+                arrow.type = Marker.ARROW
+                arrow.action = Marker.ADD
+                arrow.pose.position.x = x
+                arrow.pose.position.y = y
+                arrow.pose.position.z = 0.09
+                qx, qy, qz, qw = _yaw_quaternion(yaw)
+                arrow.pose.orientation.x = qx
+                arrow.pose.orientation.y = qy
+                arrow.pose.orientation.z = qz
+                arrow.pose.orientation.w = qw
+                arrow.scale.x = 0.20
+                arrow.scale.y = 0.035
+                arrow.scale.z = 0.035
+                arrow.color.r = r
+                arrow.color.g = g
+                arrow.color.b = b
+                arrow.color.a = 0.95
+                msg.markers.append(arrow)
 
             label = Marker()
             label.header.frame_id = frame_id

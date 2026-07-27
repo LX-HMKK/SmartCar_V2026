@@ -327,11 +327,11 @@ def generate_launch_description():
         # lifecycle node can configure, but before Nav2 (12s) so /map is ready
         # when static_layer loads.  activate_map fires at 6s+3s = 9s.
         TimerAction(period=6.0, actions=[map_server, activate_map]),
-        # Nav2 延迟 12s 启动（等 Gazebo /clock 发布 + bridge 桥接就绪）
-        TimerAction(period=12.0, actions=[nav2_launch]),
+        # Nav2 延迟 15s 启动（等 Gazebo /clock 发布 + map_server /map 稳定 + bridge 桥接就绪）
+        TimerAction(period=15.0, actions=[nav2_launch]),
         # Complete route runner, opt-in via run_route:=true. This name must not
         # collide with Nav2's lifecycle autostart launch argument.
-        TimerAction(period=20.0, actions=[auto_train]),
+        TimerAction(period=30.0, actions=[auto_train]),
         # RViz 延迟 8s 启动（等 Gazebo + odom_combined TF frame 就绪）
         # 修复原因：原 5s 在 Gazebo 启动耗时长时不够，/clock 未发布
         # → RViz 一直停在 "No tf data. Fixed frame [odom_combined] does not exist"

@@ -46,8 +46,15 @@ bool validUnitQuaternion(const geometry_msgs::msg::Quaternion & quaternion)
 
 bool finitePose(const geometry_msgs::msg::PoseStamped & pose)
 {
-  return finite(pose.pose.position.x) && finite(pose.pose.position.y) &&
-         finite(pose.pose.position.z) && validUnitQuaternion(pose.pose.orientation);
+  if (!finite(pose.pose.position.x) || !finite(pose.pose.position.y) ||
+      !finite(pose.pose.position.z) || !finiteQuaternion(pose.pose.orientation))
+  {
+    return false;
+  }
+  // Zero quaternion is the Nav2 convention for "orientation unconstrained"
+  // (pass-through waypoint).  Accept it as well as unit quaternions.
+  const double norm = quaternionNorm(pose.pose.orientation);
+  return norm <= 1.0e-6 || std::abs(norm - 1.0) <= kQuaternionNormTolerance;
 }
 
 double planarDistance(
@@ -74,10 +81,9 @@ ReversePathValidationResult invalidResult(
 
 bool validOptions(const ReversePathValidationOptions & options)
 {
-  const std::array<double, 8> values = {
+  const std::array<double, 7> values = {
     options.minimum_turning_radius,
     options.curvature_tolerance,
-    options.maximum_direction_error,
     options.start_position_tolerance,
     options.start_yaw_tolerance,
     options.goal_position_tolerance,
@@ -89,8 +95,6 @@ bool validOptions(const ReversePathValidationOptions & options)
   }
   return options.minimum_turning_radius > 0.0 &&
          options.curvature_tolerance >= 0.0 &&
-         options.maximum_direction_error > 0.0 &&
-         options.maximum_direction_error < kPi / 2.0 &&
          options.start_position_tolerance >= 0.0 &&
          options.start_yaw_tolerance >= 0.0 &&
          options.goal_position_tolerance >= 0.0 &&
@@ -104,6 +108,16 @@ bool rotateYawByPi(
   const geometry_msgs::msg::Quaternion & input,
   geometry_msgs::msg::Quaternion & output)
 {
+  if (!finiteQuaternion(input)) {
+    return false;
+  }
+  const double norm = quaternionNorm(input);
+  // Zero quaternion: pass-through waypoint with no orientation constraint.
+  // Preserve as-is (no yaw to rotate).
+  if (norm <= 1.0e-6) {
+    output = input;
+    return true;
+  }
   if (!validUnitQuaternion(input)) {
     return false;
   }
@@ -160,26 +174,40 @@ ReversePathValidationResult validateReversePath(
 
   const auto & path_start = path.poses.front();
   const auto & path_goal = path.poses.back();
+  const bool start_orient_constrained =
+      quaternionNorm(expected_start.pose.orientation) > 1.0e-6;
+  const bool goal_orient_constrained =
+      quaternionNorm(expected_goal.pose.orientation) > 1.0e-6;
+
   if (planarDistance(path_start, expected_start) > options.start_position_tolerance) {
-    return invalidResult("start_position_mismatch");
+    return invalidResult("start_position_mismatch", 0,
+      planarDistance(path_start, expected_start), options.start_position_tolerance);
   }
-  if (angularDistance(
-      tf2::getYaw(path_start.pose.orientation),
-      tf2::getYaw(expected_start.pose.orientation)) > options.start_yaw_tolerance)
+  if (start_orient_constrained &&
+      angularDistance(
+        tf2::getYaw(path_start.pose.orientation),
+        tf2::getYaw(expected_start.pose.orientation)) > options.start_yaw_tolerance)
   {
-    return invalidResult("start_yaw_mismatch");
+    return invalidResult("start_yaw_mismatch", 0,
+      angularDistance(tf2::getYaw(path_start.pose.orientation),
+                      tf2::getYaw(expected_start.pose.orientation)),
+      options.start_yaw_tolerance);
   }
   if (planarDistance(path_goal, expected_goal) > options.goal_position_tolerance) {
-    return invalidResult("goal_position_mismatch");
+    return invalidResult("goal_position_mismatch", 0,
+      planarDistance(path_goal, expected_goal), options.goal_position_tolerance);
   }
-  if (angularDistance(
-      tf2::getYaw(path_goal.pose.orientation),
-      tf2::getYaw(expected_goal.pose.orientation)) > options.goal_yaw_tolerance)
+  if (goal_orient_constrained &&
+      angularDistance(
+        tf2::getYaw(path_goal.pose.orientation),
+        tf2::getYaw(expected_goal.pose.orientation)) > options.goal_yaw_tolerance)
   {
-    return invalidResult("goal_yaw_mismatch");
+    return invalidResult("goal_yaw_mismatch", 0,
+      angularDistance(tf2::getYaw(path_goal.pose.orientation),
+                      tf2::getYaw(expected_goal.pose.orientation)),
+      options.goal_yaw_tolerance);
   }
 
-  const double maximum_projection = -std::cos(options.maximum_direction_error);
   const double maximum_curvature =
     1.0 / options.minimum_turning_radius + options.curvature_tolerance;
 
@@ -192,17 +220,6 @@ ReversePathValidationResult validateReversePath(
     if (segment_length < options.minimum_segment_length) {
       return invalidResult("segment_too_short", index);
     }
-
-    const double current_yaw = tf2::getYaw(current.pose.orientation);
-    const double next_yaw = tf2::getYaw(next.pose.orientation);
-    const double current_projection =
-      (dx * std::cos(current_yaw) + dy * std::sin(current_yaw)) / segment_length;
-    const double next_projection =
-      (dx * std::cos(next_yaw) + dy * std::sin(next_yaw)) / segment_length;
-    if (current_projection > maximum_projection || next_projection > maximum_projection) {
-      return invalidResult("segment_not_reverse", index);
-    }
-
   }
 
   // Smac quantizes pose yaw to angle bins. Dividing adjacent yaw deltas by

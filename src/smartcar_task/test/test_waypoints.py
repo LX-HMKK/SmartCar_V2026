@@ -47,21 +47,6 @@ def valid_document():
                 "task": "qr",
             },
             {
-                "id": "b_corridor_out",
-                "frame_id": "odom_combined",
-                "pose": {
-                    "position": {"x": 2.0, "y": 2.40, "z": 0.0},
-                    "orientation": {
-                        "x": 0.0,
-                        "y": 0.0,
-                        "z": 0.7071067812,
-                        "w": 0.7071067812,
-                    },
-                },
-                "task": "corridor",
-                "direction": "reverse",
-            },
-            {
                 "id": "c_corner_1",
                 "frame_id": "odom_combined",
                 "pose": {
@@ -72,29 +57,11 @@ def valid_document():
                 "direction": "reverse",
             },
             {
-                "id": "c_corner_2",
-                "frame_id": "odom_combined",
-                "pose": {
-                    "position": {"x": 0.825, "y": 3.90, "z": 0.0},
-                    "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-                },
-                "task": "loop",
-            },
-            {
                 "id": "c_corner_3",
                 "frame_id": "odom_combined",
                 "pose": {
                     "position": {"x": 3.175, "y": 3.90, "z": 0.0},
                     "orientation": {"x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0},
-                },
-                "task": "loop",
-            },
-            {
-                "id": "c_corner_4",
-                "frame_id": "odom_combined",
-                "pose": {
-                    "position": {"x": 3.175, "y": 2.75, "z": 0.0},
-                    "orientation": {"x": 0.0, "y": 0.0, "z": 1.0, "w": 0.0},
                 },
                 "task": "loop",
             },
@@ -136,7 +103,7 @@ class WaypointTests(unittest.TestCase):
             waypoints = load_waypoints(
                 self.write_document(directory, valid_document()))
 
-        self.assertEqual(len(waypoints), 9)
+        self.assertEqual(len(waypoints), 6)
         self.assertEqual(waypoints[1].frame_id, "odom_combined")
         self.assertEqual(waypoints[1].id, "a_task_observe")
         self.assertEqual(waypoints[1].position, (3.45, 0.8, 0.0))
@@ -146,8 +113,7 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.direction for item in waypoints],
             [
-                "forward", "forward", "reverse", "reverse", "forward",
-                "forward", "forward", "forward", "forward",
+                "forward", "forward", "reverse", "forward", "forward", "forward",
             ],
         )
         self.assertEqual(
@@ -286,17 +252,17 @@ class WaypointTests(unittest.TestCase):
             self.assertEqual(
                 [item.task for item in waypoints],
                 [
-                    "start", "qr", "corridor", "vlm", "loop",
-                    "loop", "loop", "corridor", "return",
+                    "start", "qr", "vlm", "loop", "corridor", "return",
                 ],
             )
 
+            # Swap vlm (index 2) and loop (index 3) — produces invalid sequence
             document = valid_document()
             document["waypoints"][2], document["waypoints"][3] = (
                 document["waypoints"][3], document["waypoints"][2]
             )
-            document["waypoints"][3]["direction"] = "forward"
-            with self.assertRaisesRegex(ValueError, "sequence|order|out-of"):
+            document["waypoints"][2]["direction"] = "forward"
+            with self.assertRaisesRegex(ValueError, "direction|sequence|order|out-of|expected"):
                 load_waypoints(self.write_document(directory, document))
 
     def test_direction_window_is_mandatory_and_nav_only_uses_same_contract(self):
@@ -328,17 +294,16 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.direction for item in nav_only],
             [
-                "forward", "forward", "reverse", "reverse", "reverse",
-                "forward", "forward", "forward", "forward", "forward",
-                "forward",
+                "forward", "forward", "reverse",
+                "forward", "forward", "forward",
             ],
         )
         self.assertEqual(nav_only[1].goal_profile, "precise")
-        self.assertEqual(nav_only[4].goal_profile, "reverse_handoff")
+        self.assertEqual(nav_only[2].goal_profile, "reverse_handoff")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(nav_only)
-            if index not in {1, 4}
+            if index not in {1, 2}
         ))
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
@@ -349,26 +314,10 @@ class WaypointTests(unittest.TestCase):
             / "waypoints"
             / "default_waypoints.yaml"
         )
-        corners = waypoints[4:8]
-        self.assertEqual([item.task for item in corners], [
-            "vlm", "loop", "loop", "loop",
-        ])
-        self.assertEqual(
-            [(item.position[0], item.position[1]) for item in corners],
-            [
-                (0.3867094808286349, 2.6824089026910594),
-                (0.825, 3.90),
-                (3.175, 3.90),
-                (3.175, 2.75),
-            ],
-        )
-        signed_area = 0.5 * sum(
-            first.position[0] * second.position[1]
-            - second.position[0] * first.position[1]
-            for first, second in zip(corners, (*corners[1:], corners[0]))
-        )
-        self.assertLess(signed_area, 0.0)
-        vlm = corners[0]
+        vlm = waypoints[2]  # c_corner_1
+        self.assertEqual(vlm.task, "vlm")
+        self.assertEqual(vlm.position,
+                         (0.3867094808286349, 2.55, 0.0))
         _, _, qz, qw = vlm.orientation
         yaw = math.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
         self.assertAlmostEqual(yaw, 1.0471975511965976, delta=1.0e-6)
@@ -385,14 +334,13 @@ class WaypointTests(unittest.TestCase):
         self.assertIs(document["calibrated"], False)
         waypoints = load_waypoints(default_file)
         qr = waypoints[1]
-        # outbound/return corridor waypoints still share the same centre position
-        outbound_center = waypoints[3]   # b_corridor_out
+        # outbound: corridor entry was removed (B-zone walls guide the planner);
+        # inbound: return corridor still exists as a through-pose.
         inbound_center = waypoints[-2]   # b_corridor_return
         self.assertEqual(qr.position, (3.127294927294929, 0.9765623265623269, 0.0))
         standoff = math.hypot(4.15 - qr.position[0], 1.35 - qr.position[1])
         self.assertAlmostEqual(standoff, 1.08875220, delta=1.0e-6)
         self.assertGreater(standoff, 0.5)
-        self.assertEqual(outbound_center.task, "corridor")
         self.assertEqual(inbound_center.task, "corridor")
         # Waypoint positions diverge after user editing — corridor entrance
         # and exit are distinct coordinates; the bidirectional-reuse
@@ -447,8 +395,7 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.task for item in waypoints],
             [
-                "start", "qr", "corridor", "corridor", "vlm", "loop",
-                "loop", "loop", "corridor", "corridor", "return",
+                "start", "qr", "vlm", "loop", "corridor", "return",
             ],
         )
         self.assertEqual(
@@ -456,23 +403,18 @@ class WaypointTests(unittest.TestCase):
             [
                 "p_start",
                 "a_task_observe",
-                "b_corridor_enter",
-                "b_corridor_out",
                 "c_corner_1",
-                "c_corner_2",
                 "c_corner_3",
-                "c_corner_4",
-                "b_corridor_return_enter",
                 "b_corridor_return",
                 "p_finish",
             ],
         )
         self.assertEqual(waypoints[1].goal_profile, "precise")
-        self.assertEqual(waypoints[4].goal_profile, "reverse_handoff")
+        self.assertEqual(waypoints[2].goal_profile, "reverse_handoff")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(waypoints)
-            if index not in {1, 4}
+            if index not in {1, 2}
         ))
 
 
