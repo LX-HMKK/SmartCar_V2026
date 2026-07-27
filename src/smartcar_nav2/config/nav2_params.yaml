@@ -312,9 +312,9 @@ global_costmap:
       global_frame: odom_combined
       robot_base_frame: base_footprint
       rolling_window: true
-      width: 14
-      height: 14
-      resolution: 0.05
+      width: 10
+      height: 10
+      resolution: 0.10
       # pi-invariant hull of the real footprint. This keeps virtual-yaw
       # reverse planning collision-equivalent to the physical vehicle.
       footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
