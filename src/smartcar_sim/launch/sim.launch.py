@@ -68,6 +68,8 @@ def generate_launch_description():
     run_route = LaunchConfiguration("run_route", default="false")
     results_file = LaunchConfiguration(
         "results_file", default="/tmp/auto_train_results.json")
+    start_goal_id = LaunchConfiguration("start_goal_id", default="")
+    end_goal_id = LaunchConfiguration("end_goal_id", default="")
 
     # ── Gazebo ──
     # 注意：gz_server 和 gz_server_headless 互斥，只启动其中一个。
@@ -188,6 +190,10 @@ def generate_launch_description():
         pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
     ])
+    bt_reverse_through_poses = PathJoinSubstitution([
+        pkg_nav2, "config", "behavior_trees",
+        "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
+    ])
 
     nav2_launch = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(
@@ -248,8 +254,20 @@ def generate_launch_description():
             "precise_behavior_tree": bt_precise,
             "reverse_behavior_tree": bt_reverse,
             "reverse_handoff_behavior_tree": bt_reverse_handoff,
+            "through_poses_behavior_tree": PathJoinSubstitution([
+                pkg_nav2, "config", "behavior_trees",
+                "navigate_through_poses_w_replanning_and_recovery.xml",
+            ]),
+            "through_poses_reverse_behavior_tree": PathJoinSubstitution([
+                pkg_nav2, "config", "behavior_trees",
+                "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
+            ]),
+            "use_through_poses": True,
             "nav2_params_file": nav2_fixed_params,
             "results_file": results_file,
+            "start_goal_id": start_goal_id,
+            "end_goal_id": end_goal_id,
+            "goal_timeout_sec": 180.0,
         }],
         condition=IfCondition(run_route),
         output="screen",
@@ -294,6 +312,8 @@ def generate_launch_description():
         DeclareLaunchArgument("run_route", default_value="false"),
         DeclareLaunchArgument(
             "results_file", default_value="/tmp/auto_train_results.json"),
+        DeclareLaunchArgument("start_goal_id", default_value=""),
+        DeclareLaunchArgument("end_goal_id", default_value=""),
         set_rmw,
         set_localhost,
         set_model_path,

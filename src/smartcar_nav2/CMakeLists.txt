@@ -67,6 +67,33 @@ ament_target_dependencies(smartcar_compute_reverse_path_to_pose_action_bt_node
   tf2_ros
 )
 
+add_library(smartcar_compute_reverse_path_through_poses_action_bt_node SHARED
+  src/compute_reverse_path_through_poses_action.cpp
+)
+target_compile_definitions(smartcar_compute_reverse_path_through_poses_action_bt_node PRIVATE
+  BT_PLUGIN_EXPORT
+)
+target_include_directories(smartcar_compute_reverse_path_through_poses_action_bt_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(smartcar_compute_reverse_path_through_poses_action_bt_node
+  reverse_path_utils
+)
+ament_target_dependencies(smartcar_compute_reverse_path_through_poses_action_bt_node
+  behaviortree_cpp_v3
+  geometry_msgs
+  nav2_behavior_tree
+  nav2_msgs
+  nav2_util
+  nav_msgs
+  rclcpp
+  rclcpp_action
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
+)
+
 add_library(smartcar_reverse_only_mppi_controller SHARED
   src/reverse_only_mppi_controller.cpp
 )
@@ -111,6 +138,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
 
 set(SMARTCAR_NAV2_BEHAVIOR_TREE_FILES
   config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_through_poses_reverse_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_precise_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml
@@ -133,6 +161,7 @@ install(DIRECTORY include/
 install(TARGETS
   reverse_path_utils
   smartcar_compute_reverse_path_to_pose_action_bt_node
+  smartcar_compute_reverse_path_through_poses_action_bt_node
   smartcar_reverse_only_mppi_controller
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib

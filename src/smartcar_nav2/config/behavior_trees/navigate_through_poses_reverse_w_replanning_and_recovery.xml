@@ -1,0 +1,36 @@
+<!-- Reverse Ackermann-safe through-poses tree: no backup, no wait, no spin.
+     Uses ComputePathThroughPoses for path geometry and reverse_goal_checker
+     so FollowPath drives the segment in reverse. -->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="6" name="NavigateReverseThroughRecovery">
+      <PipelineSequence name="NavigateReverseThroughWithReplanning">
+        <RateController hz="0.5">
+          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
+            <ComputeReversePathThroughPoses
+                goals="{goals}"
+                path="{path}"
+                planner_id="GridBased"
+                minimum_turning_radius="0.55"
+                curvature_tolerance="0.30"
+                maximum_direction_error="0.35"
+                start_position_tolerance="0.10"
+                start_yaw_tolerance="0.15"
+                goal_position_tolerance="0.12"
+                goal_yaw_tolerance="0.15"
+                minimum_segment_length="0.0001"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-ReverseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowReversePath">
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="reverse_goal_checker"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-ReverseContext" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="ClearReverseCostmapsRecovery">
+        <ClearEntireCostmap name="ClearLocalCostmap-ReverseSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap-ReverseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

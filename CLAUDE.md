@@ -2,12 +2,12 @@
 
 本文件为 Claude Code（claude.ai/code）提供本仓库的操作指导。
 
-> 同步基线：2026-07-26。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
+> 同步基线：2026-07-27。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
 ## 项目背景与当前状态
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
-截至 2026-07-24，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 11 点语义任务路线、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
+截至 2026-07-27，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线（三阶段 NavigateThroughPoses）、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
 截至 2026-07-26，`feat/gazebo-simulation` 分支还包含 WSL2 Ubuntu-22.04 +
 Ignition Gazebo 6.18 仿真。WSL 必须使用 NAT 网络；mirrored 模式会破坏
@@ -20,7 +20,7 @@ QR→VLM 约 48 秒完成。该证据只覆盖 Gazebo 模型，不属于实体�
 
 - **任务决策层**：`smartcar_task` 管理五子任务和语义航点；每个非起点航点独立发送 `NavigateToPose`，并把动作 UUID、方向、generation 与方向租约绑定。
 - **视觉层**：`smartcar_vision` 使用 `zbar_ros` 识别二维码；图生文请求包含图像等待、JPEG 编码和后端推理，统一受 8 秒硬期限约束并提供兜底文案。
-- **导航层**：单一 Smac Hybrid `DUBIN` planner + Regulated Pure Pursuit；正向使用普通 BT，倒车使用 `ComputeReversePathToPose` 自定义 BT 节点做虚拟航向规划、路径恢复和严格反向校验。BT 以 0.5 Hz 重规划；不启动 `behavior_server` 或 `waypoint_follower`，禁止 Spin recovery 和原地旋转。
+- **导航层**：单一 Smac Hybrid `DUBIN` planner + Regulated Pure Pursuit；正向使用普通 BT，倒车单航点使用 `ComputeReversePathToPose`、多航点使用 `ComputeReversePathThroughPoses` 自定义 BT 节点做虚拟航向旋转、路径去重和反向校验。任务路线为三阶段 ThroughPoses：QR 单航点 forward → corridor（2 点）reverse ThroughPoses → C 区 loop+return（6 点）forward ThroughPoses。BT 以 0.5 Hz 重规划；不启动 `behavior_server` 或 `waypoint_follower`，禁止 Spin recovery 和原地旋转。
 - **避障感知层**：YDLIDAR `/scan` 直接进入 obstacle/inflation costmap；无消费者的 `obstacle_detector_2` 默认关闭，仅保留诊断开关。
 - **定位层**：STM32 轮式里程计 + IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
 - **控制层**：`controller_server -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，只允许与动作租约一致的速度符号；安全节点（C++ 默认，Python 备选）继续负责指令消毒、急停锁存、传感器心跳超时和 Twist→Ackermann 转换。
@@ -30,7 +30,7 @@ QR→VLM 约 48 秒完成。该证据只覆盖 Gazebo 模型，不属于实体�
 - LiDAR 不做 SLAM 或静态地图定位；必须允许通过连续扫描匹配生成激光里程计并融合进 EKF，同时继续进入 obstacle/inflation costmap。激光里程计不得直接发布 `odom_combined -> base_footprint` TF，EKF 是唯一 TF owner。
 - 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。安全节点直接发布 `/ackermann_cmd`，`use_safety_ackermann:=true` 时跳过独立的 `cmd_vel_to_ackermann_drive` 节点。
 - 方向门必须位于 velocity smoother 之后。`Prepare/Activate/Renew/Stop` 租约同时绑定 boot epoch、lease ID、generation 和 `NavigateToPose` UUID；错方向、过期许可、非法 Twist 或重放必须完整输出零并锁存故障。
-- 唯一路线方向模式是：start/QR 为 `forward`，QR 后的出站 corridor 与 VLM 为 `reverse`，VLM 后至 return 全部为 `forward`。`validate_waypoints()` 必须拒绝全正向或越界方向配置。
+- 唯一路线方向模式是三阶段 ThroughPoses：QR 单航点 `forward` → 出站 corridor（b_corridor_enter + c_corner_1，2 航点）`reverse` ThroughPoses → C 区 loop + return（c_corner_2 至 p_finish，6 航点）`forward` ThroughPoses。`validate_waypoints()` 必须拒绝全正向或越界方向配置。
 - 安全节点 odom 回调有 50ms 节流（`odom_throttle_interval_sec`），有效 odom 看门狗窗口 = `odom_timeout + throttle_interval + timer_period`（最坏 ~450ms，0.15 m/s 下 ~6.8 cm）。`raw_odom_timeout_sec` 已参数化。
 - 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发不是当前 release 依赖；TTS consumer 已提供但默认关闭，不属于任务或运动门禁依赖。
 - 发车时车辆手动置于 P 区原点，车头朝 `+X`；任务 reset 不能替代物理复位。
@@ -100,7 +100,12 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-26 当前分支证据：WSL 仿真合同 6/6，通过完整 Gazebo 导航验证；本地根合同 143 项中 141 项通过。两项已知失败均尚未解决：`reverse_goal_checker.xy_goal_tolerance=0.25` 超出合同上限 `0.12`，以及顶层 `smartcar_system.launch.py` 的 `extrinsics_calibrated` 默认值为 `true`。这两项必须在合并或部署前修复，不得把当前失败套件表述为全绿。
+2026-07-27 当前分支证据：WSL 仿真 NavigateThroughPoses 三阶段路线已通过
+`overall_outcome=completed`。路线从原 10 航点简化为 9 nav 航点（移除 `b_corridor_out`），
+`b_corridor_return_enter` 经 geometry_scan 重新定位至 (2.3, 2.5, -120°) 消除 corridor 过渡兜圈。
+`auto_train.py` 支持 ThroughPoses 三阶段分段运行。本地根合同 143 项中 141 项通过，
+两项已知失败同 2026-07-26 基线。已知问题：reverse ThroughPoses 曲率校验默认 tolerance=0.25
+不足，BT XML 已设为 0.30；forward ThroughPoses 约 60s 后规划失败，仍在调试。
 
 2026-07-24 RDK 历史证据：`smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 共 108 项测试零失败；提交 `8103b37` 已部署到 `/root/ros2_ws`。这些证据不包含实体倒车运动，也不覆盖当前仿真分支的两项本地合同失败。
 
@@ -124,7 +129,8 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - 实测并替换 `default_waypoints.yaml` 占位航点（`nav_only.yaml` 已支持纯导航实测，语义航点坐标仍需场地验证后标定）。
 - 完成转向标定（`steering_command_scale` / `offset`）。
 - 车轮离地和 0.15 m/s 低速验证 QR→VLM 实际倒车；`minimum_turning_radius: 0.55` 仍是未标定规划假设。
-- 修正并现场确认两处正向 DUBIN 兜圈风险：`c_corner_1 -> c_corner_2` 和 `c_corner_4 -> b_corridor_return_enter`。几何候选航向约为 `c_corner_2=38°`、`b_corridor_return_enter=-135°`，尚未写入路线。
+- 修正并现场确认 `c_corner_1 -> c_corner_2` 正向 DUBIN 兜圈风险（c_corner_2=38°）。
+- ✅ `c_corner_4 -> b_corridor_return_enter` 兜圈已通过 yaw 调参在 WSL 仿真中解决：`c_corner_4` yaw 180°→-50°、`return_enter` 经 geometry_scan 重定位至 (2.3, 2.5) yaw -120°。实体场地还需复测。
 - 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
 - 0.30 m/s 运动异常尚未完成单变量复测；历史 EKF 超期发生在发车前，不能归因于车速。已实施首批调度修复，仍须现场分级验证。
@@ -146,7 +152,10 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - **一键导航测试脚本 (2026-07-24 修订)**：只使用仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。`scripts/deploy/nav_test.sh` 是会自动解除急停并 start 的历史副本，不得复制或执行；当前 `scripts/monitor_mission.py` 也不能作为零速或安全判据。
-- **倒车导航实现 (2026-07-25 修订)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；QR 方向切换点使用 `0.12 m / 0.15 rad` 精确正向 BT，Smac 近似终点 `tolerance=0.0`；reverse goal 把实际 TF 起点和目标 yaw 临时加 π，调用唯一 `DUBIN` planner，再把路径 yaw 恢复 π。插件拒绝非有限、错误 frame/端点、正向分量、cusp 和超曲率路径。后置方向门用动作 UUID 租约保证“倒车或停车”，不使用 `REEDS_SHEPP`、`reverse_penalty`、航点朝向翻转或开环速度。负速度与倒车 `angular.z` 翻转已在首个 reverse goal 上实车确认，精确交接与完整路线仍待复测。
+- **倒车导航实现 (2026-07-27 修订)**：QR→VLM 段必须倒车，已升级为 ThroughPoses。`ComputeReversePathThroughPoses` C++ BT 节点对多航点倒车段做 yaw+π 旋转、连续帧去重和反向校验（曲率、cusp、非有限/错误 frame/端点/正向分量），替代逐航点 `NavigateToPose`。后置方向门用动作 UUID 租约保证”倒车或停车”，不使用 `REEDS_SHEPP`、`reverse_penalty`、航点朝向翻转或开环速度。负速度与倒车 `angular.z` 翻转已在首个 reverse goal 上实车确认。
+- **NavigateThroughPoses 三阶段路线 (2026-07-27)**：路线从逐航点 `NavigateToPose` 升级为三阶段 ThroughPoses，减少 BT 重规划开销和交接延迟。阶段划分：① QR 单航点 forward（`navigate_to_pose_w_replanning_and_recovery.xml`）；② corridor 2 点 reverse ThroughPoses（`navigate_through_poses_reverse_w_replanning_and_recovery.xml`，使用 `ComputeReversePathThroughPoses`）；③ C 区 loop+return 6 点 forward ThroughPoses（`navigate_through_poses_w_replanning_and_recovery.xml`）。`nav_only.yaml` 移除 `b_corridor_out`（10→9 nav 航点），`b_corridor_return_enter` 经 `geometry_scan.py` 重定位至 (2.3, 2.5, -120°)。`auto_train.py` 按三阶段分段发送（`use_through_poses:=true`），fallback 退化为逐航点。已知问题：reverse BT XML 曲率校验 `curvature_tolerance=0.30`（默认 0.25 不足）；forward ThroughPoses 约 60s 后规划失败，仍在调试。
+- **航点调参约束 (2026-07-27)**：C 区循环点（c_corner_1~4）位置不可改，仅可改 yaw；B 区走廊点（b_corridor_*）可上延至 C 区边缘（允许占一点 C 区）。P/QR/VLM 点位不得移动。调参流程：`geometry_scan.py` 枚举候选 yaw → `apply_candidate.py` 写入 YAML → `sim_tune.sh --loop 1` 验证。
+- **仿真航点几何扫描 (2026-07-27)**：`src/smartcar_sim/scripts/geometry_scan.py` 对任意航点段做 Dubins 路径扫描（R=0.55m），枚举 yaw 候选、采样起姿包络（±0.25m/±0.50rad）、检查 B 区墙碰撞和 corridor 可达性。输出 JSON 候选集供 `apply_candidate.py` 消费。`apply_candidate.py --index N` 将第 N 个候选写入航点 YAML。
 - **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
 - **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
 

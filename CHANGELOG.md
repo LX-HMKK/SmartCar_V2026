@@ -1,5 +1,38 @@
 # 变更日志
 
+## 2026-07-27 - 仿真实现 3 段 NavigateThroughPoses 路线导航
+
+### 背景
+
+此前 auto_train 使用逐点 `NavigateToPose`，每段独立规划，无法共享路径上下文，导致倒车段和长直线段效率低下。本次重构将仿真路线拆分为 3 段：QR 精确单点、倒车 ThroughPoses（2 点）、正向 ThroughPoses（6 点），并引入反向 ThroughPoses 行为树节点支撑倒车多航点连续导航。
+
+### 实现
+
+- **新增 `ComputeReversePathThroughPoses` C++ BT 节点**：继承 `ComputePathThroughPoses`，对 goal 数组做 yaw+pi 旋转、调用唯一 DUBIN forward planner、路径 yaw 复原、去重、反向曲率校验。拒绝非有限、错误 frame/端点、正向分量和超曲率路径。
+- **新增 reverse ThroughPoses BT XML**：使用 `ComputeReversePathThroughPoses` + `FollowPath` + `reverse_goal_checker`，RateController 0.5 Hz。
+- **简化 forward ThroughPoses BT XML**：移除 `RemovePassedGoals`（避免 map frame 缺失），RateController 0.5 Hz。
+- **`auto_train.py` 重写**：3 段拆分——QR 单点 `NavigateToPose`（precise checker）→ 倒车 `NavigateThroughPoses`（2 点）→ 正向 `NavigateThroughPoses`（6 点）。新增结果校验与任务状态监控。
+- **删除 `b_corridor_out`**：倒车段从 3 点简化为 2 点（`b_corridor_enter` → `c_corner_1`），避免中间点干扰 DUBIN 路径连续性。
+- **修正 `b_corridor_return_enter`**：坐标移至 `(2.3, 2.5, -120deg)`，来自 `geo_candidates_v5` 最优候选，消除正向 DUBIN 兜圈风险。
+- **goal_checker 容差调整**：standard `xy_goal_tolerance` 从 0.25 放宽至 0.35，缓解长距离 ThroughPoses 中 DUBIN 末端绕圈导致的终点误差。
+- **CMakeLists.txt 更新**：`smartcar_nav2` 新增 `compute_reverse_path_through_poses` 共享库；`smartcar_sim` 排除未跟踪开发文件。
+- **`nav2_params.yaml` 扩展**：新增 `reverse_through_poses` goal_checker 插件、`ThroughPoses` planner 参数段、BT XML 路径注册。
+- **`nav_only.yaml` 重构**：航点坐标与方向配置同步至最新路线，新增 `goal_profile` 字段。
+- **`sim.launch.py` 增强**：新增仿真结果校验参数与 `validate_sim_results.py` 调用。
+- **`CLAUDE.md` / `AGENTS.md` 同步**：更新仿真状态与项目上下文。
+
+### 修改文件 (10 files, +489/-178)
+
+- `AGENTS.md` — 同步 CLAUDE.md
+- `CLAUDE.md` — 同步 AGENTS.md
+- `src/smartcar_nav2/CMakeLists.txt` — 新增 reverse through-poses 库
+- `src/smartcar_nav2/config/nav2_params.yaml` — 新增插件/planner/BT 参数
+- `src/smartcar_nav2/config/waypoints/nav_only.yaml` — 重构航点路线
+- `src/smartcar_sim/CMakeLists.txt` — 排除开发文件
+- `src/smartcar_sim/launch/sim.launch.py` — 仿真校验集成
+- `src/smartcar_sim/scripts/auto_train.py` — 3 段拆分 +214 行
+- `src/smartcar_sim/scripts/validate_sim_results.py` — 新增依赖
+
 ## 2026-07-25 - 收敛 QR 到倒车段的方向切换端姿
 
 ### 原因

@@ -18,6 +18,11 @@ install(
     rviz
     scripts
   DESTINATION share/${PROJECT_NAME}
+  PATTERN "geo_candidates*" EXCLUDE
+  PATTERN "email_body.txt" EXCLUDE
+  PATTERN "apply_candidate.py" EXCLUDE
+  PATTERN "geometry_scan.py" EXCLUDE
+  PATTERN "short_test.sh" EXCLUDE
 )
 
 # Install Python executables (ros2 run smartcar_sim odom_relay.py)
@@ -26,6 +31,7 @@ install(
     scripts/odom_relay.py
     scripts/odom_combined_relay.py
     scripts/auto_train.py
+    scripts/test_through_poses.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
