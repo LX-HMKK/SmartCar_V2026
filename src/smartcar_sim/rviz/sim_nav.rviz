@@ -16,6 +16,19 @@ Visualization Manager:
       Color: 125; 125; 125
       Enabled: true
 
+    # ── Static Map (forbidden zones) ──
+    - Class: rviz_default_plugins/Map
+      Name: FieldMap
+      Topic:
+        Depth: 5
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /map
+      Color Scheme: map
+      Alpha: 0.7
+      Draw Behind: false
+      Enabled: true
+
     # ── Robot Model ──
     - Class: rviz_default_plugins/RobotModel
       Name: RobotModel

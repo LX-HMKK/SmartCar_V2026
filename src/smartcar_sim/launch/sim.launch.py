@@ -68,6 +68,7 @@ def generate_launch_description():
     run_route = LaunchConfiguration("run_route", default="false")
     results_file = LaunchConfiguration(
         "results_file", default="/tmp/auto_train_results.json")
+    use_through_poses_lc = LaunchConfiguration("use_through_poses", default="true")
     start_goal_id = LaunchConfiguration("start_goal_id", default="")
     end_goal_id = LaunchConfiguration("end_goal_id", default="")
 
@@ -171,6 +172,22 @@ def generate_launch_description():
     # The real system requires forward/reverse leases per waypoint.
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
+    # ── Map server: serve pre-built static occupancy map for Nav2 costmap ──
+    # Launched as a lifecycle Node (not ExecuteProcess). The node auto-activates
+    # once /clock is publishing (TimerAction(6.0) ensures Gazebo is up first).
+    # /map is consumed by static_layer in local + global costmaps.
+    map_file = os.path.join(pkg_sim, "maps", "field_map.yaml")
+    map_server = Node(
+        package="nav2_map_server",
+        executable="map_server",
+        name="map_server",
+        parameters=[{
+            "use_sim_time": True,
+            "yaml_filename": map_file,
+        }],
+        output="screen",
+    )
+
     # ── Safety bypass: simulation doesn't need safety_node ──
     # cmd_vel chain: controller → /cmd_vel_nav → velocity_smoother → /cmd_vel_candidate → bridge → Gazebo
     # No direction_guard or safety_node (both block velocity without real hardware)
@@ -262,7 +279,7 @@ def generate_launch_description():
                 pkg_nav2, "config", "behavior_trees",
                 "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
             ]),
-            "use_through_poses": True,
+            "use_through_poses": use_through_poses_lc,
             "nav2_params_file": nav2_fixed_params,
             "results_file": results_file,
             "start_goal_id": start_goal_id,
@@ -294,6 +311,10 @@ def generate_launch_description():
         waypoint_viz,
         field_reference,
         auto_train_exit,
+        # Static map server: start after Gazebo clock is publishing (6s) so the
+        # lifecycle node can configure, but before Nav2 (12s) so /map is ready
+        # when static_layer loads.
+        TimerAction(period=6.0, actions=[map_server]),
         # Nav2 延迟 12s 启动（等 Gazebo /clock 发布 + bridge 桥接就绪）
         TimerAction(period=12.0, actions=[nav2_launch]),
         # Complete route runner, opt-in via run_route:=true. This name must not
@@ -312,6 +333,7 @@ def generate_launch_description():
         DeclareLaunchArgument("run_route", default_value="false"),
         DeclareLaunchArgument(
             "results_file", default_value="/tmp/auto_train_results.json"),
+        DeclareLaunchArgument("use_through_poses", default_value="true"),
         DeclareLaunchArgument("start_goal_id", default_value=""),
         DeclareLaunchArgument("end_goal_id", default_value=""),
         set_rmw,

@@ -115,6 +115,7 @@ static_layer:
 | `src/smartcar_sim/maps/field_map.pgm` | **New** — generated PGM |
 | `src/smartcar_sim/maps/field_map.yaml` | **New** — generated YAML |
 | `src/smartcar_sim/launch/sim.launch.py` | **Edit** — map_server Node |
+| `src/smartcar_sim/rviz/sim_nav.rviz` | **Edit** — add Map display for /map |
 | `src/smartcar_nav2/config/nav2_params.yaml` | No change |
 
 ## Verification
@@ -122,7 +123,11 @@ static_layer:
 1. `sim_start.sh --headless --rviz` → `/map` topic has data
    (`ros2 topic echo /map --once`).
 2. RViz shows the Map display with occupied cells matching wall locations.
-3. Local and global costmap topics (`/local_costmap/costmap`,
+3. RViz also shows waypoint markers (`/smartcar/waypoints/markers`) and field
+   reference geometry (`/smartcar/field_reference/markers`). These are
+   independent MarkerArray layers — already configured in `sim_nav.rviz` and
+   launched via `waypoint_viz` + `field_reference` nodes.
+4. Local and global costmap topics (`/local_costmap/costmap`,
    `/global_costmap/costmap`) include the static walls plus inflation.
-4. `auto_train.py` run: planner routes through the B-zone corridor opening
+5. `auto_train.py` run: planner routes through the B-zone corridor opening
    (x ∈ [2.0, 3.0]) and C-zone ring track, avoiding occupied cells.
