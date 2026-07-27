@@ -24,8 +24,8 @@ from pathlib import Path
 
 # ── field geometry (metres, origin south-west) ──
 FIELD_SIZE = 5.0           # both axes
-RESOLUTION = 0.05          # m/px
-PIXELS = int(FIELD_SIZE / RESOLUTION)  # 100
+RESOLUTION = 0.10          # m/px  (0.05 → 0.10 to keep PGM under Fast DDS limit in WSL)
+PIXELS = int(FIELD_SIZE / RESOLUTION)  # 50
 
 # Occupancy values (PGM pixel bytes)
 OCCUPIED = 0               # black → wall (negate:1 flips to occupied)
@@ -141,12 +141,20 @@ def write_pgm(path: Path, grid: bytearray) -> None:
 
 
 def write_yaml(path: Path, image_name: str) -> None:
-    """Write the nav2 map YAML descriptor."""
+    """Write the nav2 map YAML descriptor.
+
+    Coordinate alignment: the field's south-west corner (P_origin) is offset
+    from the odom_combined origin (where the robot starts) by
+    field_geometry.yaml's p_origin_*_from_*_m values.
+    """
+    # P origin relative to south-west corner → negate to place SW corner in odom frame
+    origin_x = -0.5
+    origin_y = -0.25
     content = (
         f"image: {image_name}\n"
         "mode: trinary\n"
         f"resolution: {RESOLUTION}\n"
-        "origin: [0.0, 0.0, 0.0]\n"
+        f"origin: [{origin_x}, {origin_y}, 0.0]\n"
         "negate: 1\n"
         "occupied_thresh: 0.65\n"
         "free_thresh: 0.196\n"
