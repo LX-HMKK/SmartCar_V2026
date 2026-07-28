@@ -1,5 +1,75 @@
 # 变更日志
 
+## 2026-07-28 - 仿真静态禁区 PGM 地图与成本地图可视化
+
+### 背景
+
+Gazebo headless 模式下 `gpu_lidar` 全部射线返回 `0.1 m`（最小测距），`obstacle_min_range=0.25`
+过滤后成本地图为空，规划器无法感知 B/C 区物理墙体。需引入独立于 LiDAR 的障碍物表示。
+
+### 实现
+
+- **`generate_field_map.py`** — 根据 `track.world` 墙体几何参数（B/C 区 6 面墙）自动生成
+  PGM 占位图 `field_map.pgm`（50×50 px @ 0.10 m/px）及 `field_map.yaml`。
+  坐标系对齐：origin `[-0.5, -0.25, 0]`，匹配 `odom_combined` 的 P 点原点。
+- **`field_map.pgm`** — 墙体 = 黑色（像素 0），自由空间 = 白色（像素 254），
+  `negate: 1` 配合 `trinary` 模式正确映射占用/空闲。
+- **`map_server` 生命周期激活** — `sim.launch.py` 中从 `ExecuteProcess` 改为 `Node` action，
+  新增 `activate_map` 脚本在节点创建后执行 `configure + activate` 转换。
+  Nav2 的 `lifecycle_manager` 不管理外部 `map_server`。
+- **`sim.launch.py` 时序调整** — map_server 6s → costmap 初始化 15s → auto_train 30s，
+  确保 `/map` 在 costmap `static_layer` 订阅前已发布。
+- **`sim_nav.rviz` 新增 FieldMap 显示** — `/map` 话题的 Map 显示层（Alpha 0.7），
+  与 costmap、场地图层共存。
+- **`CMakeLists.txt` — `maps/` 目录加入 install**。
+- **反向 ThroughPoses BT 曲率容差调整** — `curvature_tolerance` 0.30→0.40→0.55→0.80→1.05，
+  应对反向 DUBIN 路径中出现的高曲率段（实测峰值 2.85，对应极限 2.87 @ 1.05 tolerance）。
+- **PGM 场地边框移除** — 边框无对应 Gazebo 物理墙，`inflation_radius=0.65` 膨胀后覆盖
+  机器人起点 `(0,0)`，导致 Smac planner 报 `Starting point in lethal space`。
+  仅保留 B/C 区墙体到位。
+- **`auto_train.py` 4 段拆分（WIP, stashed）** — 新增 `b_corridor_return` 分割点，
+  将 Stage 3 拆为两段短 ThroughPoses（各 2 航点），适配 10m 全局成本地图的
+  Planner bounding-box 检查。
+- **`wall_publisher.py`（实验性，未合并）** — 尝试以 PointCloud2 和 LaserScan 格式
+  发布墙体点为 `obstacle_layer` 提供数据。LaserScan 方案（10 Hz, 360 ray
+  ray-cast）带宽远低于 PointCloud2（720 floats vs 5000+ points），但膨胀半径
+  (0.55/0.65 m) 仍会覆盖反向 Path 的目标航点。
+
+### 未解决
+
+- **TROS Nav2 1.1.20 `static_layer` 与 `rolling_window` costmap 不兼容**：
+  costmap 初始化时 `static_layer` 的异步 `/map` 订阅回调尚未将覆盖区域写入成本地图，
+  此时起始单元格为 `NO_INFORMATION(255)`，Smac planner 判定为 `lethal(≥253)` 并拒绝规划。
+  `track_unknown_space: false` 和 `tolerance: 0.25` 均不能绕过此问题。
+- **墙体检测与反向路径矛盾**：obstacle_layer 标记的 C 区西墙体经膨胀后覆盖
+  `c_corner_1`（VLM 反向目标），导致反向 ThroughPoses 规划失败。
+- **Stage 3（C 区环道）无墙体感知**：移除所有墙体检测后，规划器对空成本地图规划
+  直线路径穿越 C 区内部填充，Gazebo 物理碰撞阻止执行并导致迂回。
+- **成本地图尺寸迭代** — 10m 可能报 `Goal out of costmap`（ThroughPoses
+  bounding-box 超出），14m/16m 使 Stage 2 逆向路径可规划到场地外。
+  最终仅 Stage 1+2 稳定通过。
+
+### 稳定可达配置
+
+| 阶段 | 路线 | 方向 | 耗时 | 状态 |
+|------|------|------|------|:----:|
+| 1 | P→QR 单点 | forward precise | ~25 s | ✅ |
+| 2 | QR→VLM ThroughPoses | reverse (1 wp) | ~63 s | ✅ |
+| 3 | C 区环道 ThroughPoses | forward (4 wp) | — | ❌ Goal out of costmap |
+
+### 修改文件 (10 files, +486/-73)
+
+- `src/smartcar_sim/scripts/generate_field_map.py` — 新增 PGM 生成器
+- `src/smartcar_sim/maps/field_map.pgm` — 新增 50×50 PGM
+- `src/smartcar_sim/maps/field_map.yaml` — 新增地图描述
+- `src/smartcar_sim/launch/sim.launch.py` — map_server Node + lifecycle 激活 + 时序调整
+- `src/smartcar_sim/rviz/sim_nav.rviz` — +FieldMap 显示层
+- `src/smartcar_sim/CMakeLists.txt` — install maps/ 目录
+- `src/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_w_replanning_and_recovery.xml` — curvature_tolerance 0.30→1.05
+- `src/smartcar_nav2/config/nav2_params.yaml` — 迭代 costmap width/height/resolution
+- `src/smartcar_sim/scripts/wall_publisher.py` — 新增（实验性，未合并）
+- `docs/superpowers/specs/2026-07-27-static-forbidden-zones-design.md` — 设计文档
+
 ## 2026-07-27 - 仿真实现 3 段 NavigateThroughPoses 路线导航
 
 ### 背景
