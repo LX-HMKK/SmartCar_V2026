@@ -990,30 +990,42 @@ class AutoTrain(Node):
 
         use_tp = bool(self.get_parameter("use_through_poses").value)
 
-        # Split into 3 segments:
-        #   Seg 1 (single):  a_task_observe (QR point, forward, precise)
-        #   Seg 2 (single):  c_corner_1 (VLM reverse, B-zone walls guide planner)
-        #   Seg 3 (through): c_corner_2 .. p_finish (forward through-poses)
+        # Split into 4 segments (10m costmap can't fit all waypoints at once):
+        #   Seg 1 (single):  a_task_observe (forward, precise)
+        #   Seg 2 (reverse): c_corner_1 (reverse ThroughPoses)
+        #   Seg 3 (forward): c_corner_2, c_corner_3 (C-zone ring, short ThroughPoses)
+        #   Seg 4 (forward): b_corridor_return, p_finish (return ThroughPoses)
         reverse_tp_start_id = "c_corner_1"
         forward_tp_start_id = "c_corner_2"
+        return_tp_start_id = "b_corridor_return"
 
         ids = [w["id"] for w in route]
         rev_idx = ids.index(reverse_tp_start_id) if reverse_tp_start_id in ids else None
         fwd_idx = ids.index(forward_tp_start_id) if forward_tp_start_id in ids else None
+        ret_idx = ids.index(return_tp_start_id) if return_tp_start_id in ids else None
 
-        if use_tp and rev_idx is not None and fwd_idx is not None and rev_idx < fwd_idx:
+        if use_tp and rev_idx is not None and fwd_idx is not None \
+           and ret_idx is not None and rev_idx < fwd_idx < ret_idx:
+            single_route = route[:rev_idx]
+            reverse_through_route = route[rev_idx:fwd_idx]
+            forward_through_route = route[fwd_idx:ret_idx]
+            return_through_route = route[ret_idx:]
+        elif use_tp and rev_idx is not None and fwd_idx is not None and rev_idx < fwd_idx:
             single_route = route[:rev_idx]
             reverse_through_route = route[rev_idx:fwd_idx]
             forward_through_route = route[fwd_idx:]
+            return_through_route = []
         else:
             single_route = route
             reverse_through_route = []
             forward_through_route = []
+            return_through_route = []
 
         self.get_logger().info(
             f"Route: {len(single_route)} single + "
             f"{len(reverse_through_route)} reverse-through + "
-            f"{len(forward_through_route)} forward-through "
+            f"{len(forward_through_route)} forward-through + "
+            f"{len(return_through_route)} return-through "
             f"(use_through_poses={use_tp})")
 
         # Phase 1: per-waypoint single-pose (a_task_observe)
@@ -1069,6 +1081,27 @@ class AutoTrain(Node):
                 if result is None:
                     self._save_results(
                         "failed", "forward_through_poses_failed")
+                    return False
+                self._results.append(result)
+                if result["outcome"] != "succeeded":
+                    self._save_results("failed")
+                    return False
+
+        # Phase 4: return through-poses (b_corridor_return .. p_finish)
+        if return_through_route:
+            if not self._through_client.wait_for_server(timeout_sec=10.0):
+                self.get_logger().error(
+                    "/navigate_through_poses unavailable, falling back")
+                for waypoint in return_through_route:
+                    result = self._send_goal(waypoint)
+                    self._results.append(result)
+                    if result["outcome"] != "succeeded":
+                        self._save_results("failed")
+                        return False
+            else:
+                result = self._send_through_poses(return_through_route)
+                if result is None:
+                    self._save_results("failed", "return_through_poses_failed")
                     return False
                 self._results.append(result)
                 if result["outcome"] != "succeeded":

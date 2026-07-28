@@ -1,7 +1,7 @@
 <!-- Ackermann-safe tree: no backup, no wait, no spin.  Clear costmaps + replan only. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="3" name="NavigateRecovery">
+    <RecoveryNode number_of_retries="5" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
         <RateController hz="0.5">
           <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
