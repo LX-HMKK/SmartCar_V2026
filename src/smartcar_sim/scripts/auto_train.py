@@ -24,6 +24,7 @@ from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 EXPECTED_ROUTE = (
     ("a_task_observe", "forward", "precise"),
     ("c_corner_1", "reverse", "reverse_handoff"),
+    ("c_corner_2", "forward", "standard"),
     ("c_corner_3", "forward", "standard"),
     ("b_corridor_return", "forward", "standard"),
     ("p_finish", "forward", "standard"),
@@ -994,7 +995,7 @@ class AutoTrain(Node):
         #   Seg 2 (single):  c_corner_1 (VLM reverse, B-zone walls guide planner)
         #   Seg 3 (through): c_corner_2 .. p_finish (forward through-poses)
         reverse_tp_start_id = "c_corner_1"
-        forward_tp_start_id = "c_corner_3"
+        forward_tp_start_id = "c_corner_2"
 
         ids = [w["id"] for w in route]
         rev_idx = ids.index(reverse_tp_start_id) if reverse_tp_start_id in ids else None

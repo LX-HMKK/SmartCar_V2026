@@ -283,7 +283,7 @@ local_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
-        observation_sources: scan walls
+        observation_sources: scan
         scan:
           topic: /scan
           data_type: LaserScan
@@ -291,13 +291,6 @@ local_costmap:
           marking: true
           obstacle_max_range: 2.5
           obstacle_min_range: 0.25
-        walls:
-          topic: /walls_cloud
-          data_type: PointCloud2
-          clearing: false
-          marking: true
-          obstacle_max_range: 8.0
-          obstacle_min_range: 0.0
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
       inflation_layer:
@@ -315,8 +308,8 @@ global_costmap:
       global_frame: odom_combined
       robot_base_frame: base_footprint
       rolling_window: true
-      width: 10
-      height: 10
+      width: 12
+      height: 12
       resolution: 0.05
       # pi-invariant hull of the real footprint. This keeps virtual-yaw
       # reverse planning collision-equivalent to the physical vehicle.
@@ -326,7 +319,7 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
-        observation_sources: scan walls
+        observation_sources: scan
         scan:
           topic: /scan
           data_type: LaserScan
@@ -334,13 +327,6 @@ global_costmap:
           marking: true
           obstacle_max_range: 2.5
           obstacle_min_range: 0.25
-        walls:
-          topic: /walls_cloud
-          data_type: PointCloud2
-          clearing: false
-          marking: true
-          obstacle_max_range: 8.0
-          obstacle_min_range: 0.0
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
       inflation_layer:

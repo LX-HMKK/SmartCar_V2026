@@ -44,6 +44,20 @@ waypoints:
   task: nav
   direction: reverse
   goal_profile: reverse_handoff
+- id: c_corner_2
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.7
+      y: 4.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 0.0
+  task: nav
+  direction: forward
 - id: c_corner_3
   frame_id: odom_combined
   pose:

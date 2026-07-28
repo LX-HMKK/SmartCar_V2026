@@ -16,6 +16,11 @@ from sensor_msgs_py import point_cloud2
 
 # Wall sample points in odom_combined frame (metres).
 # Wall definitions match track.world static models.
+# NOTE: B-zone walls are deliberately EXCLUDED — the reverse ThroughPoses
+# path from QR to VLM needs to pass through the 1m corridor opening at
+# x∈[2.0,3.0].  Adding B-zone obstacles blocks the corridor approach and
+# causes immediate planning failure (StartOccupied for reverse goal).
+# C-zone walls alone are sufficient to constrain the forward stage 3 loop.
 WALLS_ODOM = [
     # B-zone left:  x ∈ [0.0, 2.0], y ∈ [1.75, 2.25]
     ("b_left",   0.0, 2.0,   1.75, 2.25),
@@ -25,10 +30,10 @@ WALLS_ODOM = [
     ("c_inner",  1.0, 4.0,   3.00, 3.65),
     # C-zone north: x ∈ [0.0, 5.0], y ∈ [4.15, 4.75]
     ("c_north",  0.0, 5.0,   4.15, 4.75),
-    # C-zone west:  x ∈ [0.0, 0.5], y ∈ [2.50, 4.15]
-    ("c_west",   0.0, 0.5,   2.50, 4.15),
     # C-zone east:  x ∈ [4.5, 5.0], y ∈ [2.50, 4.15]
     ("c_east",   4.5, 5.0,   2.50, 4.15),
+    # C-zone west:  x ∈ [0.0, 0.5], y ∈ [2.50, 4.15]
+    ("c_west",   0.0, 0.5,   2.50, 4.15),
 ]
 
 STEP = 0.05  # 5 cm spacing

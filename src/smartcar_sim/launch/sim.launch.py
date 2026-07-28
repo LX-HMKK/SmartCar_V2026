@@ -322,15 +322,6 @@ def generate_launch_description():
         odom_combined_relay,
         waypoint_viz,
         field_reference,
-        # Synthetic wall detection: publishes PointCloud2 at wall edges
-        # for obstacle_layer marking (bypasses broken static_layer).
-        Node(
-            package="smartcar_sim",
-            executable="wall_publisher.py",
-            name="wall_publisher",
-            parameters=[{"use_sim_time": True}],
-            output="screen",
-        ),
         auto_train_exit,
         # Static map server: start after Gazebo clock is publishing (6s) so the
         # lifecycle node can configure, but before Nav2 (12s) so /map is ready
