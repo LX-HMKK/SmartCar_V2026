@@ -1,4 +1,35 @@
 calibrated: false
+planning_segments:
+- id: p_to_qr
+  direction: forward
+  start_id: p_start
+  end_id: a_task_observe
+  through_ids: []
+- id: reverse_corridor
+  direction: reverse
+  start_id: a_task_observe
+  end_id: c_corner_1
+  through_ids:
+  - b_corridor_enter
+  - b_corridor_out
+- id: c_loop
+  direction: forward
+  start_id: c_corner_1
+  end_id: c_corner_3
+  through_ids:
+  - c_corner_2
+- id: c_exit
+  direction: forward
+  start_id: c_corner_3
+  end_id: b_corridor_return_enter
+  through_ids:
+  - c_corner_4
+- id: return_to_p
+  direction: forward
+  start_id: b_corridor_return_enter
+  end_id: p_finish
+  through_ids:
+  - b_corridor_return
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -14,6 +45,7 @@ waypoints:
       w: 1.0
   task: start
   direction: forward
+  goal_profile: standard
 - id: a_task_observe
   frame_id: odom_combined
   pose:
@@ -29,12 +61,42 @@ waypoints:
   task: nav
   direction: forward
   goal_profile: precise
+- id: b_corridor_enter
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 2.03757281950581
+      y: 2.027552773686795
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: -0.573576436351046
+      w: 0.8191520442889918
+  task: corridor
+  direction: reverse
+  goal_profile: standard
+- id: b_corridor_out
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 1.4396346751759128
+      y: 2.6539641629847823
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: -0.08715574274765824
+      w: 0.9961946980917455
+  task: corridor
+  direction: reverse
+  goal_profile: standard
 - id: c_corner_1
   frame_id: odom_combined
   pose:
     position:
       x: 0.3867094808286349
-      y: 2.55
+      y: 2.6824089026910594
       z: 0.0
     orientation:
       x: 0.0
@@ -48,30 +110,62 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.7
-      y: 4.0
+      x: 0.8132232858779256
+      y: 3.7739117983963357
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.0
-      w: 0.0
-  task: nav
+      z: 0.13052619222005157
+      w: 0.9914448613738104
+  task: loop
   direction: forward
+  goal_profile: standard
 - id: c_corner_3
   frame_id: odom_combined
   pose:
     position:
-      x: 3.175
-      y: 3.9
+      x: 3.684275486827034
+      y: 3.669509900180005
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.0
-      w: 0.0
+      z: -0.6087614290087205
+      w: 0.7933533402912353
   task: loop
   direction: forward
+  goal_profile: standard
+- id: c_corner_4
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.4612350679103265
+      y: 2.7820937653411892
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: -0.9659258262890682
+      w: 0.25881904510252096
+  task: loop
+  direction: forward
+  goal_profile: standard
+- id: b_corridor_return_enter
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 2.3
+      y: 2.5
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: -0.8660254037844386
+      w: 0.5
+  task: corridor
+  direction: forward
+  goal_profile: standard
 - id: b_corridor_return
   frame_id: odom_combined
   pose:
@@ -82,10 +176,11 @@ waypoints:
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.0
-      w: 0.0
+      z: -0.8660254037844386
+      w: 0.5000000000000001
   task: corridor
   direction: forward
+  goal_profile: standard
 - id: p_finish
   frame_id: odom_combined
   pose:
@@ -100,3 +195,4 @@ waypoints:
       w: 0.38268343236508984
   task: return
   direction: forward
+  goal_profile: standard

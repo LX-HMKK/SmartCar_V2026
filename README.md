@@ -133,9 +133,9 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 ## 场地路线与独立测试入口
 
-`smartcar_tools` 提供官方规则图参考层、直接拖拽 `default_waypoints.yaml` 的 RViz 编辑器，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘，并默认锁存软件急停。
+`smartcar_tools` 提供官方规则图参考层、中文路径分段航点编辑器，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘，并默认锁存软件急停。
 
-规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整编辑命令、HDMI 的 `DISPLAY`/`XAUTHORITY` 设置和单文件 `pull-waypoints` 同步方式见 [`docs/deployment/field-test-entrypoints.md`](docs/deployment/field-test-entrypoints.md)。
+规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整的分段、途经点、无朝向、预检、保存和仿真同步流程见 [`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md)。
 
 无视觉导航测试使用已部署的 `/root/nav_test.sh`。脚本完成清理、增量构建、启动和 RViz 准备，但明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车：
 
@@ -192,4 +192,4 @@ ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
 
 关键输出：`/cmd_vel_candidate`、`/cmd_vel`、`/cmd_vel_safe`、`/ackermann_cmd`、`/smartcar/direction_guard/status`、`/smartcar/safety/status`、`/smartcar/task/state`、`/smartcar/vision/read_qr`、`/smartcar/vision/describe_scene`、`/smartcar/speech/status`。
 
-更多设计与部署细节见 [`docs/deployment/rdk-environment-setup.md`](docs/deployment/rdk-environment-setup.md)、[`docs/deployment/field-test-entrypoints.md`](docs/deployment/field-test-entrypoints.md) 和 [`docs/智慧医疗挑战赛_技术方案_本地部署版.md`](docs/智慧医疗挑战赛_技术方案_本地部署版.md)。
+更多设计与部署细节见 [`docs/deployment/rdk-environment-setup.md`](docs/deployment/rdk-environment-setup.md)、[`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md) 和 [`docs/智慧医疗挑战赛_技术方案_本地部署版.md`](docs/智慧医疗挑战赛_技术方案_本地部署版.md)。

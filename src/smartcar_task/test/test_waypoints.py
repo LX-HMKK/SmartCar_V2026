@@ -13,6 +13,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_task.waypoints import (  # noqa: E402
+    is_zero_quaternion,
     load_waypoint_document,
     load_waypoints,
     write_waypoints_atomic,
@@ -265,6 +266,46 @@ class WaypointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "direction|sequence|order|out-of|expected"):
                 load_waypoints(self.write_document(directory, document))
 
+    def test_via_points_are_unoriented_navigation_constraints(self):
+        document = valid_document()
+        original = document["waypoints"]
+
+        def via(waypoint_id, direction, x, y):
+            return {
+                "id": waypoint_id,
+                "frame_id": "odom_combined",
+                "pose": {"position": {"x": x, "y": y, "z": 0.0}},
+                "task": "via",
+                "direction": direction,
+            }
+
+        document["waypoints"] = [
+            original[0],
+            via("via_outbound", "forward", 0.8, 0.2),
+            original[1],
+            via("via_reverse", "reverse", 2.3, 1.0),
+            original[2],
+            via("via_loop", "forward", 1.2, 3.0),
+            original[3],
+            via("via_return", "forward", 2.5, 2.8),
+            original[4],
+            original[5],
+        ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = self.write_document(directory, document)
+            template, waypoints = load_waypoint_document(path)
+            via_waypoints = [item for item in waypoints if item.task == "via"]
+            self.assertEqual(len(via_waypoints), 4)
+            self.assertTrue(all(
+                is_zero_quaternion(item.orientation) for item in via_waypoints
+            ))
+            write_waypoints_atomic(path, template, waypoints)
+            written = yaml.safe_load(path.read_text(encoding="utf-8"))
+
+        written_via = [item for item in written["waypoints"] if item["task"] == "via"]
+        self.assertTrue(all("orientation" not in item["pose"] for item in written_via))
+
     def test_direction_window_is_mandatory_and_nav_only_uses_same_contract(self):
         with tempfile.TemporaryDirectory() as directory:
             all_forward = valid_document()
@@ -294,17 +335,33 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.direction for item in nav_only],
             [
-                "forward", "forward", "reverse",
-                "forward", "forward", "forward",
+                "forward", "forward", "reverse", "reverse", "reverse",
+                "forward", "forward", "forward", "forward", "forward",
+                "forward",
             ],
         )
         self.assertEqual(nav_only[1].goal_profile, "precise")
-        self.assertEqual(nav_only[2].goal_profile, "reverse_handoff")
+        self.assertEqual(nav_only[2].id, "b_corridor_enter")
+        self.assertEqual(nav_only[3].id, "b_corridor_out")
+        self.assertEqual(nav_only[4].goal_profile, "reverse_handoff")
+        self.assertEqual(nav_only[5].id, "c_corner_2")
+        self.assertEqual(nav_only[5].task, "loop")
+        self.assertEqual(nav_only[5].direction, "forward")
+        self.assertEqual(nav_only[7].id, "c_corner_4")
+        self.assertEqual(nav_only[7].task, "loop")
+        self.assertEqual(nav_only[8].id, "b_corridor_return_enter")
+        self.assertEqual(nav_only[8].task, "corridor")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(nav_only)
-            if index not in {1, 2}
+            if index not in {1, 4}
         ))
+
+        nav_only_document = yaml.safe_load(nav_only_file.read_text(encoding="utf-8"))
+        nav_only_document["waypoints"][5]["direction"] = "reverse"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "direction must be forward"):
+                load_waypoints(self.write_document(directory, nav_only_document))
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
         waypoints = load_waypoints(
@@ -317,7 +374,7 @@ class WaypointTests(unittest.TestCase):
         vlm = waypoints[2]  # c_corner_1
         self.assertEqual(vlm.task, "vlm")
         self.assertEqual(vlm.position,
-                         (0.3867094808286349, 2.55, 0.0))
+                         (0.3867094808286349, 2.65, 0.0))
         _, _, qz, qw = vlm.orientation
         yaw = math.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
         self.assertAlmostEqual(yaw, 1.0471975511965976, delta=1.0e-6)

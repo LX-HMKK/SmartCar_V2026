@@ -71,27 +71,95 @@ def _lifecycle_manager_actions(
     )]
 
 
+def _navigation_node_actions(
+    context,
+    *,
+    use_sim_time,
+    params_file,
+    params_overlay_file,
+    use_respawn,
+    log_level,
+):
+    """Create Nav2 nodes from a resolved base file and optional overlay.
+
+    Nav2 1.1.20 on TROS cannot reliably consume the old RewrittenYaml chain.
+    The base file is therefore generated at build time, while a launch caller
+    may add a small, fully-resolved overlay for simulation-only behavior.
+    """
+    parameters = [ParameterFile(
+        params_file.perform(context),
+        allow_substs=True,
+    )]
+    overlay_path = params_overlay_file.perform(context).strip()
+    if overlay_path:
+        parameters.append(ParameterFile(overlay_path, allow_substs=True))
+    parameters.append({
+        "use_sim_time": _as_bool(context, use_sim_time, "use_sim_time"),
+    })
+
+    remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
+    return [GroupAction(
+        actions=[
+            Node(
+                package='nav2_controller',
+                executable='controller_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=parameters,
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings + [('cmd_vel', 'cmd_vel_nav')],
+            ),
+            Node(
+                package='nav2_planner',
+                executable='planner_server',
+                name='planner_server',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=parameters,
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings,
+            ),
+            Node(
+                package='nav2_bt_navigator',
+                executable='bt_navigator',
+                name='bt_navigator',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=parameters,
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings,
+            ),
+            Node(
+                package='nav2_velocity_smoother',
+                executable='velocity_smoother',
+                name='velocity_smoother',
+                output='screen',
+                respawn=use_respawn,
+                respawn_delay=2.0,
+                parameters=parameters,
+                arguments=['--ros-args', '--log-level', log_level],
+                remappings=remappings + [
+                    ('cmd_vel', 'cmd_vel_nav'),
+                    ('cmd_vel_smoothed', 'cmd_vel_candidate'),
+                ],
+            ),
+        ],
+    )]
+
+
 def generate_launch_description():
-    bringup_dir = get_package_share_directory('nav2_bringup')
+    pkg_dir = get_package_share_directory('smartcar_nav2')
 
     namespace = LaunchConfiguration('namespace')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     params_file = LaunchConfiguration('params_file')
+    params_overlay_file = LaunchConfiguration('params_overlay_file')
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
-
-    remappings = [('/tf', 'tf'), ('/tf_static', 'tf_static')]
-
-    # NOTE(lx): RewrittenYaml output is intercepted by YDLIDAR param files on
-    # Nav2 1.1.20 (TROS Humble).  Use a pre-resolved fixed params file with
-    # hardcoded BT-XML paths instead; generated during colcon build by the
-    # CMake configure step or manually from the nav2_params.yaml template.
-    _pkg_dir = get_package_share_directory('smartcar_nav2')
-    configured_params = ParameterFile(
-        os.path.join(_pkg_dir, 'config', 'nav2_params_fixed.yaml'),
-        allow_substs=True,
-    )
 
     stdout_linebuf_envvar = SetEnvironmentVariable(
         'RCUTILS_LOGGING_BUFFERED_STREAM', '1'
@@ -107,8 +175,13 @@ def generate_launch_description():
     )
     declare_params_file_cmd = DeclareLaunchArgument(
         'params_file',
-        default_value=os.path.join(bringup_dir, 'params', 'nav2_params.yaml'),
-        description='Full path to the ROS2 parameters file for all launched nodes',
+        default_value=os.path.join(pkg_dir, 'config', 'nav2_params_fixed.yaml'),
+        description='Resolved Nav2 parameter file for all launched nodes',
+    )
+    declare_params_overlay_file_cmd = DeclareLaunchArgument(
+        'params_overlay_file',
+        default_value='',
+        description='Optional resolved parameter overlay applied after params_file',
     )
     declare_autostart_cmd = DeclareLaunchArgument(
         'autostart',
@@ -124,55 +197,15 @@ def generate_launch_description():
         'log_level', default_value='info', description='Log level'
     )
 
-    load_nodes = GroupAction(
-        actions=[
-            Node(
-                package='nav2_controller',
-                executable='controller_server',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings + [('cmd_vel', 'cmd_vel_nav')],
-            ),
-            Node(
-                package='nav2_planner',
-                executable='planner_server',
-                name='planner_server',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings,
-            ),
-            Node(
-                package='nav2_bt_navigator',
-                executable='bt_navigator',
-                name='bt_navigator',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings,
-            ),
-            Node(
-                package='nav2_velocity_smoother',
-                executable='velocity_smoother',
-                name='velocity_smoother',
-                output='screen',
-                respawn=use_respawn,
-                respawn_delay=2.0,
-                parameters=[configured_params],
-                arguments=['--ros-args', '--log-level', log_level],
-                remappings=remappings + [
-                    ('cmd_vel', 'cmd_vel_nav'),
-                    ('cmd_vel_smoothed', 'cmd_vel_candidate'),
-                ],
-            ),
-        ],
+    load_nodes = OpaqueFunction(
+        function=_navigation_node_actions,
+        kwargs={
+            'use_sim_time': use_sim_time,
+            'params_file': params_file,
+            'params_overlay_file': params_overlay_file,
+            'use_respawn': use_respawn,
+            'log_level': log_level,
+        },
     )
 
     lifecycle_manager = OpaqueFunction(
@@ -189,6 +222,7 @@ def generate_launch_description():
     launch_description.add_action(declare_namespace_cmd)
     launch_description.add_action(declare_use_sim_time_cmd)
     launch_description.add_action(declare_params_file_cmd)
+    launch_description.add_action(declare_params_overlay_file_cmd)
     launch_description.add_action(declare_autostart_cmd)
     launch_description.add_action(declare_use_respawn_cmd)
     launch_description.add_action(declare_log_level_cmd)

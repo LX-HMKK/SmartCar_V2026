@@ -1,0 +1,29 @@
+# Simulation-only overlay. This file is layered after smartcar_nav2's resolved
+# base parameters, so the real vehicle never loads the KeepoutFilter plugin.
+local_costmap:
+  local_costmap:
+    ros__parameters:
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/keepout_filter_info"
+      # The official B-zone opening is 1.0 m wide.  The vehicle's padded
+      # half-width is 0.16 m, so the real-system 0.55 m inflation radius
+      # would mark the entire simulated opening impassable.  Gazebo still
+      # retains the physical B walls; this overlay leaves a 0.20 m planning
+      # clearance without changing the real-vehicle configuration. The scalar
+      # is synchronized from smartcar_tools/config/routes/route_planning.yaml.
+      inflation_layer:
+        inflation_radius: 0.20
+
+global_costmap:
+  global_costmap:
+    ros__parameters:
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/keepout_filter_info"
+      inflation_layer:
+        inflation_radius: 0.20

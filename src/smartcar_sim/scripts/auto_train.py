@@ -8,6 +8,7 @@ import os
 import time
 import traceback
 from pathlib import Path
+from types import SimpleNamespace
 
 import rclpy
 import yaml
@@ -19,16 +20,9 @@ from nav_msgs.msg import Odometry, Path as NavPath
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from smartcar_tools.planning_segments import PlanningSegmentError, load_planning_segments
 
 
-EXPECTED_ROUTE = (
-    ("a_task_observe", "forward", "precise"),
-    ("c_corner_1", "reverse", "reverse_handoff"),
-    ("c_corner_2", "forward", "standard"),
-    ("c_corner_3", "forward", "standard"),
-    ("b_corridor_return", "forward", "standard"),
-    ("p_finish", "forward", "standard"),
-)
 VELOCITY_EPSILON = 1.0e-3
 CONFIG_TOLERANCE_EPSILON = 2.0e-3
 POSITION_OBSERVER_MARGIN_M = 2.0e-2
@@ -55,6 +49,7 @@ class AutoTrain(Node):
         self.declare_parameter("use_through_poses", True)
         self.declare_parameter("goal_timeout_sec", 120.0)
         self.declare_parameter("inter_goal_delay_sec", 1.0)
+        self.declare_parameter("action_endpoint_settle_sec", 2.0)
         self.declare_parameter("start_goal_id", "")
         self.declare_parameter("end_goal_id", "")
         self.declare_parameter(
@@ -90,6 +85,7 @@ class AutoTrain(Node):
         self._results = []
         self._expected_goal_count = 0
         self._input_manifest_cache = None
+        self._route_manifest = None
 
     def _odom_cb(self, msg):
         pose = msg.pose.pose
@@ -145,43 +141,89 @@ class AutoTrain(Node):
             raise ValueError(f"{parameter_name} is not a file: {value}")
         return path
 
+    @staticmethod
+    def _orientation_mapping(pose):
+        """Honor omitted orientation for pass-through points as Nav2 zero yaw."""
+        orientation = pose.get("orientation")
+        if not isinstance(orientation, dict):
+            return {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0}
+        return orientation
+
     def _load_route(self):
         path = self._required_path("waypoints_file")
         document = yaml.safe_load(path.read_text(encoding="utf-8"))
         waypoints = document.get("waypoints", [])
         if not isinstance(waypoints, list) or len(waypoints) < 2:
             raise ValueError("waypoints_file has no navigation route")
-        route = [item for item in waypoints if item.get("task") != "start"]
-        actual = []
-        for item in route:
-            profile = item.get("goal_profile", "standard")
-            actual.append((
-                item.get("id"), item.get("direction", "forward"), profile))
-        if tuple(actual) != EXPECTED_ROUTE:
-            raise ValueError(
-                f"waypoints_file route contract mismatch: {actual!r}")
+        if not all(isinstance(item, dict) for item in waypoints):
+            raise ValueError("waypoints_file entries must be mappings")
+        proxy_waypoints = [
+            SimpleNamespace(
+                id=item.get("id"),
+                task=item.get("task"),
+                direction=item.get("direction", "forward"),
+            )
+            for item in waypoints
+        ]
+        try:
+            segments = load_planning_segments(document, proxy_waypoints)
+        except PlanningSegmentError as error:
+            raise ValueError(f"planning_segments invalid: {error}") from error
+
+        waypoint_by_id = {item["id"]: item for item in waypoints}
+        stages = []
+        for segment in segments:
+            goals = []
+            for waypoint_id in (*segment.through_ids, segment.end_id):
+                source = waypoint_by_id[waypoint_id]
+                goal = dict(source)
+                goal["direction"] = segment.direction
+                goals.append(goal)
+            stages.append({
+                "id": segment.id,
+                "direction": segment.direction,
+                "goals": goals,
+            })
+        route = [goal for stage in stages for goal in stage["goals"]]
 
         start_id = str(self.get_parameter("start_goal_id").value).strip()
         end_id = str(self.get_parameter("end_goal_id").value).strip()
         if start_id or end_id:
-            filtered = []
+            filtered_stages = []
             in_range = not start_id  # if no start, include from beginning
-            for item in route:
-                wid = item.get("id")
-                if start_id and wid == start_id:
-                    in_range = True
-                if in_range:
-                    filtered.append(item)
-                if end_id and wid == end_id:
-                    break
-            if not filtered:
+            reached_end = False
+            for stage in stages:
+                filtered_goals = []
+                for item in stage["goals"]:
+                    waypoint_id = item.get("id")
+                    if start_id and waypoint_id == start_id:
+                        in_range = True
+                    if in_range and not reached_end:
+                        filtered_goals.append(item)
+                    if end_id and waypoint_id == end_id and in_range:
+                        reached_end = True
+                if filtered_goals:
+                    filtered_stages.append({
+                        **stage,
+                        "goals": filtered_goals,
+                    })
+            if not filtered_stages:
                 raise ValueError(
                     f"Goal filter {start_id!r}..{end_id!r} matched nothing")
             self.get_logger().info(
                 f"Goal filter {start_id!r}..{end_id!r}: "
-                f"{len(route)} -> {len(filtered)} waypoints")
-            route = filtered
-        return route
+                f"{len(route)} -> "
+                f"{sum(len(stage['goals']) for stage in filtered_stages)} waypoints")
+            stages = filtered_stages
+            route = [goal for stage in stages for goal in stage["goals"]]
+        self.get_logger().info(
+            "Route definition: %s" % ", ".join(
+                f"{stage['id']}[{stage['direction']}]:"
+                + ",".join(goal["id"] for goal in stage["goals"])
+                for stage in stages
+            )
+        )
+        return route, stages
 
     def _behavior_tree_for(self, waypoint):
         if waypoint.get("goal_profile") == "reverse_handoff":
@@ -233,6 +275,28 @@ class AutoTrain(Node):
         while self._latest_odom is None and time.monotonic() < deadline:
             rclpy.spin_once(self, timeout_sec=0.2)
         return self._latest_odom is not None
+
+    def _settle_action_endpoints(self):
+        # Fast DDS discovers an action's request and response endpoints
+        # separately. wait_for_server() only proves the request path exists;
+        # a short spin prevents the first goal response from racing the
+        # newly-created client's response reader.
+        settle_sec = float(
+            self.get_parameter("action_endpoint_settle_sec").value)
+        if not math.isfinite(settle_sec) or settle_sec < 0.0:
+            raise ValueError(
+                "action_endpoint_settle_sec must be a nonnegative finite number")
+        if settle_sec <= 0.0:
+            return
+
+        self.get_logger().info(
+            f"Settling Nav2 action endpoints for {settle_sec:.1f}s")
+        deadline = time.monotonic() + settle_sec
+        while time.monotonic() < deadline:
+            rclpy.spin_once(
+                self,
+                timeout_sec=min(0.1, deadline - time.monotonic()),
+            )
 
     @staticmethod
     def _travel_distance(samples):
@@ -305,7 +369,7 @@ class AutoTrain(Node):
 
         pose = waypoint["pose"]
         position = pose["position"]
-        orientation = pose["orientation"]
+        orientation = self._orientation_mapping(pose)
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = waypoint.get(
             "frame_id", "odom_combined")
@@ -432,7 +496,7 @@ class AutoTrain(Node):
         goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
             waypoint)
         position = waypoint["pose"]["position"]
-        orientation = waypoint["pose"]["orientation"]
+        orientation = self._orientation_mapping(waypoint["pose"])
         target_yaw = math.atan2(
             2.0 * (
                 float(orientation["w"]) * float(orientation["z"])
@@ -851,12 +915,34 @@ class AutoTrain(Node):
                 }
         return manifest
 
+    @staticmethod
+    def _route_manifest_for(stages):
+        """Record the exact edited segment plan that this run executes."""
+        return {
+            "segments": [
+                {
+                    "id": stage["id"],
+                    "direction": stage["direction"],
+                    "goals": [
+                        {
+                            "id": goal["id"],
+                            "direction": goal["direction"],
+                            "goal_profile": goal.get("goal_profile", "standard"),
+                        }
+                        for goal in stage["goals"]
+                    ],
+                }
+                for stage in stages
+            ]
+        }
+
     def _save_results(self, overall_outcome, error=None):
         path = Path(str(self.get_parameter("results_file").value))
         data = {
             "overall_outcome": overall_outcome,
             "expected_goal_count": self._expected_goal_count,
             "results": self._results,
+            "route": self._route_manifest,
             "inputs": (
                 self._input_manifest_cache
                 if self._input_manifest_cache is not None
@@ -878,7 +964,13 @@ class AutoTrain(Node):
             temporary.unlink(missing_ok=True)
         self.get_logger().info(f"Results saved: {path}")
 
-    def _send_through_poses(self, waypoints, behavior_tree_param="through_poses_behavior_tree"):
+    def _send_through_poses(
+        self,
+        waypoints,
+        stage_id,
+        direction,
+        behavior_tree_param="through_poses_behavior_tree",
+    ):
         """Send multiple waypoints as a single NavigateThroughPoses goal."""
         bt_path = self.get_parameter(behavior_tree_param).value
         if not bt_path or not Path(str(bt_path)).is_file():
@@ -889,6 +981,7 @@ class AutoTrain(Node):
         timeout_sec = float(self.get_parameter("goal_timeout_sec").value)
         start_time = time.monotonic()
         start_pose = self._latest_odom
+        path_start = len(self._path_messages)
 
         goal = NavigateThroughPoses.Goal()
         for w in waypoints:
@@ -899,10 +992,11 @@ class AutoTrain(Node):
             ps.pose.position.x = float(pose["position"]["x"])
             ps.pose.position.y = float(pose["position"]["y"])
             ps.pose.position.z = float(pose["position"].get("z", 0.0))
-            ps.pose.orientation.x = float(pose["orientation"]["x"])
-            ps.pose.orientation.y = float(pose["orientation"]["y"])
-            ps.pose.orientation.z = float(pose["orientation"]["z"])
-            ps.pose.orientation.w = float(pose["orientation"]["w"])
+            orientation = self._orientation_mapping(pose)
+            ps.pose.orientation.x = float(orientation["x"])
+            ps.pose.orientation.y = float(orientation["y"])
+            ps.pose.orientation.z = float(orientation["z"])
+            ps.pose.orientation.w = float(orientation["w"])
             goal.poses.append(ps)
         goal.behavior_tree = str(bt)
 
@@ -964,11 +1058,20 @@ class AutoTrain(Node):
         result = {
             "id": f"through_poses[{ids}]",
             "mode": "through_poses",
+            "segment_id": stage_id,
+            "direction": direction,
+            "goal_ids": [waypoint["id"] for waypoint in waypoints],
+            "goal_profiles": [
+                waypoint.get("goal_profile", "standard")
+                for waypoint in waypoints
+            ],
             "behavior_tree": bt.name,
             "waypoint_count": len(waypoints),
             "outcome": "succeeded" if success else "failed",
+            "status": int(status),
             "duration_sec": round(duration, 2),
             "travel_m": round(self._travel_distance(odom_slice), 3),
+            "path_messages": len(self._path_messages[path_start:]),
             "final_pos": (round(cur[1], 3), round(cur[2], 3)),
             "waypoints_passed": passed,
         }
@@ -979,134 +1082,78 @@ class AutoTrain(Node):
             self.get_logger().info(f"  {wp['id']}: min_dist={wp['min_distance_m']}m")
         return result
 
-    def run(self):
-        self._input_manifest_cache = self._input_manifest()
-        route = self._load_route()
-        self._expected_goal_count = len(route)
-        if not self._action_client.wait_for_server(timeout_sec=90.0):
-            raise RuntimeError("navigate_to_pose action server unavailable")
-        if not self._wait_for_odom():
-            raise RuntimeError("odom_combined unavailable")
+    def _run_stage(self, stage, use_through_poses):
+        """Execute one user-defined segment, preserving its direction and goals."""
+        goals = stage["goals"]
+        if not goals:
+            return True
+        direction = stage["direction"]
+        if use_through_poses and len(goals) > 1:
+            behavior_tree_param = (
+                "through_poses_reverse_behavior_tree"
+                if direction == "reverse"
+                else "through_poses_behavior_tree"
+            )
+            if self._through_client.wait_for_server(timeout_sec=10.0):
+                result = self._send_through_poses(
+                    goals,
+                    stage["id"],
+                    direction,
+                    behavior_tree_param,
+                )
+                if result is None:
+                    self._save_results(
+                        "failed", f"{stage['id']}_through_poses_failed"
+                    )
+                    return False
+                self._results.append(result)
+                return result["outcome"] == "succeeded"
+            self.get_logger().warning(
+                "/navigate_through_poses unavailable; falling back to single goals"
+            )
 
-        use_tp = bool(self.get_parameter("use_through_poses").value)
-
-        # Split into 4 segments (10m costmap can't fit all waypoints at once):
-        #   Seg 1 (single):  a_task_observe (forward, precise)
-        #   Seg 2 (reverse): c_corner_1 (reverse ThroughPoses)
-        #   Seg 3 (forward): c_corner_2, c_corner_3 (C-zone ring, short ThroughPoses)
-        #   Seg 4 (forward): b_corridor_return, p_finish (return ThroughPoses)
-        reverse_tp_start_id = "c_corner_1"
-        forward_tp_start_id = "c_corner_2"
-        return_tp_start_id = "b_corridor_return"
-
-        ids = [w["id"] for w in route]
-        rev_idx = ids.index(reverse_tp_start_id) if reverse_tp_start_id in ids else None
-        fwd_idx = ids.index(forward_tp_start_id) if forward_tp_start_id in ids else None
-        ret_idx = ids.index(return_tp_start_id) if return_tp_start_id in ids else None
-
-        if use_tp and rev_idx is not None and fwd_idx is not None \
-           and ret_idx is not None and rev_idx < fwd_idx < ret_idx:
-            single_route = route[:rev_idx]
-            reverse_through_route = route[rev_idx:fwd_idx]
-            forward_through_route = route[fwd_idx:ret_idx]
-            return_through_route = route[ret_idx:]
-        elif use_tp and rev_idx is not None and fwd_idx is not None and rev_idx < fwd_idx:
-            single_route = route[:rev_idx]
-            reverse_through_route = route[rev_idx:fwd_idx]
-            forward_through_route = route[fwd_idx:]
-            return_through_route = []
-        else:
-            single_route = route
-            reverse_through_route = []
-            forward_through_route = []
-            return_through_route = []
-
-        self.get_logger().info(
-            f"Route: {len(single_route)} single + "
-            f"{len(reverse_through_route)} reverse-through + "
-            f"{len(forward_through_route)} forward-through + "
-            f"{len(return_through_route)} return-through "
-            f"(use_through_poses={use_tp})")
-
-        # Phase 1: per-waypoint single-pose (a_task_observe)
         delay = float(self.get_parameter("inter_goal_delay_sec").value)
-        for waypoint in single_route:
+        for waypoint in goals:
             result = self._send_goal(waypoint)
             self._results.append(result)
             if result["outcome"] != "succeeded":
-                self._save_results("failed")
                 return False
             if delay > 0.0:
                 deadline = time.monotonic() + delay
                 while time.monotonic() < deadline:
                     rclpy.spin_once(self, timeout_sec=0.1)
+        return True
 
-        # Phase 2: reverse single (c_corner_1, B-zone wall guides corridor)
-        if reverse_through_route:
-            if not self._through_client.wait_for_server(timeout_sec=10.0):
-                self.get_logger().error(
-                    "/navigate_through_poses unavailable, falling back")
-                for waypoint in reverse_through_route:
-                    result = self._send_goal(waypoint)
-                    self._results.append(result)
-                    if result["outcome"] != "succeeded":
-                        self._save_results("failed")
-                        return False
-            else:
-                result = self._send_through_poses(
-                    reverse_through_route,
-                    behavior_tree_param="through_poses_reverse_behavior_tree")
-                if result is None:
-                    self._save_results(
-                        "failed", "reverse_through_poses_failed")
-                    return False
-                self._results.append(result)
-                if result["outcome"] != "succeeded":
-                    self._save_results("failed")
-                    return False
+    def run(self):
+        self._input_manifest_cache = self._input_manifest()
+        route, stages = self._load_route()
+        self._expected_goal_count = len(route)
+        self._route_manifest = self._route_manifest_for(stages)
+        if not self._action_client.wait_for_server(timeout_sec=90.0):
+            raise RuntimeError("navigate_to_pose action server unavailable")
+        self._settle_action_endpoints()
+        if not self._wait_for_odom():
+            raise RuntimeError("odom_combined unavailable")
 
-        # Phase 3: forward through-poses (c_corner_2 .. p_finish)
-        if forward_through_route:
-            if not self._through_client.wait_for_server(timeout_sec=10.0):
-                self.get_logger().error(
-                    "/navigate_through_poses unavailable, falling back")
-                for waypoint in forward_through_route:
-                    result = self._send_goal(waypoint)
-                    self._results.append(result)
-                    if result["outcome"] != "succeeded":
-                        self._save_results("failed")
-                        return False
-            else:
-                result = self._send_through_poses(forward_through_route)
-                if result is None:
-                    self._save_results(
-                        "failed", "forward_through_poses_failed")
-                    return False
-                self._results.append(result)
-                if result["outcome"] != "succeeded":
-                    self._save_results("failed")
-                    return False
-
-        # Phase 4: return through-poses (b_corridor_return .. p_finish)
-        if return_through_route:
-            if not self._through_client.wait_for_server(timeout_sec=10.0):
-                self.get_logger().error(
-                    "/navigate_through_poses unavailable, falling back")
-                for waypoint in return_through_route:
-                    result = self._send_goal(waypoint)
-                    self._results.append(result)
-                    if result["outcome"] != "succeeded":
-                        self._save_results("failed")
-                        return False
-            else:
-                result = self._send_through_poses(return_through_route)
-                if result is None:
-                    self._save_results("failed", "return_through_poses_failed")
-                    return False
-                self._results.append(result)
-                if result["outcome"] != "succeeded":
-                    self._save_results("failed")
-                    return False
+        use_through_poses = bool(self.get_parameter("use_through_poses").value)
+        self.get_logger().info(
+            "Executing %d configured segments (%d goals, through_poses=%s)"
+            % (len(stages), len(route), use_through_poses)
+        )
+        for index, stage in enumerate(stages, start=1):
+            self.get_logger().info(
+                "Segment %d/%d %s [%s]: %s"
+                % (
+                    index,
+                    len(stages),
+                    stage["id"],
+                    stage["direction"],
+                    ", ".join(goal["id"] for goal in stage["goals"]),
+                )
+            )
+            if not self._run_stage(stage, use_through_poses):
+                self._save_results("failed")
+                return False
 
         self._save_results("completed")
         return True

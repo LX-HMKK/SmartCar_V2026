@@ -212,7 +212,7 @@ bash /root/nav_test.sh
 | `qr_test.launch.py` | 指定相机或单图回放、zbar、QR 服务 | 底盘、Nav2、任务与语音 |
 | `vlm_test.launch.py` | 指定相机或单图回放、VLM 服务、PyQt5 HDMI UI | 底盘、Nav2、任务与语音 |
 
-参考层只发布 `odom_combined` 下的 Marker，不发布 `/map`、TF，也不加入 Nav2 costmap。拖拽编辑、右键保存、HDMI 环境变量和 `pull-waypoints` 见 [`field-test-entrypoints.md`](field-test-entrypoints.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
+参考层只发布 `odom_combined` 下的 Marker，不发布 `/map`、TF，也不加入 Nav2 costmap。分段编辑、途经点、无朝向、HDMI 环境变量、预检和保存见 [`waypoint-editor.md`](waypoint-editor.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
 
 ## 7. 任务、停止和复位
 

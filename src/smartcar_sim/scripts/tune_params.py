@@ -19,7 +19,10 @@ except ImportError:  # pragma: no cover - Windows-only test environment.
     fcntl = None
 
 
-WS = Path(os.environ.get("SMARTCAR_WS", "/root/ros2_ws"))
+# Root-based CI/deployment retains /root/ros2_ws, while an ordinary WSL user
+# gets a writable workspace without needing to export SMARTCAR_WS just to run
+# the local tuning contracts.
+WS = Path(os.environ.get("SMARTCAR_WS", str(Path.home() / "ros2_ws")))
 REPO_ROOT = Path(os.environ.get(
     "SMARTCAR_REPO_ROOT", "/mnt/d/StudyWorks/3.2/SmartCar"))
 SOURCE_ROOT = Path(os.environ.get("SMARTCAR_SRC", str(REPO_ROOT / "src")))
@@ -69,7 +72,7 @@ TUNABLE_PARAMS = {
         "name": "xy_goal_tolerance",
         "path": "controller_server.ros__parameters.goal_checker.xy_goal_tolerance",
         "desc": "普通目标位置容差 (m)",
-        "default": 0.40,
+        "default": 0.35,
         "range": (0.10, 0.50),
         "step": 0.05,
     },
@@ -77,7 +80,7 @@ TUNABLE_PARAMS = {
         "name": "lookahead_dist",
         "path": "controller_server.ros__parameters.FollowPath.lookahead_dist",
         "desc": "RPP 前视距离 (m)",
-        "default": 1.0,
+        "default": 0.8,
         "range": (0.30, 2.00),
         "step": 0.10,
     },

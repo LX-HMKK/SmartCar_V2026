@@ -468,6 +468,16 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("use_waypoint_follower", source)
         self.assertNotIn("use_composition", source)
 
+    def test_navigation_launch_uses_the_requested_resolved_parameter_files(self):
+        source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
+        wrapper = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
+
+        self.assertIn("params_file.perform(context)", source)
+        self.assertIn("params_overlay_file.perform(context)", source)
+        self.assertIn("nav2_params_fixed.yaml", source)
+        self.assertIn("params_overlay_file", wrapper)
+        self.assertIn("'params_overlay_file': params_overlay_file", wrapper)
+
     def test_waypoints_are_valid_and_fit_the_rolling_global_costmap(self):
         global_costmap = self.params["global_costmap"]["global_costmap"][
             "ros__parameters"
@@ -510,28 +520,62 @@ class TestNav2Contracts(unittest.TestCase):
                     global_costmap["height"] / 2.0 - margin_y,
                 )
 
-    def test_precise_reverse_handoff_geometry_matches_both_routes(self):
+    def test_simulation_route_preserves_protected_semantic_targets(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
-        self.assertEqual(
-            [waypoint["id"] for waypoint in default["waypoints"]],
-            [waypoint["id"] for waypoint in nav_only["waypoints"]],
+        default_by_id = {
+            waypoint["id"]: waypoint for waypoint in default["waypoints"]
+        }
+        nav_by_id = {
+            waypoint["id"]: waypoint for waypoint in nav_only["waypoints"]
+        }
+
+        # P and QR are fixed competition references. C-zone guide points and
+        # the return corridor are intentionally simulation-tunable, so their
+        # coordinates must not be compared against the compact real route.
+        for waypoint_id in ("p_start", "a_task_observe", "p_finish"):
+            with self.subTest(waypoint=waypoint_id):
+                self.assertEqual(
+                    default_by_id[waypoint_id]["pose"],
+                    nav_by_id[waypoint_id]["pose"],
+                )
+                self.assertEqual(
+                    default_by_id[waypoint_id]["direction"],
+                    nav_by_id[waypoint_id]["direction"],
+                )
+                self.assertEqual(
+                    default_by_id[waypoint_id].get("goal_profile", "standard"),
+                    nav_by_id[waypoint_id].get("goal_profile", "standard"),
+                )
+
+        # The VLM target is shared by both routes, including its observation
+        # heading. Simulation-only guide points must not silently alter it.
+        nav_c_corner_1 = waypoint_by_id(nav_only, "c_corner_1")
+        self.assertAlmostEqual(
+            planar_yaw(nav_c_corner_1["pose"]["orientation"]),
+            planar_yaw(
+                waypoint_by_id(default, "c_corner_1")["pose"]["orientation"]
+            ),
+            delta=1.0e-6,
         )
-        for default_waypoint, nav_waypoint in zip(
-            default["waypoints"], nav_only["waypoints"]
-        ):
-            with self.subTest(waypoint=default_waypoint["id"]):
-                self.assertEqual(
-                    default_waypoint["pose"], nav_waypoint["pose"]
-                )
-                self.assertEqual(
-                    default_waypoint["direction"],
-                    nav_waypoint["direction"],
-                )
-                self.assertEqual(
-                    default_waypoint.get("goal_profile", "standard"),
-                    nav_waypoint.get("goal_profile", "standard"),
-                )
+
+        corridor_enter = waypoint_by_id(nav_only, "b_corridor_enter")
+        self.assertEqual(corridor_enter["direction"], "reverse")
+        self.assertEqual(corridor_enter["task"], "corridor")
+        corridor_out = waypoint_by_id(nav_only, "b_corridor_out")
+        self.assertEqual(corridor_out["direction"], "reverse")
+        self.assertEqual(corridor_out["task"], "corridor")
+
+        c_corner_2 = waypoint_by_id(nav_only, "c_corner_2")
+        self.assertEqual(c_corner_2["task"], "loop")
+        self.assertEqual(c_corner_2["direction"], "forward")
+
+        c_corner_4 = waypoint_by_id(nav_only, "c_corner_4")
+        self.assertEqual(c_corner_4["task"], "loop")
+        self.assertEqual(c_corner_4["direction"], "forward")
+        return_enter = waypoint_by_id(nav_only, "b_corridor_return_enter")
+        self.assertEqual(return_enter["task"], "corridor")
+        self.assertEqual(return_enter["direction"], "forward")
 
         precise_ids = [
             waypoint["id"]

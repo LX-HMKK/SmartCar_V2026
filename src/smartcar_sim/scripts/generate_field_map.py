@@ -1,208 +1,265 @@
 #!/usr/bin/env python3
-"""Generate field_map.pgm + field_map.yaml from wall geometry.
+"""Generate the simulation-only Nav2 keepout mask from field_geometry.yaml.
 
-The script encodes B-zone and C-zone permanent walls as occupied cells in a
-100×100 PGM (0.05 m/px, 5×5 m field). Wall coordinates are derived from
-track.world and field_geometry.yaml.  The output is consumed by
-nav2_map_server → static_layer → Nav2 costmaps.
-
-PGM pixel convention (negate: 1):
-  pixel   0 (black) → OCCUPIED (wall)
-  pixel 254 (white) → FREE     (open space)
-  pixel 205 (grey)  → UNKNOWN  (out of field / unclassified)
-
-P5 PGM is row-major top-to-bottom. Row 0 = y=5.0 (top of field),
-row 99 = y=0.0 (bottom).  The Y-axis is flipped so the field origin
-(bottom-left) appears at the bottom of the image.
+The generated PGM is consumed by nav2_map_server and then by Nav2's
+KeepoutFilter. It is not a localization map. Its black cells are prohibited
+areas and its white cells are traversable. Keeping this generator tied to the
+same FieldReference used by Gazebo and RViz prevents coordinate drift between
+the three simulation representations.
 """
 
+from __future__ import annotations
+
+import argparse
 import math
-import os
-import struct
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-# ── field geometry (metres, origin south-west) ──
-FIELD_SIZE = 5.0           # both axes
-RESOLUTION = 0.10          # m/px  (0.05 → 0.10 to keep PGM under Fast DDS limit in WSL)
-PIXELS = int(FIELD_SIZE / RESOLUTION)  # 50
 
-# Occupancy values (PGM pixel bytes)
-OCCUPIED = 0               # black → wall (negate:1 flips to occupied)
-FREE = 254                 # near-white → open
-UNKNOWN = 205              # grey → unclassified
-
-# Wall definitions: (x_min, x_max, y_min, y_max) in metres
-WALLS = [
-    # B-zone band at y∈[2.0, 2.5]; corridor opening x∈[2.0, 3.0]
-    ("b_zone_left",   0.0, 2.0,   2.0, 2.5),
-    ("b_zone_right",  3.0, 5.0,   2.0, 2.5),
-    # C-zone inner fill blocks the centre of the ring
-    ("c_zone_inner",  1.0, 4.0,   3.25, 3.90),
-    # C-zone outer boundaries
-    ("c_zone_north",  0.0, 5.0,   4.4, 5.0),
-    ("c_zone_west",   0.0, 0.5,   2.75, 4.40),
-    ("c_zone_east",   4.5, 5.0,   2.75, 4.40),
-]
-
-# Field border: 1-cell rim around the entire field
-# DISABLED — the border has no corresponding physical wall in Gazebo.
-# Inflation from border-occupied cells extends ~0.65 m into the field,
-# blocking the robot start position at (0, 0) in odom_combined.
-# Gazebo ground-plane friction keeps the vehicle on the field; the
-# planner only needs to see the six B/C-zone walls.
-BORDERS: list[tuple[str, float, float, float, float]] = []
-
-# Corridor centre-line (decorative guide only — NOT an obstacle)
-CORRIDOR_X = 2.5
-CORRIDOR_HALF = 0.5
+SCRIPT = Path(__file__).resolve()
+SIM_ROOT = SCRIPT.parents[1]
+SOURCE_ROOT = SCRIPT.parents[2]
+SOURCE_TOOLS_ROOT = SOURCE_ROOT / "smartcar_tools"
+GEOMETRY_RELATIVE_PATH = Path("config") / "routes" / "field_geometry.yaml"
+ROUTE_PLANNING_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
+# PGM values used with ``negate: 0`` in the generated YAML.
+OCCUPIED = 0
+FREE = 254
 
 
-def fill_rect(grid: bytearray, x0: float, x1: float, y0: float, y1: float,
-              value: int) -> None:
-    """Mark every pixel whose centre falls inside [x0,x1)×[y0,y1).
+try:
+    from ament_index_python.packages import get_package_share_directory
+except ModuleNotFoundError:
+    get_package_share_directory = None
 
-    PGM rows go top→bottom: row 0 = field y = FIELD_SIZE, row 99 = field y = 0.
-    This function computes the pixel row range from field y-coordinates,
-    then fills every pixel in that range.
-    """
+
+def resolve_tools_share(script_path: Path, package_share_lookup=None) -> Path:
+    """Locate smartcar_tools in a source tree or isolated install layout."""
+    source_candidate = script_path.resolve().parents[2] / "smartcar_tools"
+    if (source_candidate / GEOMETRY_RELATIVE_PATH).is_file():
+        return source_candidate
+    if package_share_lookup is not None:
+        try:
+            installed_candidate = Path(package_share_lookup("smartcar_tools"))
+        except (LookupError, OSError):
+            installed_candidate = None
+        if (
+            installed_candidate is not None
+            and (installed_candidate / GEOMETRY_RELATIVE_PATH).is_file()
+        ):
+            return installed_candidate
+    raise RuntimeError(
+        "cannot locate smartcar_tools/config/routes/field_geometry.yaml"
+    )
+
+
+TOOLS_SHARE = resolve_tools_share(SCRIPT, get_package_share_directory)
+DEFAULT_GEOMETRY = TOOLS_SHARE / GEOMETRY_RELATIVE_PATH
+DEFAULT_ROUTE_PLANNING_CONFIG = TOOLS_SHARE / ROUTE_PLANNING_RELATIVE_PATH
+DEFAULT_MAPS_DIR = SIM_ROOT / "maps"
+
+
+try:
+    from smartcar_tools.field_reference import (  # type: ignore[import-not-found]
+        Bounds2D,
+        FieldReference,
+        load_field_reference,
+    )
+    from smartcar_tools.field_keepouts import (  # type: ignore[import-not-found]
+        central_c_keepout as _central_c_keepout,
+        keepout_bounds as _keepout_bounds,
+    )
+    from smartcar_tools.route_planning import (  # type: ignore[import-not-found]
+        RoutePlanningConfig,
+        load_route_planning_config,
+    )
+except ModuleNotFoundError:
+    sys.path.insert(0, str(SOURCE_TOOLS_ROOT))
+    from smartcar_tools.field_reference import (  # type: ignore[no-redef]
+        Bounds2D,
+        FieldReference,
+        load_field_reference,
+    )
+    from smartcar_tools.field_keepouts import (  # type: ignore[no-redef]
+        central_c_keepout as _central_c_keepout,
+        keepout_bounds as _keepout_bounds,
+    )
+    from smartcar_tools.route_planning import (  # type: ignore[no-redef]
+        RoutePlanningConfig,
+        load_route_planning_config,
+    )
+
+
+@dataclass(frozen=True)
+class MapSpec:
+    origin_x: float
+    origin_y: float
+    width_m: float
+    height_m: float
+    resolution: float
+
+    @property
+    def width_px(self) -> int:
+        return int(round(self.width_m / self.resolution))
+
+    @property
+    def height_px(self) -> int:
+        return int(round(self.height_m / self.resolution))
+
+
+def map_spec(
+    reference: FieldReference,
+    config: RoutePlanningConfig | None = None,
+) -> MapSpec:
+    """Build a PGM extent exactly covering the authoritative field bounds."""
+    settings = config or load_route_planning_config()
+    return MapSpec(
+        origin_x=reference.field.x_min,
+        origin_y=reference.field.y_min,
+        width_m=reference.field.width,
+        height_m=reference.field.height,
+        resolution=settings.simulation_keepout.map_resolution_m,
+    )
+
+
+def central_c_keepout(
+    reference: FieldReference,
+    config: RoutePlanningConfig | None = None,
+) -> Bounds2D:
+    """Return the shared C-zone core that routes must circumnavigate."""
+    return _central_c_keepout(reference, config)
+
+
+def keepout_bounds(
+    reference: FieldReference,
+    config: RoutePlanningConfig | None = None,
+) -> tuple[Bounds2D, ...]:
+    """Return the shared permanent B-wall and C-zone constraints."""
+    return _keepout_bounds(reference, config)
+
+
+def fill_rect(grid: bytearray, spec: MapSpec, bounds: Bounds2D, value: int) -> None:
+    """Fill cells whose centres lie within an odom-frame rectangle."""
+    x0 = max(spec.origin_x, bounds.x_min)
+    x1 = min(spec.origin_x + spec.width_m, bounds.x_max)
+    y0 = max(spec.origin_y, bounds.y_min)
+    y1 = min(spec.origin_y + spec.height_m, bounds.y_max)
     if x0 >= x1 or y0 >= y1:
         return
-    # column range (x → col is straightforward: col = x / resolution)
-    col0 = max(0, int(math.floor(x0 / RESOLUTION)))
-    col1 = min(PIXELS, int(math.ceil(x1 / RESOLUTION)))
-    if col0 >= col1:
+
+    col0 = max(0, int(math.floor((x0 - spec.origin_x) / spec.resolution)))
+    col1 = min(
+        spec.width_px,
+        int(math.ceil((x1 - spec.origin_x) / spec.resolution)),
+    )
+    row_top = max(
+        0,
+        int(math.floor((spec.origin_y + spec.height_m - y1) / spec.resolution)),
+    )
+    row_bottom = min(
+        spec.height_px - 1,
+        int(math.ceil((spec.origin_y + spec.height_m - y0) / spec.resolution)) - 1,
+    )
+    if col0 >= col1 or row_top > row_bottom:
         return
-    # row range (y → row is inverted: row = (FIELD_SIZE - y) / resolution)
-    # row_top    = row index of the top    edge (y = y1), smaller row number
-    # row_bottom = row index of the bottom edge (y = y0), larger  row number
-    row_top = int(math.floor((FIELD_SIZE - y1) / RESOLUTION))
-    row_bottom = int(math.ceil((FIELD_SIZE - y0) / RESOLUTION)) - 1
-    # clamp
-    row_top = max(0, row_top)
-    row_bottom = min(PIXELS - 1, row_bottom)
-    if row_top > row_bottom:
-        return
+
     for row in range(row_top, row_bottom + 1):
-        base = row * PIXELS
+        offset = row * spec.width_px
         for col in range(col0, col1):
-            grid[base + col] = value
+            grid[offset + col] = value
 
 
-def draw_corridor_marks(grid: bytearray) -> None:
-    """Light dash marks along the corridor opening edges (NOT obstacles)."""
-    col_center = int(CORRIDOR_X / RESOLUTION)
-    half_px = int(CORRIDOR_HALF / RESOLUTION)
-    # B-zone band: y ∈ [2.0, 2.5]
-    row_top = int((FIELD_SIZE - 2.5) / RESOLUTION)
-    row_bottom = int((FIELD_SIZE - 2.0) / RESOLUTION) - 1
-    for row in range(row_top, row_bottom + 1, 3):  # every 3rd row → dashed
-        left = max(0, col_center - half_px)
-        right = min(PIXELS - 1, col_center + half_px)
-        if 0 <= left < PIXELS:
-            grid[row * PIXELS + left] = 150
-        if 0 <= right < PIXELS:
-            grid[row * PIXELS + right] = 150
+def make_grid(
+    reference: FieldReference,
+    config: RoutePlanningConfig | None = None,
+) -> tuple[MapSpec, bytearray]:
+    """Build the black=keepout, white=free occupancy mask."""
+    settings = config or load_route_planning_config()
+    spec = map_spec(reference, settings)
+    grid = bytearray([FREE]) * (spec.width_px * spec.height_px)
+    for bounds in keepout_bounds(reference, settings):
+        fill_rect(grid, spec, bounds, OCCUPIED)
+    return spec, grid
 
 
-def make_grid() -> bytearray:
-    """Build the 100×100 occupancy grid."""
-    grid = bytearray([FREE]) * (PIXELS * PIXELS)
-
-    # 1. Paint wall rectangles as OCCUPIED
-    for _name, x0, x1, y0, y1 in WALLS:
-        fill_rect(grid, x0, x1, y0, y1, OCCUPIED)
-
-    # 2. Paint field border rim (1 cell)
-    for _name, x0, x1, y0, y1 in BORDERS:
-        # expand degenerate edges to 1-cell thickness
-        if abs(x1 - x0) < 1e-6:
-            x0 -= RESOLUTION / 2
-            x1 += RESOLUTION / 2
-        if abs(y1 - y0) < 1e-6:
-            y0 -= RESOLUTION / 2
-            y1 += RESOLUTION / 2
-        fill_rect(grid, x0, x1, y0, y1, OCCUPIED)
-
-    # 3. Light corridor edge dashes (visual only, still free)
-    draw_corridor_marks(grid)
-
-    # 4. Mark pixels outside 5×5 as UNKNOWN (fringe gutter)
-    #    Actually the grid IS exactly 5×5, so just mark a 1px rim unknown.
-    #    No — keep it simple, the grid covers the field exactly.
-
-    return grid
+def pgm_bytes(spec: MapSpec, grid: bytearray) -> bytes:
+    header = f"P5\n{spec.width_px} {spec.height_px}\n255\n".encode("ascii")
+    return header + bytes(grid)
 
 
-def write_pgm(path: Path, grid: bytearray) -> None:
-    """Write P5 binary PGM."""
-    header = f"P5\n{PIXELS} {PIXELS}\n255\n".encode("ascii")
-    path.write_bytes(header + bytes(grid))
-
-
-def write_yaml(path: Path, image_name: str) -> None:
-    """Write the nav2 map YAML descriptor.
-
-    Coordinate alignment: the field's south-west corner (P_origin) is offset
-    from the odom_combined origin (where the robot starts) by
-    field_geometry.yaml's p_origin_*_from_*_m values.
-    """
-    # P origin relative to south-west corner → negate to place SW corner in odom frame
-    origin_x = -0.5
-    origin_y = -0.25
-    content = (
+def yaml_text(spec: MapSpec, image_name: str) -> str:
+    return (
         f"image: {image_name}\n"
         "mode: trinary\n"
-        f"resolution: {RESOLUTION}\n"
-        f"origin: [{origin_x}, {origin_y}, 0.0]\n"
-        "negate: 1\n"
+        f"resolution: {spec.resolution}\n"
+        f"origin: [{spec.origin_x}, {spec.origin_y}, 0.0]\n"
+        "negate: 0\n"
         "occupied_thresh: 0.65\n"
         "free_thresh: 0.196\n"
     )
-    path.write_text(content, encoding="utf-8")
 
 
-def main() -> None:
-    maps_dir = Path(__file__).resolve().parent.parent / "maps"
-    maps_dir.mkdir(parents=True, exist_ok=True)
+def render(
+    geometry_file: Path,
+    route_planning_file: Path = DEFAULT_ROUTE_PLANNING_CONFIG,
+) -> tuple[bytes, str]:
+    reference = load_field_reference(geometry_file)
+    config = load_route_planning_config(route_planning_file)
+    spec, grid = make_grid(reference, config)
+    return pgm_bytes(spec, grid), yaml_text(spec, "field_map.pgm")
 
-    pgm_path = maps_dir / "field_map.pgm"
-    yaml_path = maps_dir / "field_map.yaml"
 
-    grid = make_grid()
-
-    # Quick stats
-    occupied_px = sum(1 for b in grid if b == OCCUPIED)
-    free_px = sum(1 for b in grid if b == FREE)
-    print(
-        f"Generated {PIXELS}×{PIXELS} PGM: "
-        f"{occupied_px} occupied, {free_px} free pixels"
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--geometry", type=Path, default=DEFAULT_GEOMETRY)
+    parser.add_argument(
+        "--route-planning-config",
+        type=Path,
+        default=DEFAULT_ROUTE_PLANNING_CONFIG,
+        help="shared editor/simulation planning constraints YAML",
     )
+    parser.add_argument("--maps-dir", type=Path, default=DEFAULT_MAPS_DIR)
+    parser.add_argument(
+        "--check",
+        action="store_true",
+        help="fail when committed field_map artifacts differ from the generator",
+    )
+    return parser.parse_args()
 
-    write_pgm(pgm_path, grid)
-    write_yaml(yaml_path, "field_map.pgm")
 
-    print(f"Wrote {pgm_path}")
-    print(f"Wrote {yaml_path}")
-
-    # Verify round-trip: YAML file is readable
-    if not yaml_path.exists():
-        print("ERROR: YAML file not found after write", file=sys.stderr)
-        sys.exit(1)
-
-    pgm_size = pgm_path.stat().st_size
-    expected = len(header_bytes()) + PIXELS * PIXELS
-    if pgm_size != expected:
-        print(
-            f"WARNING: PGM size {pgm_size} != expected {expected} "
-            f"(header {len(header_bytes())} + {PIXELS*PIXELS} data)",
-            file=sys.stderr,
+def main() -> int:
+    args = parse_args()
+    try:
+        expected_pgm, expected_yaml = render(
+            args.geometry,
+            args.route_planning_config,
         )
+    except (OSError, ValueError) as error:
+        print(f"cannot generate field map: {error}", file=sys.stderr)
+        return 2
 
+    pgm_path = args.maps_dir / "field_map.pgm"
+    yaml_path = args.maps_dir / "field_map.yaml"
+    if args.check:
+        try:
+            actual_pgm = pgm_path.read_bytes()
+            actual_yaml = yaml_path.read_text(encoding="utf-8")
+        except OSError as error:
+            print(f"cannot read generated field map: {error}", file=sys.stderr)
+            return 1
+        if actual_pgm == expected_pgm and actual_yaml == expected_yaml:
+            print(f"field keepout mask is current: {pgm_path}")
+            return 0
+        print("field keepout mask is stale; run generate_field_map.py", file=sys.stderr)
+        return 1
 
-def header_bytes() -> bytes:
-    return f"P5\n{PIXELS} {PIXELS}\n255\n".encode("ascii")
+    args.maps_dir.mkdir(parents=True, exist_ok=True)
+    pgm_path.write_bytes(expected_pgm)
+    yaml_path.write_text(expected_yaml, encoding="utf-8", newline="\n")
+    print(f"generated field keepout mask: {pgm_path}")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

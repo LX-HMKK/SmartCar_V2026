@@ -26,6 +26,8 @@ _TASK_COLORS = {
     "corridor": (0.95, 0.80, 0.20),  # yellow
     "loop":     (1.00, 0.35, 0.20),  # red
     "return":   (0.70, 0.30, 0.90),  # purple
+    "nav":      (0.35, 0.72, 0.90),  # light blue
+    "via":      (0.67, 0.71, 0.75),  # neutral grey
 }
 _DEFAULT_COLOR = (0.80, 0.80, 0.80)  # grey
 

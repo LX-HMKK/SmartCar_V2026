@@ -17,6 +17,7 @@ ALLOWED_TASKS = frozenset({
     "loop",
     "return",
     "nav",       # pure navigation pass-through (no vision/media subtask)
+    "via",       # editor-created route constraint (no vision/media subtask)
 })
 ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
 ALLOWED_GOAL_PROFILES = frozenset({
@@ -224,7 +225,9 @@ def validate_waypoints(waypoints):
 
     # validate sequence with a simple state machine:
     #   start → (qr|nav) → corridor* → (vlm|nav) → loop* → corridor* → return
-    # loop corners are optional when C-zone ring walls constrain the path.
+    # ``via`` is a direction-preserving navigation constraint that may appear
+    # anywhere between semantic endpoints.  It never starts a media task.
+    # Loop corners are optional when C-zone ring walls constrain the path.
     loop_count = tasks.count("loop")
 
     state = "start"
@@ -236,7 +239,9 @@ def validate_waypoints(waypoints):
             expected_direction = "forward"
             state = "before_loop"
         elif state == "before_loop":
-            if task in ("qr", "nav"):
+            if task == "via":
+                expected_direction = "forward"
+            elif task in ("qr", "nav"):
                 expected_direction = "forward"
                 state = "outbound_corridor"
             else:
@@ -244,7 +249,9 @@ def validate_waypoints(waypoints):
                     f"waypoint {i}: expected qr or nav, got {task}"
                 )
         elif state == "outbound_corridor":
-            if task == "corridor":
+            if task == "via":
+                expected_direction = "reverse"
+            elif task == "corridor":
                 expected_direction = "reverse"
             elif task in ("vlm", "nav"):
                 expected_direction = "reverse"
@@ -254,7 +261,9 @@ def validate_waypoints(waypoints):
                     f"waypoint {i}: expected corridor or vlm/nav, got {task}"
                 )
         elif state == "loop_or_return":
-            if task == "loop":
+            if task == "via":
+                expected_direction = "forward"
+            elif task == "loop":
                 expected_direction = "forward"
             elif task == "corridor":
                 expected_direction = "forward"
@@ -264,7 +273,9 @@ def validate_waypoints(waypoints):
                     f"waypoint {i}: expected loop or corridor, got {task}"
                 )
         elif state == "return_corridor":
-            if task == "corridor":
+            if task == "via":
+                expected_direction = "forward"
+            elif task == "corridor":
                 expected_direction = "forward"
             elif task == "return":
                 expected_direction = "forward"

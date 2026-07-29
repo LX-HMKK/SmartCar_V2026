@@ -1,0 +1,35 @@
+schema_version: 1
+name: shared_route_planning_constraints
+
+# This file is the shared tuning surface for the waypoint editor preflight
+# and the simulation keepout-map generator. sim_tune.sh also projects the
+# radius/envelope into simulation Nav2. It is not a SLAM/localization map.
+minimum_turning_radius_m: 0.55
+footprint_envelope_radius_m: 0.20
+
+# The central C-zone core forces a loop, while retaining a traversable lane
+# around it. Values are measured inward from field_geometry.yaml's inner ring.
+c_zone_keepout:
+  horizontal_inset_m: 0.80
+  vertical_inset_m: 0.15
+
+preflight:
+  grid_resolution_m: 0.10
+  heading_bins: 36
+  step_length_m: 0.10
+  primitive_samples: 3
+  steering_fractions: [-1.0, -0.5, 0.0, 0.5, 1.0]
+  turning_penalty_m: 0.015
+  # A route may finish inside this Nav2-like goal acceptance region. The
+  # editor never draws an unchecked line from that state to the marker.
+  goal_position_tolerance_m: 0.15
+  goal_heading_tolerance_deg: 20.0
+  # Near a target, use an exact forward-only Dubins connection instead of
+  # drawing an unchecked straight-line tail from a lattice state.
+  terminal_connector_max_distance_m: 1.50
+  terminal_connector_max_length_m: 4.00
+  terminal_connector_sample_step_m: 0.025
+  max_expansions_per_leg: 30000
+
+simulation_keepout:
+  map_resolution_m: 0.10

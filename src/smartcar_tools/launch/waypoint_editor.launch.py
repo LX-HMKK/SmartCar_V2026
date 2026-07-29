@@ -1,7 +1,7 @@
 """Launch the motion-disabled semantic waypoint editor and field reference."""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition
+from launch.conditions import IfCondition, UnlessCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -11,8 +11,10 @@ from launch_ros.substitutions import FindPackageShare
 def generate_launch_description():
     waypoints_file = LaunchConfiguration("waypoints_file")
     geometry_file = LaunchConfiguration("geometry_file")
+    route_planning_file = LaunchConfiguration("route_planning_file")
     start_safety = LaunchConfiguration("start_safety")
     use_rviz = LaunchConfiguration("use_rviz")
+    use_segment_ui = LaunchConfiguration("use_segment_ui")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     safety = IncludeLaunchDescription(
@@ -51,6 +53,22 @@ def generate_launch_description():
             "latch_emergency_stop": True,
             "use_sim_time": use_sim_time,
         }],
+        condition=UnlessCondition(use_segment_ui),
+    )
+    segment_editor = Node(
+        package="smartcar_tools",
+        executable="waypoint_drag_editor",
+        name="waypoint_drag_editor",
+        output="screen",
+        parameters=[{
+            "waypoints_file": waypoints_file,
+            "geometry_file": geometry_file,
+            "use_sim_time": use_sim_time,
+        }],
+        additional_env={
+            "SMARTCAR_ROUTE_PLANNING_CONFIG": route_planning_file,
+        },
+        condition=IfCondition(use_segment_ui),
     )
     rviz = Node(
         package="rviz2",
@@ -84,11 +102,22 @@ def generate_launch_description():
                 "field_geometry.yaml",
             ]),
         ),
+        DeclareLaunchArgument(
+            "route_planning_file",
+            default_value=PathJoinSubstitution([
+                FindPackageShare("smartcar_tools"),
+                "config",
+                "routes",
+                "route_planning.yaml",
+            ]),
+        ),
         DeclareLaunchArgument("start_safety", default_value="true"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
+        DeclareLaunchArgument("use_segment_ui", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         safety,
         field_reference,
         editor,
+        segment_editor,
         rviz,
     ])

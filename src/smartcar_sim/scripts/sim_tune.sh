@@ -38,8 +38,9 @@ if ! [[ "$loop_count" =~ ^[1-9][0-9]*$ ]]; then
 fi
 
 if [ ! -f "${source_root}/smartcar_sim/package.xml" ] || \
-        [ ! -f "${source_root}/smartcar_nav2/config/nav2_params.yaml" ]; then
-    echo "Invalid SMARTCAR_SRC (missing smartcar_sim or nav2 params): ${source_root}" >&2
+        [ ! -f "${source_root}/smartcar_nav2/config/nav2_params.yaml" ] || \
+        [ ! -f "${source_root}/smartcar_tools/config/routes/route_planning.yaml" ]; then
+    echo "Invalid SMARTCAR_SRC (missing simulation, nav2 params, or route planning config): ${source_root}" >&2
     exit 2
 fi
 
@@ -51,6 +52,17 @@ if ! flock -n 9; then
     exit 2
 fi
 source /opt/ros/humble/setup.bash
+
+echo "[tune] Regenerating simulation keepout map from shared route_planning.yaml..."
+PYTHONPATH="${source_root}/smartcar_tools${PYTHONPATH:+:${PYTHONPATH}}" \
+    python3 "${source_root}/smartcar_sim/scripts/generate_field_map.py" \
+        --geometry "${source_root}/smartcar_tools/config/routes/field_geometry.yaml" \
+        --route-planning-config "${source_root}/smartcar_tools/config/routes/route_planning.yaml" \
+        --maps-dir "${source_root}/smartcar_sim/maps"
+python3 "${source_root}/smartcar_sim/scripts/sync_route_planning.py" \
+    --route-planning-config "${source_root}/smartcar_tools/config/routes/route_planning.yaml" \
+    --nav2-params "${source_root}/smartcar_nav2/config/nav2_params.yaml" \
+    --keepout-overlay "${source_root}/smartcar_sim/config/nav2_keepout_filter.yaml"
 
 rsync -a \
     --delete \
@@ -109,6 +121,9 @@ for run_index in $(seq 1 "$loop_count"); do
     cp "${workspace}/install/smartcar_nav2/share/smartcar_nav2/config/nav2_params_fixed.yaml" \
         "$snapshot_dir/"
     cp "${source_root}/smartcar_nav2/config/waypoints/nav_only.yaml" "$snapshot_dir/"
+    cp "${source_root}/smartcar_tools/config/routes/route_planning.yaml" "$snapshot_dir/"
+    cp "${source_root}/smartcar_sim/maps/field_map.pgm" "$snapshot_dir/"
+    cp "${source_root}/smartcar_sim/maps/field_map.yaml" "$snapshot_dir/"
     cp "${source_root}/smartcar_nav2/config/behavior_trees/"*.xml "$snapshot_dir/"
 
     if [ "$headless" = true ]; then

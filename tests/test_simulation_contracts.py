@@ -28,7 +28,39 @@ WORLD = SIM / "worlds" / "track.world"
 FIELD_MODEL_CONFIG = SIM / "config" / "competition_field_model.yaml"
 FIELD_MODEL_GENERATOR = SIM / "scripts" / "generate_competition_field.py"
 FIELD_MODEL = SIM / "models" / "competition_field" / "model.sdf"
+FIELD_MAP_GENERATOR = SIM / "scripts" / "generate_field_map.py"
+FIELD_MAP = SIM / "maps" / "field_map.pgm"
+FIELD_MAP_YAML = SIM / "maps" / "field_map.yaml"
+KEEPOUT_OVERLAY = SIM / "config" / "nav2_keepout_filter.yaml"
 PACKAGE_XML = SIM / "package.xml"
+
+
+def read_pgm(path: Path) -> tuple[int, int, bytes]:
+    raw = path.read_bytes()
+    magic, dimensions, max_value, pixels = raw.split(b"\n", 3)
+    if magic != b"P5" or max_value != b"255":
+        raise ValueError(f"unsupported PGM header in {path}")
+    width, height = (int(value) for value in dimensions.split())
+    if len(pixels) != width * height:
+        raise ValueError(f"unexpected PGM payload size in {path}")
+    return width, height, pixels
+
+
+def pgm_value_at(
+    pixels: bytes,
+    width: int,
+    height: int,
+    origin: tuple[float, float],
+    resolution: float,
+    x: float,
+    y: float,
+) -> int:
+    col = int((x - origin[0]) // resolution)
+    row_from_bottom = int((y - origin[1]) // resolution)
+    if not 0 <= col < width or not 0 <= row_from_bottom < height:
+        raise ValueError(f"point ({x}, {y}) lies outside the PGM")
+    row = height - 1 - row_from_bottom
+    return pixels[row * width + col]
 
 
 class SimulationContractTests(unittest.TestCase):
@@ -85,6 +117,8 @@ class SimulationContractTests(unittest.TestCase):
             'name="b_wall_east"',
             'name="corridor_wall_',
             'name="czone_wall"',
+            'name="b_zone_wall_',
+            'name="c_zone_',
             'name="wp_corner_',
         ):
             self.assertNotIn(stale_model, world)
@@ -256,9 +290,88 @@ class SimulationContractTests(unittest.TestCase):
             "rmw_fastrtps_cpp",
             "rviz2",
             "smartcar_tools",
+            "nav2_lifecycle_manager",
+            "nav2_map_server",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", package)
         self.assertIn("scripts/generate_competition_field.py", cmake)
+
+    def test_keepout_mask_is_current_and_uses_authoritative_geometry(self) -> None:
+        completed = subprocess.run(
+            [sys.executable, str(FIELD_MAP_GENERATOR), "--check"],
+            cwd=ROOT,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            msg=completed.stdout + completed.stderr,
+        )
+
+        descriptor = yaml.safe_load(FIELD_MAP_YAML.read_text(encoding="utf-8"))
+        self.assertEqual(descriptor["mode"], "trinary")
+        self.assertEqual(descriptor["resolution"], 0.1)
+        self.assertEqual(descriptor["origin"], [-0.5, -0.25, 0.0])
+        self.assertEqual(descriptor["negate"], 0)
+
+        width, height, pixels = read_pgm(FIELD_MAP)
+        self.assertEqual((width, height), (50, 50))
+        origin = tuple(descriptor["origin"][:2])
+        resolution = descriptor["resolution"]
+        samples = {
+            "P origin": ((0.0, 0.0), 254),
+            "B corridor": ((2.0, 2.0), 254),
+            "B west wall": ((0.5, 2.0), 0),
+            "C inner": ((2.0, 3.3), 0),
+            "C inner west lane": ((1.1, 3.3), 254),
+            "C inner north lane": ((2.0, 3.6), 254),
+            "C north": ((2.0, 4.4), 0),
+            "C west": ((-0.25, 3.0), 0),
+            "C east": ((4.25, 3.0), 0),
+            "C ring": ((0.7, 4.0), 254),
+        }
+        for label, ((x, y), expected) in samples.items():
+            with self.subTest(label=label):
+                self.assertEqual(
+                    pgm_value_at(
+                        pixels,
+                        width,
+                        height,
+                        origin,
+                        resolution,
+                        x,
+                        y,
+                    ),
+                    expected,
+                )
+
+        source = FIELD_MAP_GENERATOR.read_text(encoding="utf-8")
+        self.assertIn("load_field_reference", source)
+        self.assertIn("keepout_bounds", source)
+        self.assertNotIn("WALLS = [", source)
+
+    def test_keepout_filter_is_scoped_to_simulation_and_ready_before_nav2(self) -> None:
+        launch = LAUNCH.read_text(encoding="utf-8")
+        overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
+
+        for costmap_name in ("local_costmap", "global_costmap"):
+            parameters = overlay[costmap_name][costmap_name]["ros__parameters"]
+            self.assertEqual(parameters["filters"], ["keepout_filter"])
+            keepout = parameters["keepout_filter"]
+            self.assertEqual(keepout["plugin"], "nav2_costmap_2d::KeepoutFilter")
+            self.assertIs(keepout["enabled"], True)
+            self.assertEqual(keepout["filter_info_topic"], "/keepout_filter_info")
+            self.assertEqual(parameters["inflation_layer"]["inflation_radius"], 0.20)
+
+        self.assertIn('executable="costmap_filter_info_server"', launch)
+        self.assertIn('"topic_name": "/keepout_filter_mask"', launch)
+        self.assertIn('"mask_topic": "/keepout_filter_mask"', launch)
+        self.assertIn("OnStateTransition", launch)
+        self.assertIn('goal_state="active"', launch)
+        self.assertIn('"params_overlay_file": nav2_keepout_overlay', launch)
+        self.assertNotIn("ros2 lifecycle set /map_server", launch)
 
     def test_run_route_uses_an_isolated_switch_and_explicit_trees(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
@@ -281,15 +394,40 @@ class SimulationContractTests(unittest.TestCase):
             self.assertIn(parameter, runner)
         self.assertNotIn("TRAIN_WAYPOINTS", runner)
         self.assertIn('goal.behavior_tree = str(behavior_tree)', runner)
-        self.assertIn('item.get("task") != "start"', runner)
+        self.assertIn("segment.end_id", runner)
         self.assertIn("os.replace(temporary, path)", runner)
         self.assertIn("raise SystemExit(exit_code)", runner)
         self.assertIn("self._input_manifest_cache = self._input_manifest()", runner)
         self.assertIn("path_start = len(self._path_messages)", runner)
         self.assertIn("rclpy.spin_once(self, timeout_sec=0.1)", runner)
         self.assertNotIn("time.sleep(delay)", runner)
-        self.assertIn("EXPECTED_ROUTE", runner)
-        self.assertIn('("c_corner_1", "reverse", "reverse_handoff")', runner)
+        self.assertIn('"action_endpoint_settle_sec"', runner)
+        self.assertIn("wait_for_server() only proves the request path exists", runner)
+        self.assertIn("Settling Nav2 action endpoints", runner)
+        self.assertIn("self._settle_action_endpoints()", runner)
+        self.assertIn("load_planning_segments", runner)
+        self.assertIn('stage["direction"]', runner)
+        self.assertIn("_run_stage", runner)
+        self.assertNotIn("EXPECTED_ROUTE", runner)
+        self.assertNotIn("reverse_tp_start_id", runner)
+
+        nav_only = yaml.safe_load(
+            (ROOT / "src" / "smartcar_nav2" / "config" / "waypoints" / "nav_only.yaml")
+            .read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            [
+                (segment["id"], segment["direction"], segment["start_id"], segment["end_id"])
+                for segment in nav_only["planning_segments"]
+            ],
+            [
+                ("p_to_qr", "forward", "p_start", "a_task_observe"),
+                ("reverse_corridor", "reverse", "a_task_observe", "c_corner_1"),
+                ("c_loop", "forward", "c_corner_1", "c_corner_3"),
+                ("c_exit", "forward", "c_corner_3", "b_corridor_return_enter"),
+                ("return_to_p", "forward", "b_corridor_return_enter", "p_finish"),
+            ],
+        )
 
     def test_route_results_preserve_planning_and_execution_yaw_evidence(self) -> None:
         runner = AUTO_TRAIN.read_text(encoding="utf-8")

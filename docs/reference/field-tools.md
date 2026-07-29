@@ -1,18 +1,12 @@
 # 场地工具与纯导航测试
 
 > 源文件：`CLAUDE.md` → 本文件（低频查阅，为 CLAUDE.md 减负）
-> 最后更新：2026-07-25
+> 最后更新：2026-07-29
 
-## 航点编辑
+## 路径分段航点编辑器
 
-RDK 上启动无运动航点编辑器：
-
-```bash
-export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
-ros2 launch smartcar_tools waypoint_editor.launch.py
-```
-
-编辑器直接拖拽唯一的 `default_waypoints.yaml`，同时显示官方尺寸参考层；右键航点可保存、撤销或重载。它不启动 Nav2 或底盘，并默认锁存软件急停。
+航点编辑器支持分段方向、起终点朝向、无朝向途经点、C 区禁区预检和仿真参数同步。
+完整命令和操作流程见 [`../deployment/waypoint-editor.md`](../deployment/waypoint-editor.md)。
 
 ## 航点可视化
 

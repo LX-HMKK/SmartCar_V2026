@@ -1,16 +1,16 @@
-"""Drag-to-move waypoint editor using matplotlib — works around RViz InteractiveMarkers bug.
+"""Interactive Chinese-language segment route editor using matplotlib.
 
 Mouse:
-  - drag  a waypoint circle to move it
-  - scroll wheel on a selected waypoint to rotate (±5° per tick)
+  - drag a waypoint circle to move it
+  - scroll a selected waypoint to rotate it (±5 degrees per tick)
   - click a waypoint to select it (highlighted ring)
   - click empty space to deselect
 
 Keyboard:
-  - Ctrl+S          → save to YAML
-  - Ctrl+Z          → undo last move
-  - R / Shift+R     → rotate selected waypoint ±15°
-  - Delete / Escape → deselect
+  - Ctrl+S          save to YAML
+  - Ctrl+Z          undo last move
+  - R / Shift+R     rotate selected waypoint ±15 degrees
+  - Delete / Escape deselect
 
 Usage:
   ros2 run smartcar_tools waypoint_drag_editor
@@ -20,18 +20,22 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
+import os
 from pathlib import Path
+import shutil
 import threading
 
 from ament_index_python.packages import get_package_share_directory
 import matplotlib
+from matplotlib import font_manager
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseButton
-from matplotlib.patches import FancyBboxPatch
+from matplotlib.widgets import Button, RadioButtons, TextBox
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from smartcar_task.waypoints import (
+    Waypoint,
     is_zero_quaternion,
     load_waypoint_document,
     validate_waypoints,
@@ -42,6 +46,16 @@ from smartcar_tools.field_reference import (
     Point2D,
     load_field_reference,
 )
+from smartcar_tools.field_keepouts import central_c_keepout, keepout_bounds
+from smartcar_tools.planning_segments import (
+    PlanningSegment,
+    PlanningSegmentError,
+    load_planning_segments,
+    materialize_route,
+    planning_segments_document,
+    validate_planning_segments,
+)
+from smartcar_tools.route_preflight import RoutePreflight, preflight_route
 from visualization_msgs.msg import Marker, MarkerArray
 
 # ── colours ────────────────────────────────────────────────────────────────
@@ -52,12 +66,117 @@ TASK_COLORS = {
     "corridor": "#F2CC33",
     "loop":     "#FF5933",
     "return":   "#B34DE6",
+    "nav":      "#5AB8E6",
+    "via":      "#AAB4BF",
 }
 DEFAULT_COLOR = "#CCCCCC"
 SELECTED_EDGE = "#FFFF33"
 FIELD_BG = "#1A1C20"
 GRID_COLOR = "#2A2C30"
 LINE_COLOR = "#26D9F2"
+PANEL_BG = "#20242A"
+PANEL_INPUT = "#2C323B"
+PANEL_TEXT = "#E7EBF0"
+PATH_OK = "#32D583"
+PATH_FAILED = "#F97066"
+PATH_PENDING = "#A6B0BF"
+DRAG_THRESHOLD_M = 0.01
+
+DIRECTION_LABELS = {
+    "forward": "正向",
+    "reverse": "倒向",
+}
+DIRECTION_CHOICES = {
+    "正向（前进）": "forward",
+    "倒向（倒车）": "reverse",
+}
+ENDPOINT_LABELS = {
+    "start": "起点",
+    "end": "终点",
+}
+EMPTY_THROUGH_LABEL = "（无）"
+
+
+def _cache_windows_font(source: Path) -> Path:
+    """Avoid rendering each frame through WSL's slow mounted Windows filesystem."""
+    if not source.is_file():
+        return source
+    try:
+        cache_root = Path(
+            os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
+        ) / "smartcar_tools" / "fonts"
+        cache_root.mkdir(parents=True, exist_ok=True)
+        cached = cache_root / source.name
+        if (
+            not cached.is_file()
+            or cached.stat().st_size != source.stat().st_size
+        ):
+            temporary = cached.with_name(f".{cached.name}.{os.getpid()}.tmp")
+            try:
+                shutil.copyfile(source, temporary)
+                temporary.replace(cached)
+            finally:
+                if temporary.exists():
+                    temporary.unlink()
+        return cached
+    except OSError:
+        # The UI remains usable when the user cache is read-only; this just
+        # retains the slower mounted-font fallback.
+        return source
+
+
+def _configure_cjk_font():
+    """Prefer a local CJK font and cache the WSL Windows-font fallback."""
+    families = ["Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans"]
+    local_candidates = (
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
+        Path("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf"),
+        Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
+    )
+    windows_candidates = (
+        Path("/mnt/c/Windows/Fonts/msyh.ttc"),
+        Path("/mnt/c/Windows/Fonts/msyhbd.ttc"),
+    )
+    candidates = list(local_candidates)
+    for source in windows_candidates:
+        if source.is_file():
+            candidates.append(_cache_windows_font(source))
+            candidates.append(source)
+    for candidate in candidates:
+        if not candidate.is_file():
+            continue
+        try:
+            font_manager.fontManager.addfont(str(candidate))
+            family = font_manager.FontProperties(fname=str(candidate)).get_name()
+        except (OSError, RuntimeError):
+            continue
+        families.insert(0, family)
+        break
+    matplotlib.rcParams["font.family"] = "sans-serif"
+    matplotlib.rcParams["font.sans-serif"] = families
+    matplotlib.rcParams["axes.unicode_minus"] = False
+
+
+def _direction_label(direction: str) -> str:
+    return DIRECTION_LABELS.get(direction, direction)
+
+
+def _endpoint_label(target: str) -> str:
+    return ENDPOINT_LABELS[target]
+
+
+def _preflight_message(message: str) -> str:
+    """Convert the local planner's terse diagnostics into UI-facing Chinese."""
+    if message.endswith(": no collision-free minimum-radius route"):
+        leg = message.removesuffix(": no collision-free minimum-radius route")
+        return f"{leg}：当前禁区与最小转弯半径下无可行路径"
+    if message.endswith(": orientation unconstrained; preflight uses route tangent"):
+        waypoint_id = message.removesuffix(": orientation unconstrained; preflight uses route tangent")
+        return f"{waypoint_id}：未设置朝向，预检按路线切线计算"
+    if message.endswith(": orientation unconstrained; preflight uses incoming tangent"):
+        waypoint_id = message.removesuffix(": orientation unconstrained; preflight uses incoming tangent")
+        return f"{waypoint_id}：未设置朝向，预检按入段切线计算"
+    return message
 
 
 def _yaw_from_quaternion(orientation):
@@ -83,12 +202,24 @@ class DragEditor:
         self._path = waypoints_path
         self._template, loaded = load_waypoint_document(self._path)
         self._waypoints = list(loaded)
-        self._history: list[tuple] = []
+        self._segments = list(load_planning_segments(self._template, self._waypoints))
+        self._history: list[tuple[tuple, tuple[PlanningSegment, ...]]] = []
         self._selected: int | None = None
         self._dragging: int | None = None
         self._drag_start = None
+        self._drag_moved = False
+        self._drag_preview_position = None
         self._panning = False
         self._pan_start = None
+        self._selected_segment = 0
+        self._selected_through: int | None = None
+        self._pick_target: str | None = None
+        self._adding_through = False
+        self._add_through_button: Button | None = None
+        self._status_text = None
+        self._preflight: RoutePreflight | None = None
+        self._route_definition_valid: bool | None = None
+        self._route_status = "尚未路径规划：可先编辑，完成后点击“路径规划”"
         self._lock = threading.Lock()
 
         # ── load field reference (same data as RViz overlay) ────────────
@@ -96,6 +227,7 @@ class DragEditor:
 
         # ── build matplotlib figure ────────────────────────────────────
         matplotlib.use("Qt5Agg")
+        _configure_cjk_font()
         matplotlib.rcParams["keymap.save"] = []
         matplotlib.rcParams["keymap.pan"] = []
         matplotlib.rcParams["keymap.zoom"] = []
@@ -106,12 +238,12 @@ class DragEditor:
         data_w = field.width + 2 * margin
         data_h = field.height + 2 * margin
 
-        # size figure to match data aspect, filling the screen nicely
-        self._fig, self._ax = plt.subplots(figsize=(10, 10 * data_h / data_w))
-        self._fig.canvas.manager.set_window_title("Waypoint Drag Editor — SmartCar")
-
-        # minimal margins so the plot fills the window
-        self._fig.subplots_adjust(left=0.06, right=0.97, bottom=0.06, top=0.97)
+        # Keep the field unframed and reserve a fixed right-hand route panel.
+        self._fig = plt.figure(figsize=(15.2, max(8.8, 11.0 * data_h / data_w)))
+        self._ax = self._fig.add_axes([0.055, 0.105, 0.585, 0.84])
+        self._fig.canvas.manager.set_window_title("路径分段编辑器 - SmartCar")
+        self._panel_axes = []
+        self._panel_widgets = []
 
         self._ax.set_facecolor(FIELD_BG)
         self._fig.patch.set_facecolor(FIELD_BG)
@@ -120,29 +252,45 @@ class DragEditor:
         self._ax.set_ylim(field.y_min - margin, field.y_max + margin)
         self._ax.set_aspect("equal")
         self._ax.grid(True, color=GRID_COLOR, alpha=0.5, linewidth=0.5)
-        self._ax.set_xlabel("X (m)  —  odom_combined", color="#888")
-        self._ax.set_ylabel("Y (m)", color="#888")
+        self._ax.set_xlabel("X（米，odom_combined）", color="#888")
+        self._ax.set_ylabel("Y（米）", color="#888")
         self._ax.tick_params(colors="#888")
 
         self._draw_field_ref()
+        self._draw_keepout_reference()
 
         # controls hint
         self._hint = self._ax.text(
             0.5, -0.06,
-            "drag=move  |  scroll=rotate(sel)/zoom(bg)  |  right-drag=pan  |  "
-            "+/- =zoom  |  arrows=pan  |  Ctrl+S=save  |  Ctrl+Z=undo  |  R=rotate15°",
+            "左键拖动：移动点  |  滚轮：调朝向/缩放  |  右键拖动：平移  |  "
+            "右侧：分段与约束  |  新增途经点后点击场地  |  点击“路径规划”：检查可行性  |  Ctrl+S：保存",
             transform=self._ax.transAxes, fontsize=7, color="#666",
             ha="center", va="top",
         )
 
         # artists we'll update
         self._scatter = None
-        self._arrows = []
+        self._arrows = {}
         self._line = None
+        self._segment_artists = []
         self._labels = []
         self._sel_ring = None
+        self._blit_background = None
+        self._drag_preview = self._ax.scatter(
+            [],
+            [],
+            s=150,
+            facecolors="none",
+            edgecolors=SELECTED_EDGE,
+            linewidths=3,
+            zorder=9,
+            animated=True,
+            visible=False,
+        )
 
+        self._mark_route_changed(redraw=False, rebuild_panel=False)
         self._redraw()
+        self._build_route_panel()
 
         # ── connect events ─────────────────────────────────────────────
         self._fig.canvas.mpl_connect("button_press_event", self._on_press)
@@ -150,11 +298,12 @@ class DragEditor:
         self._fig.canvas.mpl_connect("button_release_event", self._on_release)
         self._fig.canvas.mpl_connect("scroll_event", self._on_scroll)
         self._fig.canvas.mpl_connect("key_press_event", self._on_key)
+        self._fig.canvas.mpl_connect("draw_event", self._on_canvas_draw)
+        self._fig.canvas.mpl_connect("resize_event", self._on_canvas_resize)
 
         self._node.get_logger().info(
-            f"Drag editor ready: {len(self._waypoints)} waypoints, "
-            f"field ref from {geometry_path}. "
-            "Drag circles to move, scroll to rotate, Ctrl+S to save."
+            f"路径分段编辑器已就绪：{len(self._waypoints)} 个航点，"
+            f"{len(self._segments)} 个规划分段，场地参考：{geometry_path}。"
         )
 
     # ── field reference (matches RViz field_reference_node output) ─────
@@ -223,7 +372,7 @@ class DragEditor:
             zorder=2,
         )
         self._ax.annotate(
-            "P (origin)", (ref.p_origin.x, ref.p_origin.y + 0.18),
+            "P（起点）", (ref.p_origin.x, ref.p_origin.y + 0.18),
             fontsize=8, color="#33FF66", ha="center", va="bottom", zorder=2,
         )
 
@@ -234,7 +383,7 @@ class DragEditor:
             zorder=2,
         )
         self._ax.annotate(
-            "Task", (ref.task_point.x, ref.task_point.y + 0.18),
+            "任务点", (ref.task_point.x, ref.task_point.y + 0.18),
             fontsize=8, color="#FF8C42", ha="center", va="bottom", zorder=2,
         )
 
@@ -246,62 +395,921 @@ class DragEditor:
                 zorder=1, alpha=0.8,
             )
 
+    def _draw_keepout_reference(self):
+        """Make the simulation planning constraints visible before editing."""
+        core = central_c_keepout(self._field_ref)
+        for bounds in keepout_bounds(self._field_ref):
+            is_core = bounds == core
+            self._ax.add_patch(plt.Rectangle(
+                (bounds.x_min, bounds.y_min), bounds.width, bounds.height,
+                facecolor="#F0443833" if is_core else "#F0443818",
+                edgecolor="#FF7368" if is_core else "#D26A63",
+                linewidth=1.2 if is_core else 0.7,
+                linestyle="--",
+                zorder=2,
+            ))
+        self._ax.annotate(
+            "C 区禁区", (core.center.x, core.y_min - 0.08),
+            fontsize=7, color="#FF8B80", ha="center", va="top", zorder=2,
+        )
+
+    # ── route-segment panel and model ──────────────────────────────────
+
+    def _current_segment(self):
+        if not self._segments:
+            return None
+        self._selected_segment = max(
+            0, min(self._selected_segment, len(self._segments) - 1)
+        )
+        return self._segments[self._selected_segment]
+
+    def _new_panel_axis(self, rect):
+        axis = self._fig.add_axes(rect)
+        axis.set_facecolor(PANEL_BG)
+        self._panel_axes.append(axis)
+        return axis
+
+    def _style_button(self, button):
+        button.label.set_color(PANEL_TEXT)
+        button.label.set_fontsize(8)
+        self._panel_widgets.append(button)
+        return button
+
+    def _style_radio(self, radio):
+        for label in radio.labels:
+            label.set_color(PANEL_TEXT)
+            label.set_fontsize(8)
+        for circle in getattr(radio, "circles", ()):
+            circle.set_edgecolor("#8D99A8")
+        self._panel_widgets.append(radio)
+        return radio
+
+    def _route_ids_for_display(self):
+        try:
+            route = materialize_route(self._waypoints, self._segments)
+        except PlanningSegmentError:
+            route = tuple(self._waypoints)
+        return [waypoint.id for waypoint in route]
+
+    @staticmethod
+    def _segment_panel_label(index, segment):
+        return f"第 {index + 1} 段  [{_direction_label(segment.direction)}]"
+
+    def _set_route_status(self, message):
+        self._route_status = str(message)
+        self._node.get_logger().info(self._route_status)
+        status_text = self._status_text
+        if status_text is not None:
+            status_text.set_text(self._route_status)
+            status_text.set_color(self._route_status_color())
+            self._fig.canvas.draw_idle()
+
+    def _route_status_color(self):
+        if self._preflight is not None and self._preflight.feasible:
+            return PATH_OK
+        if self._preflight is not None or self._route_definition_valid is False:
+            return PATH_FAILED
+        return PATH_PENDING
+
+    def _refresh_add_through_button(self, redraw=True):
+        """Update the one-click placement mode without rebuilding its widget."""
+        button = self._add_through_button
+        if button is None:
+            return
+        button.label.set_text(
+            "点击场地放置" if self._adding_through else "新增途经点"
+        )
+        color = "#176F4D" if self._adding_through else PANEL_INPUT
+        button.color = color
+        button.ax.set_facecolor(color)
+        if redraw:
+            self._fig.canvas.draw_idle()
+
+    def _mark_route_changed(self, redraw=True, rebuild_panel=False):
+        """Refresh cheap route-definition checks without running the planner."""
+        self._preflight = None
+        try:
+            checked = validate_planning_segments(self._segments, self._waypoints)
+            route = materialize_route(self._waypoints, checked)
+            validate_waypoints(route)
+        except (PlanningSegmentError, ValueError) as error:
+            self._route_definition_valid = False
+            self._node.get_logger().error(f"Route validation error: {error}")
+            self._set_route_status(
+                "路线定义有误：请确认分段首尾连续、所有航点均被覆盖，"
+                "且 QR/VLM 点是分段终点"
+            )
+        else:
+            self._route_definition_valid = True
+            self._set_route_status(
+                "路线已修改：点击“路径规划”检查禁区、转弯半径和可行路径"
+            )
+        if redraw:
+            self._redraw()
+        if rebuild_panel:
+            self._build_route_panel()
+
+    def _recheck_route(self, redraw=True, rebuild_panel=False):
+        """Run the explicit local car-like path-planning check."""
+        try:
+            checked = validate_planning_segments(self._segments, self._waypoints)
+            route = materialize_route(self._waypoints, checked)
+            validate_waypoints(route)
+            self._route_definition_valid = True
+            self._preflight = preflight_route(
+                self._field_ref, self._waypoints, checked
+            )
+            failed = [segment for segment in self._preflight.segments if not segment.feasible]
+            if failed:
+                self._set_route_status(
+                    "预检不通过：" + _preflight_message(failed[0].message)
+                )
+            else:
+                total = sum(segment.length_m for segment in self._preflight.segments)
+                warning = (
+                    "\n提示：" + _preflight_message(self._preflight.warnings[0])
+                    if self._preflight.warnings else ""
+                )
+                self._set_route_status(
+                    f"预检通过：{len(checked)} 段，总长 {total:.1f} 米"
+                    + warning
+                )
+        except (PlanningSegmentError, ValueError) as error:
+            self._preflight = None
+            self._route_definition_valid = False
+            self._node.get_logger().error(f"Route validation error: {error}")
+            self._set_route_status(
+                "路线定义有误：请确认分段首尾连续、所有航点均被覆盖，"
+                "且 QR/VLM 点是分段终点"
+            )
+        if redraw:
+            self._redraw()
+        if rebuild_panel:
+            self._build_route_panel()
+
+    def _build_route_panel(self):
+        self._invalidate_fast_canvas()
+        self._add_through_button = None
+        self._status_text = None
+        for axis in self._panel_axes:
+            axis.remove()
+        self._panel_axes.clear()
+        self._panel_widgets.clear()
+
+        title = self._new_panel_axis([0.675, 0.935, 0.305, 0.04])
+        title.axis("off")
+        title.text(
+            0.0, 0.5, "路径分段", color=PANEL_TEXT,
+            fontsize=10, fontweight="bold", va="center",
+        )
+
+        labels = [
+            self._segment_panel_label(index, segment)
+            for index, segment in enumerate(self._segments)
+        ] or ["（暂无分段）"]
+        segment_axis = self._new_panel_axis([0.675, 0.755, 0.305, 0.16])
+        segment_radio = self._style_radio(RadioButtons(
+            segment_axis,
+            labels,
+            active=min(self._selected_segment, max(0, len(labels) - 1)),
+            activecolor="#4F9DFF",
+        ))
+        segment_radio.on_clicked(self._on_segment_selected)
+
+        split_axis = self._new_panel_axis([0.675, 0.705, 0.145, 0.035])
+        self._style_button(Button(
+            split_axis, "在选中途经点拆分", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(self._split_segment)
+        delete_axis = self._new_panel_axis([0.835, 0.705, 0.145, 0.035])
+        self._style_button(Button(
+            delete_axis, "合并/删除", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(self._delete_segment)
+
+        segment = self._current_segment()
+        if segment is None:
+            self._fig.canvas.draw_idle()
+            return
+
+        direction_label = self._new_panel_axis([0.675, 0.665, 0.305, 0.025])
+        direction_label.axis("off")
+        direction_label.text(0.0, 0.4, "行驶方向", color="#AEB8C5", fontsize=8)
+        direction_axis = self._new_panel_axis([0.675, 0.585, 0.305, 0.075])
+        direction_radio = self._style_radio(RadioButtons(
+            direction_axis,
+            tuple(DIRECTION_CHOICES),
+            active=0 if segment.direction == "forward" else 1,
+            activecolor="#4F9DFF",
+        ))
+        direction_radio.on_clicked(self._on_direction_selected)
+
+        start_axis = self._new_panel_axis([0.675, 0.535, 0.215, 0.035])
+        start_box = TextBox(
+            start_axis, "起点 ", initial=segment.start_id,
+            color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
+        )
+        start_box.label.set_color(PANEL_TEXT)
+        start_box.text_disp.set_color(PANEL_TEXT)
+        start_box.on_submit(lambda value: self._set_segment_endpoint("start", value))
+        self._panel_widgets.append(start_box)
+        start_pick_axis = self._new_panel_axis([0.905, 0.535, 0.075, 0.035])
+        self._style_button(Button(
+            start_pick_axis, "点选", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(lambda _event: self._set_pick_target("start"))
+
+        end_axis = self._new_panel_axis([0.675, 0.485, 0.215, 0.035])
+        end_box = TextBox(
+            end_axis, "终点 ", initial=segment.end_id,
+            color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
+        )
+        end_box.label.set_color(PANEL_TEXT)
+        end_box.text_disp.set_color(PANEL_TEXT)
+        end_box.on_submit(lambda value: self._set_segment_endpoint("end", value))
+        self._panel_widgets.append(end_box)
+        end_pick_axis = self._new_panel_axis([0.905, 0.485, 0.075, 0.035])
+        self._style_button(Button(
+            end_pick_axis, "点选", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(lambda _event: self._set_pick_target("end"))
+
+        start_yaw_axis = self._new_panel_axis([0.675, 0.435, 0.145, 0.035])
+        start_yaw = TextBox(
+            start_yaw_axis, "起点朝向 ",
+            initial=f"{self._waypoint_yaw_degrees(segment.start_id):.1f}",
+            color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
+        )
+        start_yaw.label.set_color(PANEL_TEXT)
+        start_yaw.text_disp.set_color(PANEL_TEXT)
+        start_yaw.on_submit(lambda value: self._set_endpoint_yaw("start", value))
+        self._panel_widgets.append(start_yaw)
+        end_yaw_axis = self._new_panel_axis([0.835, 0.435, 0.145, 0.035])
+        end_yaw = TextBox(
+            end_yaw_axis, "终点朝向 ",
+            initial=f"{self._waypoint_yaw_degrees(segment.end_id):.1f}",
+            color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
+        )
+        end_yaw.label.set_color(PANEL_TEXT)
+        end_yaw.text_disp.set_color(PANEL_TEXT)
+        end_yaw.on_submit(lambda value: self._set_endpoint_yaw("end", value))
+        self._panel_widgets.append(end_yaw)
+
+        through_label = self._new_panel_axis([0.675, 0.415, 0.305, 0.025])
+        through_label.axis("off")
+        through_label.text(
+            0.0, 0.4, "按顺序途经点", color="#AEB8C5", fontsize=8
+        )
+        through_labels = list(segment.through_ids) or [EMPTY_THROUGH_LABEL]
+        through_axis = self._new_panel_axis([0.675, 0.280, 0.305, 0.125])
+        through_radio = self._style_radio(RadioButtons(
+            through_axis,
+            through_labels,
+            active=(
+                min(self._selected_through, len(through_labels) - 1)
+                if self._selected_through is not None else 0
+            ),
+            activecolor="#4F9DFF",
+        ))
+        through_radio.on_clicked(self._on_through_selected)
+
+        new_through_axis = self._new_panel_axis([0.675, 0.235, 0.305, 0.030])
+        new_through_button = self._style_button(Button(
+            new_through_axis, "新增途经点",
+            color=PANEL_INPUT, hovercolor="#3C4654"
+        ))
+        self._add_through_button = new_through_button
+        self._refresh_add_through_button(redraw=False)
+        new_through_button.on_clicked(self._begin_add_through)
+
+        add_axis = self._new_panel_axis([0.675, 0.190, 0.145, 0.035])
+        self._style_button(Button(
+            add_axis, "加入已有点", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(self._add_selected_through)
+        remove_axis = self._new_panel_axis([0.835, 0.190, 0.145, 0.035])
+        self._style_button(Button(
+            remove_axis, "移除", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(self._remove_selected_through)
+        up_axis = self._new_panel_axis([0.675, 0.145, 0.145, 0.035])
+        self._style_button(Button(
+            up_axis, "上移", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(lambda _event: self._move_selected_through(-1))
+        down_axis = self._new_panel_axis([0.835, 0.145, 0.145, 0.035])
+        self._style_button(Button(
+            down_axis, "下移", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(lambda _event: self._move_selected_through(1))
+
+        unconstrained_axis = self._new_panel_axis([0.675, 0.105, 0.145, 0.035])
+        self._style_button(Button(
+            unconstrained_axis, "设为无朝向", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(self._set_selected_orientation_unconstrained)
+        restore_orientation_axis = self._new_panel_axis([0.835, 0.105, 0.145, 0.035])
+        self._style_button(Button(
+            restore_orientation_axis, "恢复路线朝向", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(self._restore_selected_route_orientation)
+
+        status = self._new_panel_axis([0.675, 0.050, 0.305, 0.040])
+        status.axis("off")
+        self._status_text = status.text(
+            0.0, 0.98, self._route_status, color=self._route_status_color(),
+            fontsize=6.8, va="top", wrap=True,
+        )
+        recheck_axis = self._new_panel_axis([0.675, 0.005, 0.145, 0.035])
+        self._style_button(Button(
+            recheck_axis, "路径规划", color=PANEL_INPUT, hovercolor="#3C4654"
+        )).on_clicked(lambda _event: self._recheck_route(rebuild_panel=True))
+        save_axis = self._new_panel_axis([0.835, 0.005, 0.145, 0.035])
+        self._style_button(Button(
+            save_axis, "保存路线", color="#176F4D", hovercolor="#248D63"
+        )).on_clicked(lambda _event: self._save())
+        self._fig.canvas.draw_idle()
+
+    def _on_segment_selected(self, label):
+        for index, segment in enumerate(self._segments):
+            if label == self._segment_panel_label(index, segment):
+                self._selected_segment = index
+                self._selected_through = None
+                self._pick_target = None
+                self._build_route_panel()
+                self._redraw()
+                return
+
+    def _on_direction_selected(self, direction):
+        segment = self._current_segment()
+        direction = DIRECTION_CHOICES.get(direction)
+        if direction is None:
+            return
+        if segment is None or direction == segment.direction:
+            return
+        self._push_history()
+        self._segments[self._selected_segment] = replace(segment, direction=direction)
+        self._mark_route_changed(rebuild_panel=True)
+
+    def _set_pick_target(self, target):
+        self._pick_target = target
+        self._set_route_status(f"请在场地上点选本段的{_endpoint_label(target)}")
+        self._build_route_panel()
+
+    def _set_segment_endpoint(self, target, waypoint_id):
+        segment = self._current_segment()
+        waypoint_id = str(waypoint_id).strip()
+        if segment is None or not waypoint_id:
+            return
+        self._push_history()
+        field = "start_id" if target == "start" else "end_id"
+        self._segments[self._selected_segment] = replace(segment, **{field: waypoint_id})
+        self._pick_target = None
+        self._selected_through = None
+        self._mark_route_changed(rebuild_panel=True)
+
+    def _waypoint_yaw_degrees(self, waypoint_id):
+        waypoint = next(
+            (item for item in self._waypoints if item.id == waypoint_id), None
+        )
+        if waypoint is None:
+            return 0.0
+        return math.degrees(_yaw_from_quaternion(waypoint.orientation))
+
+    def _set_endpoint_yaw(self, target, value):
+        segment = self._current_segment()
+        if segment is None:
+            return
+        try:
+            yaw_deg = float(str(value).strip())
+        except ValueError:
+            self._set_route_status("朝向必须是有限的角度数值（单位：度）")
+            self._build_route_panel()
+            return
+        if not math.isfinite(yaw_deg):
+            self._set_route_status("朝向必须是有限的角度数值（单位：度）")
+            self._build_route_panel()
+            return
+        waypoint_id = segment.start_id if target == "start" else segment.end_id
+        index = next(
+            (index for index, item in enumerate(self._waypoints) if item.id == waypoint_id),
+            None,
+        )
+        if index is None:
+            self._set_route_status(
+                f"找不到{_endpoint_label(target)}航点：{waypoint_id!r}"
+            )
+            self._build_route_panel()
+            return
+        if index == 0:
+            self._set_route_status("P 起点朝向固定为 +X")
+            self._build_route_panel()
+            return
+        self._push_history()
+        waypoint = self._waypoints[index]
+        with self._lock:
+            self._waypoints[index] = replace(
+                waypoint, orientation=_yaw_quaternion(math.radians(yaw_deg))
+        )
+        self._selected = index
+        self._mark_route_changed(rebuild_panel=True)
+        self._publish_markers()
+
+    def _selected_current_through_index(self):
+        """Return a selected intermediate point, or explain why it is ineligible."""
+        segment = self._current_segment()
+        if segment is None or self._selected is None:
+            self._set_route_status("请先在场地上选中当前分段的途经点")
+            self._build_route_panel()
+            return None
+        waypoint_id = self._waypoints[self._selected].id
+        if waypoint_id not in segment.through_ids:
+            self._set_route_status(
+                "无朝向只可用于当前分段的途经点；先点击“加入选中点”"
+            )
+            self._build_route_panel()
+            return None
+        return self._selected
+
+    def _set_selected_orientation_unconstrained(self, _event):
+        """Store an intermediate waypoint without a yaw constraint."""
+        index = self._selected_current_through_index()
+        if index is None:
+            return
+        waypoint = self._waypoints[index]
+        if is_zero_quaternion(waypoint.orientation):
+            self._set_route_status(f"{waypoint.id} 已是无朝向途经点")
+            self._build_route_panel()
+            return
+        self._push_history()
+        with self._lock:
+            self._waypoints[index] = replace(
+                waypoint, orientation=(0.0, 0.0, 0.0, 0.0)
+            )
+        self._set_route_status(f"{waypoint.id} 已设为无朝向途经点")
+        self._mark_route_changed(rebuild_panel=True)
+        self._publish_markers()
+
+    def _restore_selected_route_orientation(self, _event):
+        """Restore an unconstrained intermediate point to the route tangent."""
+        index = self._selected_current_through_index()
+        if index is None:
+            return
+        waypoint = self._waypoints[index]
+        if not is_zero_quaternion(waypoint.orientation):
+            self._set_route_status(f"{waypoint.id} 已有朝向")
+            self._build_route_panel()
+            return
+        segment = self._current_segment()
+        route_ids = segment.route_ids
+        route_index = route_ids.index(waypoint.id)
+        previous = next(
+            item for item in self._waypoints if item.id == route_ids[route_index - 1]
+        )
+        following = next(
+            item for item in self._waypoints if item.id == route_ids[route_index + 1]
+        )
+        dx = following.position[0] - previous.position[0]
+        dy = following.position[1] - previous.position[1]
+        if math.hypot(dx, dy) <= 1.0e-6:
+            self._set_route_status("相邻点重合，无法恢复路线朝向")
+            self._build_route_panel()
+            return
+        yaw = math.atan2(dy, dx)
+        if segment.direction == "reverse":
+            yaw += math.pi
+        self._push_history()
+        with self._lock:
+            self._waypoints[index] = replace(
+                waypoint, orientation=_yaw_quaternion(yaw)
+            )
+        self._set_route_status(f"{waypoint.id} 已恢复为路线朝向")
+        self._mark_route_changed(rebuild_panel=True)
+        self._publish_markers()
+
+    def _begin_add_through(self, _event):
+        """Enter a one-click mode for adding a new route-constraint point."""
+        if self._current_segment() is None:
+            self._set_route_status("请先选择要添加途经点的分段")
+            return
+        if self._adding_through:
+            self._adding_through = False
+            self._set_route_status("已取消新增途经点")
+        else:
+            self._pick_target = None
+            self._adding_through = True
+            self._set_route_status("请在场地空白处点击新途经点的位置；Esc 取消")
+        self._refresh_add_through_button()
+
+    def _next_via_id(self):
+        existing = {waypoint.id for waypoint in self._waypoints}
+        index = 1
+        while f"via_{index}" in existing:
+            index += 1
+        return f"via_{index}"
+
+    def _create_through_at(self, x, y):
+        segment = self._current_segment()
+        field = self._field_ref.field
+        if segment is None:
+            return
+        if not (field.x_min <= x <= field.x_max and field.y_min <= y <= field.y_max):
+            self._set_route_status("新途经点必须落在比赛场地内")
+            self._refresh_add_through_button()
+            return
+        waypoint_id = self._next_via_id()
+        self._push_history()
+        waypoint = Waypoint(
+            frame_id=self._waypoints[0].frame_id,
+            position=(float(x), float(y), 0.0),
+            orientation=(0.0, 0.0, 0.0, 0.0),
+            task="via",
+            direction=segment.direction,
+            id=waypoint_id,
+            goal_profile="standard",
+        )
+        # The semantic document reserves its final entry for the P return
+        # point.  Route order itself comes from planning_segments, so inserting
+        # before that terminal entry preserves both contracts until save
+        # materializes the complete ordered route.
+        insertion_index = len(self._waypoints) - 1
+        with self._lock:
+            self._waypoints.insert(insertion_index, waypoint)
+        through = list(segment.through_ids)
+        insert_at = (
+            self._selected_through + 1
+            if self._selected_through is not None
+            else len(through)
+        )
+        through.insert(insert_at, waypoint_id)
+        self._segments[self._selected_segment] = replace(
+            segment, through_ids=tuple(through)
+        )
+        self._selected = insertion_index
+        self._selected_through = insert_at
+        self._adding_through = False
+        self._set_route_status(f"已新增无朝向途经点 {waypoint_id}")
+        self._mark_route_changed(rebuild_panel=True)
+        self._publish_markers()
+
+    def _on_through_selected(self, label):
+        segment = self._current_segment()
+        if segment is None or label == EMPTY_THROUGH_LABEL:
+            self._selected_through = None
+            return
+        self._selected_through = segment.through_ids.index(label)
+
+    def _add_selected_through(self, _event):
+        segment = self._current_segment()
+        if segment is None or self._selected is None:
+            self._set_route_status("请先在场地上选中要加入的途经点")
+            self._build_route_panel()
+            return
+        waypoint_id = self._waypoints[self._selected].id
+        if waypoint_id in {segment.start_id, segment.end_id}:
+            self._set_route_status("本段起点或终点不能同时作为途经点")
+            self._build_route_panel()
+            return
+        for candidate in self._segments:
+            if waypoint_id in {candidate.start_id, candidate.end_id}:
+                self._set_route_status(
+                    "该点正在作为其他分段的端点，请先修改该分段端点"
+                )
+                self._build_route_panel()
+                return
+        self._push_history()
+        for index, candidate in enumerate(self._segments):
+            if waypoint_id in candidate.through_ids:
+                retained = tuple(item for item in candidate.through_ids if item != waypoint_id)
+                self._segments[index] = replace(candidate, through_ids=retained)
+        segment = self._current_segment()
+        self._segments[self._selected_segment] = replace(
+            segment, through_ids=(*segment.through_ids, waypoint_id)
+        )
+        self._selected_through = len(segment.through_ids)
+        self._mark_route_changed(rebuild_panel=True)
+
+    def _remove_selected_through(self, _event):
+        segment = self._current_segment()
+        if (
+            segment is None or self._selected_through is None
+            or self._selected_through >= len(segment.through_ids)
+        ):
+            self._set_route_status("请先从途经点列表中选中要移除的点")
+            self._build_route_panel()
+            return
+        self._push_history()
+        through = list(segment.through_ids)
+        removed = through.pop(self._selected_through)
+        self._segments[self._selected_segment] = replace(
+            segment, through_ids=tuple(through)
+        )
+        self._selected_through = None
+        self._set_route_status(f"已移除 {removed}；保存前需将它加入其他分段")
+        self._mark_route_changed(rebuild_panel=True)
+
+    def _move_selected_through(self, offset):
+        segment = self._current_segment()
+        if (
+            segment is None or self._selected_through is None
+            or not 0 <= self._selected_through < len(segment.through_ids)
+        ):
+            self._set_route_status("请先选中要调整顺序的途经点")
+            self._build_route_panel()
+            return
+        destination = self._selected_through + offset
+        if not 0 <= destination < len(segment.through_ids):
+            return
+        self._push_history()
+        through = list(segment.through_ids)
+        through[self._selected_through], through[destination] = (
+            through[destination], through[self._selected_through]
+        )
+        self._segments[self._selected_segment] = replace(
+            segment, through_ids=tuple(through)
+        )
+        self._selected_through = destination
+        self._mark_route_changed(rebuild_panel=True)
+
+    def _next_segment_id(self):
+        existing = {segment.id for segment in self._segments}
+        index = 1
+        while f"segment_{index}" in existing:
+            index += 1
+        return f"segment_{index}"
+
+    def _split_segment(self, _event):
+        segment = self._current_segment()
+        if segment is None or self._selected is None:
+            self._set_route_status("请先在本段的途经点中选一个点，再拆分")
+            self._build_route_panel()
+            return
+        waypoint_id = self._waypoints[self._selected].id
+        if waypoint_id not in segment.through_ids:
+            self._set_route_status("拆分位置必须是当前分段的途经点")
+            self._build_route_panel()
+            return
+        split_index = segment.through_ids.index(waypoint_id)
+        self._push_history()
+        first = replace(
+            segment,
+            end_id=waypoint_id,
+            through_ids=segment.through_ids[:split_index],
+        )
+        second = PlanningSegment(
+            id=self._next_segment_id(),
+            direction=segment.direction,
+            start_id=waypoint_id,
+            end_id=segment.end_id,
+            through_ids=segment.through_ids[split_index + 1:],
+        )
+        self._segments[self._selected_segment:self._selected_segment + 1] = [
+            first, second,
+        ]
+        self._selected_segment += 1
+        self._selected_through = None
+        self._mark_route_changed(rebuild_panel=True)
+
+    def _delete_segment(self, _event):
+        segment = self._current_segment()
+        if segment is None or len(self._segments) == 1:
+            self._set_route_status("至少需要保留一个规划分段")
+            self._build_route_panel()
+            return
+        previous_index = self._selected_segment - 1
+        next_index = self._selected_segment + 1
+        if previous_index >= 0 and self._segments[previous_index].direction == segment.direction:
+            self._push_history()
+            previous = self._segments[previous_index]
+            self._segments[previous_index] = replace(
+                previous,
+                end_id=segment.end_id,
+                through_ids=(*previous.through_ids, previous.end_id, *segment.through_ids),
+            )
+            del self._segments[self._selected_segment]
+            self._selected_segment = previous_index
+        elif next_index < len(self._segments) and self._segments[next_index].direction == segment.direction:
+            self._push_history()
+            following = self._segments[next_index]
+            self._segments[next_index] = replace(
+                following,
+                start_id=segment.start_id,
+                through_ids=(*segment.through_ids, segment.end_id, *following.through_ids),
+            )
+            del self._segments[self._selected_segment]
+        else:
+            self._set_route_status("只有行驶方向相同的相邻分段才能合并")
+            self._build_route_panel()
+            return
+        self._selected_through = None
+        self._mark_route_changed(rebuild_panel=True)
+
     # ── rendering ──────────────────────────────────────────────────────
+
+    def _route_xy(self):
+        waypoint_by_id = {waypoint.id: waypoint for waypoint in self._waypoints}
+        route_points = [
+            waypoint_by_id[waypoint_id]
+            for waypoint_id in self._route_ids_for_display()
+            if waypoint_id in waypoint_by_id
+        ]
+        return (
+            [waypoint.position[0] for waypoint in route_points],
+            [waypoint.position[1] for waypoint in route_points],
+        )
+
+    def _waypoint_label_text(self, index):
+        waypoint = self._waypoints[index]
+        locked = (
+            " [位置锁定]"
+            if index in (0, len(self._waypoints) - 1)
+            else ""
+        )
+        return f"{index}:{waypoint.id}{locked}"
+
+    def _draw_waypoint_arrow(self, index):
+        waypoint = self._waypoints[index]
+        if is_zero_quaternion(waypoint.orientation):
+            return None
+        x, y = waypoint.position[:2]
+        yaw = _yaw_from_quaternion(waypoint.orientation)
+        arrow_len = 0.18
+        color = TASK_COLORS.get(waypoint.task, DEFAULT_COLOR)
+        return self._ax.arrow(
+            x,
+            y,
+            arrow_len * math.cos(yaw),
+            arrow_len * math.sin(yaw),
+            head_width=0.06,
+            head_length=0.08,
+            fc=color,
+            ec=color,
+            alpha=0.9,
+            zorder=6,
+            length_includes_head=True,
+        )
+
+    def _clear_preflight_artists(self):
+        for artist in self._segment_artists:
+            artist.remove()
+        self._segment_artists.clear()
+
+    def _refresh_selected_ring(self):
+        if self._selected is None:
+            if self._sel_ring is not None:
+                self._sel_ring.remove()
+                self._sel_ring = None
+            return
+        x, y = self._waypoints[self._selected].position[:2]
+        if self._sel_ring is None:
+            self._sel_ring = self._ax.add_patch(plt.Circle(
+                (x, y),
+                0.12,
+                fill=False,
+                edgecolor=SELECTED_EDGE,
+                linewidth=2.5,
+                zorder=8,
+                linestyle="-",
+            ))
+        else:
+            self._sel_ring.set_center((x, y))
+
+    def _invalidate_fast_canvas(self):
+        self._blit_background = None
+
+    def _on_canvas_draw(self, event):
+        """Refresh the field-only background after a normal figure redraw."""
+        canvas = self._fig.canvas
+        if event.canvas is not canvas or not canvas.supports_blit:
+            self._invalidate_fast_canvas()
+            return
+        self._blit_background = canvas.copy_from_bbox(self._ax.bbox)
+        # Qt emits this from its paint cycle.  Calling ``blit`` here re-enters
+        # QWidget.repaint under WSLg and can recurse until the process crashes.
+        # The next pointer event draws the animated artists from this cache.
+
+    def _on_canvas_resize(self, _event):
+        self._invalidate_fast_canvas()
+
+    def _prepare_fast_canvas(self):
+        """Capture the static field once so pointer updates can use blitting."""
+        if self._blit_background is not None:
+            return
+        canvas = self._fig.canvas
+        if not canvas.supports_blit:
+            canvas.draw_idle()
+            return
+        canvas.draw()
+        if self._blit_background is None:
+            self._blit_background = canvas.copy_from_bbox(self._ax.bbox)
+        self._blit_dynamic_artists()
+
+    def _blit_dynamic_artists(self):
+        canvas = self._fig.canvas
+        if self._blit_background is None or not canvas.supports_blit:
+            canvas.draw_idle()
+            return
+        canvas.restore_region(self._blit_background)
+        if self._drag_preview.get_visible():
+            self._ax.draw_artist(self._drag_preview)
+        canvas.blit(self._ax.bbox)
+
+    def _hide_drag_preview(self):
+        self._drag_preview_position = None
+        self._drag_preview.set_visible(False)
+
+    def _update_selection_artists(self):
+        """Redraw the persistent selection ring after a discrete click."""
+        if self._scatter is None:
+            self._redraw()
+            return
+        # Right-panel widgets issue normal canvas redraws for their hover
+        # state. The ring must be part of that normal draw, otherwise it
+        # appears to disappear when the pointer enters the panel.
+        self._invalidate_fast_canvas()
+        self._refresh_selected_ring()
+        self._fig.canvas.draw_idle()
+
+    def _update_drag_preview(self, x, y):
+        """Show a lightweight pointer-following preview until mouse release."""
+        self._prepare_fast_canvas()
+        self._drag_preview_position = (float(x), float(y))
+        self._drag_preview.set_offsets([self._drag_preview_position])
+        self._drag_preview.set_visible(True)
+        self._blit_dynamic_artists()
 
     def _redraw(self):
         """Full redraw of all waypoint artists."""
+        self._invalidate_fast_canvas()
+        self._hide_drag_preview()
         xs = [w.position[0] for w in self._waypoints]
         ys = [w.position[1] for w in self._waypoints]
-        yaws = [_yaw_from_quaternion(w.orientation) for w in self._waypoints]
         colors = [TASK_COLORS.get(w.task, DEFAULT_COLOR) for w in self._waypoints]
 
-        # connecting line
+        # The muted line is the user-declared constraint order.  Colored paths
+        # below it are the local heading-aware preflight result.
         if self._line is not None:
             self._line.remove()
-        self._line, = self._ax.plot(xs, ys, color=LINE_COLOR, linewidth=1.5,
-                                     alpha=0.8, zorder=3)
+        waypoint_by_id = {waypoint.id: waypoint for waypoint in self._waypoints}
+        route_xs, route_ys = self._route_xy()
+        self._line, = self._ax.plot(
+            route_xs,
+            route_ys,
+            color=PATH_PENDING, linewidth=1.0, linestyle=":", alpha=0.75, zorder=3,
+        )
+
+        self._clear_preflight_artists()
+        if self._preflight is not None:
+            for index, report in enumerate(self._preflight.segments):
+                points = report.points
+                color = PATH_OK if report.feasible else PATH_FAILED
+                linestyle = "--" if report.direction == "reverse" else "-"
+                if points:
+                    line, = self._ax.plot(
+                        [point.x for point in points],
+                        [point.y for point in points],
+                        color=color, linewidth=2.4, linestyle=linestyle,
+                        alpha=0.92, zorder=4,
+                    )
+                    self._segment_artists.append(line)
+                    anchor = points[0]
+                else:
+                    segment = self._segments[index]
+                    constrained = [
+                        waypoint_by_id[waypoint_id]
+                        for waypoint_id in segment.route_ids
+                    ]
+                    line, = self._ax.plot(
+                        [waypoint.position[0] for waypoint in constrained],
+                        [waypoint.position[1] for waypoint in constrained],
+                        color=color, linewidth=2.0, linestyle=":", alpha=0.9, zorder=4,
+                    )
+                    self._segment_artists.append(line)
+                    anchor = Point2D(
+                        constrained[0].position[0], constrained[0].position[1]
+                    )
+                marker = "可行" if report.feasible else "不可行"
+                label = self._ax.annotate(
+                    f"第 {index + 1} 段 {marker} {report.length_m:.1f} 米",
+                    (anchor.x, anchor.y - 0.16), fontsize=6.7,
+                    color=color, ha="center", va="top", zorder=7,
+                )
+                self._segment_artists.append(label)
 
         # scatter plot (draggable circles)
         if self._scatter is not None:
             self._scatter.remove()
-        sizes = [140 if i == self._selected else 85 for i in range(len(xs))]
-        edge_colors = [
-            SELECTED_EDGE if i == self._selected else colors[i]
-            for i in range(len(xs))
-        ]
-        edge_widths = [3 if i == self._selected else 1.5 for i in range(len(xs))]
         self._scatter = self._ax.scatter(
-            xs, ys, s=sizes, c=colors, edgecolors=edge_colors,
-            linewidths=edge_widths, zorder=5, picker=8, alpha=0.95,
+            xs, ys, s=85, c=colors, edgecolors=colors,
+            linewidths=1.5, zorder=5, picker=8, alpha=0.95,
         )
 
         # direction arrows (skip zero-quaternion / orientation-unconstrained waypoints)
-        for arrow in self._arrows:
+        for arrow in self._arrows.values():
             arrow.remove()
         self._arrows.clear()
-        arrow_len = 0.18
-        for w, x, y, yaw, color in zip(self._waypoints, xs, ys, yaws, colors):
-            if is_zero_quaternion(w.orientation):
-                continue
-            dx = arrow_len * math.cos(yaw)
-            dy = arrow_len * math.sin(yaw)
-            arrow = self._ax.arrow(
-                x, y, dx, dy, head_width=0.06, head_length=0.08,
-                fc=color, ec=color, alpha=0.9, zorder=6,
-                length_includes_head=True,
-            )
-            self._arrows.append(arrow)
+        for index in range(len(self._waypoints)):
+            arrow = self._draw_waypoint_arrow(index)
+            if arrow is not None:
+                self._arrows[index] = arrow
 
         # labels
         for label in self._labels:
             label.remove()
         self._labels.clear()
-        for i, (x, y, w) in enumerate(zip(xs, ys, self._waypoints)):
-            locked = i in (0, len(self._waypoints) - 1)
-            sel = " [*]" if i == self._selected else ""
-            lck = " [LOCKED]" if locked else ""
+        for i, (x, y) in enumerate(zip(xs, ys)):
             label = self._ax.annotate(
-                f"{i}:{w.id}{sel}{lck}",
+                self._waypoint_label_text(i),
                 (x, y + 0.20), fontsize=7, color="white",
                 ha="center", va="bottom", zorder=7,
                 bbox=dict(boxstyle="round,pad=0.2", facecolor="#000000CC",
@@ -309,17 +1317,7 @@ class DragEditor:
             )
             self._labels.append(label)
 
-        # selected ring
-        if self._sel_ring is not None:
-            self._sel_ring.remove()
-            self._sel_ring = None
-        if self._selected is not None:
-            sx, sy = xs[self._selected], ys[self._selected]
-            self._sel_ring = self._ax.add_patch(plt.Circle(
-                (sx, sy), 0.12, fill=False, edgecolor=SELECTED_EDGE,
-                linewidth=2.5, zorder=8, linestyle="-",
-            ))
-
+        self._refresh_selected_ring()
         self._fig.canvas.draw_idle()
 
     def _publish_markers(self):
@@ -394,7 +1392,7 @@ class DragEditor:
             l.pose.orientation.w = 1.0
             l.scale.z = 0.10
             l.color.r = l.color.g = l.color.b = 1.0; l.color.a = 1.0
-            lock_mark = " [LOCKED]" if i in (0, len(self._waypoints)-1) else ""
+            lock_mark = " [位置锁定]" if i in (0, len(self._waypoints)-1) else ""
             sel_mark = " *" if i == self._selected else ""
             l.text = f"{i}: {w.id}{sel_mark}{lock_mark}"
             msg.markers.append(l)
@@ -409,7 +1407,7 @@ class DragEditor:
     # ── mouse events ───────────────────────────────────────────────────
 
     def _find_waypoint(self, event):
-        if event.xdata is None or event.ydata is None:
+        if event.inaxes is not self._ax or event.xdata is None or event.ydata is None:
             return None
         for i, w in enumerate(self._waypoints):
             dx = event.xdata - w.position[0]
@@ -419,30 +1417,50 @@ class DragEditor:
         return None
 
     def _on_press(self, event):
+        # Widget clicks share the canvas event stream.  Do not let a right-panel
+        # button clear the waypoint selected on the field.
+        if event.inaxes is not self._ax:
+            return
         if event.button == MouseButton.RIGHT:
             self._panning = True
             self._pan_start = (event.x, event.y)
             return
         if event.button != MouseButton.LEFT:
             return
+        if self._adding_through:
+            if event.xdata is None or event.ydata is None:
+                return
+            if self._find_waypoint(event) is not None:
+                self._set_route_status("请在场地空白处新增途经点，不要覆盖已有航点")
+                self._refresh_add_through_button()
+                return
+            self._create_through_at(event.xdata, event.ydata)
+            return
         idx = self._find_waypoint(event)
         if idx is not None:
+            if self._pick_target is not None:
+                self._selected = idx
+                self._set_segment_endpoint(
+                    self._pick_target, self._waypoints[idx].id
+                )
+                return
             if idx in (0, len(self._waypoints) - 1):
                 self._node.get_logger().info(
-                    f"Waypoint [{idx}] is locked (start/return), cannot move"
+                    f"航点 [{idx}] 位置已锁定（起点/返回点），不能移动"
                 )
                 self._selected = idx
-                self._redraw()
+                self._update_selection_artists()
                 return
             self._dragging = idx
             self._selected = idx
             self._drag_start = (self._waypoints[idx].position[0],
                                 self._waypoints[idx].position[1])
-            self._push_history()
+            self._drag_moved = False
         else:
             self._selected = None
             self._dragging = None
-        self._redraw()
+            self._drag_moved = False
+        self._update_selection_artists()
 
     def _on_motion(self, event):
         # --- panning ---
@@ -454,6 +1472,7 @@ class DragEditor:
             ylim = self._ax.get_ylim()
             scale_x = (xlim[1] - xlim[0]) / self._fig.bbox.width
             scale_y = (ylim[1] - ylim[0]) / self._fig.bbox.height
+            self._invalidate_fast_canvas()
             self._ax.set_xlim(xlim[0] - dx * scale_x, xlim[1] - dx * scale_x)
             self._ax.set_ylim(ylim[0] - dy * scale_y, ylim[1] - dy * scale_y)
             self._fig.canvas.draw_idle()
@@ -462,16 +1481,22 @@ class DragEditor:
         # --- waypoint drag ---
         if self._dragging is None:
             return
-        if event.xdata is None or event.ydata is None:
+        if event.inaxes is not self._ax or event.xdata is None or event.ydata is None:
             return
-        idx = self._dragging
-        with self._lock:
-            w = self._waypoints[idx]
-            self._waypoints[idx] = replace(
-                w, position=(float(event.xdata), float(event.ydata), 0.0)
-            )
-        self._redraw()
-        self._publish_markers()
+        if not self._drag_moved:
+            start = self._drag_start
+            if start is None or math.hypot(event.xdata - start[0], event.ydata - start[1]) < DRAG_THRESHOLD_M:
+                return
+            self._push_history()
+            self._drag_moved = True
+            if self._preflight is not None:
+                # The cached field must be rebuilt once without the old
+                # preflight lines before the live pointer preview begins.
+                self._preflight = None
+                self._route_definition_valid = None
+                self._route_status = "点位已移动；松开鼠标后点击“路径规划”"
+                self._redraw()
+        self._update_drag_preview(event.xdata, event.ydata)
 
     def _on_release(self, event):
         if self._panning:
@@ -479,17 +1504,40 @@ class DragEditor:
             self._pan_start = None
             return
         if self._dragging is not None:
-            w = self._waypoints[self._dragging]
-            self._node.get_logger().info(
-                f"Moved [{self._dragging}] → ({w.position[0]:.3f}, {w.position[1]:.3f})"
-            )
+            moved = self._drag_moved
+            waypoint_index = self._dragging
+            preview_position = self._drag_preview_position
+            self._dragging = None
+            self._drag_start = None
+            self._drag_moved = False
+            if moved and preview_position is not None:
+                with self._lock:
+                    waypoint = self._waypoints[waypoint_index]
+                    self._waypoints[waypoint_index] = replace(
+                        waypoint,
+                        position=(preview_position[0], preview_position[1], 0.0),
+                    )
+                w = self._waypoints[waypoint_index]
+                self._node.get_logger().info(
+                    f"已移动 [{waypoint_index}] 到 "
+                    f"({w.position[0]:.3f}, {w.position[1]:.3f})"
+                )
+                self._mark_route_changed(rebuild_panel=True)
+                self._publish_markers()
+            else:
+                self._hide_drag_preview()
+                self._blit_dynamic_artists()
+            return
         self._dragging = None
         self._drag_start = None
+        self._drag_moved = False
 
     def _on_scroll(self, event):
+        if event.inaxes is not self._ax:
+            return
         # scroll on a waypoint → rotate it
         idx = self._find_waypoint(event)
-        if idx is not None and idx not in (0, len(self._waypoints) - 1):
+        if idx is not None and idx != 0:
             self._selected = idx
             delta = 5.0 if event.button == "up" else -5.0
             self._rotate_selected(delta)
@@ -501,6 +1549,7 @@ class DragEditor:
         ylim = self._ax.get_ylim()
         cx = event.xdata if event.xdata is not None else (xlim[0] + xlim[1]) / 2.0
         cy = event.ydata if event.ydata is not None else (ylim[0] + ylim[1]) / 2.0
+        self._invalidate_fast_canvas()
         self._ax.set_xlim(cx - (cx - xlim[0]) * factor,
                           cx + (xlim[1] - cx) * factor)
         self._ax.set_ylim(cy - (cy - ylim[0]) * factor,
@@ -518,8 +1567,13 @@ class DragEditor:
             delta = 15.0 if event.key == "r" else -15.0
             self._rotate_selected(delta)
         elif event.key in ("delete", "escape"):
+            if self._adding_through:
+                self._adding_through = False
+                self._set_route_status("已取消新增途经点")
+                self._refresh_add_through_button()
+                return
             self._selected = None
-            self._redraw()
+            self._update_selection_artists()
         # --- zoom ---
         elif event.key in ("+", "="):
             self._zoom(0.85)
@@ -540,6 +1594,7 @@ class DragEditor:
         ylim = self._ax.get_ylim()
         cx = (xlim[0] + xlim[1]) / 2
         cy = (ylim[0] + ylim[1]) / 2
+        self._invalidate_fast_canvas()
         self._ax.set_xlim(cx - (cx - xlim[0]) * factor,
                           cx + (xlim[1] - cx) * factor)
         self._ax.set_ylim(cy - (cy - ylim[0]) * factor,
@@ -551,6 +1606,7 @@ class DragEditor:
         ylim = self._ax.get_ylim()
         dx = (xlim[1] - xlim[0]) * dx_frac
         dy = (ylim[1] - ylim[0]) * dy_frac
+        self._invalidate_fast_canvas()
         self._ax.set_xlim(xlim[0] + dx, xlim[1] + dx)
         self._ax.set_ylim(ylim[0] + dy, ylim[1] + dy)
         self._fig.canvas.draw_idle()
@@ -561,50 +1617,76 @@ class DragEditor:
         if self._selected is None:
             return
         idx = self._selected
-        if idx in (0, len(self._waypoints) - 1):
+        if idx == 0:
             return
         self._push_history()
         w = self._waypoints[idx]
         yaw = _yaw_from_quaternion(w.orientation) + math.radians(delta_deg)
         with self._lock:
             self._waypoints[idx] = replace(w, orientation=_yaw_quaternion(yaw))
-        self._redraw()
+        self._mark_route_changed(rebuild_panel=True)
         self._publish_markers()
         self._node.get_logger().info(
-            f"Rotated [{idx}] to {math.degrees(yaw):.1f}°"
+            f"已将航点 [{idx}] 朝向调整为 {math.degrees(yaw):.1f} 度"
         )
 
     def _push_history(self):
-        self._history.append(tuple(self._waypoints))
+        self._history.append((tuple(self._waypoints), tuple(self._segments)))
         if len(self._history) > 100:
             del self._history[0]
 
     def _undo(self):
         if not self._history:
-            self._node.get_logger().info("Nothing to undo")
+            self._node.get_logger().info("没有可撤销的修改")
             return
         with self._lock:
-            self._waypoints = list(self._history.pop())
+            waypoints, segments = self._history.pop()
+            self._waypoints = list(waypoints)
+            self._segments = list(segments)
         self._selected = None
         self._dragging = None
-        self._redraw()
+        self._selected_through = None
+        self._mark_route_changed(rebuild_panel=True)
         self._publish_markers()
-        self._node.get_logger().info("Undo — restored previous positions")
+        self._node.get_logger().info("已撤销上一步修改")
 
     def _save(self):
-        with self._lock:
-            validate_waypoints(self._waypoints)
-            destination = self._path.resolve()
-            write_waypoints_atomic(destination, self._template, self._waypoints)
-            self._path = destination
-            self._template, loaded = load_waypoint_document(destination)
-            self._waypoints = list(loaded)
+        if self._preflight is None:
+            self._set_route_status("保存已阻止：请先点击“路径规划”")
+            self._build_route_panel()
+            return
+        if not self._preflight.feasible:
+            self._set_route_status("保存已阻止：请先修正全部红色分段，再点击“路径规划”")
+            self._build_route_panel()
+            return
+        try:
+            with self._lock:
+                checked = validate_planning_segments(self._segments, self._waypoints)
+                route = materialize_route(self._waypoints, checked)
+                validate_waypoints(route)
+                destination = self._path.resolve()
+                template = planning_segments_document(self._template, checked)
+                write_waypoints_atomic(destination, template, route)
+                self._path = destination
+                self._template, loaded = load_waypoint_document(destination)
+                self._waypoints = list(loaded)
+                self._segments = list(
+                    load_planning_segments(self._template, self._waypoints)
+                )
+        except (PlanningSegmentError, ValueError) as error:
+            self._node.get_logger().error(f"Save route error: {error}")
+            self._set_route_status("保存已阻止：路线定义有误，请先重新校验")
+            self._build_route_panel()
+            return
         self._history.clear()
         self._selected = None
         self._dragging = None
+        self._selected_through = None
+        self._route_status = "航点与规划分段已保存"
         self._redraw()
+        self._build_route_panel()
         self._publish_markers()
-        self._node.get_logger().info("✓ Waypoints saved atomically")
+        self._node.get_logger().info("航点与规划分段已保存")
 
     # ── public API ─────────────────────────────────────────────────────
 

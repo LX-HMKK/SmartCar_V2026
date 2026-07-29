@@ -13,6 +13,7 @@ def generate_launch_description():
 
     use_sim_time = LaunchConfiguration('use_sim_time')
     params_file = LaunchConfiguration('params_file')
+    params_overlay_file = LaunchConfiguration('params_overlay_file')
     bt_xml_file = LaunchConfiguration('bt_xml_file')
     bt_through_poses_xml_file = LaunchConfiguration(
         'bt_through_poses_xml_file')
@@ -26,8 +27,13 @@ def generate_launch_description():
 
     declare_params_file = DeclareLaunchArgument(
         'params_file',
-        default_value=os.path.join(pkg_dir, 'config', 'nav2_params.yaml'),
-        description='Full path to the Nav2 parameters file')
+        default_value=os.path.join(pkg_dir, 'config', 'nav2_params_fixed.yaml'),
+        description='Full path to the resolved Nav2 parameters file')
+
+    declare_params_overlay_file = DeclareLaunchArgument(
+        'params_overlay_file',
+        default_value='',
+        description='Optional resolved Nav2 parameter overlay')
 
     declare_bt_xml_file = DeclareLaunchArgument(
         'bt_xml_file',
@@ -67,6 +73,7 @@ def generate_launch_description():
         launch_arguments={
             'use_sim_time': use_sim_time,
             'params_file': params_file,
+            'params_overlay_file': params_overlay_file,
             'autostart': autostart,
             'use_respawn': use_respawn,
         }.items())
@@ -74,6 +81,7 @@ def generate_launch_description():
     return LaunchDescription([
         declare_use_sim_time,
         declare_params_file,
+        declare_params_overlay_file,
         declare_bt_xml_file,
         declare_bt_through_poses_xml_file,
         declare_autostart,

@@ -1,5 +1,6 @@
 """Behavioral tests for complete-route simulation result validation."""
 
+import copy
 import importlib.util
 import unittest
 from pathlib import Path
@@ -118,10 +119,89 @@ def valid_manifest():
     }
 
 
+def dynamic_manifest():
+    """A user-edited two-segment route with one ThroughPoses stage."""
+    source = valid_manifest()
+    single_goal = copy.deepcopy(source["results"][4])
+    single_goal.update({
+        "id": "entry",
+        "direction": "forward",
+        "goal_profile": "standard",
+        "behavior_tree": "navigate_to_pose_w_replanning_and_recovery.xml",
+        "goal_checker": "goal_checker",
+    })
+    through_result = {
+        "id": "through_poses[reverse_a, reverse_b]",
+        "mode": "through_poses",
+        "segment_id": "reverse_loop",
+        "direction": "reverse",
+        "goal_ids": ["reverse_a", "reverse_b"],
+        "goal_profiles": ["standard", "reverse_handoff"],
+        "behavior_tree": (
+            "navigate_through_poses_reverse_w_replanning_and_recovery.xml"),
+        "waypoint_count": 2,
+        "outcome": "succeeded",
+        "status": VALIDATION.SUCCEEDED_STATUS,
+        "duration_sec": 2.0,
+        "travel_m": 0.8,
+        "path_messages": 1,
+        "waypoints_passed": [
+            {"id": "reverse_a", "min_distance_m": 0.10},
+            {"id": "reverse_b", "min_distance_m": 0.12},
+        ],
+    }
+    source.update({
+        "expected_goal_count": 3,
+        "results": [single_goal, through_result],
+        "route": {
+            "segments": [
+                {
+                    "id": "entry",
+                    "direction": "forward",
+                    "goals": [
+                        {
+                            "id": "entry",
+                            "direction": "forward",
+                            "goal_profile": "standard",
+                        },
+                    ],
+                },
+                {
+                    "id": "reverse_loop",
+                    "direction": "reverse",
+                    "goals": [
+                        {
+                            "id": "reverse_a",
+                            "direction": "reverse",
+                            "goal_profile": "standard",
+                        },
+                        {
+                            "id": "reverse_b",
+                            "direction": "reverse",
+                            "goal_profile": "reverse_handoff",
+                        },
+                    ],
+                },
+            ],
+        },
+    })
+    return source
+
+
 class SimResultValidationTests(unittest.TestCase):
     def test_complete_current_run_is_accepted(self):
         self.assertEqual(
             VALIDATION.validate_manifest(valid_manifest(), 199.0), [])
+
+    def test_saved_dynamic_segments_and_through_poses_are_accepted(self):
+        manifest = dynamic_manifest()
+        self.assertEqual(VALIDATION.validate_manifest(manifest, 199.0), [])
+
+        manifest["results"][1]["goal_ids"] = ["reverse_b", "reverse_a"]
+        manifest["results"][1]["waypoints_passed"][1]["min_distance_m"] = 0.8
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("goal_ids" in error for error in errors))
+        self.assertTrue(any("min_distance_m" in error for error in errors))
 
     def test_route_order_and_action_status_are_strict(self):
         manifest = valid_manifest()

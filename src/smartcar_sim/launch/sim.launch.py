@@ -28,7 +28,7 @@ from launch.actions import (
     ExecuteProcess,
 )
 from launch.conditions import IfCondition, UnlessCondition
-from launch.event_handlers import OnProcessExit
+from launch.event_handlers import OnProcessExit, OnProcessStart
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
@@ -36,7 +36,8 @@ from launch.substitutions import (
     PathJoinSubstitution,
     PythonExpression,
 )
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
+from launch_ros.event_handlers import OnStateTransition
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -172,32 +173,63 @@ def generate_launch_description():
     # The real system requires forward/reverse leases per waypoint.
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
-    # ── Map server: serve pre-built static occupancy map for Nav2 costmap ──
-    # Launched as a lifecycle Node. The node enters "unconfigured" and waits for
-    # an external lifecycle transition.  activate_map (below) configures +
-    # activates it 2 s later, so /map is published before Nav2 static_layer loads.
+    # ── Prior-map keepout stack ──
+    # The PGM is a mask, not a localization map. CostmapFilterInfoServer turns
+    # it into a KeepoutFilter contract for both Nav2 costmaps. This keeps static
+    # route constraints simulation-only and avoids the static-layer startup race.
     map_file = os.path.join(pkg_sim, "maps", "field_map.yaml")
-    map_server = Node(
+    keepout_mask_server = Node(
         package="nav2_map_server",
         executable="map_server",
-        name="map_server",
+        name="keepout_mask_server",
         parameters=[{
             "use_sim_time": True,
             "yaml_filename": map_file,
             "frame_id": "odom_combined",
+            "topic_name": "/keepout_filter_mask",
         }],
         output="screen",
     )
-
-    # Explicit lifecycle activation — nav2_lifecycle_manager only manages its own
-    # bringup nodes (controller, planner, bt_navigator, smoother), not map_server.
-    activate_map = ExecuteProcess(
-        cmd=["bash", "-c",
-             "sleep 3 && "
-             "ros2 lifecycle set /map_server configure && "
-             "ros2 lifecycle set /map_server activate"],
+    keepout_filter_info_server = LifecycleNode(
+        package="nav2_map_server",
+        executable="costmap_filter_info_server",
+        namespace="",
+        name="keepout_filter_info_server",
+        parameters=[{
+            "use_sim_time": True,
+            "type": 0,
+            "filter_info_topic": "/keepout_filter_info",
+            "mask_topic": "/keepout_filter_mask",
+            "base": 0.0,
+            "multiplier": 1.0,
+        }],
         output="screen",
-        name="activate_map",
+    )
+    keepout_lifecycle_manager = Node(
+        package="nav2_lifecycle_manager",
+        executable="lifecycle_manager",
+        name="lifecycle_manager_keepout",
+        parameters=[{
+            "use_sim_time": True,
+            "autostart": True,
+            "node_names": [
+                "keepout_mask_server",
+                "keepout_filter_info_server",
+            ],
+        }],
+        output="screen",
+    )
+    keepout_lifecycle_after_servers = RegisterEventHandler(
+        OnProcessStart(
+            target_action=keepout_filter_info_server,
+            # The manager does not retry a node that was absent at its first
+            # autostart pass. Give both lifecycle services one launch cycle to
+            # register before handing them to the manager.
+            on_start=[TimerAction(
+                period=1.0,
+                actions=[keepout_lifecycle_manager],
+            )],
+        )
     )
 
     # ── Safety bypass: simulation doesn't need safety_node ──
@@ -205,9 +237,11 @@ def generate_launch_description():
     # No direction_guard or safety_node (both block velocity without real hardware)
 
     # ── Nav2 ──
-    nav2_params = PathJoinSubstitution([pkg_nav2, "config", "nav2_params.yaml"])
     nav2_fixed_params = PathJoinSubstitution([
         pkg_nav2, "config", "nav2_params_fixed.yaml"
+    ])
+    nav2_keepout_overlay = PathJoinSubstitution([
+        pkg_sim, "config", "nav2_keepout_filter.yaml"
     ])
     bt_forward = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_w_replanning_and_recovery.xml"])
@@ -230,11 +264,19 @@ def generate_launch_description():
         ),
         launch_arguments={
             "use_sim_time": "true",
-            "params_file": nav2_params,
+            "params_file": nav2_fixed_params,
+            "params_overlay_file": nav2_keepout_overlay,
             "bt_xml_file": bt_forward,
             "bt_through_poses_xml_file": bt_forward,  # not used but required
             "autostart": "true",
         }.items(),
+    )
+    nav2_after_keepout = RegisterEventHandler(
+        OnStateTransition(
+            target_lifecycle_node=keepout_filter_info_server,
+            goal_state="active",
+            entities=[nav2_launch],
+        )
     )
 
     # ── Waypoint visualizer (publishes MarkerArray for RViz) ──
@@ -323,12 +365,14 @@ def generate_launch_description():
         waypoint_viz,
         field_reference,
         auto_train_exit,
-        # Static map server: start after Gazebo clock is publishing (6s) so the
-        # lifecycle node can configure, but before Nav2 (12s) so /map is ready
-        # when static_layer loads.  activate_map fires at 6s+3s = 9s.
-        TimerAction(period=6.0, actions=[map_server, activate_map]),
-        # Nav2 延迟 15s 启动（等 Gazebo /clock 发布 + map_server /map 稳定 + bridge 桥接就绪）
-        TimerAction(period=15.0, actions=[nav2_launch]),
+        # Start the mask lifecycle stack after Gazebo begins publishing /clock.
+        # Nav2 itself is released only after the filter-info node is active.
+        nav2_after_keepout,
+        keepout_lifecycle_after_servers,
+        TimerAction(period=6.0, actions=[
+            keepout_mask_server,
+            keepout_filter_info_server,
+        ]),
         # Complete route runner, opt-in via run_route:=true. This name must not
         # collide with Nav2's lifecycle autostart launch argument.
         TimerAction(period=30.0, actions=[auto_train]),

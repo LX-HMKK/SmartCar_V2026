@@ -58,7 +58,9 @@ class RosAdapterTests(unittest.TestCase):
             rclpy.shutdown()
 
     def test_guarded_navigate_to_pose_binds_direction_bt_and_uuid(self):
-        modes = ["success", "success", "cancel"]
+        # The first three submissions cover ordinary, precise, and reverse
+        # handoff success.  The fourth submission is the cancellation case.
+        modes = ["success", "success", "success", "cancel"]
         received_goals = []
 
         class FakeDirectionGuard:
@@ -248,27 +250,27 @@ class RosAdapterTests(unittest.TestCase):
         while (
             (
                 not navigator.is_active()
-                or direction_guard.activations < 3
+                or direction_guard.activations < 4
             )
             and time.monotonic() < deadline
         ):
             time.sleep(0.01)
         self.assertTrue(navigator.is_active())
-        self.assertEqual(direction_guard.activations, 3)
+        self.assertEqual(direction_guard.activations, 4)
         self.assertTrue(navigator.cancel())
         worker.join(timeout=2.0)
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(outcome[0].status, "navigation_canceled")
-        self.assertEqual(received_goals[2][2], "/tmp/reverse.xml")
+        self.assertEqual(received_goals[3][2], "/tmp/reverse.xml")
         prepare_calls = [
             lease for name, lease in direction_guard.calls
             if name == "prepare"
         ]
-        self.assertEqual(prepare_calls[2].direction, 2)
+        self.assertEqual(prepare_calls[3].direction, 2)
         self.assertEqual(
-            bytes(prepare_calls[2].action_uuid.uuid),
-            received_goals[2][3],
+            bytes(prepare_calls[3].action_uuid.uuid),
+            received_goals[3][3],
         )
         final_activate = len(direction_guard.events) - 1 - list(reversed(
             direction_guard.events)).index("activate")

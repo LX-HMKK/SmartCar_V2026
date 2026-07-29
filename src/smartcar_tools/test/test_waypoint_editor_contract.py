@@ -11,6 +11,7 @@ REPOSITORY_ROOT = PACKAGE_ROOT.parents[1]
 NAV2_ROOT = PACKAGE_ROOT.parent / "smartcar_nav2"
 LAUNCH = PACKAGE_ROOT / "launch" / "waypoint_editor.launch.py"
 NODE = PACKAGE_ROOT / "smartcar_tools" / "waypoint_editor_node.py"
+DRAG_EDITOR = PACKAGE_ROOT / "smartcar_tools" / "waypoint_drag_editor.py"
 SETUP = PACKAGE_ROOT / "setup.py"
 RVIZ = PACKAGE_ROOT / "rviz" / "waypoint_editor.rviz"
 WAYPOINT_MODEL = (
@@ -58,6 +59,8 @@ class TestWaypointEditorContract(unittest.TestCase):
         self.assertIn('"emergency_stop_on_start": "true"', source)
         self.assertIn('"latch_emergency_stop": True', source)
         self.assertIn('executable="waypoint_editor_node"', source)
+        self.assertIn('executable="waypoint_drag_editor"', source)
+        self.assertIn('DeclareLaunchArgument("use_segment_ui", default_value="true")', source)
         self.assertIn('executable="field_reference_node"', source)
         self.assertIn("default_waypoints.yaml", source)
         self.assertIn("field_geometry.yaml", source)
@@ -103,6 +106,88 @@ class TestWaypointEditorContract(unittest.TestCase):
         self.assertIn("Marker.LINE_STRIP", source)
         self.assertIn("Marker.ARROW", source)
         self.assertIn("Marker.TEXT_VIEW_FACING", source)
+
+    def test_drag_editor_exposes_segment_controls_and_local_preflight(self):
+        source = DRAG_EDITOR.read_text(encoding="utf-8")
+        ast.parse(source)
+        self.assertNotIn('node.declare_parameter("use_sim_time"', source)
+        for token in (
+            "PlanningSegment",
+            "load_planning_segments",
+            "planning_segments_document",
+            "validate_planning_segments",
+            "materialize_route",
+            "preflight_route",
+            "RadioButtons",
+            "TextBox",
+            "路径分段",
+            "行驶方向",
+            "正向（前进）",
+            "倒向（倒车）",
+            "起点朝向",
+            "终点朝向",
+            "在选中途经点拆分",
+            "新增途经点",
+            "加入已有点",
+            "上移",
+            "下移",
+            "设为无朝向",
+            "恢复路线朝向",
+            "路径规划",
+            "保存路线",
+            "保存已阻止",
+            "C 区禁区",
+            "_mark_route_changed",
+            "event.inaxes is not self._ax",
+        ):
+            self.assertIn(token, source)
+        self.assertEqual(source.count("self._recheck_route("), 1)
+
+    def test_qt_draw_callback_only_captures_the_blit_background(self):
+        """A Qt paint callback must not recursively request another repaint."""
+        source = DRAG_EDITOR.read_text(encoding="utf-8")
+        module = ast.parse(source)
+        editor = next(
+            node for node in module.body
+            if isinstance(node, ast.ClassDef) and node.name == "DragEditor"
+        )
+        draw_callback = next(
+            node for node in editor.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_on_canvas_draw"
+        )
+        self.assertIn("copy_from_bbox", ast.unparse(draw_callback))
+        self.assertNotIn("_blit_dynamic_artists", ast.unparse(draw_callback))
+
+    def test_add_through_mode_does_not_rebuild_the_panel_from_button_click(self):
+        """Qt releases the clicked widget after this callback returns."""
+        module = ast.parse(DRAG_EDITOR.read_text(encoding="utf-8"))
+        editor = next(
+            node for node in module.body
+            if isinstance(node, ast.ClassDef) and node.name == "DragEditor"
+        )
+        begin_add = next(
+            node for node in editor.body
+            if isinstance(node, ast.FunctionDef) and node.name == "_begin_add_through"
+        )
+        source = ast.unparse(begin_add)
+        self.assertIn("_refresh_add_through_button", source)
+        self.assertNotIn("_build_route_panel", source)
+
+    def test_selection_ring_survives_right_panel_hover_redraws(self):
+        module = ast.parse(DRAG_EDITOR.read_text(encoding="utf-8"))
+        editor = next(
+            node for node in module.body
+            if isinstance(node, ast.ClassDef) and node.name == "DragEditor"
+        )
+        methods = {
+            node.name: ast.unparse(node)
+            for node in editor.body
+            if isinstance(node, ast.FunctionDef)
+        }
+        self.assertNotIn("animated=True", methods["_refresh_selected_ring"])
+        self.assertIn("_invalidate_fast_canvas", methods["_update_selection_artists"])
+        self.assertIn("draw_idle", methods["_update_selection_artists"])
+        self.assertNotIn("_blit_dynamic_artists", methods["_update_selection_artists"])
 
     def test_editor_has_save_undo_load_menu_and_keeps_p_positions_fixed(self):
         source = NODE.read_text(encoding="utf-8")

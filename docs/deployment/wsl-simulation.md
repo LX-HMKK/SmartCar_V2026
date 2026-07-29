@@ -192,6 +192,11 @@ bash /root/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
 `ReverseHandoff.AckermannConstraints.min_turning_r`、controller wrapper 输出门和
 velocity smoother 的同比例缩放，不是 reverse BT 发布的普通 YAML 参数。
 
+航点几何、C 区中央禁区、最小转弯半径和仿真 KeepoutFilter 包络统一由
+`src/smartcar_tools/config/routes/route_planning.yaml` 管理。修改后使用
+`sim_tune.sh` 重生 PGM、同步 Nav2 参数并运行仿真；它不是 SLAM 或定位调参。编辑
+流程、参数含义和 WSL 用户路径示例见 [`waypoint-editor.md`](waypoint-editor.md)。
+
 2026-07-26 在 WSL 2.6.3、Ubuntu-22.04、Gazebo 6.18 上的验证结果：
 
 - mirrored：Fast DDS daemon 查询在 5 秒限制内超时。
