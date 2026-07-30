@@ -162,6 +162,12 @@ odom_combined -> base_footprint -> base_link -> laser_link
               -> origincar/laser_link/lidar_sensor
 ```
 
+仿真 RViz 中，`Actual Nav2 Global Path (/plan)` 是 Nav2 实际发布的全局路径，
+`Actual Nav2 Local Path (/local_plan)` 是控制器实际使用的局部路径。`Waypoint
+Reference Constraints (not a Nav2 path)` 仅连接 YAML 中的任务航点，不能用于判断
+Nav2 实际规划或可达性。`Official Field Reference` 的黄色 C 区双环是场地参考层，
+不是任一 Nav2 路径；判断时以 RViz Display 的名称和 Topic 为准，不以颜色为准。
+
 ### 自动导航
 
 ```bash
@@ -171,10 +177,19 @@ ros2 launch smartcar_sim sim.launch.py \
 cat /tmp/auto_train_results.json
 ```
 
-验收要求：JSON 的 `overall_outcome` 为 `completed`，包含全部 10 个非起点航点，
-每个 `outcome` 为 `succeeded`。`behavior_tree` 必须与航点方向一致；两层速度命令
-必须符合航向符号，reverse handoff 还必须满足 controller wrapper、末端航向闭环、
-速度上限和 `0.55 m` 曲率合同。
+默认的 `nav_only.yaml` 是当前保存的仿真路线。需要试验路线时，通过
+`waypoints_file:=/absolute/path/to/trial.yaml` 显式传入，避免覆盖该文件。自动路线退出
+后，Gazebo 与 RViz 默认继续运行，便于检查最终 `/plan`、`/local_plan`、代价地图和
+车位；CI 如需原来的一次性退出行为，追加 `shutdown_on_route_exit:=true`。
+
+当前路线包含五段：`p_to_qr` 正向，`reverse_corridor`、`reverse_c_entry`、`c_exit`
+和 `return_to_p` 均倒车。验收要求：JSON 的 `overall_outcome` 为 `completed`，包含
+全部 9 个非起点航点，每个 `outcome` 为 `succeeded`。`behavior_tree` 必须与航点方向
+一致；两层速度命令必须符合航向符号。
+
+截至 2026-07-30，当前保存路线的 `b_corridor_enter -> c_corner_1` 在 C 区中央禁区
+西南角仍没有运行时安全余量：最近一轮仿真先完成前两段，随后被局部代价地图的碰撞预测
+中止。该路线不能标注为全程仿真通过；调整该入口前，必须继续在隔离试验 YAML 上验证。
 
 ### 仿真调参
 
@@ -185,30 +200,44 @@ python3 /root/ros2_ws/src/smartcar_sim/scripts/tune_params.py \
 bash /root/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
 ```
 
-调参工具修改 Windows 源码挂载目录（或 `SMARTCAR_REPO_ROOT` 指定目录），
-`sim_tune.sh` 每次都会同步源码并构建 `smartcar_nav2` 的 fixed 参数文件；
-`--no-build` 仅保留为兼容参数但会被忽略。扫参只生成备份快照，不会把最后一个
+调参工具和 `sim_tune.sh` 默认都只操作 `${SMARTCAR_WS:-/root/ros2_ws}/src`；
+它们不会自动用 Windows 挂载目录覆盖 WSL 中已保存的航点。若确实要导入 Windows
+源码，必须显式执行 `sim_tune.sh --sync-from-windows`（可用
+`--windows-src <path>` 或 `SMARTCAR_WINDOWS_SRC` 指定来源）。同步前脚本会比较
+两个 `nav_only.yaml` 的 SHA-256；内容不同时，先备份 WSL 版本到
+`$SMARTCAR_TUNE_LOG_DIR/manual_backups/nav_only.before-windows-sync-*.yaml`。
+同一显式同步也会对不同的 `nav2_params.yaml` 创建备份，避免调参参数被静默覆盖。
+显式同步不会使用 `rsync --delete`。每次运行仍会构建 `smartcar_nav2` 的 fixed
+参数文件；`--no-build` 仅保留为兼容参数但会被忽略。扫参只生成备份快照，不会把最后一个
 候选值留在源文件中。QR 相关参数对应 `precise_goal_checker`。倒车曲率约束来自
 `ReverseHandoff.AckermannConstraints.min_turning_r`、controller wrapper 输出门和
 velocity smoother 的同比例缩放，不是 reverse BT 发布的普通 YAML 参数。
+
+```bash
+# 默认：使用并保留 WSL 中已保存的点位。
+bash /root/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
+
+# 只有明确需要用 Windows 源码替换 WSL 源码时才执行。
+bash /root/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh \
+  --sync-from-windows --headless --loop 1
+```
 
 航点几何、C 区中央禁区、最小转弯半径和仿真 KeepoutFilter 包络统一由
 `src/smartcar_tools/config/routes/route_planning.yaml` 管理。修改后使用
 `sim_tune.sh` 重生 PGM、同步 Nav2 参数并运行仿真；它不是 SLAM 或定位调参。编辑
 流程、参数含义和 WSL 用户路径示例见 [`waypoint-editor.md`](waypoint-editor.md)。
 
-2026-07-26 在 WSL 2.6.3、Ubuntu-22.04、Gazebo 6.18 上的验证结果：
+2026-07-30 在 WSL 2.6.3、Ubuntu-22.04、Gazebo 6.18 上的当前证据：
 
 - mirrored：Fast DDS daemon 查询在 5 秒限制内超时。
 - NAT：Fast DDS 双 participant discovery 约 0.9 秒。
 - `ros2 node list`：约 1.2-1.35 秒。
 - Gazebo world：10 秒内完成初始化。
 - Nav2：20 秒内全部 active。
-- 完整路线前六个目标连续两轮成功；`c_corner_1` reverse handoff 分别约
-  31.96 秒和 31.80 秒完成，方向与曲率合同零违规。
-- 完整路线当前阻塞在 `c_corner_4` 航点几何：原始 `180 deg` 和单点
-  `-90 deg` 候选均在 120 秒超时。继续测试前先联合优化相邻点位置与 yaw，详见
-  `docs/review/wsl-waypoint-overnight-handoff.md`。
+- 首段 P→A 和 A→B 的倒车段可以启动并完成；当前 all-reverse 配置随后在
+  `b_corridor_enter -> c_corner_1` 入口处触发局部碰撞预测。
+- C1-C4 坐标、P/A/终点位置不得为了绕开该问题直接移动。后续只在隔离试验 YAML 中
+  调整允许的 B 区点位或航向，并以 `overall_outcome=completed` 作为全程通过证据。
 - RViz/TF：窗口正常，激光帧可从 `odom_combined` 查询，日志无 transform 错误。
 
 ## 7. 症状速查

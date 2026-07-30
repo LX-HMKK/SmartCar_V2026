@@ -22,6 +22,12 @@ BT_THROUGH_POSES_FILE = (
     / "behavior_trees"
     / "navigate_through_poses_w_replanning_and_recovery.xml"
 )
+BT_REVERSE_THROUGH_POSES_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_w_replanning_and_recovery.xml"
+)
 BT_REVERSE_FILE = (
     PACKAGE_ROOT
     / "config"
@@ -183,6 +189,19 @@ class TestNav2Contracts(unittest.TestCase):
         ]
         self.assertIn("ComputePathThroughPoses", through_tags)
         self.assertIn("RemovePassedGoals", through_tags)
+        for behavior_tree in (
+            BT_THROUGH_POSES_FILE,
+            BT_REVERSE_THROUGH_POSES_FILE,
+        ):
+            remove_passed_goals = list(
+                ElementTree.parse(behavior_tree).getroot().iter(
+                    "RemovePassedGoals")
+            )
+            self.assertEqual(len(remove_passed_goals), 1)
+            self.assertEqual(
+                remove_passed_goals[0].attrib.get("robot_base_frame"),
+                "base_footprint",
+            )
 
     def test_bt_navigator_only_overrides_matching_tree(self):
         bt_navigator = ros_parameters(self.params, "bt_navigator")
@@ -341,6 +360,9 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertLessEqual(planner["tolerance"], 0.05)
         minimum_turning_radius = planner["minimum_turning_radius"]
         self.assertAlmostEqual(minimum_turning_radius, 0.55)
+        # The Humble Smac smoother does not preserve the Hybrid-A* curvature
+        # constraint. A reverse path must retain the DUBIN lattice geometry.
+        self.assertIs(planner["smooth_path"], False)
 
         calibration = self.bringup_coord["calibration"]
         wheelbase = float(calibration["wheelbase"])
@@ -533,7 +555,7 @@ class TestNav2Contracts(unittest.TestCase):
         # P and QR are fixed competition references. C-zone guide points and
         # the return corridor are intentionally simulation-tunable, so their
         # coordinates must not be compared against the compact real route.
-        for waypoint_id in ("p_start", "a_task_observe", "p_finish"):
+        for waypoint_id in ("p_start", "a_task_observe"):
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
                     default_by_id[waypoint_id]["pose"],
@@ -548,34 +570,48 @@ class TestNav2Contracts(unittest.TestCase):
                     nav_by_id[waypoint_id].get("goal_profile", "standard"),
                 )
 
-        # The VLM target is shared by both routes, including its observation
-        # heading. Simulation-only guide points must not silently alter it.
+        # The finish position is fixed, while its simulation heading is flipped
+        # by 180 degrees for the all-reverse route.
+        self.assertEqual(
+            default_by_id["p_finish"]["pose"]["position"],
+            nav_by_id["p_finish"]["pose"]["position"],
+        )
+        finish_yaw_delta = math.remainder(
+            planar_yaw(nav_by_id["p_finish"]["pose"]["orientation"])
+            - planar_yaw(default_by_id["p_finish"]["pose"]["orientation"]),
+            2.0 * math.pi,
+        )
+        self.assertAlmostEqual(abs(finish_yaw_delta), math.pi)
+        self.assertEqual(
+            default_by_id["p_finish"].get("goal_profile", "standard"),
+            nav_by_id["p_finish"].get("goal_profile", "standard"),
+        )
+
+        # C-zone simulation points are user-tunable. Preserve their semantic
+        # role and continuous reverse ThroughPoses contract, but do not pin a
+        # saved yaw to the compact real-route reference value.
         nav_c_corner_1 = waypoint_by_id(nav_only, "c_corner_1")
-        self.assertAlmostEqual(
-            planar_yaw(nav_c_corner_1["pose"]["orientation"]),
-            planar_yaw(
-                waypoint_by_id(default, "c_corner_1")["pose"]["orientation"]
-            ),
-            delta=1.0e-6,
+        self.assertEqual(nav_c_corner_1["task"], "nav")
+        self.assertEqual(nav_c_corner_1["direction"], "reverse")
+        self.assertEqual(
+            nav_c_corner_1.get("goal_profile", "standard"),
+            "standard",
         )
 
         corridor_enter = waypoint_by_id(nav_only, "b_corridor_enter")
         self.assertEqual(corridor_enter["direction"], "reverse")
         self.assertEqual(corridor_enter["task"], "corridor")
-        corridor_out = waypoint_by_id(nav_only, "b_corridor_out")
-        self.assertEqual(corridor_out["direction"], "reverse")
-        self.assertEqual(corridor_out["task"], "corridor")
 
         c_corner_2 = waypoint_by_id(nav_only, "c_corner_2")
         self.assertEqual(c_corner_2["task"], "loop")
-        self.assertEqual(c_corner_2["direction"], "forward")
+        self.assertEqual(c_corner_2["direction"], "reverse")
 
         c_corner_4 = waypoint_by_id(nav_only, "c_corner_4")
         self.assertEqual(c_corner_4["task"], "loop")
-        self.assertEqual(c_corner_4["direction"], "forward")
+        self.assertEqual(c_corner_4["direction"], "reverse")
         return_enter = waypoint_by_id(nav_only, "b_corridor_return_enter")
         self.assertEqual(return_enter["task"], "corridor")
-        self.assertEqual(return_enter["direction"], "forward")
+        self.assertEqual(return_enter["direction"], "reverse")
 
         precise_ids = [
             waypoint["id"]

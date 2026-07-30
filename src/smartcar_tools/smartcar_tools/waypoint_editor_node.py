@@ -9,6 +9,9 @@ Select a waypoint to edit:
 
 Save / Undo / Reload via services or right-click context menu (if interactive
 markers are functional in the current RViz version).
+
+The displayed line only joins ordered waypoint reference constraints.  It is
+not a Nav2-generated ``/plan`` or ``/local_plan``.
 """
 
 from __future__ import annotations
@@ -357,6 +360,7 @@ class WaypointEditorNode(Node):
         frame_id = self._waypoints[0].frame_id
         selected = self._selected_index
 
+        # This ordered line is a waypoint reference constraint, not Nav2 output.
         line = Marker()
         line.header.frame_id = frame_id
         line.header.stamp = stamp

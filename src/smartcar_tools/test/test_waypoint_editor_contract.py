@@ -1,6 +1,7 @@
 """Static contracts for the motion-disabled semantic waypoint editor."""
 import ast
 from pathlib import Path
+import re
 import unittest
 
 import yaml
@@ -10,6 +11,8 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 REPOSITORY_ROOT = PACKAGE_ROOT.parents[1]
 NAV2_ROOT = PACKAGE_ROOT.parent / "smartcar_nav2"
 LAUNCH = PACKAGE_ROOT / "launch" / "waypoint_editor.launch.py"
+SIM_EDITOR_LAUNCH = PACKAGE_ROOT / "launch" / "sim_waypoint_editor.launch.py"
+SIM_LAUNCH = REPOSITORY_ROOT / "src" / "smartcar_sim" / "launch" / "sim.launch.py"
 NODE = PACKAGE_ROOT / "smartcar_tools" / "waypoint_editor_node.py"
 DRAG_EDITOR = PACKAGE_ROOT / "smartcar_tools" / "waypoint_drag_editor.py"
 SETUP = PACKAGE_ROOT / "setup.py"
@@ -28,6 +31,39 @@ def display_by_name(rviz_document, name):
 
 
 class TestWaypointEditorContract(unittest.TestCase):
+    def test_simulation_editor_uses_the_same_nav_only_file_as_simulation(self):
+        nav_only_suffix = (
+            r'"config",\s*"waypoints",\s*"nav_only\.yaml",?\s*\]\)'
+        )
+        editor_path = re.compile(
+            r'PathJoinSubstitution\(\[\s*FindPackageShare\("smartcar_nav2"\),\s*'
+            + nav_only_suffix
+        )
+        default_path = re.compile(
+            r'PathJoinSubstitution\(\[\s*FindPackageShare\("smartcar_nav2"\),\s*'
+            r'"config",\s*"waypoints",\s*"default_waypoints\.yaml",?\s*\]\)'
+        )
+        standard = LAUNCH.read_text(encoding="utf-8")
+        simulation = SIM_LAUNCH.read_text(encoding="utf-8")
+        simulation_editor = SIM_EDITOR_LAUNCH.read_text(encoding="utf-8")
+
+        self.assertIn('pkg_nav2 = get_package_share_directory("smartcar_nav2")', simulation)
+        self.assertIn('default_value=os.path.join(', simulation)
+        self.assertIn(
+            'pkg_nav2, "config", "waypoints", "nav_only.yaml"', simulation
+        )
+        self.assertRegex(simulation_editor, editor_path)
+        self.assertNotRegex(standard, editor_path)
+        self.assertRegex(standard, default_path)
+
+        ast.parse(simulation_editor)
+        self.assertIn("waypoint_editor.launch.py", simulation_editor)
+        self.assertIn(
+            'DeclareLaunchArgument("start_safety", default_value="false")',
+            simulation_editor,
+        )
+        self.assertNotIn('package="smartcar_sim"', simulation_editor)
+
     def test_legacy_navigation_test_chain_is_removed(self):
         legacy_paths = (
             PACKAGE_ROOT / "launch" / "navigation_test.launch.py",
@@ -133,7 +169,7 @@ class TestWaypointEditorContract(unittest.TestCase):
             "下移",
             "设为无朝向",
             "恢复路线朝向",
-            "路径规划",
+            "几何预检",
             "保存路线",
             "保存已阻止",
             "C 区禁区",
@@ -208,7 +244,9 @@ class TestWaypointEditorContract(unittest.TestCase):
     def test_rviz_shows_field_and_semantic_waypoints_and_routes_goal_updates(self):
         document = yaml.safe_load(RVIZ.read_text(encoding="utf-8"))
         field = display_by_name(document, "Official Field Reference")
-        waypoints = display_by_name(document, "Mission Route")
+        waypoints = display_by_name(
+            document, "Waypoint Reference Constraints (not a Nav2 path)"
+        )
         for display, topic in (
             (field, FIELD_MARKER_TOPIC),
             (waypoints, WAYPOINT_MARKER_TOPIC),

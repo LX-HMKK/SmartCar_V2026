@@ -1,4 +1,5 @@
 """Contracts for the editable planning-segment route model."""
+import math
 from pathlib import Path
 import sys
 import unittest
@@ -138,16 +139,84 @@ class PlanningSegmentTests(unittest.TestCase):
         blocked = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(2.0, 3.3, 0.0))
         self.assertIsNone(blocked)
 
-    def test_simulation_segment_baseline_passes_the_same_local_preflight(self):
+    def test_orientation_free_through_pose_keeps_a_continuous_joint_heading(self):
+        source = (
+            Waypoint(
+                frame_id="odom_combined",
+                position=(-0.1, 0.0, 0.0),
+                orientation=(0.0, 0.0, 1.0, 0.0),
+                task="start",
+                direction="forward",
+                id="start",
+            ),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(0.7, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 0.0),
+                task="via",
+                direction="reverse",
+                id="middle",
+            ),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(1.5, 0.0, 0.0),
+                orientation=(0.0, 0.0, 1.0, 0.0),
+                task="return",
+                direction="reverse",
+                id="end",
+            ),
+        )
+        segment = PlanningSegment(
+            "joint_reverse", "reverse", "start", "end", ("middle",)
+        )
+
+        report = preflight_route(
+            load_field_reference(GEOMETRY_FILE), source, (segment,)
+        )
+
+        self.assertTrue(report.feasible)
+        self.assertEqual(
+            report.warnings,
+            (
+                "middle: orientation unconstrained; preflight selects "
+                "a continuous heading",
+            ),
+        )
+        first_leg, second_leg = report.segments[0].legs
+        self.assertEqual(first_leg.points[-1], second_leg.points[0])
+        self.assertLessEqual(
+            math.hypot(first_leg.points[-1].x - 0.7, first_leg.points[-1].y),
+            0.15,
+        )
+
+    def test_simulation_segment_baseline_reports_current_c_entry_blocked(self):
         document, source = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, source)
         report = preflight_route(load_field_reference(GEOMETRY_FILE), source, segments)
 
-        self.assertTrue(report.feasible)
+        self.assertFalse(report.feasible)
         self.assertEqual(
             [item.segment_id for item in report.segments],
-            ["p_to_qr", "reverse_corridor", "c_loop", "c_exit", "return_to_p"],
+            [
+                "p_to_qr",
+                "reverse_corridor",
+                "reverse_c_entry",
+                "c_exit",
+                "return_to_p",
+            ],
         )
+        self.assertEqual(
+            report.warnings,
+            (
+                "c_corner_1: orientation unconstrained; preflight selects "
+                "a continuous heading",
+            ),
+        )
+        c_entry = next(
+            item for item in report.segments if item.segment_id == "reverse_c_entry"
+        )
+        self.assertFalse(c_entry.feasible)
+        self.assertIn("b_corridor_enter -> c_corner_1", c_entry.message)
 
 
 if __name__ == "__main__":

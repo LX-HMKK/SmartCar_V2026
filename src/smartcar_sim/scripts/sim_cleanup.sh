@@ -43,6 +43,11 @@ if [ "$kill_processes" = true ]; then
         "ros2 launch smartcar_sim"
         "/smartcar_sim/"
         "smartcar_sim/launch/sim.launch.py"
+        # The keepout stack uses nav2_map_server executables, which are not
+        # covered by the core Nav2 process names above. Match their dedicated
+        # simulation node names instead of killing unrelated map servers.
+        "/nav2_map_server/map_server.*__node:=keepout_mask_server"
+        "/nav2_map_server/costmap_filter_info_server.*__node:=keepout_filter_info_server"
     )
     for process_pattern in "${process_patterns[@]}"; do
         matches=$(pgrep -f "$process_pattern" 2>/dev/null || true)

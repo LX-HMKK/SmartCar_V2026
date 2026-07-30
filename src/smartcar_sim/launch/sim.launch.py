@@ -22,6 +22,7 @@ from launch.actions import (
     EmitEvent,
     GroupAction,
     IncludeLaunchDescription,
+    OpaqueFunction,
     RegisterEventHandler,
     SetEnvironmentVariable,
     TimerAction,
@@ -67,6 +68,9 @@ def generate_launch_description():
     headless = LaunchConfiguration("headless", default="false")
     use_rviz = LaunchConfiguration("use_rviz", default="false")
     run_route = LaunchConfiguration("run_route", default="false")
+    shutdown_on_route_exit = LaunchConfiguration(
+        "shutdown_on_route_exit", default="false")
+    waypoints_file = LaunchConfiguration("waypoints_file")
     results_file = LaunchConfiguration(
         "results_file", default="/tmp/auto_train_results.json")
     use_through_poses_lc = LaunchConfiguration("use_through_poses", default="true")
@@ -212,6 +216,10 @@ def generate_launch_description():
         parameters=[{
             "use_sim_time": True,
             "autostart": True,
+            # Gazebo and RViz can briefly starve this process during startup.
+            # Leave enough room for the first bond heartbeat before resetting
+            # the filter servers.
+            "bond_timeout": 20.0,
             "node_names": [
                 "keepout_mask_server",
                 "keepout_filter_info_server",
@@ -223,10 +231,12 @@ def generate_launch_description():
         OnProcessStart(
             target_action=keepout_filter_info_server,
             # The manager does not retry a node that was absent at its first
-            # autostart pass. Give both lifecycle services one launch cycle to
-            # register before handing them to the manager.
+            # autostart pass. Under Gazebo startup load one launch cycle is
+            # occasionally not enough for Fast DDS service discovery, which
+            # leaves the filter stack inactive and prevents Nav2 from starting.
+            # Give both lifecycle services a deterministic readiness window.
             on_start=[TimerAction(
-                period=1.0,
+                period=3.0,
                 actions=[keepout_lifecycle_manager],
             )],
         )
@@ -271,11 +281,23 @@ def generate_launch_description():
             "autostart": "true",
         }.items(),
     )
+    # A lifecycle manager can reactivate the filter after a transient startup
+    # delay. Launch Nav2 exactly once: repeating this include creates duplicate
+    # controller/planner nodes that fight over the same lifecycle services.
+    nav2_started = False
+
+    def launch_nav2_once(context):
+        nonlocal nav2_started
+        if nav2_started:
+            return []
+        nav2_started = True
+        return [nav2_launch]
+
     nav2_after_keepout = RegisterEventHandler(
         OnStateTransition(
             target_lifecycle_node=keepout_filter_info_server,
             goal_state="active",
-            entities=[nav2_launch],
+            entities=[OpaqueFunction(function=launch_nav2_once)],
         )
     )
 
@@ -286,7 +308,7 @@ def generate_launch_description():
         name="waypoint_viz",
         parameters=[{
             "use_sim_time": True,
-            "waypoints_file": PathJoinSubstitution([pkg_nav2, "config", "waypoints", "nav_only.yaml"]),
+            "waypoints_file": waypoints_file,
             "publish_rate": 1.0,
         }],
     )
@@ -318,9 +340,7 @@ def generate_launch_description():
         name="auto_train",
         parameters=[{
             "use_sim_time": True,
-            "waypoints_file": PathJoinSubstitution([
-                pkg_nav2, "config", "waypoints", "nav_only.yaml"
-            ]),
+            "waypoints_file": waypoints_file,
             "forward_behavior_tree": bt_forward,
             "precise_behavior_tree": bt_precise,
             "reverse_behavior_tree": bt_reverse,
@@ -350,7 +370,14 @@ def generate_launch_description():
             on_exit=[EmitEvent(event=Shutdown(
                 reason="complete route runner exited"))],
         ),
-        condition=IfCondition(run_route),
+        # A route failure is diagnostic evidence, not a request to close
+        # Gazebo/RViz. Keep the simulation open by default so its final plan,
+        # costmaps, and robot pose remain inspectable. CI callers can retain
+        # the former one-shot behavior explicitly.
+        condition=IfCondition(PythonExpression([
+            "'", run_route, "' == 'true' and '", shutdown_on_route_exit,
+            "' == 'true'",
+        ])),
     )
 
     start_after_cleanup = GroupAction(actions=[
@@ -387,6 +414,15 @@ def generate_launch_description():
         DeclareLaunchArgument("headless", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
         DeclareLaunchArgument("run_route", default_value="false"),
+        # A trial route can be supplied without modifying the saved editor
+        # file. The default remains the one authoritative simulation route.
+        DeclareLaunchArgument(
+            "waypoints_file",
+            default_value=os.path.join(
+                pkg_nav2, "config", "waypoints", "nav_only.yaml"),
+        ),
+        DeclareLaunchArgument(
+            "shutdown_on_route_exit", default_value="false"),
         DeclareLaunchArgument(
             "results_file", default_value="/tmp/auto_train_results.json"),
         DeclareLaunchArgument("use_through_poses", default_value="true"),

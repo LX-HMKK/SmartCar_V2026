@@ -187,7 +187,9 @@ controller_server:
     # final reverse-only velocity and curvature guard.
     ReverseHandoff:
       plugin: "smartcar_nav2::ReverseOnlyMPPIController"
-      time_steps: 100
+      # Keep the reverse terminal rollout inside the C1 corner rather than
+      # projecting beyond the strict handoff pose into the outer keepout.
+      time_steps: 60
       model_dt: 0.05
       batch_size: 1000
       iteration_count: 2
@@ -364,7 +366,10 @@ planner_server:
       retrospective_penalty: 0.015
       lookup_table_size: 20.0
       cache_obstacle_heuristic: false
-      smooth_path: true
+      # Humble's Smac smoother is collision-aware but does not preserve the
+      # Hybrid-A* curvature bound. Keep the DUBIN lattice path intact so a
+      # valid R=0.55 m plan cannot be tightened before reverse validation.
+      smooth_path: false
 
 velocity_smoother:
   ros__parameters:

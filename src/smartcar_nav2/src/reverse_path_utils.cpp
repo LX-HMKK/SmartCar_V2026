@@ -44,7 +44,7 @@ bool validUnitQuaternion(const geometry_msgs::msg::Quaternion & quaternion)
   return finite(norm) && std::abs(norm - 1.0) <= kQuaternionNormTolerance;
 }
 
-bool finitePose(const geometry_msgs::msg::PoseStamped & pose)
+bool validExpectedPose(const geometry_msgs::msg::PoseStamped & pose)
 {
   if (!finite(pose.pose.position.x) || !finite(pose.pose.position.y) ||
       !finite(pose.pose.position.z) || !finiteQuaternion(pose.pose.orientation))
@@ -52,9 +52,16 @@ bool finitePose(const geometry_msgs::msg::PoseStamped & pose)
     return false;
   }
   // Zero quaternion is the Nav2 convention for "orientation unconstrained"
-  // (pass-through waypoint).  Accept it as well as unit quaternions.
+  // (pass-through waypoint). Expected start and goal poses may therefore
+  // omit orientation, unlike planner-returned path poses.
   const double norm = quaternionNorm(pose.pose.orientation);
   return norm <= 1.0e-6 || std::abs(norm - 1.0) <= kQuaternionNormTolerance;
+}
+
+bool validPathPose(const geometry_msgs::msg::PoseStamped & pose)
+{
+  return finite(pose.pose.position.x) && finite(pose.pose.position.y) &&
+         finite(pose.pose.position.z) && validUnitQuaternion(pose.pose.orientation);
 }
 
 double planarDistance(
@@ -81,9 +88,10 @@ ReversePathValidationResult invalidResult(
 
 bool validOptions(const ReversePathValidationOptions & options)
 {
-  const std::array<double, 7> values = {
+  const std::array<double, 8> values = {
     options.minimum_turning_radius,
     options.curvature_tolerance,
+    options.maximum_direction_error,
     options.start_position_tolerance,
     options.start_yaw_tolerance,
     options.goal_position_tolerance,
@@ -95,6 +103,8 @@ bool validOptions(const ReversePathValidationOptions & options)
   }
   return options.minimum_turning_radius > 0.0 &&
          options.curvature_tolerance >= 0.0 &&
+         options.maximum_direction_error > 0.0 &&
+         options.maximum_direction_error < kPi / 2.0 &&
          options.start_position_tolerance >= 0.0 &&
          options.start_yaw_tolerance >= 0.0 &&
          options.goal_position_tolerance >= 0.0 &&
@@ -158,7 +168,7 @@ ReversePathValidationResult validateReversePath(
   {
     return invalidResult("path_frame_mismatch");
   }
-  if (!finitePose(expected_start) || !finitePose(expected_goal)) {
+  if (!validExpectedPose(expected_start) || !validExpectedPose(expected_goal)) {
     return invalidResult("expected_pose_invalid");
   }
 
@@ -167,7 +177,7 @@ ReversePathValidationResult validateReversePath(
     if (pose.header.frame_id != path.header.frame_id) {
       return invalidResult("pose_frame_mismatch", index);
     }
-    if (!finitePose(pose)) {
+    if (!validPathPose(pose)) {
       return invalidResult("pose_invalid", index);
     }
   }
@@ -208,6 +218,7 @@ ReversePathValidationResult validateReversePath(
       options.goal_yaw_tolerance);
   }
 
+  const double maximum_projection = -std::cos(options.maximum_direction_error);
   const double maximum_curvature =
     1.0 / options.minimum_turning_radius + options.curvature_tolerance;
 
@@ -219,6 +230,18 @@ ReversePathValidationResult validateReversePath(
     const double segment_length = std::hypot(dx, dy);
     if (segment_length < options.minimum_segment_length) {
       return invalidResult("segment_too_short", index);
+    }
+
+    const double current_yaw = tf2::getYaw(current.pose.orientation);
+    const double next_yaw = tf2::getYaw(next.pose.orientation);
+    const double current_projection =
+      (dx * std::cos(current_yaw) + dy * std::sin(current_yaw)) / segment_length;
+    const double next_projection =
+      (dx * std::cos(next_yaw) + dy * std::sin(next_yaw)) / segment_length;
+    const double observed_projection = std::max(current_projection, next_projection);
+    if (observed_projection > maximum_projection) {
+      return invalidResult(
+        "segment_not_reverse", index, observed_projection, maximum_projection);
     }
   }
 

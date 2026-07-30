@@ -67,7 +67,7 @@ Visualization Manager:
       Enabled: true
       Line Style: Lines
       Line Width: 0.03
-      Name: Global Plan
+      Name: Actual Nav2 Global Path (/plan)
       Topic:
         Value: /plan
     - Class: rviz_default_plugins/Path
@@ -75,7 +75,7 @@ Visualization Manager:
       Enabled: true
       Line Style: Lines
       Line Width: 0.04
-      Name: Local Plan
+      Name: Actual Nav2 Local Path (/local_plan)
       Topic:
         Value: /local_plan
     - Class: rviz_default_plugins/Path
@@ -88,7 +88,7 @@ Visualization Manager:
         Value: /transformed_plan
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Waypoint Markers
+      Name: Waypoint Reference Constraints (not a Nav2 path)
       Topic:
         Durability Policy: Transient Local
         Reliability Policy: Reliable

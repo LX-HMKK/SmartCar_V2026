@@ -231,6 +231,7 @@ def validate_waypoints(waypoints):
     loop_count = tasks.count("loop")
 
     state = "start"
+    post_vlm_direction = None
     for i, task in enumerate(tasks):
         expected_direction = None
         if state == "start":
@@ -261,24 +262,27 @@ def validate_waypoints(waypoints):
                     f"waypoint {i}: expected corridor or vlm/nav, got {task}"
                 )
         elif state == "loop_or_return":
-            if task == "via":
-                expected_direction = "forward"
-            elif task == "loop":
-                expected_direction = "forward"
-            elif task == "corridor":
-                expected_direction = "forward"
+            if task in {"via", "loop", "corridor"}:
+                # Once the vehicle leaves the VLM handoff, retain one
+                # direction through the C-zone and return corridor.  This
+                # supports both the established forward route and an
+                # all-reverse simulation route.
+                if post_vlm_direction is None:
+                    post_vlm_direction = waypoints[i].direction
+                expected_direction = post_vlm_direction
+            if task == "corridor":
                 state = "return_corridor"
-            else:
+            elif task not in {"via", "loop"}:
                 raise ValueError(
                     f"waypoint {i}: expected loop or corridor, got {task}"
                 )
         elif state == "return_corridor":
             if task == "via":
-                expected_direction = "forward"
+                expected_direction = post_vlm_direction
             elif task == "corridor":
-                expected_direction = "forward"
+                expected_direction = post_vlm_direction
             elif task == "return":
-                expected_direction = "forward"
+                expected_direction = post_vlm_direction
                 state = "done"
             else:
                 raise ValueError(

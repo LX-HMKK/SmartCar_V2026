@@ -21,11 +21,10 @@ except ImportError:  # pragma: no cover - Windows-only test environment.
 
 # Root-based CI/deployment retains /root/ros2_ws, while an ordinary WSL user
 # gets a writable workspace without needing to export SMARTCAR_WS just to run
-# the local tuning contracts.
+# the local tuning contracts. Tuning and sim_tune.sh must use this same WSL
+# workspace source; Windows imports are handled explicitly by sim_tune.sh.
 WS = Path(os.environ.get("SMARTCAR_WS", str(Path.home() / "ros2_ws")))
-REPO_ROOT = Path(os.environ.get(
-    "SMARTCAR_REPO_ROOT", "/mnt/d/StudyWorks/3.2/SmartCar"))
-SOURCE_ROOT = Path(os.environ.get("SMARTCAR_SRC", str(REPO_ROOT / "src")))
+SOURCE_ROOT = WS / "src"
 PARAMS_FILE = SOURCE_ROOT / "smartcar_nav2" / "config" / "nav2_params.yaml"
 BACKUP_DIR = Path(os.environ.get(
     "SMARTCAR_TUNE_BACKUP_DIR",
@@ -295,6 +294,22 @@ def resolve_param(selector):
     raise ValueError(f"unknown parameter {selector!r}; choose: {choices}")
 
 
+def require_workspace_source():
+    """Reject the legacy source override before it edits a different tree."""
+    legacy_source = os.environ.get("SMARTCAR_SRC")
+    if not legacy_source:
+        return
+    requested = Path(legacy_source).expanduser().resolve()
+    expected = SOURCE_ROOT.expanduser().resolve()
+    if requested != expected:
+        raise RuntimeError(
+            "SMARTCAR_SRC is no longer accepted for simulation tuning; "
+            f"use SMARTCAR_WS so both tools operate on {SOURCE_ROOT}. "
+            "Import a Windows checkout explicitly with "
+            "sim_tune.sh --sync-from-windows."
+        )
+
+
 def interactive():
     original = load_params()
     data = copy.deepcopy(original)
@@ -388,6 +403,11 @@ def main():
     parser.add_argument(
         "--list", action="store_true", help="列出所有备份")
     args = parser.parse_args()
+
+    try:
+        require_workspace_source()
+    except RuntimeError as error:
+        parser.error(str(error))
 
     if args.list:
         for backup in sorted(BACKUP_DIR.glob("*.yaml")):

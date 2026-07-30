@@ -94,9 +94,9 @@ Visualization Manager:
       Draw Behind: true
       Enabled: true
 
-    # ── Global Plan (smoothed) ──
+    # ── Actual Nav2 global path ──
     - Class: rviz_default_plugins/Path
-      Name: Plan
+      Name: Actual Nav2 Global Path (/plan)
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -107,9 +107,9 @@ Visualization Manager:
       Line Width: 0.08
       Enabled: true
 
-    # ── Local Path (RPP) ──
+    # ── Actual Nav2 local control path ──
     - Class: rviz_default_plugins/Path
-      Name: LocalPlan
+      Name: Actual Nav2 Local Path (/local_plan)
       Topic:
         Depth: 5
         Durability Policy: Volatile
@@ -142,9 +142,9 @@ Visualization Manager:
         Value: Arrow
       Enabled: true
 
-    # ── Waypoint Markers ──
+    # ── Ordered waypoint constraints; not a Nav2-generated path ──
     - Class: rviz_default_plugins/MarkerArray
-      Name: Waypoints
+      Name: Waypoint Reference Constraints (not a Nav2 path)
       Topic:
         Depth: 5
         Durability Policy: Transient Local

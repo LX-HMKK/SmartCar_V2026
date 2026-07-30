@@ -1,10 +1,10 @@
-# 路径分段航点编辑器操作手册
+# 航点分段编辑与离线几何预检操作手册
 
 本文档说明 `smartcar_tools` 的 `waypoint_editor.launch.py`。它提供一个中文
-Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束，并在保存前做本地
-最小转弯半径与禁区预检。
+Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束，并在保存前做离线
+几何预检。
 
-最后更新：2026-07-29。
+最后更新：2026-07-30。
 
 ## 1. 适用范围
 
@@ -12,9 +12,12 @@ Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束
 视觉任务。默认配置会额外启动锁存急停的 safety 节点。下面的 WSL 示例显式关闭该
 节点，因为它只用于离线编辑，没有接入实体硬件。
 
-编辑器显示的红色禁区是路径规划约束，不是 SLAM 地图，也不参与实车定位。预检使用
-与仿真共享的转弯半径和禁区几何，但它是本地可行性检查，不等于 Nav2 在运行时的
-最终 `/plan`。实际仿真仍可能因代价地图、起始姿态、控制器或重规划而得到不同轨迹。
+编辑器显示的红色禁区是离线几何预检约束，不是 SLAM 地图，也不参与实车定位。灰色
+航点连线只是任务航点参考约束，不是 Nav2 路径。预检使用与仿真共享的转弯半径和禁区
+几何，但不读取实时机器人姿态、代价地图或控制器状态，也不等于 Nav2 在运行时生成的
+`/plan` 或 `/local_plan`。实际仿真仍可能因代价地图、起始姿态、控制器或重规划而得到
+不同轨迹。RViz 中黄色 C 区双环来自 `Official Field Reference`，同样不是预检或 Nav2
+路径；应通过 Display 名称和 Topic 区分显示项。
 
 保存航点会保持 `calibrated: false`，不能解除任何实车运动门禁。
 
@@ -48,6 +51,19 @@ ros2 launch smartcar_tools waypoint_editor.launch.py \
   use_rviz:=false
 ```
 
+### WSL 仿真路线编辑
+
+仿真正在使用的路线应从专用入口打开，而不是沿用实车编辑器的默认文件：
+
+```bash
+ros2 launch smartcar_tools sim_waypoint_editor.launch.py use_rviz:=false
+```
+
+该入口默认解析与 `smartcar_sim/launch/sim.launch.py` 完全相同的已安装包路径
+`smartcar_nav2/config/waypoints/nav_only.yaml`，且默认不启动 safety、Gazebo、Nav2
+或任何实体驱动。若没有已运行的 Gazebo 时钟，追加 `use_sim_time:=false`；与仿真
+并行查看时保留默认的 `use_sim_time:=true`。
+
 关闭窗口或在启动终端按 `Ctrl+C` 退出。若旧 launch 残留了 `field_reference_node`，先在
 原终端按 `Ctrl+C`，再重新启动；不要同时运行两份编辑器。
 
@@ -79,8 +95,9 @@ RDK 上编辑前先确认 YAML 的实际位置。日常从 Windows 同步时，`
 
 ## 4. 界面与鼠标操作
 
-左侧是场地和航点，右侧是当前分段的编辑面板。虚线为声明的航点顺序，点击
-“路径规划”后会显示每一段的可行或不可行路径。红色虚线框是仿真/预检共享的禁区。
+左侧是场地和航点，右侧是当前分段的编辑面板。灰色虚线为声明的航点参考约束，不是
+Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每段的离线几何候选或
+阻塞结果，同样不是 Nav2 路径。红色虚线框是仿真/预检共享的禁区。
 
 | 操作 | 效果 |
 |---|---|
@@ -144,12 +161,13 @@ RDK 上编辑前先确认 YAML 的实际位置。日常从 Windows 同步时，`
 
 每次修改后，状态栏会提示“路线已修改”。完成编辑后：
 
-1. 点击“路径规划”。
-2. 查看所有分段：绿色为可行，红色为禁区或最小转弯半径下不可行。
+1. 点击“几何预检”。
+2. 查看所有分段：绿色为离线预检通过，红色为静态禁区或最小转弯半径下的预检阻塞。
 3. 只有预检通过后，“保存路线”或 `Ctrl+S` 才会写入 YAML。
 
-预检未执行或存在红段时，保存会被阻止。修复点位、朝向、途经顺序或分段边界后重新
-预检。
+预检未执行或存在红段时，保存会被阻止。它只验证静态几何，不能作为 Nav2 运行时
+可达或轨迹一致的结论。修复点位、朝向、途经顺序或分段边界后重新预检，并通过实际
+仿真检查 `/plan` 和 `/local_plan`。
 
 ## 6. 共享路线参数与仿真
 
@@ -163,19 +181,20 @@ RDK 上编辑前先确认 YAML 的实际位置。日常从 Windows 同步时，`
 | `preflight` | 本地预检的网格、采样、终点容差和搜索预算。 |
 | `simulation_keepout.map_resolution_m` | 仿真 keepout PGM 的分辨率。 |
 
-修改该 YAML 后，在 WSL 中运行以下命令完成同步与验证：
+修改该 YAML 后，在 WSL 中运行以下命令完成验证。默认使用
+`SMARTCAR_WS/src` 中的已保存路线，不会从 Windows 挂载目录覆盖它：
 
 ```bash
 SMARTCAR_WS=/home/lx_hm/ros2_ws \
-SMARTCAR_REPO_ROOT=/mnt/d/StudyWorks/3.2/SmartCar \
-bash /mnt/d/StudyWorks/3.2/SmartCar/src/smartcar_sim/scripts/sim_tune.sh \
+bash /home/lx_hm/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh \
   --headless --loop 1
 ```
 
 `sim_tune.sh` 会依次重生成 `field_map.pgm`、同步 Smac/ReverseHandoff 与仿真
-KeepoutFilter 参数、用 `rsync --delete` 镜像 `src/` 到 WSL 工作区、构建并运行
-Gazebo 自动路线。它会发布 Gazebo 的非零速度，绝不能用于实体底盘。由于含
-`rsync --delete`，先备份 WSL 工作区中不在 Windows 源码里的文件。
+KeepoutFilter 参数、构建并运行 Gazebo 自动路线。它会发布 Gazebo 的非零速度，绝
+不能用于实体底盘。需要从 Windows 源码导入时，额外添加
+`--sync-from-windows`；脚本会先比对 `nav_only.yaml` 的 SHA-256，并在不同的
+情况下将 WSL 版本备份到 `tune_logs/manual_backups/`，再进行不带 `--delete` 的同步。
 
 仅检查生成物是否与当前共享配置一致：
 
@@ -196,6 +215,6 @@ python3 src/smartcar_sim/scripts/sync_route_planning.py --check
 | 点击“新增途经点”没有新点 | 先选分段，再点击按钮，最后在左侧场地空白处点击；点到已有航点会被拒绝。 |
 | 选中环移到右侧后消失 | 使用当前已构建版本。旧版存在右侧 hover 重绘问题；关闭旧编辑器并重启。 |
 | `ParameterAlreadyDeclaredException: use_sim_time` | 说明仍在使用旧构建。同步 `smartcar_tools` 后重新执行 `colcon build --packages-select smartcar_tools smartcar_task --symlink-install`。 |
-| 保存被阻止 | 先点击“路径规划”，修复所有红色分段，并确认每个航点都恰好属于一条连续分段。 |
+| 保存被阻止 | 先点击“几何预检”，修复所有红色分段，并确认每个航点都恰好属于一条连续分段。 |
 | 仿真禁区或转弯半径没有更新 | 修改 `route_planning.yaml` 后运行 `sim_tune.sh`；直接 `ros2 launch smartcar_sim` 不会自动读取一个新的 `route_planning_file`。 |
 | 图形窗口崩溃或只剩场地参考节点 | 在原启动终端按 `Ctrl+C` 清理旧 launch，确认没有旧编辑器后重新启动。 |

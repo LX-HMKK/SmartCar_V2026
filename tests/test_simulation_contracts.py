@@ -2,10 +2,12 @@
 
 import copy
 import importlib.util
+import os
 import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 import xml.etree.ElementTree as ET
 
@@ -17,6 +19,7 @@ SIM = ROOT / "src" / "smartcar_sim"
 LAUNCH = SIM / "launch" / "sim.launch.py"
 SIM_ENV = SIM / "scripts" / "sim_env.sh"
 SIM_START = SIM / "scripts" / "sim_start.sh"
+SIM_CLEANUP = SIM / "scripts" / "sim_cleanup.sh"
 WSLG_WAIT = SIM / "scripts" / "wait_for_wslg.sh"
 AUTO_TRAIN = SIM / "scripts" / "auto_train.py"
 ODOM_RELAY = SIM / "scripts" / "odom_relay.py"
@@ -80,6 +83,19 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("OnProcessExit", launch)
         self.assertIn("target_action=sim_cleanup", launch)
         self.assertIn("on_exit=[start_after_cleanup]", launch)
+
+    def test_cleanup_reclaims_stale_keepout_stack(self) -> None:
+        cleanup = SIM_CLEANUP.read_text(encoding="utf-8")
+
+        self.assertIn(
+            '"/nav2_map_server/map_server.*__node:=keepout_mask_server"',
+            cleanup,
+        )
+        self.assertIn(
+            '"/nav2_map_server/costmap_filter_info_server.*'
+            '__node:=keepout_filter_info_server"',
+            cleanup,
+        )
 
     def test_lidar_sensor_is_a_child_of_laser_link(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
@@ -370,6 +386,9 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn('"mask_topic": "/keepout_filter_mask"', launch)
         self.assertIn("OnStateTransition", launch)
         self.assertIn('goal_state="active"', launch)
+        self.assertIn('"bond_timeout": 20.0', launch)
+        self.assertIn("launch_nav2_once", launch)
+        self.assertIn("OpaqueFunction(function=launch_nav2_once)", launch)
         self.assertIn('"params_overlay_file": nav2_keepout_overlay', launch)
         self.assertNotIn("ros2 lifecycle set /map_server", launch)
 
@@ -378,10 +397,16 @@ class SimulationContractTests(unittest.TestCase):
         runner = AUTO_TRAIN.read_text(encoding="utf-8")
 
         self.assertIn('LaunchConfiguration("run_route"', launch)
+        self.assertIn('LaunchConfiguration("waypoints_file")', launch)
+        self.assertIn('DeclareLaunchArgument(\n            "waypoints_file"', launch)
+        self.assertIn('pkg_nav2, "config", "waypoints", "nav_only.yaml"', launch)
         self.assertIn("condition=IfCondition(run_route)", launch)
         self.assertNotIn('LaunchConfiguration("autostart"', launch)
         self.assertIn("target_action=auto_train", launch)
         self.assertIn("complete route runner exited", launch)
+        self.assertIn('LaunchConfiguration(\n        "shutdown_on_route_exit"', launch)
+        self.assertIn('DeclareLaunchArgument(\n            "shutdown_on_route_exit"', launch)
+        self.assertIn("Gazebo/RViz", launch)
         for parameter in (
             '"waypoints_file"',
             '"forward_behavior_tree"',
@@ -422,11 +447,17 @@ class SimulationContractTests(unittest.TestCase):
             ],
             [
                 ("p_to_qr", "forward", "p_start", "a_task_observe"),
-                ("reverse_corridor", "reverse", "a_task_observe", "c_corner_1"),
-                ("c_loop", "forward", "c_corner_1", "c_corner_3"),
-                ("c_exit", "forward", "c_corner_3", "b_corridor_return_enter"),
-                ("return_to_p", "forward", "b_corridor_return_enter", "p_finish"),
+                ("reverse_corridor", "reverse", "a_task_observe", "b_corridor_enter"),
+                ("reverse_c_entry", "reverse", "b_corridor_enter", "c_corner_3"),
+                ("c_exit", "reverse", "c_corner_3", "b_corridor_return_enter"),
+                ("return_to_p", "reverse", "b_corridor_return_enter", "p_finish"),
             ],
+        )
+        reverse_corridor, reverse_c_entry = nav_only["planning_segments"][1:3]
+        self.assertEqual(reverse_corridor["through_ids"], [])
+        self.assertEqual(
+            reverse_c_entry["through_ids"],
+            ["c_corner_1", "c_corner_2"],
         )
 
     def test_route_results_preserve_planning_and_execution_yaw_evidence(self) -> None:
@@ -468,7 +499,22 @@ class SimulationContractTests(unittest.TestCase):
         self.assertNotIn("GridBased.curvature_tolerance", tuner)
         self.assertIn("render_params", tuner)
         self.assertIn("flock -n 9", runner)
-        self.assertIn("Invalid SMARTCAR_SRC", runner)
+        self.assertIn('source_root="${workspace}/src"', runner)
+        self.assertIn("--sync-from-windows", runner)
+        self.assertIn("--sync-only requires --sync-from-windows", runner)
+        self.assertIn("SMARTCAR_WINDOWS_SRC", runner)
+        self.assertIn("backup_wsl_file_before_sync", runner)
+        self.assertIn('"nav_only.yaml"', runner)
+        self.assertIn('"nav2_params.yaml"', runner)
+        self.assertIn("${file_label%.yaml}.before-windows-sync-", runner)
+        self.assertIn("nav2_params.yaml did not match Windows source", runner)
+        self.assertIn('sha256sum "$1"', runner)
+        self.assertNotIn("    --delete \\", runner)
+        self.assertIn('waypoints_file:="$snapshot_dir/nav_only.yaml"', runner)
+        self.assertIn('--waypoints-file "$snapshot_dir/nav_only.yaml"', runner)
+        self.assertIn('SOURCE_ROOT = WS / "src"', tuner)
+        self.assertIn("require_workspace_source", tuner)
+        self.assertIn("SMARTCAR_SRC is no longer accepted", tuner)
         self.assertNotIn("SMARTCAR_NAV2_PARAMS", tuner)
         self.assertIn("fcntl.flock", tuner)
 
@@ -491,6 +537,29 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("# The QR pose seeds a direction change.", rendered)
         self.assertEqual(len(rendered.splitlines()), len(source.splitlines()))
         self.assertIn("yaw_goal_tolerance: 0.2", rendered)
+
+    def test_tuning_uses_workspace_source_and_rejects_legacy_override(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            workspace = Path(temporary) / "workspace"
+            legacy_source = Path(temporary) / "windows_source"
+            with mock.patch.dict(
+                os.environ,
+                {
+                    "SMARTCAR_WS": str(workspace),
+                    "SMARTCAR_SRC": str(legacy_source),
+                },
+                clear=False,
+            ):
+                spec = importlib.util.spec_from_file_location(
+                    "tune_params_workspace_source", TUNE_PARAMS)
+                module = importlib.util.module_from_spec(spec)
+                spec.loader.exec_module(module)
+
+                self.assertEqual(module.SOURCE_ROOT, workspace / "src")
+                with self.assertRaisesRegex(
+                    RuntimeError, "SMARTCAR_SRC is no longer accepted"
+                ):
+                    module.require_workspace_source()
 
     def test_restore_only_changes_tunable_parameters(self) -> None:
         spec = importlib.util.spec_from_file_location("tune_params_restore", TUNE_PARAMS)

@@ -9,11 +9,12 @@
 
 截至 2026-07-27，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线（三阶段 NavigateThroughPoses）、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
-截至 2026-07-28，`feat/gazebo-simulation` 分支还包含 WSL2 Ubuntu-22.04 +
+截至 2026-07-30，`feat/gazebo-simulation` 分支还包含 WSL2 Ubuntu-22.04 +
 Ignition Gazebo 6.18 仿真。WSL 必须使用 NAT 网络；mirrored 模式会破坏
-Fast DDS discovery。仿真已验证 Gazebo/RViz/TF/Nav2 正常，P→QR 约 22 秒、
-QR→VLM 约 48 秒完成。路线已拆分为 4 阶段 ThroughPoses（C 区拆两段），
-无墙纯导航方案。该证据只覆盖 Gazebo 模型，不属于实体倒车或现场验收。
+Fast DDS discovery。Gazebo/RViz/TF/Nav2 启动，以及 P→A、A→B 倒车段已有运行
+证据。当前 `nav_only.yaml` 为首段前进、其余四段倒车的五段路线；B→C1 入口仍会在
+C 区中央禁区西南角触发局部碰撞预测，尚未取得全程 `completed` 证据。该证据只覆盖
+Gazebo 模型，不属于实体倒车或现场验收。
 
 已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
@@ -21,7 +22,7 @@ QR→VLM 约 48 秒完成。路线已拆分为 4 阶段 ThroughPoses（C 区拆�
 
 - **任务决策层**：`smartcar_task` 管理五子任务和语义航点；每个非起点航点独立发送 `NavigateToPose`，并把动作 UUID、方向、generation 与方向租约绑定。
 - **视觉层**：`smartcar_vision` 使用 `zbar_ros` 识别二维码；图生文请求包含图像等待、JPEG 编码和后端推理，统一受 8 秒硬期限约束并提供兜底文案。
-- **导航层**：单一 Smac Hybrid `DUBIN` planner + Regulated Pure Pursuit；正向使用普通 BT，倒车多航点使用 `ComputeReversePathThroughPoses` 自定义 BT 节点做虚拟航向旋转、路径去重和反向校验。任务路线为多阶段 ThroughPoses：QR 单航点 forward → corridor 2 点 reverse → C 区 loop+return 拆两段 forward。BT 以 0.5 Hz 重规划；不启动 `behavior_server` 或 `waypoint_follower`，禁止 Spin recovery 和原地旋转。
+- **导航层**：单一 Smac Hybrid `DUBIN` planner + Regulated Pure Pursuit；倒车多航点使用 `ComputeReversePathThroughPoses` 自定义 BT 节点做虚拟航向旋转、路径去重和反向校验。当前仿真路线为 P→A 单航点 forward、A→B 单航点 reverse，之后 B→C3（经 C1/C2）、C3→return_enter（经 C4）和 return_enter→P 均为 reverse ThroughPoses。BT 以 0.5 Hz 重规划；不启动 `behavior_server` 或 `waypoint_follower`，禁止 Spin recovery 和原地旋转。
 - **避障感知层**：YDLIDAR `/scan` 直接进入 obstacle/inflation costmap；无消费者的 `obstacle_detector_2` 默认关闭，仅保留诊断开关。
 - **定位层**：STM32 轮式里程计 + IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
 - **控制层**：`controller_server -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，只允许与动作租约一致的速度符号；安全节点（C++ 默认，Python 备选）继续负责指令消毒、急停锁存、传感器心跳超时和 Twist→Ackermann 转换。
@@ -31,7 +32,7 @@ QR→VLM 约 48 秒完成。路线已拆分为 4 阶段 ThroughPoses（C 区拆�
 - LiDAR 不做 SLAM 或静态地图定位；必须允许通过连续扫描匹配生成激光里程计并融合进 EKF，同时继续进入 obstacle/inflation costmap。激光里程计不得直接发布 `odom_combined -> base_footprint` TF，EKF 是唯一 TF owner。
 - 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。安全节点直接发布 `/ackermann_cmd`，`use_safety_ackermann:=true` 时跳过独立的 `cmd_vel_to_ackermann_drive` 节点。
 - 方向门必须位于 velocity smoother 之后。`Prepare/Activate/Renew/Stop` 租约同时绑定 boot epoch、lease ID、generation 和 `NavigateToPose` UUID；错方向、过期许可、非法 Twist 或重放必须完整输出零并锁存故障。
-- 唯一路线方向模式为多阶段 ThroughPoses：QR 单航点 `forward` → 出站 corridor（2 航点）`reverse` ThroughPoses → C 区 loop + return（拆分两段，共 6 航点）`forward` ThroughPoses。`validate_waypoints()` 必须拒绝全正向或越界方向配置。
+- 当前仿真 `nav_only.yaml` 的方向模式为：P→A 单航点 `forward`，其后的 `reverse_corridor`、`reverse_c_entry`、`c_exit` 和 `return_to_p` 均为 `reverse`；多航点阶段必须使用 ThroughPoses。`validate_waypoints()` 必须拒绝全正向或越界方向配置。
 - 安全节点 odom 回调有 50ms 节流（`odom_throttle_interval_sec`），有效 odom 看门狗窗口 = `odom_timeout + throttle_interval + timer_period`（最坏 ~450ms，0.15 m/s 下 ~6.8 cm）。`raw_odom_timeout_sec` 已参数化。
 - 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发不是当前 release 依赖；TTS consumer 已提供但默认关闭，不属于任务或运动门禁依赖。
 - 发车时车辆手动置于 P 区原点，车头朝 `+X`；任务 reset 不能替代物理复位。
@@ -101,21 +102,14 @@ colcon test --return-code-on-test-failure
 colcon test-result --all --verbose
 ```
 
-2026-07-28 当前分支证据：WSL 仿真 Stage 1 P→QR（25s）与 Stage 2 QR→VLM 反向（63s）
-稳定通过。新增 PGM 静态地图经由 `map_server` + `FieldMap` RViz 层可视化禁区。
-PGM 由 `generate_field_map.py` 从 `track.world` 墙体坐标生成（50×50 px @ 0.10 m），
-origin `[-0.5, -0.25]` 对齐 `odom_combined` P 点。反曲率容差 1.05 覆盖实测峰值 2.85。
+2026-07-30 当前分支证据：PGM 禁区经 `map_server` + KeepoutFilter 提供给仿真 costmap，
+并由 `FieldMap` RViz 层显示。PGM 由 `generate_field_map.py` 生成，origin
+`[-0.5, -0.25]` 对齐 `odom_combined` P 点。`static_layer` 仍不用于导航，避免 TROS
+Nav2 1.1.20 与 rolling window 的初始化竞态。
 
-**已知限制**：TROS Nav2 1.1.20 的 `static_layer` 与 `rolling_window` costmap 存在
-初始化竞态——costmap 激活时 `static_layer` 尚未处理 `/map` 订阅回调，起始单元格残
-留 `NO_INFORMATION(255)≥LETHAL(253)` 导致 Smac planner `StartOccupied` 拒绝规划。
-`track_unknown_space:false` 和 `tolerance:0.25` 均不能绕过。故当前 **不使用** static_layer
-进行导航；规划器对空 costmap 规划直线 Dubins 路径，依赖航点位置引导和 Gazebo 物理
-碰撞避免穿墙。Stage 3（C 区环道 forward ThroughPoses）因穿越 C 区内部填充而失败，
-拆分子段 + c_corner_2 航点修复验证中。
-
-实验性 `wall_publisher.py`（LaserScan/PointCloud2 墙体→obstacle_layer 标记）受限于
-膨胀半径 (0.55/0.65m) 覆盖 VLM 反向目标 `c_corner_1`，未合并。
+当前保存的 all-reverse 路线已验证 Gazebo/RViz/TF/Nav2 启动、P→A 与 A→B。B→C1 的
+反向入口贴近中央 keepout 西南角，局部代价地图会预测碰撞并中止；全程不应标注为通过。
+实验性 `wall_publisher.py` 未合并。
 
 2026-07-24 RDK 历史证据：`smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup` 共 108 项测试零失败；提交 `8103b37` 已部署到 `/root/ros2_ws`。这些证据不包含实体倒车运动，也不覆盖当前仿真分支的两项本地合同失败。
 
@@ -139,8 +133,8 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - 实测并替换 `default_waypoints.yaml` 占位航点（`nav_only.yaml` 已支持纯导航实测，语义航点坐标仍需场地验证后标定）。
 - 完成转向标定（`steering_command_scale` / `offset`）。
 - 车轮离地和 0.15 m/s 低速验证 QR→VLM 实际倒车；`minimum_turning_radius: 0.55` 仍是未标定规划假设。
-- 修正并现场确认 `c_corner_1 -> c_corner_2` 正向 DUBIN 兜圈风险（c_corner_2=38°）。
-- ✅ `c_corner_4 -> b_corridor_return_enter` 兜圈已通过 yaw 调参在 WSL 仿真中解决：`c_corner_4` yaw 180°→-50°、`return_enter` 经 geometry_scan 重定位至 (2.3, 2.5) yaw -120°。实体场地还需复测。
+- 修正并验证仿真 `b_corridor_enter -> c_corner_1` 倒车入口与 C 区中央 keepout 的安全余量；C1-C4 坐标不得移动。
+- 🔴 当前 all-reverse 路线尚未到达 `c_corner_4 -> b_corridor_return_enter`；不得将旧正向路线的 yaw 调参结果视为当前倒车路线的通过证据。
 - 配置并实测 VLM 后端（火山 Ark 或端侧模型）；如需语音，验证 TTS + 网络 + 扬声器。
 - 验证人工物理急停 → 车轮离地 → 低速地面 → 完整赛道测试。
 - 0.30 m/s 运动异常尚未完成单变量复测；历史 EKF 超期发生在发车前，不能归因于车速。已实施首批调度修复，仍须现场分级验证。
@@ -162,7 +156,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - ✅ **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - ℹ️ **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - 🔴 **一键导航测试脚本 (2026-07-24 修订)**：只使用仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。`scripts/deploy/nav_test.sh` 是会自动解除急停并 start 的历史副本，不得复制或执行；当前 `scripts/monitor_mission.py` 也不能作为零速或安全判据。
-- 🔴 **NavigateThroughPoses 路线与倒车 (2026-07-28)**：路线为多阶段 ThroughPoses——① QR 单航点 forward；② corridor 2 点 reverse（`ComputeReversePathThroughPoses` BT 节点做 yaw+π 旋转、去重和反向校验）；③④ C 区 loop→return 拆分两段 forward。方向门用 UUID 租约保证方向门禁，不使用 `REEDS_SHEPP`/`reverse_penalty`/航点翻转。`nav_only.yaml` 移除 `b_corridor_out`（10→9 nav 航点），`b_corridor_return_enter` 重定位至 (2.3, 2.5, -120°)。`auto_train.py` 按阶段分段发送，fallback 退化为逐航点。已知问题：reverse BT 曲率校验已迭代至 1.05 覆盖实测峰值但裕度有限；forward ThroughPoses 长距离规划失败，仿真通过拆分多子阶段规避。
+- 🔴 **NavigateThroughPoses 路线与倒车 (2026-07-30)**：路线为五阶段——① P→A 单航点 forward；② A→B 单航点 reverse；③ B→C3（经 C1/C2）reverse ThroughPoses；④ C3→return_enter（经 C4）reverse ThroughPoses；⑤ return_enter→P（经 b_corridor_return）reverse ThroughPoses。`ComputeReversePathThroughPoses` 做 yaw+π 旋转、去重和反向校验；不使用 `REEDS_SHEPP`、`reverse_penalty` 或航点朝向翻转。`nav_only.yaml` 已移除 `b_corridor_out`。当前 B→C1 入口仍失败，必须使用隔离 trial YAML 调整允许的 B 点/航向，并以完整结果 JSON 验收。
 - ℹ️ **航点调参约束 (2026-07-27)**：C 区循环点（c_corner_1~4）位置不可改，仅可改 yaw；B 区走廊点（b_corridor_*）可上延至 C 区边缘（允许占一点 C 区）。P/QR/VLM 点位不得移动。调参流程：`geometry_scan.py` 枚举候选 yaw → `apply_candidate.py` 写入 YAML → `sim_tune.sh --loop 1` 验证。
 - ℹ️ **仿真航点几何扫描 (2026-07-27)**：`src/smartcar_sim/scripts/geometry_scan.py` 对任意航点段做 Dubins 路径扫描（R=0.55m），枚举 yaw 候选、采样起姿包络（±0.25m/±0.50rad）、检查 B 区墙碰撞和 corridor 可达性。输出 JSON 候选集供 `apply_candidate.py` 消费。`apply_candidate.py --index N` 将第 N 个候选写入航点 YAML。
 - ℹ️ **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。

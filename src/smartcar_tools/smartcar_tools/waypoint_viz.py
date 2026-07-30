@@ -1,6 +1,9 @@
-"""Publish Nav2 waypoint YAML as RViz MarkerArray for visual inspection.
+"""Publish mission waypoint reference constraints as an RViz MarkerArray.
 
-Standalone tool — does not require Nav2 or a chassis driver.
+The line joins stored waypoint positions in mission order.  It is not a
+Nav2-generated ``/plan`` or ``/local_plan`` and does not require Nav2 or a
+chassis driver.
+
 Launch: ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<path>
 """
 
@@ -66,7 +69,7 @@ def load_waypoints(path):
 
 
 class WaypointVizNode(Node):
-    """Read waypoint YAML and publish MarkerArray on a latched topic."""
+    """Publish ordered waypoint constraints, rather than a Nav2 path."""
 
     def __init__(self):
         super().__init__("waypoint_viz")
@@ -82,7 +85,8 @@ class WaypointVizNode(Node):
 
         self._waypoints = load_waypoints(waypoints_file)
         self.get_logger().info(
-            f"Loaded {len(self._waypoints)} waypoints from {waypoints_file}"
+            f"Loaded {len(self._waypoints)} waypoint reference constraints from "
+            f"{waypoints_file}; this MarkerArray is not Nav2 /plan or /local_plan"
         )
 
         latched_qos = QoSProfile(
@@ -111,7 +115,7 @@ class WaypointVizNode(Node):
         stamp = self.get_clock().now().to_msg()
         frame_id = self._waypoints[0][0]  # first waypoint's frame
 
-        # ── connecting line ──────────────────────────────────────────
+        # ── ordered waypoint reference constraint, not a Nav2 path ───
         line = Marker()
         line.header.frame_id = frame_id
         line.header.stamp = stamp

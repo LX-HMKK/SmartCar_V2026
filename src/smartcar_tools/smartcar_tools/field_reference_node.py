@@ -181,16 +181,16 @@ class FieldReferenceNode(Node):
             "c_ring_outer",
             0,
             self._reference.ring_outer_outline,
-            0.045,
-            (1.00, 0.76, 0.10, 0.95),
+            0.030,
+            (0.70, 0.75, 0.82, 0.70),
             stamp,
         ))
         message.markers.append(self._line(
             "c_ring_inner",
             0,
             self._reference.ring_inner_outline,
-            0.045,
-            (1.00, 0.76, 0.10, 0.95),
+            0.030,
+            (0.70, 0.75, 0.82, 0.70),
             stamp,
         ))
 

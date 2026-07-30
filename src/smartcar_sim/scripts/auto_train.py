@@ -32,6 +32,7 @@ HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
 HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
+THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M = 0.17
 
 
 class AutoTrain(Node):
@@ -86,6 +87,10 @@ class AutoTrain(Node):
         self._expected_goal_count = 0
         self._input_manifest_cache = None
         self._route_manifest = None
+        self._execution_manifest = {
+            "use_through_poses": bool(
+                self.get_parameter("use_through_poses").value),
+        }
 
     def _odom_cb(self, msg):
         pose = msg.pose.pose
@@ -139,7 +144,7 @@ class AutoTrain(Node):
         path = Path(value)
         if not value or not path.is_file():
             raise ValueError(f"{parameter_name} is not a file: {value}")
-        return path
+        return path.resolve()
 
     @staticmethod
     def _orientation_mapping(pose):
@@ -148,6 +153,32 @@ class AutoTrain(Node):
         if not isinstance(orientation, dict):
             return {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0}
         return orientation
+
+    @classmethod
+    def _route_goal_manifest(cls, goal):
+        """Serialize the exact physical target passed to Nav2 for a stage."""
+        pose = goal["pose"]
+        position = pose["position"]
+        orientation = cls._orientation_mapping(pose)
+        return {
+            "id": goal["id"],
+            "direction": goal["direction"],
+            "goal_profile": goal.get("goal_profile", "standard"),
+            "frame_id": str(goal.get("frame_id", "odom_combined")),
+            "pose": {
+                "position": {
+                    "x": float(position["x"]),
+                    "y": float(position["y"]),
+                    "z": float(position.get("z", 0.0)),
+                },
+                "orientation": {
+                    "x": float(orientation["x"]),
+                    "y": float(orientation["y"]),
+                    "z": float(orientation["z"]),
+                    "w": float(orientation["w"]),
+                },
+            },
+        }
 
     def _load_route(self):
         path = self._required_path("waypoints_file")
@@ -184,6 +215,17 @@ class AutoTrain(Node):
                 "direction": segment.direction,
                 "goals": goals,
             })
+        for stage in stages:
+            nonstandard_goals = [
+                goal["id"] for goal in stage["goals"]
+                if goal.get("goal_profile", "standard") != "standard"
+            ]
+            if len(stage["goals"]) > 1 and nonstandard_goals:
+                raise ValueError(
+                    f"Segment {stage['id']!r} combines nonstandard goals "
+                    f"({', '.join(nonstandard_goals)}) in NavigateThroughPoses; "
+                    "split them into single-goal stages"
+                )
         route = [goal for stage in stages for goal in stage["goals"]]
 
         start_id = str(self.get_parameter("start_goal_id").value).strip()
@@ -884,9 +926,11 @@ class AutoTrain(Node):
 
     @staticmethod
     def _file_manifest(path):
-        data = path.read_bytes()
+        resolved = path.resolve()
+        data = resolved.read_bytes()
         return {
             "path": str(path),
+            "realpath": str(resolved),
             "sha256": hashlib.sha256(data).hexdigest(),
         }
 
@@ -915,8 +959,7 @@ class AutoTrain(Node):
                 }
         return manifest
 
-    @staticmethod
-    def _route_manifest_for(stages):
+    def _route_manifest_for(self, stages):
         """Record the exact edited segment plan that this run executes."""
         return {
             "segments": [
@@ -924,11 +967,7 @@ class AutoTrain(Node):
                     "id": stage["id"],
                     "direction": stage["direction"],
                     "goals": [
-                        {
-                            "id": goal["id"],
-                            "direction": goal["direction"],
-                            "goal_profile": goal.get("goal_profile", "standard"),
-                        }
+                        self._route_goal_manifest(goal)
                         for goal in stage["goals"]
                     ],
                 }
@@ -943,6 +982,7 @@ class AutoTrain(Node):
             "expected_goal_count": self._expected_goal_count,
             "results": self._results,
             "route": self._route_manifest,
+            "execution": self._execution_manifest,
             "inputs": (
                 self._input_manifest_cache
                 if self._input_manifest_cache is not None
@@ -981,6 +1021,9 @@ class AutoTrain(Node):
         timeout_sec = float(self.get_parameter("goal_timeout_sec").value)
         start_time = time.monotonic()
         start_pose = self._latest_odom
+        odom_start = len(self._odom_samples)
+        controller_cmd_start = len(self._controller_cmd_samples)
+        cmd_start = len(self._cmd_samples)
         path_start = len(self._path_messages)
 
         goal = NavigateThroughPoses.Goal()
@@ -1039,11 +1082,48 @@ class AutoTrain(Node):
         duration = time.monotonic() - start_time
         cur = self._latest_odom or start_pose
 
-        # Per-waypoint min-dist check
+        # Record the same physical evidence as single-pose results.  A
+        # NavigateThroughPoses success alone does not prove direction or final
+        # pose behavior in a custom reverse tree.
+        odom_slice = self._odom_samples[odom_start:]
+        controller_metrics = self._command_metrics(
+            self._controller_cmd_samples[controller_cmd_start:])
+        candidate_metrics = self._command_metrics(
+            self._cmd_samples[cmd_start:])
+        terminal = waypoints[-1]
+        terminal_position = terminal["pose"]["position"]
+        terminal_orientation = self._orientation_mapping(terminal["pose"])
+        target_yaw = math.atan2(
+            2.0 * (
+                float(terminal_orientation["w"])
+                * float(terminal_orientation["z"])
+                + float(terminal_orientation["x"])
+                * float(terminal_orientation["y"])
+            ),
+            1.0 - 2.0 * (
+                float(terminal_orientation["y"]) ** 2
+                + float(terminal_orientation["z"]) ** 2
+            ),
+        )
+        goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
+            terminal)
+        goal_error = None
+        goal_yaw_error = None
+        signed_goal_yaw_error = None
+        final_yaw = None
+        if cur is not None:
+            goal_error = math.hypot(
+                cur[1] - float(terminal_position["x"]),
+                cur[2] - float(terminal_position["y"]),
+            )
+            final_yaw = cur[3]
+            signed_goal_yaw_error = math.remainder(
+                final_yaw - target_yaw, 2.0 * math.pi)
+            goal_yaw_error = abs(signed_goal_yaw_error)
+
+        # Per-waypoint min-distance check.  The BT's RemovePassedGoals radius
+        # is 0.15 m; retain a 0.02 m observer margin for odometry sampling.
         passed = []
-        odom_slice = self._odom_samples[
-            next(i for i, s in enumerate(self._odom_samples)
-                 if s[0] >= start_time):]
         for w in waypoints:
             wx = float(w["pose"]["position"]["x"])
             wy = float(w["pose"]["position"]["y"])
@@ -1054,6 +1134,51 @@ class AutoTrain(Node):
                 "id": w["id"],
                 "min_distance_m": round(min_d, 3) if min_d is not None else None,
             })
+
+        path_messages = len(self._path_messages[path_start:])
+        contract_errors = []
+        if success and path_messages <= 0:
+            contract_errors.append("path_missing")
+        if success:
+            if (
+                goal_error is None
+                or goal_error > xy_tolerance + POSITION_OBSERVER_MARGIN_M
+            ):
+                contract_errors.append("goal_position_tolerance")
+            if (
+                goal_yaw_error is None
+                or goal_yaw_error > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
+            ):
+                contract_errors.append("goal_yaw_tolerance")
+            for passed_goal in passed:
+                distance = passed_goal["min_distance_m"]
+                if (
+                    distance is None
+                    or distance > THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M
+                ):
+                    contract_errors.append(
+                        f"through_pose_not_passed:{passed_goal['id']}")
+            if direction == "reverse":
+                for prefix, metrics in (
+                    ("reverse_controller", controller_metrics),
+                    ("reverse_candidate", candidate_metrics),
+                ):
+                    if metrics["negative_count"] <= 0:
+                        contract_errors.append(f"{prefix}_velocity_missing")
+                    if metrics["positive_count"] > 0:
+                        contract_errors.append(f"{prefix}_velocity_sign")
+            else:
+                for prefix, metrics in (
+                    ("forward_controller", controller_metrics),
+                    ("forward_candidate", candidate_metrics),
+                ):
+                    if metrics["positive_count"] <= 0:
+                        contract_errors.append(f"{prefix}_velocity_missing")
+                    if metrics["negative_count"] > 0:
+                        contract_errors.append(f"{prefix}_velocity_sign")
+        outcome = "succeeded" if success else "failed"
+        if contract_errors and success:
+            outcome = "contract_failed"
 
         result = {
             "id": f"through_poses[{ids}]",
@@ -1067,13 +1192,47 @@ class AutoTrain(Node):
             ],
             "behavior_tree": bt.name,
             "waypoint_count": len(waypoints),
-            "outcome": "succeeded" if success else "failed",
+            "outcome": outcome,
             "status": int(status),
             "duration_sec": round(duration, 2),
             "travel_m": round(self._travel_distance(odom_slice), 3),
-            "path_messages": len(self._path_messages[path_start:]),
+            "path_messages": path_messages,
             "final_pos": (round(cur[1], 3), round(cur[2], 3)),
+            "goal_checker": goal_checker,
+            "xy_goal_tolerance_m": round(xy_tolerance, 3),
+            "yaw_goal_tolerance_rad": round(yaw_tolerance, 3),
+            "position_observer_margin_m": POSITION_OBSERVER_MARGIN_M,
+            "yaw_observer_margin_rad": YAW_OBSERVER_MARGIN_RAD,
+            "target_yaw_rad": round(target_yaw, 3),
+            "final_yaw_rad": (
+                round(final_yaw, 3) if final_yaw is not None else None),
+            "goal_error_m": (
+                round(goal_error, 3) if goal_error is not None else None),
+            "goal_yaw_error_rad": (
+                round(goal_yaw_error, 3) if goal_yaw_error is not None else None),
+            "signed_goal_yaw_error_rad": (
+                round(signed_goal_yaw_error, 3)
+                if signed_goal_yaw_error is not None else None),
+            "controller_cmd_linear_min": (
+                round(controller_metrics["linear_min"], 3)
+                if controller_metrics["linear_min"] is not None else None),
+            "controller_cmd_linear_max": (
+                round(controller_metrics["linear_max"], 3)
+                if controller_metrics["linear_max"] is not None else None),
+            "controller_cmd_positive_sample_count": (
+                controller_metrics["positive_count"]),
+            "controller_cmd_negative_sample_count": (
+                controller_metrics["negative_count"]),
+            "cmd_linear_min": (
+                round(candidate_metrics["linear_min"], 3)
+                if candidate_metrics["linear_min"] is not None else None),
+            "cmd_linear_max": (
+                round(candidate_metrics["linear_max"], 3)
+                if candidate_metrics["linear_max"] is not None else None),
+            "cmd_positive_sample_count": candidate_metrics["positive_count"],
+            "cmd_negative_sample_count": candidate_metrics["negative_count"],
             "waypoints_passed": passed,
+            "contract_errors": contract_errors,
         }
         self.get_logger().info(
             f"[through_poses] {'OK' if success else 'FAIL'} "
@@ -1108,9 +1267,14 @@ class AutoTrain(Node):
                     return False
                 self._results.append(result)
                 return result["outcome"] == "succeeded"
-            self.get_logger().warning(
-                "/navigate_through_poses unavailable; falling back to single goals"
+            self.get_logger().error(
+                "/navigate_through_poses unavailable; refusing to replace "
+                "a configured multi-goal segment with single-pose navigation"
             )
+            self._save_results(
+                "failed", f"{stage['id']}_through_poses_unavailable"
+            )
+            return False
 
         delay = float(self.get_parameter("inter_goal_delay_sec").value)
         for waypoint in goals:
@@ -1136,6 +1300,9 @@ class AutoTrain(Node):
             raise RuntimeError("odom_combined unavailable")
 
         use_through_poses = bool(self.get_parameter("use_through_poses").value)
+        self._execution_manifest = {
+            "use_through_poses": use_through_poses,
+        }
         self.get_logger().info(
             "Executing %d configured segments (%d goals, through_poses=%s)"
             % (len(stages), len(route), use_through_poses)

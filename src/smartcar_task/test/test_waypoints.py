@@ -336,31 +336,30 @@ class WaypointTests(unittest.TestCase):
             [item.direction for item in nav_only],
             [
                 "forward", "forward", "reverse", "reverse", "reverse",
-                "forward", "forward", "forward", "forward", "forward",
-                "forward",
+                "reverse", "reverse", "reverse", "reverse", "reverse",
             ],
         )
         self.assertEqual(nav_only[1].goal_profile, "precise")
         self.assertEqual(nav_only[2].id, "b_corridor_enter")
-        self.assertEqual(nav_only[3].id, "b_corridor_out")
-        self.assertEqual(nav_only[4].goal_profile, "reverse_handoff")
-        self.assertEqual(nav_only[5].id, "c_corner_2")
-        self.assertEqual(nav_only[5].task, "loop")
-        self.assertEqual(nav_only[5].direction, "forward")
-        self.assertEqual(nav_only[7].id, "c_corner_4")
-        self.assertEqual(nav_only[7].task, "loop")
-        self.assertEqual(nav_only[8].id, "b_corridor_return_enter")
-        self.assertEqual(nav_only[8].task, "corridor")
+        self.assertEqual(nav_only[3].id, "c_corner_1")
+        self.assertEqual(nav_only[3].goal_profile, "standard")
+        self.assertEqual(nav_only[4].id, "c_corner_2")
+        self.assertEqual(nav_only[4].task, "loop")
+        self.assertEqual(nav_only[4].direction, "reverse")
+        self.assertEqual(nav_only[6].id, "c_corner_4")
+        self.assertEqual(nav_only[6].task, "loop")
+        self.assertEqual(nav_only[7].id, "b_corridor_return_enter")
+        self.assertEqual(nav_only[7].task, "corridor")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(nav_only)
-            if index not in {1, 4}
+            if index != 1
         ))
 
         nav_only_document = yaml.safe_load(nav_only_file.read_text(encoding="utf-8"))
-        nav_only_document["waypoints"][5]["direction"] = "reverse"
+        nav_only_document["waypoints"][5]["direction"] = "forward"
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "direction must be forward"):
+            with self.assertRaisesRegex(ValueError, "direction must be reverse"):
                 load_waypoints(self.write_document(directory, nav_only_document))
 
     def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):

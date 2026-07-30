@@ -71,8 +71,10 @@ exec /root/ros2_ws/install/smartcar_sim/share/smartcar_sim/scripts/sim_start.sh 
 '
 ```
 
-该入口会清理残留进程、等待 WSLg，并自动运行 P->QR 与 QR->VLM 两段导航。
-网络配置、构建、验证和故障排查见
+该入口会清理残留进程、等待 WSLg，但默认只启动 Gazebo、Nav2 和 RViz，不会自动
+发车。需要自动运行时显式追加 `run_route:=true`；当前 `nav_only.yaml` 的首段前进，
+其余四段倒车。该 all-reverse 路线在 `b_corridor_enter -> c_corner_1` 仍有 C 区入口
+碰撞问题，不能表述为全程仿真通过。网络配置、构建、验证和故障排查见
 [`docs/deployment/wsl-simulation.md`](docs/deployment/wsl-simulation.md)。
 
 ## 本地开发与同步

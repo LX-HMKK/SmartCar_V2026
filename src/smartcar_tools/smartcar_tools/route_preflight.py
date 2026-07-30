@@ -1,10 +1,11 @@
-"""Motion-constrained local route preflight for the waypoint editor.
+"""Offline geometric preflight for the waypoint editor.
 
 This is a small heading-aware lattice planner.  It runs entirely in the
 editor process, honors the same B-wall/C-core keepouts as the simulation mask,
 uses the vehicle's minimum turning radius, and treats every pass-through point
-as an ordered path constraint.  It is intentionally a preflight, not a claim
-that Nav2's live costmap will always make the identical choices.
+as an ordered waypoint constraint.  It intentionally does not invoke Nav2:
+there is no live costmap, current robot pose, controller state, or guarantee
+that the generated geometric candidate matches Nav2's ``/plan``.
 """
 
 from __future__ import annotations
@@ -33,6 +34,24 @@ class Pose2D:
     x: float
     y: float
     yaw: float
+
+
+@dataclass(frozen=True)
+class _PoseConstraint:
+    """A route waypoint whose heading may be intentionally unconstrained."""
+
+    x: float
+    y: float
+    yaw: float | None
+
+
+@dataclass(frozen=True)
+class _ThroughPlan:
+    """One continuous lattice result split at ordered through-pose targets."""
+
+    legs: tuple[tuple[Point2D, ...], ...]
+    expanded_states: tuple[int, ...]
+    completed_goals: int
 
 
 @dataclass(frozen=True)
@@ -523,6 +542,176 @@ class LatticePreflightPlanner:
                 )
         return None
 
+    def _matches_constraint(self, pose: Pose2D, goal: _PoseConstraint) -> bool:
+        if math.hypot(goal.x - pose.x, goal.y - pose.y) > (
+            self._preflight.goal_position_tolerance_m
+        ):
+            return False
+        return goal.yaw is None or _angle_distance(pose.yaw, goal.yaw) <= math.radians(
+            self._preflight.goal_heading_tolerance_deg
+        )
+
+    @staticmethod
+    def _reconstruct_staged_route(
+        key: tuple[int, int, int, int],
+        parent: dict[
+            tuple[int, int, int, int],
+            tuple[int, int, int, int] | None,
+        ],
+        poses: dict[tuple[int, int, int, int], Pose2D],
+    ) -> list[tuple[int, Point2D]]:
+        route: list[tuple[int, Point2D]] = []
+        cursor = key
+        while cursor is not None:
+            pose = poses[cursor]
+            route.append((cursor[0], Point2D(pose.x, pose.y)))
+            cursor = parent[cursor]
+        route.reverse()
+        return route
+
+    @staticmethod
+    def _split_staged_route(
+        route: Sequence[tuple[int, Point2D]], goal_count: int
+    ) -> tuple[tuple[Point2D, ...], ...]:
+        legs: list[list[Point2D]] = [[] for _ in range(goal_count)]
+        for stage, point in route:
+            legs[stage].append(point)
+        return tuple(tuple(points) for points in legs)
+
+    def plan_through(
+        self,
+        start: Pose2D,
+        goals: Sequence[_PoseConstraint],
+    ) -> _ThroughPlan:
+        """Plan an ordered sequence while carrying heading through free-yaw goals.
+
+        Nav2 represents a pass-through pose without an orientation as a zero
+        quaternion.  The planner must therefore retain the actual heading at
+        that position for the following leg; choosing a route tangent there
+        would add a constraint that Nav2 never received.
+        """
+        targets = tuple(goals)
+        if not targets:
+            raise ValueError("through-pose planning requires at least one goal")
+        if not self._is_free(start.x, start.y) or any(
+            not self._is_free(goal.x, goal.y) for goal in targets
+        ):
+            return _ThroughPlan((), (0,) * len(targets), 0)
+
+        start_key = (0, *self._state_key(start))
+        frontier: list[
+            tuple[float, float, int, tuple[int, int, int, int], Pose2D]
+        ] = []
+        first_goal = targets[0]
+        heapq.heappush(
+            frontier,
+            (
+                math.hypot(first_goal.x - start.x, first_goal.y - start.y),
+                0.0,
+                0,
+                start_key,
+                start,
+            ),
+        )
+        parent: dict[
+            tuple[int, int, int, int],
+            tuple[int, int, int, int] | None,
+        ] = {start_key: None}
+        poses: dict[tuple[int, int, int, int], Pose2D] = {start_key: start}
+        best_cost: dict[tuple[int, int, int, int], float] = {start_key: 0.0}
+        expanded_by_goal = [0] * len(targets)
+        completed_goals = 0
+        serial = 0
+        expanded = 0
+        max_expansions = self._preflight.max_expansions_per_leg * len(targets)
+        step_length = self._preflight.step_length_m
+        radius = self._config.minimum_turning_radius_m
+        curvatures = tuple(
+            fraction / radius for fraction in self._preflight.steering_fractions
+        )
+
+        while frontier and expanded < max_expansions:
+            _estimate, cost, _order, key, pose = heapq.heappop(frontier)
+            if cost != best_cost.get(key):
+                continue
+            goal_index = key[0]
+            goal = targets[goal_index]
+            expanded += 1
+            expanded_by_goal[goal_index] += 1
+
+            if goal_index == len(targets) - 1 and goal.yaw is not None:
+                connector = self._sample_terminal_connector(
+                    pose, Pose2D(goal.x, goal.y, goal.yaw)
+                )
+                if connector is not None:
+                    route = self._reconstruct_staged_route(key, parent, poses)
+                    route.extend((goal_index, point) for point in connector[1:])
+                    return _ThroughPlan(
+                        self._split_staged_route(route, len(targets)),
+                        tuple(expanded_by_goal),
+                        len(targets),
+                    )
+
+            if self._matches_constraint(pose, goal):
+                completed_goals = max(completed_goals, goal_index + 1)
+                if goal_index == len(targets) - 1:
+                    route = self._reconstruct_staged_route(key, parent, poses)
+                    return _ThroughPlan(
+                        self._split_staged_route(route, len(targets)),
+                        tuple(expanded_by_goal),
+                        len(targets),
+                    )
+
+                next_key = (goal_index + 1, *self._state_key(pose))
+                if cost < best_cost.get(next_key, math.inf):
+                    best_cost[next_key] = cost
+                    parent[next_key] = key
+                    poses[next_key] = pose
+                    serial += 1
+                    next_goal = targets[goal_index + 1]
+                    heapq.heappush(
+                        frontier,
+                        (
+                            cost + math.hypot(
+                                next_goal.x - pose.x, next_goal.y - pose.y
+                            ),
+                            cost,
+                            serial,
+                            next_key,
+                            pose,
+                        ),
+                    )
+                continue
+
+            for curvature in curvatures:
+                free, next_pose = self._primitive_is_free(pose, curvature)
+                if not free:
+                    continue
+                next_key = (goal_index, *self._state_key(next_pose))
+                turning_cost = self._preflight.turning_penalty_m * abs(
+                    curvature * radius
+                )
+                next_cost = cost + step_length + turning_cost
+                if next_cost >= best_cost.get(next_key, math.inf):
+                    continue
+                best_cost[next_key] = next_cost
+                parent[next_key] = key
+                poses[next_key] = next_pose
+                serial += 1
+                heapq.heappush(
+                    frontier,
+                    (
+                        next_cost + math.hypot(
+                            goal.x - next_pose.x, goal.y - next_pose.y
+                        ),
+                        next_cost,
+                        serial,
+                        next_key,
+                        next_pose,
+                    ),
+                )
+        return _ThroughPlan((), tuple(expanded_by_goal), completed_goals)
+
 
 def _segment_waypoints(
     segment: PlanningSegment, indexed: dict[str, Any]
@@ -530,29 +719,21 @@ def _segment_waypoints(
     return tuple((waypoint_id, indexed[waypoint_id]) for waypoint_id in segment.route_ids)
 
 
-def _poses_for_segment(
+def _constraints_for_segment(
     items: Sequence[tuple[str, Any]], warnings: list[str]
-) -> tuple[Pose2D, ...]:
-    result: list[Pose2D] = []
-    for index, (waypoint_id, waypoint) in enumerate(items):
+) -> tuple[_PoseConstraint, ...]:
+    result: list[_PoseConstraint] = []
+    for waypoint_id, waypoint in items:
         point = _point(waypoint)
         if not is_zero_quaternion(waypoint.orientation):
             yaw = _yaw_from_waypoint(waypoint)
-        elif index + 1 < len(items):
-            next_point = _point(items[index + 1][1])
-            yaw = math.atan2(next_point.y - point.y, next_point.x - point.x)
-            warnings.append(
-                f"{waypoint_id}: orientation unconstrained; preflight uses route tangent"
-            )
-        elif index:
-            previous_point = _point(items[index - 1][1])
-            yaw = math.atan2(point.y - previous_point.y, point.x - previous_point.x)
-            warnings.append(
-                f"{waypoint_id}: orientation unconstrained; preflight uses incoming tangent"
-            )
         else:
-            raise ValueError(f"{waypoint_id}: route needs a start orientation")
-        result.append(Pose2D(point.x, point.y, yaw))
+            yaw = None
+            warnings.append(
+                f"{waypoint_id}: orientation unconstrained; preflight selects "
+                "a continuous heading"
+            )
+        result.append(_PoseConstraint(point.x, point.y, yaw))
     return tuple(result)
 
 
@@ -561,7 +742,10 @@ def preflight_route(
     waypoints: Iterable[Any],
     segments: Sequence[PlanningSegment],
 ) -> RoutePreflight:
-    """Plan every segment locally and report the exact failed constraint leg."""
+    """Check each segment against static geometry and report a blocked leg.
+
+    This offline result is not a Nav2 planning or reachability result.
+    """
     indexed = {waypoint.id: waypoint for waypoint in waypoints}
     planner = LatticePreflightPlanner(reference)
     warnings: list[str] = []
@@ -569,10 +753,100 @@ def preflight_route(
 
     for segment in segments:
         items = _segment_waypoints(segment, indexed)
-        poses = _poses_for_segment(items, warnings)
+        constraints = _constraints_for_segment(items, warnings)
         virtual_offset = math.pi if segment.direction == "reverse" else 0.0
         legs: list[LegPreflight] = []
         failed_message = ""
+
+        if constraints[0].yaw is None:
+            start_id, _start = items[0]
+            end_id, _end = items[1]
+            message = (
+                f"{start_id} -> {end_id}: orientation-unconstrained segment starts "
+                "cannot be checked offline"
+            )
+            legs.append(LegPreflight(start_id, end_id, (), 0.0, 0, False, message))
+            reports.append(SegmentPreflight(
+                segment_id=segment.id,
+                direction=segment.direction,
+                legs=tuple(legs),
+                feasible=False,
+                length_m=0.0,
+                message=message,
+            ))
+            continue
+
+        if any(constraint.yaw is None for constraint in constraints[1:]):
+            virtual_start = Pose2D(
+                constraints[0].x,
+                constraints[0].y,
+                constraints[0].yaw + virtual_offset,
+            )
+            virtual_goals = tuple(
+                _PoseConstraint(
+                    constraint.x,
+                    constraint.y,
+                    None if constraint.yaw is None else constraint.yaw + virtual_offset,
+                )
+                for constraint in constraints[1:]
+            )
+            planned_through = planner.plan_through(virtual_start, virtual_goals)
+            if len(planned_through.legs) != len(virtual_goals):
+                failed_leg_index = min(
+                    planned_through.completed_goals,
+                    len(items) - 2,
+                )
+                start_id, _start = items[failed_leg_index]
+                end_id, _end = items[failed_leg_index + 1]
+                message = (
+                    f"{start_id} -> {end_id}: no collision-free "
+                    "minimum-radius route"
+                )
+                legs.append(LegPreflight(
+                    start_id,
+                    end_id,
+                    (),
+                    0.0,
+                    planned_through.expanded_states[failed_leg_index],
+                    False,
+                    message,
+                ))
+                failed_message = message
+            else:
+                for (
+                    (start_id, _start),
+                    (end_id, _end),
+                    points,
+                    expanded,
+                ) in zip(
+                    items,
+                    items[1:],
+                    planned_through.legs,
+                    planned_through.expanded_states,
+                ):
+                    legs.append(LegPreflight(
+                        start_id,
+                        end_id,
+                        points,
+                        _polyline_length(points),
+                        expanded,
+                        True,
+                    ))
+            feasible = not failed_message and len(legs) == len(items) - 1
+            reports.append(SegmentPreflight(
+                segment_id=segment.id,
+                direction=segment.direction,
+                legs=tuple(legs),
+                feasible=feasible,
+                length_m=sum(leg.length_m for leg in legs),
+                message=failed_message,
+            ))
+            continue
+
+        poses = tuple(
+            Pose2D(constraint.x, constraint.y, constraint.yaw)
+            for constraint in constraints
+        )
         for (start_id, _start), (end_id, _end), start_pose, end_pose in zip(
             items,
             items[1:],

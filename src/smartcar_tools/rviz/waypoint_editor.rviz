@@ -25,7 +25,7 @@ Visualization Manager:
         Value: /smartcar/field_reference/markers
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
-      Name: Mission Route
+      Name: Waypoint Reference Constraints (not a Nav2 path)
       Topic:
         Durability Policy: Transient Local
         Reliability Policy: Reliable

@@ -8,24 +8,23 @@ planning_segments:
 - id: reverse_corridor
   direction: reverse
   start_id: a_task_observe
-  end_id: c_corner_1
-  through_ids:
-  - b_corridor_enter
-  - b_corridor_out
-- id: c_loop
-  direction: forward
-  start_id: c_corner_1
+  end_id: b_corridor_enter
+  through_ids: []
+- id: reverse_c_entry
+  direction: reverse
+  start_id: b_corridor_enter
   end_id: c_corner_3
   through_ids:
+  - c_corner_1
   - c_corner_2
 - id: c_exit
-  direction: forward
+  direction: reverse
   start_id: c_corner_3
   end_id: b_corridor_return_enter
   through_ids:
   - c_corner_4
 - id: return_to_p
-  direction: forward
+  direction: reverse
   start_id: b_corridor_return_enter
   end_id: p_finish
   through_ids:
@@ -65,29 +64,14 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 2.03757281950581
-      y: 2.027552773686795
+      x: 1.60
+      y: 2.65
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.573576436351046
-      w: 0.8191520442889918
-  task: corridor
-  direction: reverse
-  goal_profile: standard
-- id: b_corridor_out
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 1.4396346751759128
-      y: 2.6539641629847823
-      z: 0.0
-    orientation:
-      x: 0.0
-      y: 0.0
-      z: -0.08715574274765824
-      w: 0.9961946980917455
+      z: -0.5
+      w: 0.8660254037844386
   task: corridor
   direction: reverse
   goal_profile: standard
@@ -95,91 +79,86 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.3867094808286349
-      y: 2.6824089026910594
+      x: 0.9979495131729672
+      y: 3.7958472007445607
       z: 0.0
-    orientation:
-      x: 0.0
-      y: 0.0
-      z: 0.4999999999999998
-      w: 0.8660254037844388
   task: nav
   direction: reverse
-  goal_profile: reverse_handoff
+  goal_profile: standard
 - id: c_corner_2
   frame_id: odom_combined
   pose:
     position:
-      x: 0.8132232858779256
-      y: 3.7739117983963357
+      x: 2.122642689412535
+      y: 3.805338282400591
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.13052619222005157
-      w: 0.9914448613738104
+      z: 0.9914448613738104
+      w: 0.1305261922200517
   task: loop
-  direction: forward
+  direction: reverse
   goal_profile: standard
 - id: c_corner_3
   frame_id: odom_combined
   pose:
     position:
-      x: 3.684275486827034
-      y: 3.669509900180005
+      x: 3.2188626206840123
+      y: 3.7483917924644095
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.6087614290087205
-      w: 0.7933533402912353
+      z: 0.9659258262890683
+      w: 0.25881904510252074
   task: loop
-  direction: forward
+  direction: reverse
   goal_profile: standard
 - id: c_corner_4
   frame_id: odom_combined
   pose:
     position:
-      x: 3.4612350679103265
-      y: 2.7820937653411892
+      x: 3.313773437244314
+      y: 2.737591596097203
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.9659258262890682
-      w: 0.25881904510252096
+      z: 0.3826834323650898
+      w: 0.9238795325112867
   task: loop
-  direction: forward
+  direction: reverse
   goal_profile: standard
 - id: b_corridor_return_enter
   frame_id: odom_combined
   pose:
     position:
-      x: 2.3
-      y: 2.5
+      x: 2.1606070160366553
+      y: 2.3911671156521037
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.8660254037844386
-      w: 0.5
+      z: 0.25881904510252046
+      w: 0.9659258262890683
   task: corridor
-  direction: forward
+  direction: reverse
   goal_profile: standard
 - id: b_corridor_return
   frame_id: odom_combined
   pose:
     position:
-      x: 1.883
-      y: 1.825
+      x: 1.5341956267386683
+      y: 1.4657866541891678
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.8660254037844386
-      w: 0.5000000000000001
+      z: 0.38268343236508945
+      w: 0.9238795325112868
   task: corridor
-  direction: forward
+  direction: reverse
   goal_profile: standard
 - id: p_finish
   frame_id: odom_combined
@@ -191,8 +170,8 @@ waypoints:
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.9238795325112867
-      w: 0.38268343236508984
+      z: 0.3826834323650898
+      w: 0.9238795325112867
   task: return
-  direction: forward
+  direction: reverse
   goal_profile: standard

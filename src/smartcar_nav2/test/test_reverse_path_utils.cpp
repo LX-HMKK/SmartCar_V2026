@@ -26,6 +26,16 @@ geometry_msgs::msg::PoseStamped makePose(double x, double y, double yaw)
   return pose;
 }
 
+geometry_msgs::msg::Quaternion makeZeroQuaternion()
+{
+  geometry_msgs::msg::Quaternion orientation;
+  orientation.x = 0.0;
+  orientation.y = 0.0;
+  orientation.z = 0.0;
+  orientation.w = 0.0;
+  return orientation;
+}
+
 nav_msgs::msg::Path makePath(
   const std::initializer_list<geometry_msgs::msg::PoseStamped> & poses)
 {
@@ -87,6 +97,25 @@ TEST(ReversePathUtils, RejectsForwardSegmentAndCusp)
   EXPECT_EQ(result.segment_index, 1u);
 }
 
+TEST(ReversePathUtils, RejectsSegmentOutsideMaximumDirectionError)
+{
+  const auto start = makePose(0.0, 0.0, 0.50);
+  const auto goal = makePose(-1.0, 0.0, 0.50);
+  const auto path = makePath(
+  {
+    start,
+    makePose(-0.5, 0.0, 0.50),
+    goal,
+  });
+  smartcar_nav2::ReversePathValidationOptions options;
+  options.maximum_direction_error = 0.35;
+
+  const auto result = smartcar_nav2::validateReversePath(path, start, goal, options);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "segment_not_reverse");
+  EXPECT_GT(result.observed_value, result.limit);
+}
+
 TEST(ReversePathUtils, RejectsCurvatureAboveConfiguredLimit)
 {
   const auto start = makePose(0.0, 0.0, 0.0);
@@ -138,6 +167,64 @@ TEST(ReversePathUtils, RejectsInvalidPoseAndWrongGoal)
     short_path, start, goal, smartcar_nav2::ReversePathValidationOptions());
   EXPECT_FALSE(result.valid);
   EXPECT_EQ(result.reason, "goal_position_mismatch");
+}
+
+TEST(ReversePathUtils, AllowsUnconstrainedExpectedOrientations)
+{
+  const auto path_start = makePose(0.0, 0.0, 0.0);
+  const auto path_goal = makePose(-1.0, 0.0, 0.0);
+  auto expected_start = path_start;
+  auto expected_goal = path_goal;
+  expected_start.pose.orientation = makeZeroQuaternion();
+  expected_goal.pose.orientation = makeZeroQuaternion();
+  const auto path = makePath(
+  {
+    path_start,
+    makePose(-0.5, 0.0, 0.0),
+    path_goal,
+  });
+
+  const auto result = smartcar_nav2::validateReversePath(
+    path, expected_start, expected_goal,
+    smartcar_nav2::ReversePathValidationOptions());
+  EXPECT_TRUE(result.valid) << result.reason;
+}
+
+TEST(ReversePathUtils, RejectsUnconstrainedQuaternionInPlannedPath)
+{
+  const auto start = makePose(0.0, 0.0, 0.0);
+  const auto goal = makePose(-1.0, 0.0, 0.0);
+  auto path = makePath(
+  {
+    start,
+    makePose(-0.5, 0.0, 0.0),
+    goal,
+  });
+  path.poses[1].pose.orientation = makeZeroQuaternion();
+
+  const auto result = smartcar_nav2::validateReversePath(
+    path, start, goal, smartcar_nav2::ReversePathValidationOptions());
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "pose_invalid");
+  EXPECT_EQ(result.segment_index, 1u);
+}
+
+TEST(ReversePathUtils, RejectsInvalidMaximumDirectionError)
+{
+  const auto start = makePose(0.0, 0.0, 0.0);
+  const auto goal = makePose(-1.0, 0.0, 0.0);
+  const auto path = makePath({start, goal});
+  smartcar_nav2::ReversePathValidationOptions options;
+
+  options.maximum_direction_error = 0.0;
+  auto result = smartcar_nav2::validateReversePath(path, start, goal, options);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "options_invalid");
+
+  options.maximum_direction_error = kPi / 2.0;
+  result = smartcar_nav2::validateReversePath(path, start, goal, options);
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "options_invalid");
 }
 
 TEST(ReversePathUtils, RejectsFrameMismatchAndZeroLengthSegments)
