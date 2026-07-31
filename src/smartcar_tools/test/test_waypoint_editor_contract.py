@@ -62,6 +62,14 @@ class TestWaypointEditorContract(unittest.TestCase):
             'DeclareLaunchArgument("start_safety", default_value="false")',
             simulation_editor,
         )
+        self.assertIn(
+            'DeclareLaunchArgument("use_rviz", default_value="false")',
+            simulation_editor,
+        )
+        self.assertIn(
+            'DeclareLaunchArgument("use_sim_time", default_value="false")',
+            simulation_editor,
+        )
         self.assertNotIn('package="smartcar_sim"', simulation_editor)
 
     def test_legacy_navigation_test_chain_is_removed(self):
@@ -93,10 +101,11 @@ class TestWaypointEditorContract(unittest.TestCase):
         source = LAUNCH.read_text(encoding="utf-8")
         ast.parse(source)
         self.assertIn('"emergency_stop_on_start": "true"', source)
-        self.assertIn('"latch_emergency_stop": True', source)
+        self.assertIn('"latch_emergency_stop": start_safety', source)
         self.assertIn('executable="waypoint_editor_node"', source)
         self.assertIn('executable="waypoint_drag_editor"', source)
         self.assertIn('DeclareLaunchArgument("use_segment_ui", default_value="true")', source)
+        self.assertIn('DeclareLaunchArgument("start_safety", default_value="false")', source)
         self.assertIn('executable="field_reference_node"', source)
         self.assertIn("default_waypoints.yaml", source)
         self.assertIn("field_geometry.yaml", source)
@@ -178,6 +187,13 @@ class TestWaypointEditorContract(unittest.TestCase):
         ):
             self.assertIn(token, source)
         self.assertEqual(source.count("self._recheck_route("), 1)
+        self.assertIn('matplotlib.use("Qt5Agg")', source)
+        self.assertLess(
+            source.index('matplotlib.use("Qt5Agg")'),
+            source.index("import matplotlib.pyplot as plt"),
+        )
+        self.assertNotIn("/mnt/c/Windows/Fonts", source)
+        self.assertIn("route = materialize_route(self._waypoints, self._segments)", source)
 
     def test_qt_draw_callback_only_captures_the_blit_background(self):
         """A Qt paint callback must not recursively request another repaint."""

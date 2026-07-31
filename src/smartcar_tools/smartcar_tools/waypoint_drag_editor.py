@@ -20,13 +20,12 @@ from __future__ import annotations
 
 from dataclasses import replace
 import math
-import os
 from pathlib import Path
-import shutil
 import threading
 
 from ament_index_python.packages import get_package_share_directory
 import matplotlib
+matplotlib.use("Qt5Agg")
 from matplotlib import font_manager
 import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseButton
@@ -97,51 +96,14 @@ ENDPOINT_LABELS = {
 EMPTY_THROUGH_LABEL = "（无）"
 
 
-def _cache_windows_font(source: Path) -> Path:
-    """Avoid rendering each frame through WSL's slow mounted Windows filesystem."""
-    if not source.is_file():
-        return source
-    try:
-        cache_root = Path(
-            os.environ.get("XDG_CACHE_HOME", str(Path.home() / ".cache"))
-        ) / "smartcar_tools" / "fonts"
-        cache_root.mkdir(parents=True, exist_ok=True)
-        cached = cache_root / source.name
-        if (
-            not cached.is_file()
-            or cached.stat().st_size != source.stat().st_size
-        ):
-            temporary = cached.with_name(f".{cached.name}.{os.getpid()}.tmp")
-            try:
-                shutil.copyfile(source, temporary)
-                temporary.replace(cached)
-            finally:
-                if temporary.exists():
-                    temporary.unlink()
-        return cached
-    except OSError:
-        # The UI remains usable when the user cache is read-only; this just
-        # retains the slower mounted-font fallback.
-        return source
-
-
 def _configure_cjk_font():
-    """Prefer a local CJK font and cache the WSL Windows-font fallback."""
+    """Use the native Ubuntu CJK font when it is available."""
     families = ["Microsoft YaHei", "Noto Sans CJK SC", "WenQuanYi Micro Hei", "DejaVu Sans"]
-    local_candidates = (
+    candidates = (
         Path("/usr/share/fonts/opentype/noto/NotoSansCJK-Regular.ttc"),
         Path("/usr/share/fonts/opentype/noto/NotoSansCJKsc-Regular.otf"),
         Path("/usr/share/fonts/truetype/noto/NotoSansCJK-Regular.ttc"),
     )
-    windows_candidates = (
-        Path("/mnt/c/Windows/Fonts/msyh.ttc"),
-        Path("/mnt/c/Windows/Fonts/msyhbd.ttc"),
-    )
-    candidates = list(local_candidates)
-    for source in windows_candidates:
-        if source.is_file():
-            candidates.append(_cache_windows_font(source))
-            candidates.append(source)
     for candidate in candidates:
         if not candidate.is_file():
             continue
@@ -226,7 +188,6 @@ class DragEditor:
         self._field_ref = load_field_reference(geometry_path)
 
         # ── build matplotlib figure ────────────────────────────────────
-        matplotlib.use("Qt5Agg")
         _configure_cjk_font()
         matplotlib.rcParams["keymap.save"] = []
         matplotlib.rcParams["keymap.pan"] = []
@@ -1178,8 +1139,8 @@ class DragEditor:
             self._invalidate_fast_canvas()
             return
         self._blit_background = canvas.copy_from_bbox(self._ax.bbox)
-        # Qt emits this from its paint cycle.  Calling ``blit`` here re-enters
-        # QWidget.repaint under WSLg and can recurse until the process crashes.
+        # Qt emits this from its paint cycle. Calling ``blit`` here re-enters
+        # QWidget.repaint and can recurse until the process crashes.
         # The next pointer event draws the animated artists from this cache.
 
     def _on_canvas_resize(self, _event):
@@ -1347,7 +1308,14 @@ class DragEditor:
         line.pose.orientation.w = 1.0
         line.scale.x = 0.03
         line.color.r = 0.15; line.color.g = 0.85; line.color.b = 0.95; line.color.a = 0.9
-        line.points = [Point(x=w.position[0], y=w.position[1], z=0.025) for w in self._waypoints]
+        try:
+            route = materialize_route(self._waypoints, self._segments)
+        except PlanningSegmentError:
+            route = tuple(self._waypoints)
+        line.points = [
+            Point(x=waypoint.position[0], y=waypoint.position[1], z=0.025)
+            for waypoint in route
+        ]
         msg.markers.append(line)
 
         for i, w in enumerate(self._waypoints):

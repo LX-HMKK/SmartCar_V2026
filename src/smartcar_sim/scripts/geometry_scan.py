@@ -5,7 +5,7 @@ Enumerates candidate positions and yaws for c_corner_2/3/4 and
 b_corridor_return_enter, computes Dubins paths for the three critical
 segments, checks wall collisions, and ranks candidates by path quality.
 
-Pure geometry — no ROS, no Gazebo. Runs on Windows or WSL.
+Pure geometry — no ROS or Gazebo process is required.
 """
 
 import argparse
@@ -33,7 +33,7 @@ SUSPICIOUS_THRESHOLD = 3.5         # path longer than this → suspicious
 FIELD_W = 5.0
 FIELD_H = 5.0
 
-# B-zone walls (from docs/review/wsl-waypoint-overnight-handoff.md)
+# B-zone walls from the official field geometry.
 WEST_WALL = ((-0.5, 1.75), (1.5, 2.25))    # (x_min, x_max), (y_min, y_max)
 EAST_WALL = ((2.5, 1.75), (4.5, 2.25))
 

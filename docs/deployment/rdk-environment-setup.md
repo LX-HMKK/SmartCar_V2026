@@ -207,7 +207,7 @@ bash /root/nav_test.sh
 
 | 入口 | 启动内容 | 明确不启动 |
 |---|---|---|
-| `waypoint_editor.launch.py` | 官方场地参考层、语义航点交互编辑器、RViz、锁存急停 | 底盘、LiDAR、Nav2、相机、视觉与语音 |
+| `waypoint_editor.launch.py` | 官方场地参考层、语义航点交互编辑器；`use_rviz` 默认开启，RDK 标定须显式 `start_safety:=true` 锁存急停 | 底盘、LiDAR、Nav2、相机、视觉与语音 |
 | `speech_test.launch.py` | 火山 TTS consumer | 底盘、Nav2、视觉与任务 |
 | `qr_test.launch.py` | 指定相机或单图回放、zbar、QR 服务 | 底盘、Nav2、任务与语音 |
 | `vlm_test.launch.py` | 指定相机或单图回放、VLM 服务、PyQt5 HDMI UI | 底盘、Nav2、任务与语音 |

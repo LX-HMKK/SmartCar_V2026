@@ -1,12 +1,13 @@
 #!/usr/bin/env bash
-# Validate NavigateThroughPoses for the forward segment in WSL2 simulation.
+# Validate NavigateThroughPoses for the forward segment in local simulation.
 #
-# Usage (inside WSL2):
+# Usage (inside the repository checkout):
 #   bash through_poses_test.sh [--rviz]
 
 set -o pipefail
 
-WS=/root/ros2_ws
+SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+WS=${SMARTCAR_WS:-$(cd "${SCRIPT_DIR}/../../.." && pwd)}
 INSTALL=$WS/install
 RESULT_FILE=/tmp/through_poses_test_results.json
 LOG_FILE="/tmp/through_poses_test_$(date +%H%M%S).log"

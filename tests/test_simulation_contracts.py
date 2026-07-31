@@ -1,4 +1,4 @@
-"""Static contracts for the WSL2 Gazebo simulation launch path."""
+"""Static contracts for the native Ubuntu Gazebo simulation launch path."""
 
 import copy
 import importlib.util
@@ -20,7 +20,6 @@ LAUNCH = SIM / "launch" / "sim.launch.py"
 SIM_ENV = SIM / "scripts" / "sim_env.sh"
 SIM_START = SIM / "scripts" / "sim_start.sh"
 SIM_CLEANUP = SIM / "scripts" / "sim_cleanup.sh"
-WSLG_WAIT = SIM / "scripts" / "wait_for_wslg.sh"
 AUTO_TRAIN = SIM / "scripts" / "auto_train.py"
 ODOM_RELAY = SIM / "scripts" / "odom_relay.py"
 ODOM_COMBINED_RELAY = SIM / "scripts" / "odom_combined_relay.py"
@@ -75,6 +74,10 @@ class SimulationContractTests(unittest.TestCase):
         self.assertNotIn('SetEnvironmentVariable(\n        "FASTRTPS_DEFAULT_PROFILES_FILE"', launch)
         self.assertIn("RMW_IMPLEMENTATION=rmw_fastrtps_cpp", sim_env)
         self.assertIn("unset FASTRTPS_DEFAULT_PROFILES_FILE", sim_env)
+        self.assertIn("sim_env_script_dir=", sim_env)
+        self.assertIn("sim_env_workspace=", sim_env)
+        self.assertNotIn("unset script_dir", sim_env)
+        self.assertNotIn("unset workspace", sim_env)
 
     def test_cleanup_finishes_before_simulation_nodes_start(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
@@ -267,13 +270,13 @@ class SimulationContractTests(unittest.TestCase):
             )
             self.assertEqual(resolved, tools_share)
 
-    def test_rviz_waits_for_the_wslg_socket(self) -> None:
+    def test_rviz_launches_directly_on_native_ubuntu(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
-        wait_script = WSLG_WAIT.read_text(encoding="utf-8")
 
-        self.assertIn("wait_for_wslg.sh", launch)
-        self.assertIn('[ -S "$wayland_socket" ]', wait_script)
-        self.assertIn('exec rviz2 -d "$rviz_config"', wait_script)
+        self.assertIn('package="rviz2"', launch)
+        self.assertIn('executable="rviz2"', launch)
+        self.assertIn('name="sim_rviz"', launch)
+        self.assertNotIn("wait_for_wslg.sh", launch)
 
     def test_odom_relays_handle_launch_shutdown_idempotently(self) -> None:
         for relay in (ODOM_RELAY, ODOM_COMBINED_RELAY):
@@ -289,12 +292,14 @@ class SimulationContractTests(unittest.TestCase):
                 )
                 self.assertIn("if rclpy.ok():", source)
 
-    def test_start_script_rejects_mirrored_wsl_networking(self) -> None:
+    def test_start_script_has_no_wsl_network_dependency(self) -> None:
         source = SIM_START.read_text(encoding="utf-8")
 
-        self.assertIn("ip link show loopback0", source)
-        self.assertIn("networkingMode=nat", source)
-        self.assertIn("wsl.exe --shutdown", source)
+        self.assertIn("native Ubuntu", source)
+        self.assertIn("sim_cleanup.sh", source)
+        self.assertNotIn("loopback0", source)
+        self.assertNotIn("networkingMode", source)
+        self.assertNotIn("wsl.exe", source)
 
     def test_runtime_dependencies_cover_simulation_entrypoints(self) -> None:
         package = PACKAGE_XML.read_text(encoding="utf-8")
@@ -499,22 +504,30 @@ class SimulationContractTests(unittest.TestCase):
         self.assertNotIn("GridBased.curvature_tolerance", tuner)
         self.assertIn("render_params", tuner)
         self.assertIn("flock -n 9", runner)
+        self.assertIn("workspace_lock_id=$(printf", runner)
+        self.assertIn('/tmp/smartcar_sim_tune_${workspace_lock_id}.lock', runner)
+        self.assertIn("WORKSPACE_LOCK_ID = hashlib.sha256", tuner)
+        self.assertIn("/tmp/smartcar_sim_tune_{WORKSPACE_LOCK_ID}.lock", tuner)
+        self.assertNotIn('WS / ".sim_tune.lock"', tuner)
         self.assertIn('source_root="${workspace}/src"', runner)
-        self.assertIn("--sync-from-windows", runner)
-        self.assertIn("--sync-only requires --sync-from-windows", runner)
-        self.assertIn("SMARTCAR_WINDOWS_SRC", runner)
-        self.assertIn("backup_wsl_file_before_sync", runner)
-        self.assertIn('"nav_only.yaml"', runner)
-        self.assertIn('"nav2_params.yaml"', runner)
-        self.assertIn("${file_label%.yaml}.before-windows-sync-", runner)
-        self.assertIn("nav2_params.yaml did not match Windows source", runner)
+        self.assertIn('workspace=${SMARTCAR_WS:-$(cd "${script_dir}/../../.." && pwd)}', runner)
+        self.assertNotIn("--sync-from-windows", runner)
+        self.assertNotIn("SMARTCAR_WINDOWS_SRC", runner)
+        self.assertNotIn("backup_wsl_file_before_sync", runner)
+        self.assertIn(
+            'waypoints_file="${source_root}/smartcar_nav2/config/waypoints/nav_only.yaml"',
+            runner,
+        )
+        self.assertIn(
+            '"${source_root}/smartcar_nav2/config/nav2_params.yaml"',
+            runner,
+        )
         self.assertIn('sha256sum "$1"', runner)
-        self.assertNotIn("    --delete \\", runner)
         self.assertIn('waypoints_file:="$snapshot_dir/nav_only.yaml"', runner)
         self.assertIn('--waypoints-file "$snapshot_dir/nav_only.yaml"', runner)
         self.assertIn('SOURCE_ROOT = WS / "src"', tuner)
-        self.assertIn("require_workspace_source", tuner)
-        self.assertIn("SMARTCAR_SRC is no longer accepted", tuner)
+        self.assertIn('SCRIPT = Path(__file__).resolve()', tuner)
+        self.assertNotIn("require_workspace_source", tuner)
         self.assertNotIn("SMARTCAR_NAV2_PARAMS", tuner)
         self.assertIn("fcntl.flock", tuner)
 
@@ -538,15 +551,13 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(len(rendered.splitlines()), len(source.splitlines()))
         self.assertIn("yaw_goal_tolerance: 0.2", rendered)
 
-    def test_tuning_uses_workspace_source_and_rejects_legacy_override(self) -> None:
+    def test_tuning_uses_explicit_workspace_when_requested(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
             workspace = Path(temporary) / "workspace"
-            legacy_source = Path(temporary) / "windows_source"
             with mock.patch.dict(
                 os.environ,
                 {
                     "SMARTCAR_WS": str(workspace),
-                    "SMARTCAR_SRC": str(legacy_source),
                 },
                 clear=False,
             ):
@@ -556,10 +567,6 @@ class SimulationContractTests(unittest.TestCase):
                 spec.loader.exec_module(module)
 
                 self.assertEqual(module.SOURCE_ROOT, workspace / "src")
-                with self.assertRaisesRegex(
-                    RuntimeError, "SMARTCAR_SRC is no longer accepted"
-                ):
-                    module.require_workspace_source()
 
     def test_restore_only_changes_tunable_parameters(self) -> None:
         spec = importlib.util.spec_from_file_location("tune_params_restore", TUNE_PARAMS)

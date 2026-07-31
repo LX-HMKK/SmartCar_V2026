@@ -6,7 +6,7 @@ It replaces the per-waypoint NavigateToPose loop for the forward segment
 (c_corner_2 .. p_finish, 6 waypoints) with a single NavigateThroughPoses
 call, while keeping the reverse segment per-waypoint.
 
-Usage (inside WSL2 simulation):
+Usage (inside the local Gazebo simulation):
     ros2 run smartcar_sim test_through_poses.py --ros-args \
       -p waypoints_file:=<path_to_nav_only.yaml> \
       -p through_poses_bt:=<path_to_through_poses_bt.xml> \

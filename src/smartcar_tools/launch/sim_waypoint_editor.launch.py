@@ -47,8 +47,8 @@ def generate_launch_description():
             ]),
         ),
         DeclareLaunchArgument("start_safety", default_value="false"),
-        DeclareLaunchArgument("use_rviz", default_value="true"),
+        DeclareLaunchArgument("use_rviz", default_value="false"),
         DeclareLaunchArgument("use_segment_ui", default_value="true"),
-        DeclareLaunchArgument("use_sim_time", default_value="true"),
+        DeclareLaunchArgument("use_sim_time", default_value="false"),
         editor,
     ])

@@ -8,12 +8,6 @@
     <real_time_factor>1.0</real_time_factor>
   </physics>
 
-  <!-- GUI plugin -->
-  <plugin
-    filename="ignition-gazebo-gui-system"
-    name="ignition::gazebo::systems::Gui">
-  </plugin>
-
   <!-- User commands -->
   <plugin
     filename="ignition-gazebo-user-commands-system"

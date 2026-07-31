@@ -1,22 +1,17 @@
 # 已知问题与避坑指南
 
 > 源文件：`CLAUDE.md` → 本文件（低频查阅，为 CLAUDE.md 减负）
-> 最后更新：2026-07-26
+> 最后更新：2026-07-31
 
-## WSL2 Gazebo 仿真
+## Ubuntu 本机 Gazebo 仿真
 
-- **mirrored 网络破坏 Fast DDS discovery**：当前 WSL 2.6.3 环境中，
-  `networkingMode=mirrored` 会创建 `loopback0` 和额外策略路由；Fast DDS
-  `ros2 node list` 可能为空或经 daemon 卡死，Nav2 lifecycle manager 会持续等待
-  `controller_server/get_state`。将 `%USERPROFILE%\.wslconfig` 改为
-  `networkingMode=nat`，执行 `wsl.exe --shutdown` 后恢复。不要注入旧
-  `FASTRTPS_DEFAULT_PROFILES_FILE` loopback XML。
-- **WSLg 重建竞态**：WSL 重启后 RViz 必须等待
-  `/mnt/wslg/runtime-dir/wayland-0`。使用 `sim_start.sh --headless --rviz`，不要用
-  固定 sleep 代替 socket 检查。
+- **DDS 环境不一致**：不同终端若加载不同的 Conda/Isaac overlay 或自定义
+  `FASTRTPS_DEFAULT_PROFILES_FILE`，`ros2 node list` 可能为空，Nav2 lifecycle
+  manager 也会持续等待 `controller_server/get_state`。统一使用
+  `scripts/local_sim.sh` 或加载 `sim_env.sh`，不要注入自定义 DDS profile。
 - **仿真残留进程**：日常使用 `sim_start.sh` 自动清理；手动恢复使用
   `sim_cleanup.sh --kill-processes`。完整说明见
-  [`../deployment/wsl-simulation.md`](../deployment/wsl-simulation.md)。
+  [`../deployment/local-simulation.md`](../deployment/local-simulation.md)。
 
 ## 硬件与传感器
 

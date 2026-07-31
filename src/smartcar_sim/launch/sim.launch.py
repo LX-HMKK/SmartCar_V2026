@@ -47,17 +47,14 @@ def generate_launch_description():
     pkg_nav2 = get_package_share_directory("smartcar_nav2")
     pkg_tools = get_package_share_directory("smartcar_tools")
 
-    # Fast DDS works reliably when WSL2 uses NAT networking. Mirrored networking
-    # creates an extra loopback0 interface and policy routes that break Fast DDS
-    # discovery. ROS_LOCALHOST_ONLY keeps simulation traffic inside WSL. Do not
-    # inject a custom locator profile: it can split multi-process discovery.
+    # Keep every simulator participant on the local development host.  Do not
+    # inject a custom DDS locator profile: it can split multi-process discovery.
 
     # ── 清理残留 SHM/临时文件（必须在 DDS/进程启动前执行）──
     # 修复原因：PathJoinSubstitution 返回 Substitution 对象，在
     # ExecuteProcess 的 cmd 参数中可能未正确解析。改用 os.path.join
     # 直接构造字符串路径，与 dds_config 的处理方式保持一致。
     cleanup_script = os.path.join(pkg_sim, "scripts", "sim_cleanup.sh")
-    rviz_launcher = os.path.join(pkg_sim, "scripts", "wait_for_wslg.sh")
     sim_cleanup = ExecuteProcess(
         cmd=["bash", cleanup_script],
         name="sim_cleanup",
@@ -309,7 +306,6 @@ def generate_launch_description():
         parameters=[{
             "use_sim_time": True,
             "waypoints_file": waypoints_file,
-            "publish_rate": 1.0,
         }],
     )
     field_reference = Node(
@@ -327,11 +323,14 @@ def generate_launch_description():
     # 独立于 headless 模式，由 use_rviz:=true 控制。
     # headless 只影响 Gazebo GUI，不影响 RViz。
     rviz_config = PathJoinSubstitution([pkg_sim, "rviz", "sim_nav.rviz"])
-    rviz = ExecuteProcess(
-        cmd=["bash", rviz_launcher, rviz_config],
+    rviz = Node(
+        package="rviz2",
+        executable="rviz2",
+        arguments=["-d", rviz_config],
+        parameters=[{"use_sim_time": True}],
         output="screen",
         condition=IfCondition(use_rviz),
-        name="rviz_when_wslg_ready",
+        name="sim_rviz",
     )
 
     auto_train = Node(

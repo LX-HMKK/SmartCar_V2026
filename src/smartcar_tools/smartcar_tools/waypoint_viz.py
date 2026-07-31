@@ -8,6 +8,7 @@ Launch: ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<path
 """
 
 import math
+from pathlib import Path
 
 import rclpy
 from rclpy.executors import ExternalShutdownException
@@ -74,7 +75,7 @@ class WaypointVizNode(Node):
     def __init__(self):
         super().__init__("waypoint_viz")
         self.declare_parameter("waypoints_file", "")
-        self.declare_parameter("publish_rate", 1.0)
+        self.declare_parameter("reload_interval_sec", 0.0)
         self.declare_parameter("marker_topic", MARKER_TOPIC)
 
         waypoints_file = str(
@@ -82,12 +83,9 @@ class WaypointVizNode(Node):
         ).strip()
         if not waypoints_file:
             raise ValueError("waypoints_file parameter is required")
-
-        self._waypoints = load_waypoints(waypoints_file)
-        self.get_logger().info(
-            f"Loaded {len(self._waypoints)} waypoint reference constraints from "
-            f"{waypoints_file}; this MarkerArray is not Nav2 /plan or /local_plan"
-        )
+        self._waypoints_file = Path(waypoints_file).expanduser()
+        self._waypoints = []
+        self._last_mtime_ns = None
 
         latched_qos = QoSProfile(
             depth=1,
@@ -97,8 +95,40 @@ class WaypointVizNode(Node):
         self._publisher = self.create_publisher(
             MarkerArray, str(self.get_parameter("marker_topic").value), latched_qos
         )
-        rate = max(0.1, float(self.get_parameter("publish_rate").value))
-        self._timer = self.create_timer(1.0 / rate, self._publish_markers)
+        self._reload_timer = None
+        self._reload_if_changed(force=True)
+
+        reload_interval = max(
+            0.0, float(self.get_parameter("reload_interval_sec").value)
+        )
+        if reload_interval > 0.0:
+            self._reload_timer = self.create_timer(
+                max(0.1, reload_interval), self._reload_if_changed
+            )
+
+    def _reload_if_changed(self, force=False):
+        """Reload and republish only after an atomic waypoint-file update."""
+        try:
+            mtime_ns = self._waypoints_file.stat().st_mtime_ns
+        except OSError as error:
+            self.get_logger().error(
+                f"Cannot stat waypoint reference file {self._waypoints_file}: {error}"
+            )
+            return
+        if not force and mtime_ns == self._last_mtime_ns:
+            return
+        try:
+            self._waypoints = load_waypoints(self._waypoints_file)
+        except (OSError, ValueError) as error:
+            self.get_logger().error(
+                f"Cannot load waypoint reference file {self._waypoints_file}: {error}"
+            )
+            return
+        self._last_mtime_ns = mtime_ns
+        self.get_logger().info(
+            f"Loaded {len(self._waypoints)} waypoint reference constraints from "
+            f"{self._waypoints_file}; this MarkerArray is not Nav2 /plan or /local_plan"
+        )
         self._publish_markers()
 
     def _publish_markers(self):

@@ -1,4 +1,7 @@
-# WSL 仿真航点优化夜间交接
+# WSL 仿真航点优化夜间交接（历史归档）
+
+> 本文记录 2026-07 的 WSL 验证证据，现已不作为运行手册。当前开发与仿真使用
+> [`../deployment/local-simulation.md`](../deployment/local-simulation.md)。
 
 更新日期：2026-07-26
 

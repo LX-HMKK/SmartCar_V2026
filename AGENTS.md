@@ -2,19 +2,18 @@
 
 本文件为 Codex（Codex.ai/code）提供本仓库的操作指导。
 
-> 同步基线：2026-07-28。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
+> 同步基线：2026-07-31。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
 ## 项目背景与当前状态
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
 截至 2026-07-27，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线（三阶段 NavigateThroughPoses）、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
-截至 2026-07-30，`feat/gazebo-simulation` 分支还包含 WSL2 Ubuntu-22.04 +
-Ignition Gazebo 6.18 仿真。WSL 必须使用 NAT 网络；mirrored 模式会破坏
-Fast DDS discovery。Gazebo/RViz/TF/Nav2 启动，以及 P→A、A→B 倒车段已有运行
-证据。当前 `nav_only.yaml` 为首段前进、其余四段倒车的五段路线；B→C1 入口仍会在
-C 区中央禁区西南角触发局部碰撞预测，尚未取得全程 `completed` 证据。该证据只覆盖
-Gazebo 模型，不属于实体倒车或现场验收。
+截至 2026-07-31，本机 Ubuntu 22.04 直接运行 Ignition Gazebo 6.18 仿真，不使用
+WSL。Gazebo/RViz/TF/Nav2 启动，以及 P→A、A→B 倒车段已有运行证据。当前
+`nav_only.yaml` 为首段前进、其余四段倒车的五段路线；B→C1 入口仍会在 C 区中央
+禁区西南角触发局部碰撞预测，尚未取得全程 `completed` 证据。该证据只覆盖 Gazebo
+模型，不属于实体倒车或现场验收。
 
 已完成八轮 CPU 优化（详见 CHANGELOG），系统总 CPU 从 ~120% 降至 ~10%（idle 状态），其中 safety_node 从 Python 43.9% 降至 C++ 6.4%，barcode_reader 改为任务按需启动（idle 0%），aurora930 切换为 USB 摄像头。
 
@@ -53,7 +52,7 @@ src/smartcar_speech/                 可选火山 TTS consumer
 src/smartcar_task/                   五子任务状态机
 src/smartcar_bringup/                分层和完整系统 launch
 src/smartcar_tools/                  场地参考、航点编辑、媒体入口与里程计诊断
-src/smartcar_sim/                    WSL2 Gazebo 仿真、RViz 与自动导航验证
+src/smartcar_sim/                    Ubuntu Gazebo 仿真、RViz 与自动导航验证
 scripts/                             RDK 同步与环境脚本
 tests/                               仓库级合同测试
 ```
@@ -62,28 +61,22 @@ tests/                               仓库级合同测试
 
 ## 本地开发与同步
 
-Windows PowerShell：
+本机 Ubuntu：
 
-```powershell
-python -m unittest discover -s tests -v
-python -m unittest discover -s src/smartcar_safety/test -v
-python -m unittest discover -s src/smartcar_vision/test -v
-python -m unittest discover -s src/smartcar_speech/test -v
-python -m unittest discover -s src/smartcar_task/test -v
-python -m unittest discover -s src/smartcar_tools/test -v
-python scripts/sync_to_rdk.py push --dry-run
-python scripts/sync_to_rdk.py push
+```bash
+python3 -m unittest discover -s tests -v
+python3 scripts/sync_to_rdk.py push --dry-run
+python3 scripts/sync_to_rdk.py push
 ```
 
-WSL 仿真统一使用 `docs/deployment/wsl-simulation.md`。关键约束：
+本机仿真统一使用 `docs/deployment/local-simulation.md`。关键约束：
 
-- `%USERPROFILE%\.wslconfig` 使用 `networkingMode=nat`，修改后执行
-  `wsl.exe --shutdown`。
 - 使用默认 `rmw_fastrtps_cpp` + `ROS_LOCALHOST_ONLY=1`，不得设置旧 Fast DDS
-  loopback profile。
-- 推荐通过安装空间的 `sim_start.sh --headless --rviz` 启动；该脚本会清理残留
-  并等待 WSLg。
-- 仿真会自动向 Gazebo 发布非零速度，但不得连接实体底盘、相机或 RDK 驱动。
+  locator profile。
+- 推荐通过仓库根目录的 `bash scripts/local_sim.sh --headless --rviz` 启动；该脚本
+  会清理残留并隔离 Conda/Isaac 库路径。
+- 仿真默认不运行路线；仅显式传入 `run_route:=true` 时 Gazebo 模型才会接收非零速度。
+  它不得连接实体底盘、相机或 RDK 驱动。
 
 本地仓库的 `src/` 和 `config/` 是权威源。日常使用 `push` 镜像到 RDK `/root/ros2_ws`；`init-vendor` 仅用于首次 bootstrap 或明确要求的 vendor 重建。**⚠ `push` 默认含 `--delete`，会删除 RDK 端本地源不存在的文件——在 RDK 上直接改过的文件（如航点 YAML）会被静默覆盖，务必先 `pull` 或手动备份。**
 
@@ -168,10 +161,10 @@ RDK 上启动无运动航点编辑器：
 
 ```bash
 export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
-ros2 launch smartcar_tools waypoint_editor.launch.py
+ros2 launch smartcar_tools waypoint_editor.launch.py start_safety:=true
 ```
 
-编辑器直接拖拽唯一的 `default_waypoints.yaml`，同时显示官方尺寸参考层；右键航点可保存、撤销或重载。它不启动 Nav2 或底盘，并默认锁存软件急停。
+编辑器直接拖拽唯一的 `default_waypoints.yaml`，同时显示官方尺寸参考层；右键航点可保存、撤销或重载。它不启动 Nav2 或底盘。本机离线编辑默认不启动 safety；RDK 标定时必须显式传入 `start_safety:=true` 锁存软件急停。
 
 航点可视化（独立工具，不依赖导航栈）：
 

@@ -50,7 +50,7 @@ def generate_launch_description():
         output="screen",
         parameters=[{
             "waypoints_file": waypoints_file,
-            "latch_emergency_stop": True,
+            "latch_emergency_stop": start_safety,
             "use_sim_time": use_sim_time,
         }],
         condition=UnlessCondition(use_segment_ui),
@@ -111,7 +111,7 @@ def generate_launch_description():
                 "route_planning.yaml",
             ]),
         ),
-        DeclareLaunchArgument("start_safety", default_value="true"),
+        DeclareLaunchArgument("start_safety", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
         DeclareLaunchArgument("use_segment_ui", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),

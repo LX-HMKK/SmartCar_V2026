@@ -75,7 +75,7 @@ RateController hz=0.5
 
 ## 验证方法
 
-1. WSL 仿真运行三段式 ThroughPoses，观察 `/plan` 话题的路径曲率分布
+1. Gazebo 仿真运行三段式 ThroughPoses，观察 `/plan` 话题的路径曲率分布
 2. 检查路径是否呈现清晰的"直线→弧线→直线"结构
 3. 验证 `auto_train.py` 三阶段 `overall_outcome=completed`
 4. 确认重规划次数显著减少

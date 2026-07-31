@@ -34,9 +34,7 @@
 - 导航固定使用单一 Smac Hybrid `DUBIN` planner；倒车 BT 只接受全程严格反向、无 cusp、曲率和端点均合规的路径。
 - 速度链为 `/cmd_vel_nav -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，错误方向或过期租约只能得到完整零输出。
 - `obstacle_detector_2`、Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
-- 本地 Windows 通过 WSL rsync 同步到 RDK 的单一工作空间 `/root/ros2_ws`。
-- WSL2 Ubuntu-22.04 提供 Ignition Gazebo 6.18 仿真；必须使用 NAT 网络，
-  mirrored 模式会破坏 Fast DDS discovery。
+- 本机 Ubuntu 22.04 是唯一开发与 Gazebo 仿真环境；RDK 通过原生 `rsync` 单独同步。
 
 主要包：
 
@@ -52,46 +50,53 @@ src/smartcar_speech/           可选火山 TTS 与本地音频播放
 src/smartcar_task/             五子任务状态机
 src/smartcar_bringup/          分层与一键系统 launch
 src/smartcar_tools/            场地参考、航点编辑、诊断和三个媒体测试入口
-src/smartcar_sim/              WSL2 Gazebo 阿克曼仿真、RViz 与自动导航验证
+src/smartcar_sim/              Ubuntu Gazebo 阿克曼仿真、RViz 与自动导航验证
 ```
 
-## WSL2 Gazebo 仿真
+## Ubuntu 本机仿真
 
-WSL 仿真复用真实 Nav2 配置，但只驱动 Gazebo 模型，不启动实体底盘、相机或
-RDK 驱动。Windows `%USERPROFILE%\.wslconfig` 必须配置
-`networkingMode=nat`；不要使用 mirrored 网络或自定义 Fast DDS locator profile。
+原生 Ubuntu 22.04 开发机可直接使用当前仓库作为 colcon 工作空间。首次初始化会安装
+Ignition Gazebo Fortress、ROS-Gazebo bridge 和仿真所需
+ROS 依赖；命令会请求本机 `sudo` 认证：
 
-推荐入口：
-
-```powershell
-wsl.exe -d Ubuntu-22.04 -u root bash -lc '
-source /opt/ros/humble/setup.bash
-source /root/ros2_ws/install/setup.bash
-exec /root/ros2_ws/install/smartcar_sim/share/smartcar_sim/scripts/sim_start.sh --headless --rviz
-'
+```bash
+cd /home/zyh/SmartCar_V2026
+bash scripts/setup_local_sim.sh
 ```
 
-该入口会清理残留进程、等待 WSLg，但默认只启动 Gazebo、Nav2 和 RViz，不会自动
-发车。需要自动运行时显式追加 `run_route:=true`；当前 `nav_only.yaml` 的首段前进，
-其余四段倒车。该 all-reverse 路线在 `b_corridor_enter -> c_corner_1` 仍有 C 区入口
-碰撞问题，不能表述为全程仿真通过。网络配置、构建、验证和故障排查见
-[`docs/deployment/wsl-simulation.md`](docs/deployment/wsl-simulation.md)。
+日常以以下入口启动。它会隔离 Conda/Isaac 的库路径、清理残留仿真进程，并只启动
+Gazebo、Nav2 与 RViz；默认不会启动自动路线或实体硬件：
+
+```bash
+bash scripts/local_sim.sh --headless --rviz
+```
+
+显式传入 `run_route:=true` 才会向 Gazebo 模型发送非零速度。它不会连接 RDK、底盘、
+相机或安全节点，不能用作实车启动入口。
+
+完整构建、验证、调参和故障排查见
+[`docs/deployment/local-simulation.md`](docs/deployment/local-simulation.md)。
 
 ## 本地开发与同步
 
-在 Windows PowerShell：
+在本机 Ubuntu：
 
-```powershell
-python -m unittest discover -s tests -v
-python -m unittest discover -s src/smartcar_safety/test -v
-python -m unittest discover -s src/smartcar_vision/test -v
-python -m unittest discover -s src/smartcar_speech/test -v
-python -m unittest discover -s src/smartcar_task/test -v
-python -m unittest discover -s src/smartcar_tools/test -v
-python scripts/sync_to_rdk.py push
+```bash
+python3 -m unittest discover -s tests -v
+python3 scripts/sync_to_rdk.py push --dry-run
 ```
 
 `init-vendor` 只用于首次 bootstrap 或重新拉取官方包。日常以本地仓库为权威，使用 `push` 镜像 `src/` 和 `config/`。
+
+RDK 使用 DHCP 地址时，在同步前设置目标即可；始终先审查 `--dry-run`，因为 `push`
+默认包含 `--delete`：
+
+```bash
+export SMARTCAR_RDK_HOST=root@<RDK_IP>
+python scripts/sync_to_rdk.py push --dry-run
+python scripts/sync_to_rdk.py push
+python scripts/sync_to_rdk.py setup
+```
 
 ## RDK 构建与测试
 
@@ -135,7 +140,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 ## 场地路线与独立测试入口
 
-`smartcar_tools` 提供官方规则图参考层、中文路径分段航点编辑器，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘，并默认锁存软件急停。
+`smartcar_tools` 提供官方规则图参考层、中文路径分段航点编辑器，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘；本机离线编辑默认不启动 safety，RDK 标定时必须显式传入 `start_safety:=true` 锁存软件急停。
 
 规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整的分段、途经点、无朝向、预检、保存和仿真同步流程见 [`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md)。
 

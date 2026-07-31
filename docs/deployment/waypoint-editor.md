@@ -4,13 +4,13 @@
 Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束，并在保存前做离线
 几何预检。
 
-最后更新：2026-07-30。
+最后更新：2026-07-31。
 
 ## 1. 适用范围
 
 编辑器只启动场地参考层和航点编辑界面；它不启动 Nav2、Gazebo、实体底盘、相机或
-视觉任务。默认配置会额外启动锁存急停的 safety 节点。下面的 WSL 示例显式关闭该
-节点，因为它只用于离线编辑，没有接入实体硬件。
+视觉任务。本机默认不启动 safety 节点或 RViz。RDK 上标定时必须显式开启
+`start_safety:=true`，确保软件急停保持锁存。
 
 编辑器显示的红色禁区是离线几何预检约束，不是 SLAM 地图，也不参与实车定位。灰色
 航点连线只是任务航点参考约束，不是 Nav2 路径。预检使用与仿真共享的转弯半径和禁区
@@ -26,7 +26,7 @@ Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束
 | 文件 | 用途 |
 |---|---|
 | `src/smartcar_nav2/config/waypoints/default_waypoints.yaml` | 实车语义任务路线的源文件。 |
-| `src/smartcar_nav2/config/waypoints/nav_only.yaml` | WSL 纯导航仿真路线，不触发二维码或 VLM。 |
+| `src/smartcar_nav2/config/waypoints/nav_only.yaml` | Gazebo 纯导航仿真路线，不触发二维码或 VLM。 |
 | `src/smartcar_tools/config/routes/field_geometry.yaml` | 官方场地尺寸、区域和走廊参考。 |
 | `src/smartcar_tools/config/routes/route_planning.yaml` | 编辑器预检、C 区禁区和仿真 Nav2 的共享调参文件。 |
 
@@ -35,50 +35,46 @@ Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束
 
 ## 3. 启动编辑器
 
-### WSL 离线编辑
+### 本机离线编辑
 
-以下示例与当前 WSL 工作区 `/home/lx_hm/ros2_ws` 和 Windows 源码挂载路径匹配：
+在仓库根目录启动：
 
 ```bash
-source /opt/ros/humble/setup.bash
-source /home/lx_hm/ros2_ws/install/setup.bash
-
-ros2 launch smartcar_tools waypoint_editor.launch.py \
-  waypoints_file:=/mnt/d/StudyWorks/3.2/SmartCar/src/smartcar_nav2/config/waypoints/nav_only.yaml \
-  geometry_file:=/mnt/d/StudyWorks/3.2/SmartCar/src/smartcar_tools/config/routes/field_geometry.yaml \
-  route_planning_file:=/mnt/d/StudyWorks/3.2/SmartCar/src/smartcar_tools/config/routes/route_planning.yaml \
-  start_safety:=false \
-  use_rviz:=false
+cd /home/zyh/SmartCar_V2026
+bash scripts/local_waypoint_editor.sh
 ```
 
-### WSL 仿真路线编辑
+该入口隔离 Conda/Isaac 环境，并默认打开 Matplotlib 分段编辑器。它不启动 Gazebo、
+Nav2、RViz、安全节点或任何实体驱动。
+
+### 本机仿真路线编辑
 
 仿真正在使用的路线应从专用入口打开，而不是沿用实车编辑器的默认文件：
 
 ```bash
-ros2 launch smartcar_tools sim_waypoint_editor.launch.py use_rviz:=false
+bash scripts/local_waypoint_editor.sh
 ```
 
 该入口默认解析与 `smartcar_sim/launch/sim.launch.py` 完全相同的已安装包路径
-`smartcar_nav2/config/waypoints/nav_only.yaml`，且默认不启动 safety、Gazebo、Nav2
-或任何实体驱动。若没有已运行的 Gazebo 时钟，追加 `use_sim_time:=false`；与仿真
-并行查看时保留默认的 `use_sim_time:=true`。
+`smartcar_nav2/config/waypoints/nav_only.yaml`，且默认不启动 safety、Gazebo、Nav2、
+RViz 或任何实体驱动。与已运行仿真并行查看时，追加
+`use_sim_time:=true use_rviz:=true`。
 
 关闭窗口或在启动终端按 `Ctrl+C` 退出。若旧 launch 残留了 `field_reference_node`，先在
 原终端按 `Ctrl+C`，再重新启动；不要同时运行两份编辑器。
 
 ### RDK 上查看或标定
 
-RDK 使用已部署的包路径，保持 `start_safety` 默认值。根据 HDMI 会话设置显示环境后
-启动：
+RDK 使用已部署的包路径。根据 HDMI 会话设置显示环境后启动，并显式锁存软件急停：
 
 ```bash
 source ~/source_env.sh
 export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
-ros2 launch smartcar_tools waypoint_editor.launch.py use_rviz:=false
+ros2 launch smartcar_tools waypoint_editor.launch.py \
+  start_safety:=true use_rviz:=false
 ```
 
-RDK 上编辑前先确认 YAML 的实际位置。日常从 Windows 同步时，`push` 会镜像源文件并
+RDK 上编辑前先确认 YAML 的实际位置。日常从本机同步时，`push` 会镜像源文件并
 可能覆盖 RDK 的本地修改；应先 pull 或备份。
 
 ### Launch 参数
@@ -89,8 +85,8 @@ RDK 上编辑前先确认 YAML 的实际位置。日常从 Windows 同步时，`
 | `geometry_file` | `field_geometry.yaml` | 场地参考与坐标边界。 |
 | `route_planning_file` | `route_planning.yaml` | 编辑器预检与禁区显示使用的共享配置。 |
 | `use_segment_ui` | `true` | 使用本文档描述的中文分段编辑界面；`false` 为旧 RViz Interactive Marker 编辑器。 |
-| `use_rviz` | `true` | 是否额外启动 RViz。分段编辑时通常设为 `false`。 |
-| `start_safety` | `true` | 是否启动锁存急停的 safety 节点。离线 WSL 编辑可设为 `false`。 |
+| `use_rviz` | `true` | 是否额外启动 RViz。专用本机入口默认传入 `false`。 |
+| `start_safety` | `false` | 是否启动锁存急停的 safety 节点。本机离线编辑保持 `false`；RDK 标定必须显式设为 `true`。 |
 | `use_sim_time` | `false` | 仅在已有仿真时钟的环境中设为 `true`。 |
 
 ## 4. 界面与鼠标操作
@@ -181,32 +177,28 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 | `preflight` | 本地预检的网格、采样、终点容差和搜索预算。 |
 | `simulation_keepout.map_resolution_m` | 仿真 keepout PGM 的分辨率。 |
 
-修改该 YAML 后，在 WSL 中运行以下命令完成验证。默认使用
-`SMARTCAR_WS/src` 中的已保存路线，不会从 Windows 挂载目录覆盖它：
+修改该 YAML 后，在本机仓库中运行以下命令完成验证：
 
 ```bash
-SMARTCAR_WS=/home/lx_hm/ros2_ws \
-bash /home/lx_hm/ros2_ws/src/smartcar_sim/scripts/sim_tune.sh \
-  --headless --loop 1
+cd /home/zyh/SmartCar_V2026
+bash src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
 ```
 
 `sim_tune.sh` 会依次重生成 `field_map.pgm`、同步 Smac/ReverseHandoff 与仿真
 KeepoutFilter 参数、构建并运行 Gazebo 自动路线。它会发布 Gazebo 的非零速度，绝
-不能用于实体底盘。需要从 Windows 源码导入时，额外添加
-`--sync-from-windows`；脚本会先比对 `nav_only.yaml` 的 SHA-256，并在不同的
-情况下将 WSL 版本备份到 `tune_logs/manual_backups/`，再进行不带 `--delete` 的同步。
+不能用于实体底盘。调参、航点和生成物均以当前本机仓库为唯一权威源。
 
 仅检查生成物是否与当前共享配置一致：
 
 ```bash
-cd /mnt/d/StudyWorks/3.2/SmartCar
+cd /home/zyh/SmartCar_V2026
 PYTHONPATH=src/smartcar_tools \
   python3 src/smartcar_sim/scripts/generate_field_map.py --check
 python3 src/smartcar_sim/scripts/sync_route_planning.py --check
 ```
 
-更完整的 Gazebo 环境、网络和结果验证说明见
-[`wsl-simulation.md`](wsl-simulation.md)。
+更完整的 Gazebo 环境、结果验证和故障排查说明见
+[`local-simulation.md`](local-simulation.md)。
 
 ## 7. 常见问题
 

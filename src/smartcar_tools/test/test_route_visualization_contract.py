@@ -61,6 +61,15 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertIn("Offline geometric preflight", preflight)
         self.assertIn("not a Nav2 planning or reachability result", preflight)
 
+    def test_waypoint_viz_is_latched_and_does_not_republish_when_static(self):
+        waypoint_viz = WAYPOINT_VIZ.read_text(encoding="utf-8")
+
+        self.assertIn('declare_parameter("reload_interval_sec", 0.0)', waypoint_viz)
+        self.assertNotIn('declare_parameter("publish_rate"', waypoint_viz)
+        self.assertIn("self._reload_if_changed(force=True)", waypoint_viz)
+        self.assertIn("mtime_ns == self._last_mtime_ns", waypoint_viz)
+        self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", waypoint_viz)
+
     def test_c_ring_reference_style_does_not_match_the_local_plan(self):
         source = FIELD_REFERENCE.read_text(encoding="utf-8")
 
