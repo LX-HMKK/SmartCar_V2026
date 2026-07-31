@@ -1,0 +1,177 @@
+calibrated: false
+planning_segments:
+- id: p_to_qr
+  direction: forward
+  start_id: p_start
+  end_id: a_task_observe
+  through_ids: []
+- id: reverse_corridor
+  direction: reverse
+  start_id: a_task_observe
+  end_id: b_corridor_enter
+  through_ids: []
+- id: reverse_c_entry
+  direction: reverse
+  start_id: b_corridor_enter
+  end_id: c_corner_3
+  through_ids:
+  - c_corner_1
+  - c_corner_2
+- id: c_exit
+  direction: reverse
+  start_id: c_corner_3
+  end_id: b_corridor_return_enter
+  through_ids:
+  - c_corner_4
+- id: return_to_p
+  direction: reverse
+  start_id: b_corridor_return_enter
+  end_id: p_finish
+  through_ids:
+  - b_corridor_return
+waypoints:
+- id: p_start
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  task: start
+  direction: forward
+  goal_profile: standard
+- id: a_task_observe
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.127294927294929
+      y: 0.9765623265623269
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.15076091589065388
+      w: 0.9885702535681575
+  task: nav
+  direction: forward
+  goal_profile: precise
+- id: b_corridor_enter
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 1.60
+      y: 2.65
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: -0.13052619222005157
+      w: 0.9914448613738104
+  task: corridor
+  direction: reverse
+  goal_profile: standard
+- id: c_corner_1
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.9979495131729672
+      y: 3.7958472007445607
+      z: 0.0
+  task: nav
+  direction: reverse
+  goal_profile: standard
+- id: c_corner_2
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 2.122642689412535
+      y: 3.805338282400591
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.9914448613738104
+      w: 0.1305261922200517
+  task: loop
+  direction: reverse
+  goal_profile: standard
+- id: c_corner_3
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.2188626206840123
+      y: 3.7483917924644095
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.9659258262890683
+      w: 0.25881904510252074
+  task: loop
+  direction: reverse
+  goal_profile: standard
+- id: c_corner_4
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.313773437244314
+      y: 2.737591596097203
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.3826834323650898
+      w: 0.9238795325112867
+  task: loop
+  direction: reverse
+  goal_profile: standard
+- id: b_corridor_return_enter
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 2.1606070160366553
+      y: 2.3911671156521037
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.25881904510252046
+      w: 0.9659258262890683
+  task: corridor
+  direction: reverse
+  goal_profile: standard
+- id: b_corridor_return
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 1.5341956267386683
+      y: 1.4657866541891678
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.38268343236508945
+      w: 0.9238795325112868
+  task: corridor
+  direction: reverse
+  goal_profile: standard
+- id: p_finish
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.3826834323650898
+      w: 0.9238795325112867
+  task: return
+  direction: reverse
+  goal_profile: standard

@@ -182,6 +182,17 @@ cat /tmp/auto_train_results.json
 后，Gazebo 与 RViz 默认继续运行，便于检查最终 `/plan`、`/local_plan`、代价地图和
 车位；CI 如需原来的一次性退出行为，追加 `shutdown_on_route_exit:=true`。
 
+仓库保留两份未验证的 B→C1 入口候选，均通过航点与分段结构校验，但尚无
+`overall_outcome=completed` 运行证据：
+
+- `src/smartcar_nav2/config/waypoints/nav_only.b-yaw-trial.yaml`：仅将
+  `b_corridor_enter` 朝向改为 `-15 deg`。
+- `src/smartcar_nav2/config/waypoints/nav_only.reverse-c-entry-split-trial.yaml`：保持
+  当前五阶段分段，将 B 点朝向改为 `-30 deg`、C1 朝向改为 `-155 deg`。
+
+它们只能以显式 `waypoints_file` 用于隔离仿真，不得替代正式 `nav_only.yaml` 或作为
+路线通过证据。
+
 当前路线包含五段：`p_to_qr` 正向，`reverse_corridor`、`reverse_c_entry`、`c_exit`
 和 `return_to_p` 均倒车。验收要求：JSON 的 `overall_outcome` 为 `completed`，包含
 全部 9 个非起点航点，每个 `outcome` 为 `succeeded`。`behavior_tree` 必须与航点方向
