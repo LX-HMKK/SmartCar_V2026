@@ -2,14 +2,14 @@
 
 Mouse:
   - drag a waypoint circle to move it
-  - scroll a selected waypoint to rotate it (±5 degrees per tick)
+  - scroll a QR/VLM/P waypoint to rotate it (±5 degrees per tick)
   - click a waypoint to select it (highlighted ring)
   - click empty space to deselect
 
 Keyboard:
   - Ctrl+S          save to YAML
   - Ctrl+Z          undo last move
-  - R / Shift+R     rotate selected waypoint ±15 degrees
+  - R / Shift+R     rotate selected QR/VLM/P waypoint ±15 degrees
   - Delete / Escape deselect
 
 Usage:
@@ -33,8 +33,10 @@ from matplotlib.widgets import Button, RadioButtons, TextBox
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from smartcar_task.route_geometry import RouteGeometryError, materialize_free_yaws
 from smartcar_task.waypoints import (
     Waypoint,
+    is_heading_locked,
     is_zero_quaternion,
     load_waypoint_document,
     validate_waypoints,
@@ -129,15 +131,20 @@ def _endpoint_label(target: str) -> str:
 
 def _preflight_message(message: str) -> str:
     """Convert offline geometric-preflight diagnostics into UI-facing Chinese."""
+    continuous_suffix = (
+        ": no collision-free minimum-radius route in continuous ThroughPoses action"
+    )
+    if message.endswith(continuous_suffix):
+        leg = message.removesuffix(continuous_suffix)
+        return f"{leg}：连续途经路线未找到满足静态禁区与最小转弯半径的候选"
     if message.endswith(": no collision-free minimum-radius route"):
         leg = message.removesuffix(": no collision-free minimum-radius route")
         return f"{leg}：离线几何预检未找到满足静态禁区与最小转弯半径的候选"
-    if message.endswith(": orientation unconstrained; preflight uses route tangent"):
-        waypoint_id = message.removesuffix(": orientation unconstrained; preflight uses route tangent")
-        return f"{waypoint_id}：未设置朝向，预检按路线切线计算"
-    if message.endswith(": orientation unconstrained; preflight uses incoming tangent"):
-        waypoint_id = message.removesuffix(": orientation unconstrained; preflight uses incoming tangent")
-        return f"{waypoint_id}：未设置朝向，预检按入段切线计算"
+    if message.endswith(": position-only; preflight leaves heading free"):
+        waypoint_id = message.removesuffix(
+            ": position-only; preflight leaves heading free"
+        )
+        return f"{waypoint_id}：位置约束，预检不施加朝向"
     return message
 
 
@@ -407,11 +414,43 @@ class DragEditor:
         return radio
 
     def _route_ids_for_display(self):
+        route = self._display_route()
+        return [waypoint.id for waypoint in route]
+
+    @staticmethod
+    def _uses_authored_heading(waypoint):
+        return is_heading_locked(waypoint)
+
+    def _display_route(self):
+        """Return the ordered route with position-only transit points."""
         try:
             route = materialize_route(self._waypoints, self._segments)
         except PlanningSegmentError:
             route = tuple(self._waypoints)
-        return [waypoint.id for waypoint in route]
+        try:
+            return materialize_free_yaws(route)
+        except RouteGeometryError as error:
+            # Never fall back to a user's ignored transit yaw after a bad edit.
+            self._node.get_logger().error(
+                f"无法准备位置约束路线：{error}"
+            )
+            return tuple(
+                waypoint
+                if self._uses_authored_heading(waypoint)
+                else replace(waypoint, orientation=(0.0, 0.0, 0.0, 0.0))
+                for waypoint in route
+            )
+
+    def _display_waypoints_by_id(self):
+        return {waypoint.id: waypoint for waypoint in self._display_route()}
+
+    def _display_waypoint(self, waypoint):
+        display = self._display_waypoints_by_id().get(waypoint.id)
+        if display is not None:
+            return display
+        if self._uses_authored_heading(waypoint):
+            return waypoint
+        return replace(waypoint, orientation=(0.0, 0.0, 0.0, 0.0))
 
     @staticmethod
     def _segment_panel_label(index, segment):
@@ -495,7 +534,8 @@ class DragEditor:
                     if self._preflight.warnings else ""
                 )
                 self._set_route_status(
-                    f"离线几何预检通过：{len(checked)} 段，总长 {total:.1f} 米"
+                    f"离线几何预检通过：{len(checked)} 编辑段，总长 {total:.1f} 米"
+                    "（同向途经点按连续动作检查）"
                     "（仅静态几何，不代表 Nav2 实际路径）"
                     + warning
                 )
@@ -595,26 +635,50 @@ class DragEditor:
             end_pick_axis, "点选", color=PANEL_INPUT, hovercolor="#3C4654"
         )).on_clicked(lambda _event: self._set_pick_target("end"))
 
+        start_waypoint = next(
+            (item for item in self._waypoints if item.id == segment.start_id), None
+        )
+        end_waypoint = next(
+            (item for item in self._waypoints if item.id == segment.end_id), None
+        )
+        start_heading_label = (
+            "起点朝向 "
+            if start_waypoint is not None and self._uses_authored_heading(start_waypoint)
+            else "起点位置约束 "
+        )
+        end_heading_label = (
+            "终点朝向 "
+            if end_waypoint is not None and self._uses_authored_heading(end_waypoint)
+            else "终点位置约束 "
+        )
         start_yaw_axis = self._new_panel_axis([0.675, 0.435, 0.145, 0.035])
-        start_yaw = TextBox(
-            start_yaw_axis, "起点朝向 ",
-            initial=f"{self._waypoint_yaw_degrees(segment.start_id):.1f}",
-            color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
-        )
-        start_yaw.label.set_color(PANEL_TEXT)
-        start_yaw.text_disp.set_color(PANEL_TEXT)
-        start_yaw.on_submit(lambda value: self._set_endpoint_yaw("start", value))
-        self._panel_widgets.append(start_yaw)
+        if start_waypoint is not None and self._uses_authored_heading(start_waypoint):
+            start_yaw = TextBox(
+                start_yaw_axis, start_heading_label,
+                initial=f"{self._waypoint_yaw_degrees(segment.start_id):.1f}",
+                color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
+            )
+            start_yaw.label.set_color(PANEL_TEXT)
+            start_yaw.text_disp.set_color(PANEL_TEXT)
+            start_yaw.on_submit(lambda value: self._set_endpoint_yaw("start", value))
+            self._panel_widgets.append(start_yaw)
+        else:
+            start_yaw_axis.axis("off")
+            start_yaw_axis.text(0.0, 0.5, start_heading_label, color="#AEB8C5", fontsize=7)
         end_yaw_axis = self._new_panel_axis([0.835, 0.435, 0.145, 0.035])
-        end_yaw = TextBox(
-            end_yaw_axis, "终点朝向 ",
-            initial=f"{self._waypoint_yaw_degrees(segment.end_id):.1f}",
-            color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
-        )
-        end_yaw.label.set_color(PANEL_TEXT)
-        end_yaw.text_disp.set_color(PANEL_TEXT)
-        end_yaw.on_submit(lambda value: self._set_endpoint_yaw("end", value))
-        self._panel_widgets.append(end_yaw)
+        if end_waypoint is not None and self._uses_authored_heading(end_waypoint):
+            end_yaw = TextBox(
+                end_yaw_axis, end_heading_label,
+                initial=f"{self._waypoint_yaw_degrees(segment.end_id):.1f}",
+                color=PANEL_INPUT, hovercolor="#3C4654", label_pad=0.02,
+            )
+            end_yaw.label.set_color(PANEL_TEXT)
+            end_yaw.text_disp.set_color(PANEL_TEXT)
+            end_yaw.on_submit(lambda value: self._set_endpoint_yaw("end", value))
+            self._panel_widgets.append(end_yaw)
+        else:
+            end_yaw_axis.axis("off")
+            end_yaw_axis.text(0.0, 0.5, end_heading_label, color="#AEB8C5", fontsize=7)
 
         through_label = self._new_panel_axis([0.675, 0.415, 0.305, 0.025])
         through_label.axis("off")
@@ -660,14 +724,17 @@ class DragEditor:
             down_axis, "下移", color=PANEL_INPUT, hovercolor="#3C4654"
         )).on_clicked(lambda _event: self._move_selected_through(1))
 
-        unconstrained_axis = self._new_panel_axis([0.675, 0.105, 0.145, 0.035])
-        self._style_button(Button(
-            unconstrained_axis, "设为无朝向", color=PANEL_INPUT, hovercolor="#3C4654"
-        )).on_clicked(self._set_selected_orientation_unconstrained)
-        restore_orientation_axis = self._new_panel_axis([0.835, 0.105, 0.145, 0.035])
-        self._style_button(Button(
-            restore_orientation_axis, "恢复路线朝向", color=PANEL_INPUT, hovercolor="#3C4654"
-        )).on_clicked(self._restore_selected_route_orientation)
+        heading_note = self._new_panel_axis([0.675, 0.100, 0.305, 0.045])
+        heading_note.axis("off")
+        heading_note.text(
+            0.0,
+            0.75,
+            "非 P/QR/VLM 点：位置约束；同向途经点连续规划，运行时由代价地图选朝向",
+            color="#AEB8C5",
+            fontsize=6.8,
+            va="top",
+            wrap=True,
+        )
 
         status = self._new_panel_axis([0.675, 0.050, 0.305, 0.040])
         status.axis("off")
@@ -729,7 +796,8 @@ class DragEditor:
         )
         if waypoint is None:
             return 0.0
-        return math.degrees(_yaw_from_quaternion(waypoint.orientation))
+        display = self._display_waypoint(waypoint)
+        return math.degrees(_yaw_from_quaternion(display.orientation))
 
     def _set_endpoint_yaw(self, target, value):
         segment = self._current_segment()
@@ -760,85 +828,19 @@ class DragEditor:
             self._set_route_status("P 起点朝向固定为 +X")
             self._build_route_panel()
             return
-        self._push_history()
         waypoint = self._waypoints[index]
+        if not self._uses_authored_heading(waypoint):
+            self._set_route_status(
+                f"{waypoint.id} 为位置约束；运行时由规划器选择朝向"
+            )
+            self._build_route_panel()
+            return
+        self._push_history()
         with self._lock:
             self._waypoints[index] = replace(
                 waypoint, orientation=_yaw_quaternion(math.radians(yaw_deg))
         )
         self._selected = index
-        self._mark_route_changed(rebuild_panel=True)
-        self._publish_markers()
-
-    def _selected_current_through_index(self):
-        """Return a selected intermediate point, or explain why it is ineligible."""
-        segment = self._current_segment()
-        if segment is None or self._selected is None:
-            self._set_route_status("请先在场地上选中当前分段的途经点")
-            self._build_route_panel()
-            return None
-        waypoint_id = self._waypoints[self._selected].id
-        if waypoint_id not in segment.through_ids:
-            self._set_route_status(
-                "无朝向只可用于当前分段的途经点；先点击“加入选中点”"
-            )
-            self._build_route_panel()
-            return None
-        return self._selected
-
-    def _set_selected_orientation_unconstrained(self, _event):
-        """Store an intermediate waypoint without a yaw constraint."""
-        index = self._selected_current_through_index()
-        if index is None:
-            return
-        waypoint = self._waypoints[index]
-        if is_zero_quaternion(waypoint.orientation):
-            self._set_route_status(f"{waypoint.id} 已是无朝向途经点")
-            self._build_route_panel()
-            return
-        self._push_history()
-        with self._lock:
-            self._waypoints[index] = replace(
-                waypoint, orientation=(0.0, 0.0, 0.0, 0.0)
-            )
-        self._set_route_status(f"{waypoint.id} 已设为无朝向途经点")
-        self._mark_route_changed(rebuild_panel=True)
-        self._publish_markers()
-
-    def _restore_selected_route_orientation(self, _event):
-        """Restore an unconstrained intermediate point to the route tangent."""
-        index = self._selected_current_through_index()
-        if index is None:
-            return
-        waypoint = self._waypoints[index]
-        if not is_zero_quaternion(waypoint.orientation):
-            self._set_route_status(f"{waypoint.id} 已有朝向")
-            self._build_route_panel()
-            return
-        segment = self._current_segment()
-        route_ids = segment.route_ids
-        route_index = route_ids.index(waypoint.id)
-        previous = next(
-            item for item in self._waypoints if item.id == route_ids[route_index - 1]
-        )
-        following = next(
-            item for item in self._waypoints if item.id == route_ids[route_index + 1]
-        )
-        dx = following.position[0] - previous.position[0]
-        dy = following.position[1] - previous.position[1]
-        if math.hypot(dx, dy) <= 1.0e-6:
-            self._set_route_status("相邻点重合，无法恢复路线朝向")
-            self._build_route_panel()
-            return
-        yaw = math.atan2(dy, dx)
-        if segment.direction == "reverse":
-            yaw += math.pi
-        self._push_history()
-        with self._lock:
-            self._waypoints[index] = replace(
-                waypoint, orientation=_yaw_quaternion(yaw)
-            )
-        self._set_route_status(f"{waypoint.id} 已恢复为路线朝向")
         self._mark_route_changed(rebuild_panel=True)
         self._publish_markers()
 
@@ -1080,14 +1082,19 @@ class DragEditor:
             if index in (0, len(self._waypoints) - 1)
             else ""
         )
-        return f"{index}:{waypoint.id}{locked}"
+        heading = (
+            " [位置约束]"
+            if not self._uses_authored_heading(waypoint)
+            else " [固定朝向]"
+        )
+        return f"{index}:{waypoint.id}{locked}{heading}"
 
-    def _draw_waypoint_arrow(self, index):
+    def _draw_waypoint_arrow(self, index, display_waypoint):
         waypoint = self._waypoints[index]
-        if is_zero_quaternion(waypoint.orientation):
+        if is_zero_quaternion(display_waypoint.orientation):
             return None
         x, y = waypoint.position[:2]
-        yaw = _yaw_from_quaternion(waypoint.orientation)
+        yaw = _yaw_from_quaternion(display_waypoint.orientation)
         arrow_len = 0.18
         color = TASK_COLORS.get(waypoint.task, DEFAULT_COLOR)
         return self._ax.arrow(
@@ -1259,12 +1266,16 @@ class DragEditor:
             linewidths=1.5, zorder=5, picker=8, alpha=0.95,
         )
 
-        # direction arrows (skip zero-quaternion / orientation-unconstrained waypoints)
+        # Ordinary transit points intentionally have no arrow. Their zero
+        # quaternion is consumed by the Nav2 free-heading planner at runtime.
         for arrow in self._arrows.values():
             arrow.remove()
         self._arrows.clear()
+        display_by_id = self._display_waypoints_by_id()
         for index in range(len(self._waypoints)):
-            arrow = self._draw_waypoint_arrow(index)
+            waypoint = self._waypoints[index]
+            display_waypoint = display_by_id.get(waypoint.id, waypoint)
+            arrow = self._draw_waypoint_arrow(index, display_waypoint)
             if arrow is not None:
                 self._arrows[index] = arrow
 
@@ -1308,19 +1319,18 @@ class DragEditor:
         line.pose.orientation.w = 1.0
         line.scale.x = 0.03
         line.color.r = 0.15; line.color.g = 0.85; line.color.b = 0.95; line.color.a = 0.9
-        try:
-            route = materialize_route(self._waypoints, self._segments)
-        except PlanningSegmentError:
-            route = tuple(self._waypoints)
+        route = self._display_route()
         line.points = [
             Point(x=waypoint.position[0], y=waypoint.position[1], z=0.025)
             for waypoint in route
         ]
         msg.markers.append(line)
 
+        display_by_id = {waypoint.id: waypoint for waypoint in route}
         for i, w in enumerate(self._waypoints):
             r, g, b = self._hex_rgb(TASK_COLORS.get(w.task, DEFAULT_COLOR))
-            yaw = _yaw_from_quaternion(w.orientation)
+            display_waypoint = display_by_id.get(w.id, w)
+            yaw = _yaw_from_quaternion(display_waypoint.orientation)
             half = yaw / 2.0
 
             s = Marker()
@@ -1340,7 +1350,7 @@ class DragEditor:
                 s.color.a = 0.7 if i in (0, len(self._waypoints)-1) else 1.0
             msg.markers.append(s)
 
-            if not is_zero_quaternion(w.orientation):
+            if not is_zero_quaternion(display_waypoint.orientation):
                 a = Marker()
                 a.header.frame_id = frame_id; a.header.stamp = stamp
                 a.ns = "mission_arrows"; a.id = i
@@ -1365,8 +1375,13 @@ class DragEditor:
             l.scale.z = 0.10
             l.color.r = l.color.g = l.color.b = 1.0; l.color.a = 1.0
             lock_mark = " [位置锁定]" if i in (0, len(self._waypoints)-1) else ""
+            heading_mark = (
+                " [位置约束]"
+                if not self._uses_authored_heading(w)
+                else " [固定朝向]"
+            )
             sel_mark = " *" if i == self._selected else ""
-            l.text = f"{i}: {w.id}{sel_mark}{lock_mark}"
+            l.text = f"{i}: {w.id}{sel_mark}{lock_mark}{heading_mark}"
             msg.markers.append(l)
 
         self._ros_publisher.publish(msg)
@@ -1488,6 +1503,11 @@ class DragEditor:
                     self._waypoints[waypoint_index] = replace(
                         waypoint,
                         position=(preview_position[0], preview_position[1], 0.0),
+                        orientation=(
+                            waypoint.orientation
+                            if self._uses_authored_heading(waypoint)
+                            else (0.0, 0.0, 0.0, 0.0)
+                        ),
                     )
                 w = self._waypoints[waypoint_index]
                 self._node.get_logger().info(
@@ -1591,8 +1611,14 @@ class DragEditor:
         idx = self._selected
         if idx == 0:
             return
-        self._push_history()
         w = self._waypoints[idx]
+        if not self._uses_authored_heading(w):
+            self._set_route_status(
+                f"{w.id} 为位置约束；运行时由规划器选择朝向"
+            )
+            self._build_route_panel()
+            return
+        self._push_history()
         yaw = _yaw_from_quaternion(w.orientation) + math.radians(delta_deg)
         with self._lock:
             self._waypoints[idx] = replace(w, orientation=_yaw_quaternion(yaw))
@@ -1635,6 +1661,15 @@ class DragEditor:
             with self._lock:
                 checked = validate_planning_segments(self._segments, self._waypoints)
                 route = materialize_route(self._waypoints, checked)
+                # Persist transit points as position-only constraints.  The
+                # runtime and previews derive their valid Nav2 quaternion from
+                # this ordered segment route instead of reviving an old yaw.
+                route = tuple(
+                    waypoint
+                    if self._uses_authored_heading(waypoint)
+                    else replace(waypoint, orientation=(0.0, 0.0, 0.0, 0.0))
+                    for waypoint in route
+                )
                 validate_waypoints(route)
                 destination = self._path.resolve()
                 template = planning_segments_document(self._template, checked)

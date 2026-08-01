@@ -6,7 +6,7 @@ the small set of constraints that the editor and simulation can share.  This
 script writes only the corresponding simulation values:
 
 * Smac Hybrid and reverse-MPPI minimum turning radii;
-* the simulation-only KeepoutFilter inflation envelope.
+* the padded Nav2 footprint and simulation-only cost inflation radius.
 
 It never changes the real vehicle's obstacle-layer inflation parameters.
 """
@@ -14,6 +14,7 @@ It never changes the real vehicle's obstacle-layer inflation parameters.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 from pathlib import Path
 import sys
@@ -68,11 +69,16 @@ def _nested_value(document: Mapping[str, Any], path: str) -> Any:
     return value
 
 
-def _format_scalar(value: float) -> str:
+def _format_scalar(value: float | str) -> str:
+    if isinstance(value, str):
+        return json.dumps(value)
     return format(float(value), ".12g")
 
 
-def render_updates(source_text: str, updates: Mapping[str, float]) -> tuple[str, bool]:
+def render_updates(
+    source_text: str,
+    updates: Mapping[str, float | str],
+) -> tuple[str, bool]:
     """Replace scalar values without discarding comments or unrelated layout."""
     parsed = yaml.safe_load(source_text)
     if not isinstance(parsed, Mapping):
@@ -84,10 +90,16 @@ def render_updates(source_text: str, updates: Mapping[str, float]) -> tuple[str,
     replacements: list[tuple[int, int, str]] = []
     for path, desired in updates.items():
         current = _nested_value(parsed, path)
-        if isinstance(current, bool) or not isinstance(current, (int, float)):
-            raise TypeError(f"route-planning sync target is not numeric: {path}")
-        if float(current) == float(desired):
-            continue
+        if isinstance(desired, str):
+            if not isinstance(current, str):
+                raise TypeError(f"route-planning sync target is not a string: {path}")
+            if current == desired:
+                continue
+        else:
+            if isinstance(current, bool) or not isinstance(current, (int, float)):
+                raise TypeError(f"route-planning sync target is not numeric: {path}")
+            if float(current) == float(desired):
+                continue
         node = _scalar_node(document, path)
         replacements.append((node.start_mark.index, node.end_mark.index, _format_scalar(desired)))
 
@@ -117,20 +129,28 @@ def synchronize(
     """Synchronize all simulation consumers; return whether any file changed."""
     config = _load_route_planning(route_planning_file)
     radius = config.minimum_turning_radius_m
-    envelope = config.footprint_envelope_radius_m
+    footprint = config.runtime_footprint
+    footprint_text = "[[{0}, {1}], [{0}, -{1}], [-{0}, -{1}], [-{0}, {1}]]".format(
+        _format_scalar(footprint.half_length_m),
+        _format_scalar(footprint.half_width_m),
+    )
     targets = (
         (
             nav2_params_file,
             {
                 "planner_server.ros__parameters.GridBased.minimum_turning_radius": radius,
                 "controller_server.ros__parameters.ReverseHandoff.AckermannConstraints.min_turning_r": radius,
+                "local_costmap.local_costmap.ros__parameters.footprint": footprint_text,
+                "local_costmap.local_costmap.ros__parameters.footprint_padding": footprint.padding_m,
+                "global_costmap.global_costmap.ros__parameters.footprint": footprint_text,
+                "global_costmap.global_costmap.ros__parameters.footprint_padding": footprint.padding_m,
             },
         ),
         (
             keepout_overlay_file,
             {
-                "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius": envelope,
-                "global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius": envelope,
+                "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_keepout.costmap_inflation_radius_m,
+                "global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_keepout.costmap_inflation_radius_m,
             },
         ),
     )

@@ -70,6 +70,21 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertIn("mtime_ns == self._last_mtime_ns", waypoint_viz)
         self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", waypoint_viz)
 
+    def test_previews_keep_transit_headings_free(self):
+        waypoint_viz = WAYPOINT_VIZ.read_text(encoding="utf-8")
+        drag_editor = DRAG_EDITOR.read_text(encoding="utf-8")
+        preflight = PREFLIGHT.read_text(encoding="utf-8")
+
+        for source in (waypoint_viz, drag_editor, preflight):
+            self.assertIn("materialize_free_yaws", source)
+            self.assertIn("materialize_route", source)
+        self.assertIn("[位置约束]", waypoint_viz)
+        self.assertIn("[位置约束]", drag_editor)
+        self.assertIn("position-only; preflight leaves heading free", preflight)
+        self.assertIn("not is_zero_quaternion(item.orientation)", waypoint_viz)
+        for source in (waypoint_viz, drag_editor, preflight):
+            self.assertNotIn("automatic route tangent", source)
+
     def test_c_ring_reference_style_does_not_match_the_local_plan(self):
         source = FIELD_REFERENCE.read_text(encoding="utf-8")
 

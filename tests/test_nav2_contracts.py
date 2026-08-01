@@ -40,6 +40,12 @@ BT_REVERSE_HANDOFF_FILE = (
     / "behavior_trees"
     / "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"
 )
+BT_REVERSE_LOCKED_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml"
+)
 BT_PRECISE_FILE = (
     PACKAGE_ROOT
     / "config"
@@ -80,6 +86,7 @@ UNSUPPORTED_HUMBLE_RPP_KEYS = {
     "max_angular_vel",
     "max_lateral_accel",
 }
+DEFAULT_HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm", "return"})
 
 
 def ros_parameters(config, node_name):
@@ -107,6 +114,14 @@ def waypoint_by_id(document, waypoint_id):
         waypoint
         for waypoint in document["waypoints"]
         if waypoint["id"] == waypoint_id
+    )
+
+
+def effective_heading_mode(waypoint):
+    """Mirror the YAML contract without treating every ``nav`` point as free."""
+    return waypoint.get(
+        "heading_mode",
+        "locked" if waypoint["task"] in DEFAULT_HEADING_LOCKED_TASKS else "free",
     )
 
 
@@ -172,14 +187,19 @@ class TestNav2Contracts(unittest.TestCase):
             BT_THROUGH_POSES_FILE,
             BT_REVERSE_FILE,
             BT_REVERSE_HANDOFF_FILE,
+            BT_REVERSE_LOCKED_FILE,
         ):
             with self.subTest(behavior_tree=behavior_tree.name):
                 root = ElementTree.parse(behavior_tree).getroot()
                 tags = [element.tag for element in root.iter()]
                 self.assertNotIn("Spin", tags)
-                # Wait and BackUp removed for Ackermann chassis — cannot
-                # rotate in place or reverse as recovery.
+                # Stock behaviors require behavior_server and do not preserve
+                # the task direction lease. The project recovery remains a
+                # FollowPath action through controller_server instead.
                 self.assertIn("ClearEntireCostmap", tags)
+                self.assertNotIn("BackUp", tags)
+                self.assertNotIn("DriveOnHeading", tags)
+                self.assertNotIn("Wait", tags)
                 for follow_path in root.iter("FollowPath"):
                     self.assertNotIn("allow_reversing", follow_path.attrib)
 
@@ -187,7 +207,16 @@ class TestNav2Contracts(unittest.TestCase):
             element.tag
             for element in ElementTree.parse(BT_THROUGH_POSES_FILE).getroot().iter()
         ]
-        self.assertIn("ComputePathThroughPoses", through_tags)
+        reverse_through_tags = [
+            element.tag
+            for element in ElementTree.parse(
+                BT_REVERSE_THROUGH_POSES_FILE
+            ).getroot().iter()
+        ]
+        self.assertIn("ComputeFreeHeadingPathThroughPoses", through_tags)
+        self.assertIn(
+            "ComputeReverseFreeHeadingPathThroughPoses", reverse_through_tags
+        )
         self.assertIn("RemovePassedGoals", through_tags)
         for behavior_tree in (
             BT_THROUGH_POSES_FILE,
@@ -224,11 +253,32 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("navigate_to_pose", bt_navigator)
         self.assertNotIn("navigate_through_poses", bt_navigator)
 
+    def test_bt_service_timeout_allows_costmap_recovery_round_trip(self):
+        primary = ros_parameters(self.params, "bt_navigator")
+        through_poses = ros_parameters(
+            self.params, "bt_navigator_navigate_through_poses_rclcpp_node"
+        )
+        self.assertEqual(primary["default_server_timeout"], 100)
+        self.assertEqual(
+            through_poses["default_server_timeout"],
+            primary["default_server_timeout"],
+        )
+        self.assertGreaterEqual(
+            primary["default_server_timeout"],
+            5 * primary["bt_loop_duration"],
+        )
+
     def test_controller_uses_rpp_and_reverse_mppi_contracts(self):
         controller = ros_parameters(self.params, "controller_server")
         self.assertEqual(
             controller["goal_checker_plugins"],
-            ["goal_checker", "precise_goal_checker", "reverse_goal_checker"],
+            [
+                "goal_checker",
+                "precise_goal_checker",
+                "reverse_goal_checker",
+                "transit_goal_checker",
+                "recovery_goal_checker",
+            ],
         )
         precise = controller["precise_goal_checker"]
         self.assertEqual(
@@ -246,13 +296,20 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertAlmostEqual(precise["yaw_goal_tolerance"], 0.15)
         self.assertIs(precise["stateful"], False)
         self.assertLessEqual(
-            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.12)
+            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.30)
         self.assertLessEqual(
             controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.25)
+        transit = controller["transit_goal_checker"]
+        self.assertEqual(
+            transit["plugin"], "nav2_controller::PositionGoalChecker"
+        )
+        self.assertAlmostEqual(transit["xy_goal_tolerance"], 0.50)
+        self.assertNotIn("yaw_goal_tolerance", transit)
+        self.assertIs(transit["stateful"], False)
         self.assertNotIn("goal_checker_plugin", controller)
         self.assertEqual(
             controller["controller_plugins"],
-            ["FollowPath", "ReverseHandoff"],
+            ["FollowPath", "ReverseHandoff", "ReverseRecovery"],
         )
 
         rpp = controller["FollowPath"]
@@ -327,23 +384,106 @@ class TestNav2Contracts(unittest.TestCase):
             controller["reverse_goal_checker"]["yaw_goal_tolerance"],
         )
 
+        recovery = controller["ReverseRecovery"]
+        self.assertEqual(
+            recovery["plugin"], "smartcar_nav2::ReverseOnlyMPPIController"
+        )
+        self.assertEqual(recovery["motion_model"], "Ackermann")
+        self.assertAlmostEqual(recovery["vx_min"], 0.015)
+        self.assertAlmostEqual(recovery["vx_max"], 0.05)
+        self.assertAlmostEqual(recovery["wz_max"], 0.0)
+        self.assertLess(recovery["vx_min"], recovery["vx_max"])
+        self.assertEqual(
+            recovery["AckermannConstraints"]["min_turning_r"], planner_radius
+        )
+        recovery_goal = controller["recovery_goal_checker"]
+        self.assertEqual(
+            recovery_goal["plugin"], "nav2_controller::SimpleGoalChecker"
+        )
+        self.assertLess(recovery_goal["xy_goal_tolerance"], 0.15)
+        self.assertAlmostEqual(recovery_goal["yaw_goal_tolerance"], 0.10)
+        self.assertIs(recovery_goal["stateful"], False)
+
         smoother = ros_parameters(self.params, "velocity_smoother")
         self.assertIs(smoother["scale_velocities"], True)
 
     def test_reverse_handoff_tree_keeps_strict_planning_and_goal_checks(self):
         regular = ElementTree.parse(BT_REVERSE_FILE).getroot()
         handoff = ElementTree.parse(BT_REVERSE_HANDOFF_FILE).getroot()
-        regular_compute = regular.find(".//ComputeReversePathToPose")
+        regular_compute = regular.find(".//ComputeReverseFreeHeadingPathToPose")
         handoff_compute = handoff.find(".//ComputeReversePathToPose")
         self.assertIsNotNone(regular_compute)
         self.assertIsNotNone(handoff_compute)
-        self.assertEqual(handoff_compute.attrib, regular_compute.attrib)
+        # Ordinary reverse waypoints carry a zero quaternion and resolve their
+        # terminal heading in the live costmap. The VLM handoff is heading
+        # locked, so it preserves the direct reverse planner node.
+        self.assertIn("heading_samples", regular_compute.attrib)
+        self.assertNotIn("heading_samples", handoff_compute.attrib)
+        for field in (
+            "goal",
+            "path",
+            "planner_id",
+            "minimum_turning_radius",
+            "curvature_tolerance",
+            "maximum_direction_error",
+            "start_position_tolerance",
+            "start_yaw_tolerance",
+            "goal_position_tolerance",
+            "goal_yaw_tolerance",
+            "minimum_segment_length",
+        ):
+            self.assertEqual(
+                handoff_compute.attrib[field], regular_compute.attrib[field]
+            )
 
         follow = handoff.find(".//FollowPath")
         self.assertIsNotNone(follow)
         self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
         self.assertEqual(
             follow.attrib["goal_checker_id"], "reverse_goal_checker")
+
+    def test_reverse_retreat_is_planner_only_and_single_shot(self):
+        forward_trees = (BT_FILE, BT_PRECISE_FILE, BT_THROUGH_POSES_FILE)
+        for behavior_tree in forward_trees:
+            with self.subTest(behavior_tree=behavior_tree.name):
+                tags = {
+                    element.tag
+                    for element in ElementTree.parse(behavior_tree).getroot().iter()
+                }
+                self.assertNotIn("AckermannReverseRetreat", tags)
+
+        reverse_trees = (
+            BT_REVERSE_FILE,
+            BT_REVERSE_HANDOFF_FILE,
+            BT_REVERSE_THROUGH_POSES_FILE,
+            BT_REVERSE_LOCKED_FILE,
+        )
+        for behavior_tree in reverse_trees:
+            with self.subTest(behavior_tree=behavior_tree.name):
+                root = ElementTree.parse(behavior_tree).getroot()
+                retreats = list(root.iter("AckermannReverseRetreat"))
+                self.assertEqual(len(retreats), 1)
+                retreat = retreats[0]
+                self.assertEqual(retreat.attrib["controller_id"], "ReverseRecovery")
+                self.assertEqual(
+                    retreat.attrib["goal_checker_id"], "recovery_goal_checker"
+                )
+                self.assertEqual(retreat.attrib["retreat_used"], "{reverse_retreat_used}")
+                self.assertAlmostEqual(float(retreat.attrib["retreat_distance_m"]), 0.15)
+                self.assertEqual(len(list(root.iter("SetBlackboard"))), 1)
+                self.assertNotIn("BackUp", {element.tag for element in root.iter()})
+                self.assertNotIn("DriveOnHeading", {element.tag for element in root.iter()})
+
+        primary_plugins = ros_parameters(self.params, "bt_navigator")["plugin_lib_names"]
+        through_plugins = ros_parameters(
+            self.params, "bt_navigator_navigate_through_poses_rclcpp_node"
+        )["plugin_lib_names"]
+        self.assertIn(
+            "smartcar_ackermann_reverse_retreat_action_bt_node", primary_plugins
+        )
+        self.assertIn(
+            "smartcar_ackermann_reverse_retreat_action_bt_node", through_plugins
+        )
 
     def test_smac_hybrid_obeys_ackermann_kinematics(self):
         planner = ros_parameters(self.params, "planner_server")["GridBased"]
@@ -500,6 +640,24 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertIn("params_overlay_file", wrapper)
         self.assertIn("'params_overlay_file': params_overlay_file", wrapper)
 
+    def test_lifecycle_manager_startup_delay_defaults_to_zero_and_is_forwarded(self):
+        navigation = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
+        bringup = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
+        wrapper = (PACKAGE_ROOT / "launch" / "smartcar_nav2.launch.py").read_text(
+            encoding="utf-8"
+        )
+
+        for source in (navigation, bringup, wrapper):
+            self.assertIn("lifecycle_manager_delay_sec", source)
+            self.assertIn("default_value='0.0'", source)
+        self.assertIn("TimerAction(period=delay_sec", navigation)
+        self.assertIn(
+            "'lifecycle_manager_delay_sec': lifecycle_manager_delay_sec", bringup
+        )
+        self.assertIn(
+            "'lifecycle_manager_delay_sec': lifecycle_manager_delay_sec", wrapper
+        )
+
     def test_waypoints_are_valid_and_fit_the_rolling_global_costmap(self):
         global_costmap = self.params["global_costmap"]["global_costmap"][
             "ros__parameters"
@@ -515,17 +673,29 @@ class TestNav2Contracts(unittest.TestCase):
             with self.subTest(waypoint=index):
                 self.assertEqual(waypoint["frame_id"], "odom_combined")
                 pose = waypoint["pose"]
-                values = [*pose["position"].values(), *pose["orientation"].values()]
-                self.assertTrue(all(math.isfinite(value) for value in values))
-                quaternion_norm = math.sqrt(
-                    sum(value * value for value in pose["orientation"].values())
-                )
-                # Accept unit quaternion (1.0) or zero quaternion
-                # (orientation-unconstrained pass-through waypoints)
                 self.assertTrue(
-                    abs(quaternion_norm - 1.0) <= 1.0e-3
-                    or abs(quaternion_norm) <= 1.0e-3
+                    all(math.isfinite(value) for value in pose["position"].values())
                 )
+                heading_mode = effective_heading_mode(waypoint)
+                self.assertIn(heading_mode, {"free", "locked"})
+                if heading_mode == "locked":
+                    orientation = pose["orientation"]
+                    self.assertTrue(all(math.isfinite(value) for value in orientation.values()))
+                    quaternion_norm = math.sqrt(
+                        sum(value * value for value in orientation.values())
+                    )
+                    self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
+                else:
+                    # An omitted YAML orientation is parsed as the explicit
+                    # all-zero position-only sentinel before Nav2 receives it.
+                    self.assertNotIn("orientation", pose)
+                    self.assertEqual(
+                        pose.get(
+                            "orientation",
+                            {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
+                        ),
+                        {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
+                    )
 
         for index, (start, goal) in enumerate(
             zip(self.waypoints, self.waypoints[1:])
@@ -542,6 +712,18 @@ class TestNav2Contracts(unittest.TestCase):
                     global_costmap["height"] / 2.0 - margin_y,
                 )
 
+    def test_nav_qr_substitute_can_explicitly_lock_its_heading(self):
+        substitute = waypoint_by_id(
+            self.nav_only_waypoint_document, "a_task_observe"
+        )
+
+        self.assertEqual(substitute["task"], "nav")
+        self.assertEqual(substitute["heading_mode"], "locked")
+        self.assertEqual(effective_heading_mode(substitute), "locked")
+        orientation = substitute["pose"]["orientation"]
+        quaternion_norm = math.sqrt(sum(value * value for value in orientation.values()))
+        self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
+
     def test_simulation_route_preserves_protected_semantic_targets(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
@@ -552,14 +734,14 @@ class TestNav2Contracts(unittest.TestCase):
             waypoint["id"]: waypoint for waypoint in nav_only["waypoints"]
         }
 
-        # P and QR are fixed competition references. C-zone guide points and
+        # P and QR positions are fixed competition references. C-zone guide points and
         # the return corridor are intentionally simulation-tunable, so their
         # coordinates must not be compared against the compact real route.
         for waypoint_id in ("p_start", "a_task_observe"):
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
-                    default_by_id[waypoint_id]["pose"],
-                    nav_by_id[waypoint_id]["pose"],
+                    default_by_id[waypoint_id]["pose"]["position"],
+                    nav_by_id[waypoint_id]["pose"]["position"],
                 )
                 self.assertEqual(
                     default_by_id[waypoint_id]["direction"],
@@ -569,6 +751,15 @@ class TestNav2Contracts(unittest.TestCase):
                     default_by_id[waypoint_id].get("goal_profile", "standard"),
                     nav_by_id[waypoint_id].get("goal_profile", "standard"),
                 )
+
+        self.assertEqual(nav_by_id["a_task_observe"]["task"], "nav")
+        self.assertEqual(
+            effective_heading_mode(nav_by_id["a_task_observe"]), "locked"
+        )
+        self.assertEqual(
+            nav_by_id["a_task_observe"]["pose"]["orientation"],
+            default_by_id["a_task_observe"]["pose"]["orientation"],
+        )
 
         # The finish position is fixed, while its simulation heading is flipped
         # by 180 degrees for the all-reverse route.
@@ -601,6 +792,7 @@ class TestNav2Contracts(unittest.TestCase):
         corridor_enter = waypoint_by_id(nav_only, "b_corridor_enter")
         self.assertEqual(corridor_enter["direction"], "reverse")
         self.assertEqual(corridor_enter["task"], "corridor")
+        self.assertNotIn("b_corridor_out", nav_by_id)
 
         c_corner_2 = waypoint_by_id(nav_only, "c_corner_2")
         self.assertEqual(c_corner_2["task"], "loop")
@@ -647,19 +839,16 @@ class TestNav2Contracts(unittest.TestCase):
             delta=1.0e-6,
         )
 
-        # Intermediate ThroughPoses waypoints use zero quaternion
-        # (Nav2 convention for "orientation unconstrained")
+        # Transit waypoints omit YAML orientation. The task route materializer
+        # turns that omission into an all-zero free-heading sentinel, which the
+        # custom BT resolves against the live costmap before calling Smac.
         intermediate_ids = [
             "c_corner_3",
             "b_corridor_return",
         ]
         for inter_id in intermediate_ids:
             inter = waypoint_by_id(default, inter_id)
-            orient = inter["pose"]["orientation"]
-            self.assertAlmostEqual(orient["x"], 0.0)
-            self.assertAlmostEqual(orient["y"], 0.0)
-            self.assertAlmostEqual(orient["z"], 0.0)
-            self.assertAlmostEqual(orient["w"], 0.0)
+            self.assertNotIn("orientation", inter["pose"])
 
     def test_package_declares_direct_runtime_and_test_dependencies(self):
         root = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()

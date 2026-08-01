@@ -1,41 +1,65 @@
 #!/usr/bin/env python3
-"""Apply geometry scan candidates to nav_only.yaml waypoints file."""
-import argparse, json, math, sys
+"""Apply movable geometry scan candidates without locking transit headings."""
+import argparse
+import json
+import sys
 from pathlib import Path
 import yaml
 
 
-def yaw_to_quat(yaw_deg: float):
-    """Convert yaw in degrees to ROS quaternion (z, w)."""
-    half = math.radians(yaw_deg) / 2.0
-    return (0.0, 0.0, math.sin(half), math.cos(half))
+MOVABLE_POSITION_IDS = (
+    "b_corridor_gate",
+    "b_corridor_enter",
+    "b_corridor_return_enter",
+)
+TRANSIT_CANDIDATE_IDS = (
+    "c_corner_2",
+    "c_corner_3",
+    "c_corner_4",
+    *MOVABLE_POSITION_IDS,
+)
 
 
 def apply_candidate(waypoints_path: str, candidate: dict, dry_run: bool = False):
-    """Update waypoints from candidate dict."""
+    """Update permitted transit positions and leave every transit yaw free.
+
+    The legacy geometry scan includes C-corner pose candidates.  C-corner
+    positions are fixed competition constraints and ordinary transit headings
+    are resolved by the runtime free-heading planner, so neither is written
+    into the semantic waypoint document.
+    """
     path = Path(waypoints_path)
     doc = yaml.safe_load(path.read_text(encoding="utf-8"))
     waypoints = doc["waypoints"]
 
     updates = {}
-    for key in ["c_corner_2", "c_corner_3", "c_corner_4",
-                "b_corridor_return_enter"]:
+    for key in MOVABLE_POSITION_IDS:
         wp_data = candidate.get(key)
         if wp_data is None:
             continue
-        x, y, yaw_deg = wp_data["x"], wp_data["y"], wp_data["yaw_deg"]
-        z, w = yaw_to_quat(yaw_deg)[2], yaw_to_quat(yaw_deg)[3]
         updates[key] = {
-            "x": round(x, 3), "y": round(y, 3),
-            "z": round(z, 6), "w": round(w, 6),
-            "yaw_deg": yaw_deg,
+            "x": round(wp_data["x"], 3),
+            "y": round(wp_data["y"], 3),
         }
 
     if dry_run:
         print("Would update:")
         for wid, data in updates.items():
-            print(f"  {wid}: ({data['x']:.3f}, {data['y']:.3f}), "
-                  f"yaw {data['yaw_deg']:.0f} deg")
+            print(f"  {wid}: ({data['x']:.3f}, {data['y']:.3f})")
+        ignored_corners = [
+            key
+            for key in TRANSIT_CANDIDATE_IDS
+            if key not in MOVABLE_POSITION_IDS and key in candidate
+        ]
+        ignored_yaws = [
+            key
+            for key in TRANSIT_CANDIDATE_IDS
+            if candidate.get(key, {}).get("yaw_deg") is not None
+        ]
+        if ignored_corners:
+            print("  Ignored fixed C-corner candidates: " + ", ".join(ignored_corners))
+        if ignored_yaws:
+            print("  Ignored ordinary transit yaws: " + ", ".join(ignored_yaws))
         return
 
     for wp in waypoints:
@@ -44,10 +68,15 @@ def apply_candidate(waypoints_path: str, candidate: dict, dry_run: bool = False)
             data = updates[wid]
             wp["pose"]["position"]["x"] = data["x"]
             wp["pose"]["position"]["y"] = data["y"]
-            wp["pose"]["orientation"]["z"] = data["z"]
-            wp["pose"]["orientation"]["w"] = data["w"]
-            print(f"  Updated {wid}: ({data['x']:.3f}, {data['y']:.3f}), "
-                  f"yaw {data['yaw_deg']:.0f} deg")
+            # All candidate targets are ordinary transit points.  Remove a
+            # legacy authored quaternion instead of turning it into a Nav2
+            # hard goal yaw.
+            wp["pose"].pop("orientation", None)
+            print(f"  Updated {wid}: ({data['x']:.3f}, {data['y']:.3f})")
+        elif wid in TRANSIT_CANDIDATE_IDS:
+            # Candidate JSON can come from a pre-free-heading scan.  Strip
+            # that stale yaw even when this fixed point has no position update.
+            wp["pose"].pop("orientation", None)
 
     path.write_text(
         yaml.dump(doc, default_flow_style=False, allow_unicode=True,
@@ -58,7 +87,7 @@ def apply_candidate(waypoints_path: str, candidate: dict, dry_run: bool = False)
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Apply geometry scan candidate to waypoints file")
+        description="Apply movable geometry candidates without locking transit headings")
     parser.add_argument("waypoints", help="Path to waypoints YAML")
     parser.add_argument("--candidate", type=str, required=True,
                         help="Path to candidate JSON or candidate index (0-based)")
@@ -80,8 +109,14 @@ def main():
         print(f"Error: {args.candidate} is not a valid JSON file", file=sys.stderr)
         return 1
 
-    print(f"Applying candidate #{args.index} (score={candidate['score']}, "
-          f"total={candidate['total_path_m']}m)")
+    score = candidate.get("score", "n/a")
+    total_path_m = candidate.get(
+        "total_path_m", candidate.get("total_m", candidate.get("total"))
+    )
+    summary = f"score={score}"
+    if total_path_m is not None:
+        summary += f", total={total_path_m}m"
+    print(f"Applying candidate #{args.index} ({summary})")
     apply_candidate(args.waypoints, candidate, dry_run=args.dry_run)
     return 0
 

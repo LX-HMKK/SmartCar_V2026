@@ -18,6 +18,8 @@ def generate_launch_description():
     bt_through_poses_xml_file = LaunchConfiguration(
         'bt_through_poses_xml_file')
     autostart = LaunchConfiguration('autostart')
+    lifecycle_manager_delay_sec = LaunchConfiguration(
+        'lifecycle_manager_delay_sec')
     use_respawn = LaunchConfiguration('use_respawn')
 
     declare_use_sim_time = DeclareLaunchArgument(
@@ -53,6 +55,11 @@ def generate_launch_description():
         'autostart', default_value='true',
         description='Automatically startup the nav2 stack')
 
+    declare_lifecycle_manager_delay = DeclareLaunchArgument(
+        'lifecycle_manager_delay_sec', default_value='0.0',
+        description=(
+            'Wall-clock delay before starting the Nav2 lifecycle manager'))
+
     declare_use_respawn = DeclareLaunchArgument(
         'use_respawn', default_value='False',
         description='Whether to respawn if a node crashes')
@@ -75,6 +82,7 @@ def generate_launch_description():
             'params_file': params_file,
             'params_overlay_file': params_overlay_file,
             'autostart': autostart,
+            'lifecycle_manager_delay_sec': lifecycle_manager_delay_sec,
             'use_respawn': use_respawn,
         }.items())
 
@@ -85,6 +93,7 @@ def generate_launch_description():
         declare_bt_xml_file,
         declare_bt_through_poses_xml_file,
         declare_autostart,
+        declare_lifecycle_manager_delay,
         declare_use_respawn,
         nav2_launch,
     ])

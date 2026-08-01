@@ -63,6 +63,7 @@ class FakeNavigator:
         self.results = list(results or [])
         self.ready = ready
         self.calls = []
+        self.through_calls = []
         self.cancel_calls = 0
         self.active = False
         self.on_navigate = None
@@ -72,6 +73,13 @@ class FakeNavigator:
 
     def navigate(self, waypoint, reverse_direction=False):
         self.calls.append((waypoint, bool(reverse_direction)))
+        return self._run_navigation()
+
+    def navigate_through(self, waypoints, reverse_direction=False):
+        self.through_calls.append((tuple(waypoints), bool(reverse_direction)))
+        return self._run_navigation()
+
+    def _run_navigation(self):
         self.active = True
         if self.on_navigate is not None:
             self.on_navigate()
@@ -185,7 +193,14 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(mission.state, MissionState.COMPLETED)
         self.assertEqual(
             self.navigator.calls,
-            [(item, False) for item in items[1:]],
+            [(items[1], False)],
+        )
+        self.assertEqual(
+            self.navigator.through_calls,
+            [
+                ((items[2], items[3]), False),
+                ((items[4], items[5], items[6], items[7], items[8]), False),
+            ],
         )
         self.assertEqual(vision.ready_calls, [(True, True)])
         self.assertEqual(self.output.text, ["WARD-A", "person description"])
@@ -220,8 +235,13 @@ class MissionTests(unittest.TestCase):
             navigator.calls,
             [
                 (items[1], False),
-                (items[2], False),
-                (items[2], False),
+            ],
+        )
+        self.assertEqual(
+            navigator.through_calls,
+            [
+                ((items[2], items[3]), False),
+                ((items[2], items[3]), False),
             ],
         )
         self.assertEqual(len(vision.qr_calls), 1)
@@ -426,7 +446,7 @@ class MissionTests(unittest.TestCase):
             wp("qr", 1.0),                       # forward (default)
             wp("corridor", 2.0, "reverse"),       # reverse start
             wp("corridor", 3.0, "reverse"),       # still reverse
-            wp("vlm", 4.0, "reverse", "reverse_handoff"),
+            wp("vlm", 4.0, "reverse"),
             wp("loop", 5.0),                      # back to forward (default)
             wp("loop", 6.0),
             wp("loop", 7.0),
@@ -442,25 +462,56 @@ class MissionTests(unittest.TestCase):
         result = mission.execute(items)
 
         self.assertTrue(result.success, result.status)
-        self.assertEqual(len(self.navigator.calls), len(items) - 1)
         self.assertEqual(
             self.navigator.calls,
             [
                 (items[1], False),
-                (items[2], True),
-                (items[3], True),
-                (items[4], True),
-                (items[5], False),
-                (items[6], False),
-                (items[7], False),
-                (items[8], False),
-                (items[9], False),
             ],
         )
-        self.assertEqual(items[4].goal_profile, "reverse_handoff")
+        self.assertEqual(
+            self.navigator.through_calls,
+            [
+                ((items[2], items[3], items[4]), True),
+                ((items[5], items[6], items[7], items[8], items[9]), False),
+            ],
+        )
+        self.assertEqual(items[4].goal_profile, "standard")
         self.assertEqual(mission.state, MissionState.COMPLETED)
 
-    def test_consecutive_forward_waypoints_are_submitted_individually(self):
+    def test_rejects_nonstandard_multi_goal_navigation_segment(self):
+        items = [
+            waypoint("start", 0.0),
+            Waypoint(
+                "odom_combined",
+                (1.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+                "via",
+                "forward",
+            ),
+            Waypoint(
+                "odom_combined",
+                (2.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+                "qr",
+                "forward",
+                goal_profile="precise",
+            ),
+        ]
+        mission = self.make_mission(
+            vision=FakeVision(qr_results=[OperationResult(True, "ok", "WARD")])
+        )
+
+        result = mission.execute(items, navigation_segments=[tuple(items[1:])])
+
+        self.assertFalse(result.success)
+        self.assertEqual(
+            result.status,
+            "navigation_segment_nonstandard_goal_profile",
+        )
+        self.assertEqual(self.navigator.calls, [])
+        self.assertEqual(self.navigator.through_calls, [])
+
+    def test_single_semantic_goal_uses_navigate_to_pose(self):
         items = [
             Waypoint("odom_combined", (0.0, 0.0, 0.0), (0., 0., 0., 1.), "start", "forward"),
             Waypoint("odom_combined", (1.0, 0.0, 0.0), (0., 0., 0., 1.), "qr", "forward"),
@@ -474,6 +525,61 @@ class MissionTests(unittest.TestCase):
         self.assertTrue(result.success, result.status)
         self.assertEqual(len(self.navigator.calls), 1)
         self.assertEqual(self.navigator.calls[0], (items[1], False))
+        self.assertEqual(self.navigator.through_calls, [])
+
+    def test_explicit_segments_keep_semantic_stop_boundaries(self):
+        items = [
+            waypoint("start", 0.0),
+            waypoint("qr", 1.0),
+            waypoint("corridor", 2.0),
+            waypoint("vlm", 3.0),
+            waypoint("loop", 4.0),
+            waypoint("return", 5.0),
+        ]
+        vision = FakeVision(
+            qr_results=[OperationResult(True, "ok", "WARD-E")],
+            vlm_results=[OperationResult(True, "ok", "person")],
+        )
+        mission = self.make_mission(vision=vision)
+
+        result = mission.execute(
+            items,
+            navigation_segments=(
+                (items[1],),
+                (items[2], items[3]),
+                (items[4], items[5]),
+            ),
+        )
+
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(self.navigator.calls, [(items[1], False)])
+        self.assertEqual(
+            self.navigator.through_calls,
+            [
+                ((items[2], items[3]), False),
+                ((items[4], items[5]), False),
+            ],
+        )
+        self.assertEqual(self.output.text, ["WARD-E", "person"])
+
+    def test_rejects_semantic_waypoint_inside_explicit_segment(self):
+        items = [
+            waypoint("start", 0.0),
+            waypoint("qr", 1.0),
+            waypoint("corridor", 2.0),
+            waypoint("return", 3.0),
+        ]
+        mission = self.make_mission()
+
+        result = mission.execute(
+            items,
+            navigation_segments=((items[1], items[2], items[3]),),
+        )
+
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "navigation_segment_semantic_boundary")
+        self.assertEqual(self.navigator.calls, [])
+        self.assertEqual(self.navigator.through_calls, [])
 
 
 if __name__ == "__main__":

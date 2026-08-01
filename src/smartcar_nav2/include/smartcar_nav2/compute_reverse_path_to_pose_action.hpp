@@ -36,6 +36,9 @@ public:
       {
         BT::OutputPort<nav_msgs::msg::Path>(
           "path", "Validated reverse path in the real vehicle frame"),
+        BT::OutputPort<bool>(
+          "recovery_eligible",
+          "True when the planner rejected or produced no kinematically valid reverse path"),
         BT::InputPort<geometry_msgs::msg::PoseStamped>(
           "goal", "Real vehicle destination"),
         BT::InputPort<std::string>(

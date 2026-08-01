@@ -2,7 +2,8 @@
 
 Editing via RViz toolbar tools:
   - "Publish Point"     → moves the selected waypoint to the clicked position
-  - "2D Pose Estimate"  → sets both position AND orientation of the selected waypoint
+  - "2D Pose Estimate"  → sets position and, only for semantic task points,
+                            orientation of the selected waypoint
 
 Select a waypoint to edit:
   ros2 param set /waypoint_editor selected_index 3
@@ -28,11 +29,18 @@ from interactive_markers.menu_handler import MenuHandler
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
+from smartcar_task.route_geometry import RouteGeometryError, materialize_free_yaws
 from smartcar_task.waypoints import (
+    is_heading_locked,
     is_zero_quaternion,
     load_waypoint_document,
     validate_waypoints,
     write_waypoints_atomic,
+)
+from smartcar_tools.planning_segments import (
+    PlanningSegmentError,
+    load_planning_segments,
+    materialize_route,
 )
 from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
@@ -104,6 +112,7 @@ class WaypointEditorNode(Node):
         ).expanduser()
         self._template, loaded = load_waypoint_document(self._path)
         self._waypoints = list(loaded)
+        self._segments = list(load_planning_segments(self._template, self._waypoints))
         self._history = []
         self._dragging = set()
         self._lock = threading.Lock()
@@ -178,6 +187,29 @@ class WaypointEditorNode(Node):
                 self._publish_route_markers()  # re-render to show selection highlight
         return rclpy.parameter.SetParametersResult(successful=True)
 
+    @staticmethod
+    def _uses_authored_heading(waypoint):
+        return is_heading_locked(waypoint)
+
+    def _display_route(self):
+        """Return the ordered marker route with position-only transit points."""
+        try:
+            ordered = materialize_route(self._waypoints, self._segments)
+            return materialize_free_yaws(ordered)
+        except (PlanningSegmentError, RouteGeometryError) as error:
+            self.get_logger().error(
+                f"cannot prepare position-only waypoint route: {error}"
+            )
+            return tuple(
+                waypoint
+                if self._uses_authored_heading(waypoint)
+                else replace(waypoint, orientation=(0.0, 0.0, 0.0, 0.0))
+                for waypoint in self._waypoints
+            )
+
+    def _display_waypoints_by_id(self):
+        return {waypoint.id: waypoint for waypoint in self._display_route()}
+
     # ── status ──────────────────────────────────────────────────────────
 
     def _publish_status(self, message):
@@ -228,15 +260,23 @@ class WaypointEditorNode(Node):
         """Move (and optionally rotate) a waypoint. Returns (success, message)."""
         if index == 0:
             return False, "cannot move start waypoint (index 0)"
-        if index == len(self._waypoints) - 1:
-            return False, "cannot move return waypoint (last index)"
 
         original = self._waypoints[index]
-        if yaw is None:
+        uses_authored_heading = self._uses_authored_heading(original)
+        return_waypoint = index == len(self._waypoints) - 1
+        if return_waypoint and yaw is None:
+            return False, "cannot move return waypoint (last index)"
+        if uses_authored_heading and yaw is None:
             _qx, _qy, qz, qw = original.orientation
             yaw = math.atan2(2.0 * (qw * qz), 1.0 - 2.0 * (qz * qz))
 
-        if not all(math.isfinite(v) for v in (x, y, yaw)):
+        if return_waypoint:
+            # P is position-locked but its authored final body heading is a
+            # valid 2D Pose editing target, matching the interactive marker.
+            x, y = original.position[:2]
+
+        values = (x, y, yaw) if uses_authored_heading else (x, y)
+        if not all(math.isfinite(v) for v in values):
             return False, f"invalid pose: x={x}, y={y}, yaw={yaw}"
 
         self._push_history()
@@ -244,10 +284,19 @@ class WaypointEditorNode(Node):
             self._waypoints[index] = replace(
                 original,
                 position=(float(x), float(y), 0.0),
-                orientation=_yaw_quaternion(float(yaw)),
+                orientation=(
+                    _yaw_quaternion(float(yaw))
+                    if uses_authored_heading
+                    else (0.0, 0.0, 0.0, 0.0)
+                ),
             )
         self._publish_route_markers()
         self._refresh_interactive_markers()
+        if not uses_authored_heading:
+            return True, (
+                f"waypoint [{index}] {original.id} → ({x:.3f}, {y:.3f}); "
+                "heading is resolved by the planner at runtime"
+            )
         return True, (
             f"waypoint [{index}] {original.id} → "
             f"({x:.3f}, {y:.3f}, yaw={math.degrees(yaw):.1f}°)"
@@ -262,11 +311,13 @@ class WaypointEditorNode(Node):
     def _on_initial_pose(self, msg: PoseWithCovarianceStamped):
         """2D Pose Estimate tool: set both position and orientation."""
         index = self._selected_index
-        orientation = msg.pose.pose.orientation
-        try:
-            yaw = _quaternion_yaw(orientation)
-        except ValueError:
-            yaw = 0.0
+        yaw = None
+        if self._uses_authored_heading(self._waypoints[index]):
+            orientation = msg.pose.pose.orientation
+            try:
+                yaw = _quaternion_yaw(orientation)
+            except ValueError:
+                yaw = 0.0
         success, message = self._update_waypoint(
             index, msg.pose.pose.position.x, msg.pose.pose.position.y, yaw
         )
@@ -281,16 +332,23 @@ class WaypointEditorNode(Node):
 
     # ── interactive markers (best-effort; core editing is via clicked_point) ──
 
-    def _make_interactive_marker(self, index, waypoint):
+    def _make_interactive_marker(self, index, waypoint, display_waypoint):
         marker = InteractiveMarker()
         marker.header.frame_id = waypoint.frame_id
         marker.name = waypoint.id
-        marker.description = f"{index}: {waypoint.id} [{waypoint.task}]"
+        heading_mark = (
+            " [position-only]"
+            if not self._uses_authored_heading(waypoint)
+            else " [authored heading]"
+        )
+        marker.description = f"{index}: {waypoint.id} [{waypoint.task}]{heading_mark}"
         marker.scale = 0.32
         marker.pose.position.x = waypoint.position[0]
         marker.pose.position.y = waypoint.position[1]
         marker.pose.position.z = 0.04
-        qx, qy, qz, qw = waypoint.orientation
+        qx, qy, qz, qw = display_waypoint.orientation
+        if is_zero_quaternion(display_waypoint.orientation):
+            qx, qy, qz, qw = (0.0, 0.0, 0.0, 1.0)
         marker.pose.orientation.x = qx
         marker.pose.orientation.y = qy
         marker.pose.orientation.z = qz
@@ -310,14 +368,15 @@ class WaypointEditorNode(Node):
         sphere.color.a = 1.0
         body.markers.append(sphere)
 
-        arrow = Marker()
-        arrow.type = Marker.ARROW
-        arrow.pose.orientation.w = 1.0
-        arrow.scale.x = 0.24
-        arrow.scale.y = arrow.scale.z = 0.045
-        arrow.color.r, arrow.color.g, arrow.color.b = red, green, blue
-        arrow.color.a = 0.95
-        body.markers.append(arrow)
+        if not is_zero_quaternion(display_waypoint.orientation):
+            arrow = Marker()
+            arrow.type = Marker.ARROW
+            arrow.pose.orientation.w = 1.0
+            arrow.scale.x = 0.24
+            arrow.scale.y = arrow.scale.z = 0.045
+            arrow.color.r, arrow.color.g, arrow.color.b = red, green, blue
+            arrow.color.a = 0.95
+            body.markers.append(arrow)
         marker.controls.append(body)
 
         if index not in (0, len(self._waypoints) - 1):
@@ -329,7 +388,7 @@ class WaypointEditorNode(Node):
             move.interaction_mode = InteractiveMarkerControl.MOVE_PLANE
             marker.controls.append(move)
 
-        if index != 0:
+        if index != 0 and self._uses_authored_heading(waypoint):
             rotate = InteractiveMarkerControl()
             rotate.name = "rotate_z"
             rotate.orientation.w = math.sqrt(0.5)
@@ -341,8 +400,12 @@ class WaypointEditorNode(Node):
 
     def _refresh_interactive_markers(self):
         self._server.clear()
+        display_by_id = self._display_waypoints_by_id()
         for index, waypoint in enumerate(self._waypoints):
-            marker = self._make_interactive_marker(index, waypoint)
+            display_waypoint = display_by_id.get(waypoint.id, waypoint)
+            marker = self._make_interactive_marker(
+                index, waypoint, display_waypoint
+            )
             self._server.insert(marker, feedback_callback=self._on_feedback)
             self._menu.apply(self._server, marker.name)
         self._server.applyChanges()
@@ -374,20 +437,23 @@ class WaypointEditorNode(Node):
         line.color.g = 0.85
         line.color.b = 0.95
         line.color.a = 0.9
+        display_route = self._display_route()
         line.points = [
             Point(x=item.position[0], y=item.position[1], z=0.025)
-            for item in self._waypoints
+            for item in display_route
         ]
         message.markers.append(line)
 
+        display_by_id = {waypoint.id: waypoint for waypoint in display_route}
         for index, waypoint in enumerate(self._waypoints):
+            display_waypoint = display_by_id.get(waypoint.id, waypoint)
             red, green, blue = TASK_COLORS[waypoint.task]
             is_selected = index == selected
-            is_locked = index in (0, len(self._waypoints) - 1)
+            is_position_locked = index in (0, len(self._waypoints) - 1)
+            position_only = not self._uses_authored_heading(waypoint)
 
-            # Skip arrow for zero-quaternion (orientation-unconstrained) waypoints
-            if not is_zero_quaternion(waypoint.orientation):
-                qx, qy, qz, qw = waypoint.orientation
+            if not is_zero_quaternion(display_waypoint.orientation):
+                qx, qy, qz, qw = display_waypoint.orientation
                 sin_yaw = 2.0 * (qw * qz + qx * qy)
                 cos_yaw = 1.0 - 2.0 * (qy * qy + qz * qz)
                 yaw = math.atan2(sin_yaw, cos_yaw)
@@ -440,7 +506,7 @@ class WaypointEditorNode(Node):
                 sphere.color.r = red
                 sphere.color.g = green
                 sphere.color.b = blue
-                sphere.color.a = 0.7 if is_locked else 1.0
+                sphere.color.a = 0.7 if is_position_locked else 1.0
             message.markers.append(sphere)
 
             label = Marker()
@@ -457,9 +523,10 @@ class WaypointEditorNode(Node):
             label.scale.z = 0.10
             label.color.r = label.color.g = label.color.b = 1.0
             label.color.a = 1.0
-            lock_mark = " [LOCKED]" if is_locked else ""
+            lock_mark = " [LOCKED]" if is_position_locked else ""
+            heading_mark = " [POSITION ONLY]" if position_only else " [AUTHORED]"
             sel_mark = " *" if is_selected else ""
-            label.text = f"{index}: {waypoint.id}{sel_mark}{lock_mark}"
+            label.text = f"{index}: {waypoint.id}{sel_mark}{lock_mark}{heading_mark}"
             message.markers.append(label)
         self._marker_publisher.publish(message)
 
@@ -493,6 +560,7 @@ class WaypointEditorNode(Node):
             self._dragging.add(feedback.marker_name)
 
         original = self._waypoints[index]
+        uses_authored_heading = self._uses_authored_heading(original)
         try:
             x_m = original.position[0] if index in (
                 0, len(self._waypoints) - 1
@@ -500,10 +568,15 @@ class WaypointEditorNode(Node):
             y_m = original.position[1] if index in (
                 0, len(self._waypoints) - 1
             ) else float(feedback.pose.position.y)
-            yaw = 0.0 if index == 0 else _quaternion_yaw(
-                feedback.pose.orientation
+            yaw = (
+                0.0
+                if index == 0
+                else _quaternion_yaw(feedback.pose.orientation)
+                if uses_authored_heading
+                else None
             )
-            if not all(math.isfinite(value) for value in (x_m, y_m, yaw)):
+            values = (x_m, y_m, yaw) if uses_authored_heading else (x_m, y_m)
+            if not all(math.isfinite(value) for value in values):
                 raise ValueError("interactive marker pose must be finite")
         except (TypeError, ValueError) as error:
             self._dragging.discard(feedback.marker_name)
@@ -514,7 +587,11 @@ class WaypointEditorNode(Node):
             self._waypoints[index] = replace(
                 original,
                 position=(x_m, y_m, 0.0),
-                orientation=_yaw_quaternion(yaw),
+                orientation=(
+                    _yaw_quaternion(yaw)
+                    if uses_authored_heading
+                    else (0.0, 0.0, 0.0, 0.0)
+                ),
             )
         self._publish_route_markers()
 
@@ -522,6 +599,7 @@ class WaypointEditorNode(Node):
         template, loaded = load_waypoint_document(self._path)
         self._template = template
         self._waypoints = list(loaded)
+        self._segments = list(load_planning_segments(self._template, self._waypoints))
         self._history.clear()
         self._dragging.clear()
         self._refresh_display()
@@ -538,12 +616,25 @@ class WaypointEditorNode(Node):
 
     def _save(self):
         with self._lock:
-            validate_waypoints(self._waypoints)
+            # Transit points are position-only editor input.  Remove legacy
+            # authored quaternions so a later reload cannot suggest that they
+            # constrain Nav2; the BT resolves the free heading at plan time.
+            to_save = tuple(
+                waypoint
+                if self._uses_authored_heading(waypoint)
+                else replace(waypoint, orientation=(0.0, 0.0, 0.0, 0.0))
+                for waypoint in self._waypoints
+            )
+            ordered = materialize_route(to_save, self._segments)
+            validate_waypoints(ordered)
             destination = self._path.resolve()
-            write_waypoints_atomic(destination, self._template, self._waypoints)
+            write_waypoints_atomic(destination, self._template, ordered)
             self._path = destination
             self._template, loaded = load_waypoint_document(destination)
             self._waypoints = list(loaded)
+            self._segments = list(
+                load_planning_segments(self._template, self._waypoints)
+            )
         self._history.clear()
         self._dragging.clear()
         self._refresh_display()

@@ -40,7 +40,10 @@ KEEPOUT_OVERLAY = (
 sys.path.insert(0, str(PACKAGE_ROOT))
 sys.path.insert(0, str(PACKAGE_ROOT.parent / "smartcar_task"))
 
-from smartcar_tools.field_keepouts import central_c_keepout  # noqa: E402
+from smartcar_tools.field_keepouts import (  # noqa: E402
+    central_c_keepout,
+    keepout_mask_bounds,
+)
 from smartcar_tools.field_reference import load_field_reference  # noqa: E402
 from smartcar_tools.route_planning import load_route_planning_config  # noqa: E402
 from smartcar_tools.route_preflight import LatticePreflightPlanner, Pose2D  # noqa: E402
@@ -94,7 +97,15 @@ class SharedRoutePlanningTests(unittest.TestCase):
         core = central_c_keepout(self.reference, config)
 
         self.assertEqual(config.minimum_turning_radius_m, 0.55)
-        self.assertEqual(config.footprint_envelope_radius_m, 0.20)
+        footprint = config.runtime_footprint
+        self.assertEqual(footprint.half_length_m, 0.27)
+        self.assertEqual(footprint.half_width_m, 0.13)
+        self.assertEqual(footprint.padding_m, 0.03)
+        self.assertAlmostEqual(footprint.padded_half_length_m, 0.30)
+        self.assertAlmostEqual(footprint.padded_half_width_m, 0.16)
+        self.assertEqual(
+            config.simulation_keepout.costmap_inflation_radius_m, 0.20
+        )
         self.assertEqual(config.c_zone_keepout.horizontal_inset_m, 0.80)
         self.assertEqual(config.c_zone_keepout.vertical_inset_m, 0.15)
         self.assertEqual((core.x_min, core.x_max, core.y_min, core.y_max), (
@@ -143,11 +154,16 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertIn("--route-planning-config", sim_tune)
         self.assertIn("sync_route_planning.py", sim_tune)
 
-    def test_shared_radius_and_envelope_sync_into_simulation_nav2(self) -> None:
+    def test_shared_radius_footprint_and_cost_inflation_sync_into_simulation_nav2(self) -> None:
         synchronizer = load_route_planning_sync()
         planning = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
         planning["minimum_turning_radius_m"] = 0.63
-        planning["footprint_envelope_radius_m"] = 0.17
+        planning["runtime_footprint"] = {
+            "half_length_m": 0.29,
+            "half_width_m": 0.14,
+            "padding_m": 0.04,
+        }
+        planning["simulation_keepout"]["costmap_inflation_radius_m"] = 0.17
 
         with tempfile.TemporaryDirectory() as temporary:
             root = Path(temporary)
@@ -184,11 +200,34 @@ class SharedRoutePlanningTests(unittest.TestCase):
             0.63,
         )
         for name in ("local_costmap", "global_costmap"):
+            parameters = nav2[name][name]["ros__parameters"]
+            self.assertEqual(
+                parameters["footprint"],
+                "[[0.29, 0.14], [0.29, -0.14], [-0.29, -0.14], [-0.29, 0.14]]",
+            )
+            self.assertEqual(parameters["footprint_padding"], 0.04)
             self.assertEqual(
                 overlay[name][name]["ros__parameters"]["inflation_layer"]
                 ["inflation_radius"],
                 0.17,
             )
+
+    def test_preflight_uses_padded_oriented_footprint_and_mask_cells(self) -> None:
+        config = load_route_planning_config(CONFIG_FILE)
+        planner = LatticePreflightPlanner(self.reference, config)
+        c_core = keepout_mask_bounds(self.reference, config)[2]
+
+        # The final occupied C-core PGM row ends at 3.55 rather than the raw
+        # 3.50 m edge, which is the actual KeepoutFilter collision boundary.
+        for actual, expected in zip(
+            (c_core.x_min, c_core.x_max, c_core.y_min, c_core.y_max),
+            (1.3, 2.7, 3.15, 3.55),
+        ):
+            self.assertAlmostEqual(actual, expected)
+        # A tangent vehicle clears the last C-core mask row, while the
+        # diagonal entry that previously appeared in RViz intersects it.
+        self.assertTrue(planner._is_free(1.25, 3.72, 0.0))
+        self.assertFalse(planner._is_free(1.25, 3.72, 0.757))
 
     def test_terminal_route_is_tangent_continuous_not_a_straight_line_patch(self) -> None:
         planner = LatticePreflightPlanner(

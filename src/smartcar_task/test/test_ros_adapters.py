@@ -14,7 +14,7 @@ try:
     from action_msgs.msg import GoalStatus
     from geometry_msgs.msg import PoseWithCovarianceStamped
     from nav_msgs.msg import Odometry
-    from nav2_msgs.action import NavigateToPose
+    from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
     import rclpy
     from rclpy.action import ActionServer, CancelResponse
     from rclpy.callback_groups import ReentrantCallbackGroup
@@ -285,6 +285,135 @@ class RosAdapterTests(unittest.TestCase):
         self.assertLess(action_cancel, settle_after_cancel)
         self.assertFalse(navigator.is_active())
         self.assertEqual(GoalStatus.STATUS_CANCELED, 5)
+
+    def test_guarded_navigate_through_poses_uses_one_lease_for_a_segment(self):
+        received_goals = []
+
+        class FakeDirectionGuard:
+            def __init__(self):
+                self.calls = []
+                self.activations = 0
+
+            @staticmethod
+            def wait_ready(_timeout_sec):
+                return True
+
+            @staticmethod
+            def wait_stopped():
+                return OperationResult(True, "stopped")
+
+            def stop(self, lease):
+                self.calls.append(("stop", lease))
+                return OperationResult(True, "stopped")
+
+            def prepare(self, lease):
+                self.calls.append(("prepare", lease))
+                return OperationResult(True, "prepared"), 11, 200 + lease.generation
+
+            def activate(self, lease):
+                self.calls.append(("activate", lease))
+                self.activations += 1
+                return OperationResult(True, "active")
+
+            def renew(self, lease):
+                self.calls.append(("renew", lease))
+                return OperationResult(True, "renewed")
+
+        direction_guard = FakeDirectionGuard()
+
+        def execute(goal_handle):
+            request = goal_handle.request
+            received_goals.append((
+                [pose.pose.position.x for pose in request.poses],
+                request.behavior_tree,
+                bytes(goal_handle.goal_id.uuid),
+            ))
+            deadline = time.monotonic() + 2.0
+            while (
+                direction_guard.activations < 1
+                and time.monotonic() < deadline
+            ):
+                time.sleep(0.005)
+            goal_handle.succeed()
+            return NavigateThroughPoses.Result()
+
+        action_server = ActionServer(
+            self.server_node,
+            NavigateThroughPoses,
+            "/navigate_through_poses",
+            execute_callback=execute,
+            cancel_callback=lambda _request: CancelResponse.ACCEPT,
+            callback_group=ReentrantCallbackGroup(),
+        )
+        self.resources.append(action_server)
+        navigator = RosNavigator(
+            self.client_node,
+            ReentrantCallbackGroup(),
+            direction_guard=direction_guard,
+            reverse_behavior_tree="/tmp/reverse.xml",
+            reverse_handoff_behavior_tree="/tmp/reverse-handoff.xml",
+            precise_forward_behavior_tree="/tmp/precise-forward.xml",
+            navigation_timeout_sec=3.0,
+            goal_response_timeout_sec=1.0,
+            cancel_timeout_sec=2.0,
+            direction_renew_period_sec=0.1,
+            direction_prepare_timeout_sec=0.5,
+            direction_prepare_retry_period_sec=0.01,
+            through_poses_behavior_tree="/tmp/through.xml",
+            reverse_through_poses_behavior_tree="/tmp/reverse-through.xml",
+        )
+        goals = (
+            Waypoint(
+                frame_id="odom_combined",
+                position=(1.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="corridor",
+                direction="reverse",
+                id="through_1",
+            ),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(2.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="loop",
+                direction="reverse",
+                id="through_2",
+            ),
+        )
+
+        result = navigator.navigate_through(goals, reverse_direction=True)
+
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(
+            received_goals[0][:2],
+            ([1.0, 2.0], "/tmp/reverse-through.xml"),
+        )
+        prepare = [
+            lease for name, lease in direction_guard.calls if name == "prepare"
+        ]
+        self.assertEqual(len(prepare), 1)
+        self.assertEqual(prepare[0].direction, 2)
+        self.assertEqual(bytes(prepare[0].action_uuid.uuid), received_goals[0][2])
+        self.assertEqual(
+            [name for name, _lease in direction_guard.calls].count("activate"),
+            1,
+        )
+
+        mixed_direction = navigator.navigate_through(
+            (goals[0], Waypoint(
+                frame_id="odom_combined",
+                position=(3.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="loop",
+                direction="forward",
+                id="mixed",
+            )),
+            reverse_direction=True,
+        )
+        self.assertFalse(mixed_direction.success)
+        self.assertEqual(
+            mixed_direction.status, "navigation_through_direction_mismatch"
+        )
 
     def test_localization_reset_ignores_pre_response_and_far_odometry(self):
         order = []

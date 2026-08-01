@@ -8,7 +8,6 @@ import os
 import time
 import traceback
 from pathlib import Path
-from types import SimpleNamespace
 
 import rclpy
 import yaml
@@ -20,7 +19,14 @@ from nav_msgs.msg import Odometry, Path as NavPath
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-from smartcar_tools.planning_segments import PlanningSegmentError, load_planning_segments
+from smartcar_task.planning_segments import (
+    PlanningSegmentError,
+    load_planning_segments,
+    materialize_mission_route,
+    materialize_navigation_segments,
+)
+from smartcar_task.route_geometry import materialize_free_yaws
+from smartcar_task.waypoints import is_heading_locked, load_waypoint_document
 
 
 VELOCITY_EPSILON = 1.0e-3
@@ -32,7 +38,10 @@ HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
 HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
-THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M = 0.17
+# Runtime removes ordinary free through-poses goals inside 0.50 m. Keep only
+# the odometry observer margin above that implementation contract.
+THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M = 0.52
+HEADING_MODES = frozenset({"free", "locked"})
 
 
 class AutoTrain(Node):
@@ -45,8 +54,12 @@ class AutoTrain(Node):
         self.declare_parameter("reverse_behavior_tree", "")
         self.declare_parameter("reverse_handoff_behavior_tree", "")
         self.declare_parameter("nav2_params_file", "")
+        self.declare_parameter("nav2_params_overlay_file", "")
         self.declare_parameter("through_poses_behavior_tree", "")
         self.declare_parameter("through_poses_reverse_behavior_tree", "")
+        self.declare_parameter(
+            "through_poses_reverse_locked_behavior_tree", "")
+        self.declare_parameter("sim_speed_profile", "baseline")
         self.declare_parameter("use_through_poses", True)
         self.declare_parameter("goal_timeout_sec", 120.0)
         self.declare_parameter("inter_goal_delay_sec", 1.0)
@@ -147,11 +160,30 @@ class AutoTrain(Node):
         return path.resolve()
 
     @staticmethod
-    def _orientation_mapping(pose):
-        """Honor omitted orientation for pass-through points as Nav2 zero yaw."""
+    def _heading_mode(goal):
+        mode = goal.get("heading_mode")
+        if mode not in HEADING_MODES:
+            raise ValueError("route goal heading_mode must be free or locked")
+        return mode
+
+    @classmethod
+    def _orientation_mapping(cls, pose, heading_mode):
+        """Return a locked unit quaternion or the free-heading sentinel."""
         orientation = pose.get("orientation")
         if not isinstance(orientation, dict):
-            return {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0}
+            raise ValueError("route goal is missing its heading mode")
+        components = tuple(float(orientation[name]) for name in ("x", "y", "z", "w"))
+        norm = math.sqrt(sum(component * component for component in components))
+        if not math.isfinite(norm):
+            raise ValueError("route goal orientation must be finite")
+        if heading_mode == "free" and norm > 1.0e-3:
+            raise ValueError(
+                "free-heading route goals must use the zero quaternion"
+            )
+        if heading_mode == "locked" and abs(norm - 1.0) > 1.0e-3:
+            raise ValueError(
+                "heading-locked route goals must use a unit quaternion"
+            )
         return orientation
 
     @classmethod
@@ -159,11 +191,13 @@ class AutoTrain(Node):
         """Serialize the exact physical target passed to Nav2 for a stage."""
         pose = goal["pose"]
         position = pose["position"]
-        orientation = cls._orientation_mapping(pose)
+        heading_mode = cls._heading_mode(goal)
+        orientation = cls._orientation_mapping(pose, heading_mode)
         return {
             "id": goal["id"],
             "direction": goal["direction"],
             "goal_profile": goal.get("goal_profile", "standard"),
+            "heading_mode": heading_mode,
             "frame_id": str(goal.get("frame_id", "odom_combined")),
             "pose": {
                 "position": {
@@ -182,37 +216,62 @@ class AutoTrain(Node):
 
     def _load_route(self):
         path = self._required_path("waypoints_file")
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-        waypoints = document.get("waypoints", [])
-        if not isinstance(waypoints, list) or len(waypoints) < 2:
-            raise ValueError("waypoints_file has no navigation route")
-        if not all(isinstance(item, dict) for item in waypoints):
-            raise ValueError("waypoints_file entries must be mappings")
-        proxy_waypoints = [
-            SimpleNamespace(
-                id=item.get("id"),
-                task=item.get("task"),
-                direction=item.get("direction", "forward"),
-            )
-            for item in waypoints
-        ]
         try:
-            segments = load_planning_segments(document, proxy_waypoints)
+            document, authored_waypoints = load_waypoint_document(path)
+            segments = load_planning_segments(document, authored_waypoints)
+            ordered_waypoints = materialize_mission_route(
+                authored_waypoints,
+                segments,
+            )
+            materialized_route = materialize_free_yaws(ordered_waypoints)
+            action_segments = materialize_navigation_segments(
+                authored_waypoints,
+                segments,
+            )
         except PlanningSegmentError as error:
             raise ValueError(f"planning_segments invalid: {error}") from error
+        except ValueError as error:
+            raise ValueError(f"waypoints_file has no executable route: {error}") from error
 
-        waypoint_by_id = {item["id"]: item for item in waypoints}
+        materialized_by_id = {
+            waypoint.id: waypoint
+            for waypoint in materialized_route
+        }
         stages = []
-        for segment in segments:
+        for index, action_segment in enumerate(action_segments, start=1):
             goals = []
-            for waypoint_id in (*segment.through_ids, segment.end_id):
-                source = waypoint_by_id[waypoint_id]
-                goal = dict(source)
-                goal["direction"] = segment.direction
-                goals.append(goal)
+            for source in action_segment:
+                materialized = materialized_by_id[source.id]
+                x, y, z = materialized.position
+                qx, qy, qz, qw = materialized.orientation
+                goals.append({
+                    "id": materialized.id,
+                    "frame_id": materialized.frame_id,
+                    "task": materialized.task,
+                    "direction": materialized.direction,
+                    "goal_profile": materialized.goal_profile,
+                    "heading_mode": (
+                        "locked"
+                        if is_heading_locked(materialized)
+                        else "free"
+                    ),
+                    "pose": {
+                        "position": {
+                            "x": float(x),
+                            "y": float(y),
+                            "z": float(z),
+                        },
+                        "orientation": {
+                            "x": qx,
+                            "y": qy,
+                            "z": qz,
+                            "w": qw,
+                        },
+                    },
+                })
             stages.append({
-                "id": segment.id,
-                "direction": segment.direction,
+                "id": f"action_{index}_{goals[0]['id']}_to_{goals[-1]['id']}",
+                "direction": goals[0]["direction"],
                 "goals": goals,
             })
         for stage in stages:
@@ -276,10 +335,12 @@ class AutoTrain(Node):
             return self._required_path("precise_behavior_tree")
         return self._required_path("forward_behavior_tree")
 
-    @staticmethod
-    def _goal_checker_for(waypoint):
+    @classmethod
+    def _goal_checker_for(cls, waypoint):
         if waypoint.get("goal_profile") == "precise":
             return "precise_goal_checker"
+        if cls._heading_mode(waypoint) == "free":
+            return "transit_goal_checker"
         if waypoint.get("direction") == "reverse":
             return "reverse_goal_checker"
         return "goal_checker"
@@ -293,7 +354,11 @@ class AutoTrain(Node):
         return (
             checker_name,
             float(checker["xy_goal_tolerance"]),
-            float(checker["yaw_goal_tolerance"]),
+            (
+                float(checker["yaw_goal_tolerance"])
+                if "yaw_goal_tolerance" in checker
+                else None
+            ),
         )
 
     def _reverse_handoff_contract(self):
@@ -411,7 +476,8 @@ class AutoTrain(Node):
 
         pose = waypoint["pose"]
         position = pose["position"]
-        orientation = self._orientation_mapping(pose)
+        heading_mode = self._heading_mode(waypoint)
+        orientation = self._orientation_mapping(pose, heading_mode)
         goal = NavigateToPose.Goal()
         goal.pose.header.frame_id = waypoint.get(
             "frame_id", "odom_combined")
@@ -538,17 +604,21 @@ class AutoTrain(Node):
         goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
             waypoint)
         position = waypoint["pose"]["position"]
-        orientation = self._orientation_mapping(waypoint["pose"])
-        target_yaw = math.atan2(
-            2.0 * (
-                float(orientation["w"]) * float(orientation["z"])
-                + float(orientation["x"]) * float(orientation["y"])
-            ),
-            1.0 - 2.0 * (
-                float(orientation["y"]) ** 2
-                + float(orientation["z"]) ** 2
-            ),
-        )
+        heading_mode = self._heading_mode(waypoint)
+        orientation = self._orientation_mapping(
+            waypoint["pose"], heading_mode)
+        target_yaw = None
+        if heading_mode == "locked":
+            target_yaw = math.atan2(
+                2.0 * (
+                    float(orientation["w"]) * float(orientation["z"])
+                    + float(orientation["x"]) * float(orientation["y"])
+                ),
+                1.0 - 2.0 * (
+                    float(orientation["y"]) ** 2
+                    + float(orientation["z"]) ** 2
+                ),
+            )
         goal_error = None
         goal_yaw_error = None
         signed_goal_yaw_error = None
@@ -559,11 +629,12 @@ class AutoTrain(Node):
                 current[2] - float(position["y"]),
             )
             final_yaw = current[3]
-            signed_goal_yaw_error = math.remainder(
-                final_yaw - target_yaw,
-                2.0 * math.pi,
-            )
-            goal_yaw_error = abs(signed_goal_yaw_error)
+            if target_yaw is not None:
+                signed_goal_yaw_error = math.remainder(
+                    final_yaw - target_yaw,
+                    2.0 * math.pi,
+                )
+                goal_yaw_error = abs(signed_goal_yaw_error)
         goal_odom_samples = self._odom_samples[odom_start:]
         xy_tolerance_entry = next((
             sample
@@ -582,10 +653,11 @@ class AutoTrain(Node):
         post_xy_commands = []
         if xy_tolerance_entry is not None:
             xy_tolerance_entry_elapsed = xy_tolerance_entry[0] - start_time
-            xy_tolerance_entry_yaw_error = abs(math.remainder(
-                xy_tolerance_entry[3] - target_yaw,
-                2.0 * math.pi,
-            ))
+            if target_yaw is not None:
+                xy_tolerance_entry_yaw_error = abs(math.remainder(
+                    xy_tolerance_entry[3] - target_yaw,
+                    2.0 * math.pi,
+                ))
             post_xy_odom = [
                 sample
                 for sample in goal_odom_samples
@@ -669,7 +741,8 @@ class AutoTrain(Node):
                 plan_execution_final_yaw - target_yaw,
                 2.0 * math.pi,
             )
-            if plan_execution_final_yaw is not None else None
+            if plan_execution_final_yaw is not None and target_yaw is not None
+            else None
         )
         contract_errors = []
         if outcome == "succeeded" and path_messages <= 0:
@@ -694,17 +767,18 @@ class AutoTrain(Node):
                 or goal_error > xy_tolerance + POSITION_OBSERVER_MARGIN_M
             ):
                 contract_errors.append("goal_position_tolerance")
-            if (
-                goal_yaw_error is None
-                or goal_yaw_error > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
-            ):
-                contract_errors.append("goal_yaw_tolerance")
-            if (
-                signed_plan_goal_yaw_error is None
-                or abs(signed_plan_goal_yaw_error)
-                > 0.15 + CONFIG_TOLERANCE_EPSILON
-            ):
-                contract_errors.append("plan_goal_yaw")
+            if heading_mode == "locked":
+                if (
+                    goal_yaw_error is None
+                    or goal_yaw_error > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
+                ):
+                    contract_errors.append("goal_yaw_tolerance")
+                if (
+                    signed_plan_goal_yaw_error is None
+                    or abs(signed_plan_goal_yaw_error)
+                    > 0.15 + CONFIG_TOLERANCE_EPSILON
+                ):
+                    contract_errors.append("plan_goal_yaw")
         if (
             outcome == "succeeded"
             and waypoint.get("goal_profile") == "reverse_handoff"
@@ -780,6 +854,7 @@ class AutoTrain(Node):
             "task": waypoint.get("task", "nav"),
             "direction": direction,
             "goal_profile": waypoint.get("goal_profile", "standard"),
+            "heading_mode": heading_mode,
             "goal_checker": goal_checker,
             "behavior_tree": behavior_tree.name,
             "outcome": outcome,
@@ -793,7 +868,9 @@ class AutoTrain(Node):
                 if goal_yaw_error is not None else None
             ),
             "xy_goal_tolerance_m": round(xy_tolerance, 3),
-            "yaw_goal_tolerance_rad": round(yaw_tolerance, 3),
+            "yaw_goal_tolerance_rad": (
+                round(yaw_tolerance, 3)
+                if yaw_tolerance is not None else None),
             "position_observer_margin_m": POSITION_OBSERVER_MARGIN_M,
             "yaw_observer_margin_rad": YAW_OBSERVER_MARGIN_RAD,
             "xy_tolerance_entry_elapsed_sec": (
@@ -826,7 +903,9 @@ class AutoTrain(Node):
                 round(post_xy_yaw_error_reduction, 3)
                 if post_xy_yaw_error_reduction is not None else None
             ),
-            "target_yaw_rad": round(target_yaw, 3),
+            "target_yaw_rad": (
+                round(target_yaw, 3) if target_yaw is not None else None
+            ),
             "final_yaw_rad": (
                 round(final_yaw, 3) if final_yaw is not None else None
             ),
@@ -942,8 +1021,10 @@ class AutoTrain(Node):
             "reverse_behavior_tree",
             "reverse_handoff_behavior_tree",
             "nav2_params_file",
+            "nav2_params_overlay_file",
             "through_poses_behavior_tree",
             "through_poses_reverse_behavior_tree",
+            "through_poses_reverse_locked_behavior_tree",
         )
         manifest = {}
         for name in parameters:
@@ -1035,7 +1116,8 @@ class AutoTrain(Node):
             ps.pose.position.x = float(pose["position"]["x"])
             ps.pose.position.y = float(pose["position"]["y"])
             ps.pose.position.z = float(pose["position"].get("z", 0.0))
-            orientation = self._orientation_mapping(pose)
+            orientation = self._orientation_mapping(
+                pose, self._heading_mode(w))
             ps.pose.orientation.x = float(orientation["x"])
             ps.pose.orientation.y = float(orientation["y"])
             ps.pose.orientation.z = float(orientation["z"])
@@ -1092,19 +1174,23 @@ class AutoTrain(Node):
             self._cmd_samples[cmd_start:])
         terminal = waypoints[-1]
         terminal_position = terminal["pose"]["position"]
-        terminal_orientation = self._orientation_mapping(terminal["pose"])
-        target_yaw = math.atan2(
-            2.0 * (
-                float(terminal_orientation["w"])
-                * float(terminal_orientation["z"])
-                + float(terminal_orientation["x"])
-                * float(terminal_orientation["y"])
-            ),
-            1.0 - 2.0 * (
-                float(terminal_orientation["y"]) ** 2
-                + float(terminal_orientation["z"]) ** 2
-            ),
-        )
+        terminal_heading_mode = self._heading_mode(terminal)
+        terminal_orientation = self._orientation_mapping(
+            terminal["pose"], terminal_heading_mode)
+        target_yaw = None
+        if terminal_heading_mode == "locked":
+            target_yaw = math.atan2(
+                2.0 * (
+                    float(terminal_orientation["w"])
+                    * float(terminal_orientation["z"])
+                    + float(terminal_orientation["x"])
+                    * float(terminal_orientation["y"])
+                ),
+                1.0 - 2.0 * (
+                    float(terminal_orientation["y"]) ** 2
+                    + float(terminal_orientation["z"]) ** 2
+                ),
+            )
         goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
             terminal)
         goal_error = None
@@ -1117,12 +1203,13 @@ class AutoTrain(Node):
                 cur[2] - float(terminal_position["y"]),
             )
             final_yaw = cur[3]
-            signed_goal_yaw_error = math.remainder(
-                final_yaw - target_yaw, 2.0 * math.pi)
-            goal_yaw_error = abs(signed_goal_yaw_error)
+            if target_yaw is not None:
+                signed_goal_yaw_error = math.remainder(
+                    final_yaw - target_yaw, 2.0 * math.pi)
+                goal_yaw_error = abs(signed_goal_yaw_error)
 
-        # Per-waypoint min-distance check.  The BT's RemovePassedGoals radius
-        # is 0.15 m; retain a 0.02 m observer margin for odometry sampling.
+        # Per-waypoint min-distance check. The free ThroughPoses BT removes
+        # a normal guide inside 0.50 m; retain a 0.02 m observer margin.
         passed = []
         for w in waypoints:
             wx = float(w["pose"]["position"]["x"])
@@ -1145,7 +1232,7 @@ class AutoTrain(Node):
                 or goal_error > xy_tolerance + POSITION_OBSERVER_MARGIN_M
             ):
                 contract_errors.append("goal_position_tolerance")
-            if (
+            if terminal_heading_mode == "locked" and (
                 goal_yaw_error is None
                 or goal_yaw_error > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
             ):
@@ -1185,6 +1272,7 @@ class AutoTrain(Node):
             "mode": "through_poses",
             "segment_id": stage_id,
             "direction": direction,
+            "heading_mode": terminal_heading_mode,
             "goal_ids": [waypoint["id"] for waypoint in waypoints],
             "goal_profiles": [
                 waypoint.get("goal_profile", "standard")
@@ -1200,10 +1288,14 @@ class AutoTrain(Node):
             "final_pos": (round(cur[1], 3), round(cur[2], 3)),
             "goal_checker": goal_checker,
             "xy_goal_tolerance_m": round(xy_tolerance, 3),
-            "yaw_goal_tolerance_rad": round(yaw_tolerance, 3),
+            "yaw_goal_tolerance_rad": (
+                round(yaw_tolerance, 3)
+                if yaw_tolerance is not None else None),
             "position_observer_margin_m": POSITION_OBSERVER_MARGIN_M,
             "yaw_observer_margin_rad": YAW_OBSERVER_MARGIN_RAD,
-            "target_yaw_rad": round(target_yaw, 3),
+            "target_yaw_rad": (
+                round(target_yaw, 3) if target_yaw is not None else None
+            ),
             "final_yaw_rad": (
                 round(final_yaw, 3) if final_yaw is not None else None),
             "goal_error_m": (
@@ -1248,11 +1340,14 @@ class AutoTrain(Node):
             return True
         direction = stage["direction"]
         if use_through_poses and len(goals) > 1:
-            behavior_tree_param = (
-                "through_poses_reverse_behavior_tree"
-                if direction == "reverse"
-                else "through_poses_behavior_tree"
-            )
+            if direction == "reverse":
+                behavior_tree_param = (
+                    "through_poses_reverse_locked_behavior_tree"
+                    if self._heading_mode(goals[-1]) == "locked"
+                    else "through_poses_reverse_behavior_tree"
+                )
+            else:
+                behavior_tree_param = "through_poses_behavior_tree"
             if self._through_client.wait_for_server(timeout_sec=10.0):
                 result = self._send_through_poses(
                     goals,
@@ -1302,6 +1397,8 @@ class AutoTrain(Node):
         use_through_poses = bool(self.get_parameter("use_through_poses").value)
         self._execution_manifest = {
             "use_through_poses": use_through_poses,
+            "sim_speed_profile": str(
+                self.get_parameter("sim_speed_profile").value),
         }
         self.get_logger().info(
             "Executing %d configured segments (%d goals, through_poses=%s)"

@@ -1,5 +1,42 @@
 # 变更日志
 
+## 2026-08-01 - 阿克曼反向不可达短退恢复与自由过渡点规划
+
+### 实现
+
+- 新增 `AckermannReverseRetreat` BT 插件，仅接入四个 `reverse` 行为树。规划候选穷尽后，
+  先清图并重试一次；仍不可达时才沿车体物理 `-X` 生成 `0.15 m` 零曲率短退路径，完成后
+  清局部/全局 costmap 并重新规划。
+- 恢复路径通过 `FollowPath(controller_id="ReverseRecovery")` 执行，继续经过
+  controller、velocity smoother、方向门和 safety，不直接发布 Twist。`ReverseRecovery`
+  强制负线速度、`wz_max: 0`，并使用 `0.03 m` 严格 recovery goal checker，避免短路径
+  被宽松 transit tolerance 立即判成功。
+- 每个导航 action 的 `reverse_retreat_used` 黑板锁存只允许一次物理短退；只有
+  `Compute*` 已穷尽可行候选时才允许触发，TF、参数、取消和 costmap 等非几何错误均会
+  fail-closed。
+- 短退前同时检查新鲜的 global/local raw costmap，并对完整 padded footprint 做扫掠。
+  诊断日志现在区分地图缺失、frame 错误、格式错误、过期、足迹出图和 lethal overlap。
+- 非任务过渡点改为自由航向/位置约束，反向段使用 free-heading 全链搜索，避免为未要求的
+  yaw 在中间点停车或绕大圈；P、QR、VLM 任务点保持严格位置/朝向语义。
+
+### 验收
+
+- `colcon build --packages-select smartcar_nav2 --symlink-install --cmake-args -DBUILD_TESTING=ON` 通过。
+- `test_costmap_footprint_sweep`、`test_ackermann_reverse_retreat_path` 通过；Nav2 反向合同和
+  仓库 Nav2 合同共 36 项通过。
+- 本机 Ignition Gazebo 6.18 + RViz：P→A 完成；第二段首次规划失败、清图重试后仍不可达，
+  于 `1785564636.052` 触发 `retreating 0.150 m`，严格 recovery goal 于
+  `1785564643.453` 完成，随后重规划并选出新的 free-heading chain。该段所有采样的
+  controller/cmd 线速度均为负值。
+
+### 未通过项
+
+- 本轮不是全路线验收。恢复后的第二段终点距 `b_corridor_enter` 为 `0.533 m`，超过
+  `0.50 m` transit 约束，因此结果为 `contract_failed`，后续 C 区和回程未运行。
+- 离线 padded-OBB/keepout 预检推荐把非任务点 `b_corridor_enter` 从 `(1.10, 2.85)`
+  调至 `(1.10, 2.65)`；该候选尚未写入运行路线，必须以新的完整 Gazebo 结果 JSON 复验。
+- 以上仅是 Gazebo 软件证据，不构成实体底盘、竞赛现场或更高速度通过证据。
+
 ## 2026-07-28 - 仿真静态禁区 PGM 地图与成本地图可视化
 
 ### 背景

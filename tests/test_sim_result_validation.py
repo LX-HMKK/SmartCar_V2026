@@ -4,7 +4,6 @@ import copy
 from contextlib import contextmanager
 import hashlib
 import importlib.util
-import tempfile
 import unittest
 from unittest import mock
 from pathlib import Path
@@ -23,6 +22,9 @@ TUNE_PARAMS = (
 )
 NAV2_PARAMS = (
     ROOT / "src" / "smartcar_nav2" / "config" / "nav2_params.yaml"
+)
+NAV_ONLY_WAYPOINTS = (
+    ROOT / "src" / "smartcar_nav2" / "config" / "waypoints" / "nav_only.yaml"
 )
 
 SPEC = importlib.util.spec_from_file_location(
@@ -159,6 +161,7 @@ def dynamic_manifest():
         "id": "entry",
         "direction": "forward",
         "goal_profile": "standard",
+        "heading_mode": "locked",
         "behavior_tree": "navigate_to_pose_w_replanning_and_recovery.xml",
         "goal_checker": "goal_checker",
         "controller_cmd_linear_min": 0.02,
@@ -171,6 +174,7 @@ def dynamic_manifest():
         "mode": "through_poses",
         "segment_id": "reverse_loop",
         "direction": "reverse",
+        "heading_mode": "locked",
         "goal_ids": ["reverse_a", "reverse_b"],
         "goal_profiles": ["standard", "standard"],
         "behavior_tree": (
@@ -212,6 +216,7 @@ def dynamic_manifest():
                             "id": "entry",
                             "direction": "forward",
                             "goal_profile": "standard",
+                            "heading_mode": "locked",
                             "frame_id": "odom_combined",
                             "pose": {
                                 "position": {"x": 0.0, "y": 0.0, "z": 0.0},
@@ -230,6 +235,7 @@ def dynamic_manifest():
                             "id": "reverse_a",
                             "direction": "reverse",
                             "goal_profile": "standard",
+                            "heading_mode": "locked",
                             "frame_id": "odom_combined",
                             "pose": {
                                 "position": {"x": 1.0, "y": 1.0, "z": 0.0},
@@ -242,6 +248,7 @@ def dynamic_manifest():
                             "id": "reverse_b",
                             "direction": "reverse",
                             "goal_profile": "standard",
+                            "heading_mode": "locked",
                             "frame_id": "odom_combined",
                             "pose": {
                                 "position": {"x": 2.0, "y": 2.0, "z": 0.0},
@@ -257,6 +264,147 @@ def dynamic_manifest():
         "execution": {"use_through_poses": True},
     })
     return source
+
+
+def _single_goal_result(goal):
+    direction = goal["direction"]
+    goal_profile = goal["goal_profile"]
+    heading_mode = goal["heading_mode"]
+    if direction == "reverse":
+        minimum, maximum = -0.10, -0.02
+    else:
+        minimum, maximum = 0.02, 0.10
+    if heading_mode == "free":
+        xy_tolerance, yaw_tolerance = 0.35, None
+    elif goal_profile == "precise":
+        xy_tolerance, yaw_tolerance = 0.12, 0.15
+    else:
+        xy_tolerance, yaw_tolerance = 0.12, 0.25
+    return {
+        "id": goal["id"],
+        "direction": direction,
+        "goal_profile": goal_profile,
+        "heading_mode": heading_mode,
+        "behavior_tree": VALIDATION._goal_behavior_tree(
+            direction, goal_profile),
+        "outcome": "succeeded",
+        "status": VALIDATION.SUCCEEDED_STATUS,
+        "goal_checker": VALIDATION._goal_checker(
+            direction, goal_profile, heading_mode
+        ),
+        "xy_goal_tolerance_m": xy_tolerance,
+        "yaw_goal_tolerance_rad": yaw_tolerance,
+        "position_observer_margin_m": (
+            VALIDATION.POSITION_OBSERVER_MARGIN_M),
+        "yaw_observer_margin_rad": VALIDATION.YAW_OBSERVER_MARGIN_RAD,
+        "goal_error_m": 0.01,
+        "target_yaw_rad": 0.0 if heading_mode == "locked" else None,
+        "goal_yaw_error_rad": 0.01 if heading_mode == "locked" else None,
+        "signed_goal_yaw_error_rad": (
+            0.01 if heading_mode == "locked" else None
+        ),
+        "signed_plan_goal_yaw_error_rad": (
+            0.0 if heading_mode == "locked" else None
+        ),
+        "path_messages": 1,
+        "controller_cmd_linear_min": minimum,
+        "controller_cmd_linear_max": maximum,
+        "cmd_linear_min": minimum,
+        "cmd_linear_max": maximum,
+        "contract_errors": [],
+    }
+
+
+def _through_poses_result(stage):
+    segment_id, direction, goals = stage
+    heading_mode = goals[-1]["heading_mode"]
+    minimum, maximum = (-0.10, -0.02) if direction == "reverse" else (0.02, 0.10)
+    return {
+        "id": "through_poses[{}]".format(
+            ", ".join(goal["id"] for goal in goals)),
+        "mode": "through_poses",
+        "segment_id": segment_id,
+        "direction": direction,
+        "heading_mode": heading_mode,
+        "goal_ids": [goal["id"] for goal in goals],
+        "goal_profiles": [goal["goal_profile"] for goal in goals],
+        "behavior_tree": (
+            "navigate_through_poses_reverse_w_replanning_and_recovery.xml"
+            if direction == "reverse"
+            else "navigate_through_poses_w_replanning_and_recovery.xml"
+        ),
+        "waypoint_count": len(goals),
+        "outcome": "succeeded",
+        "status": VALIDATION.SUCCEEDED_STATUS,
+        "goal_checker": VALIDATION._goal_checker(
+            direction, "standard", heading_mode
+        ),
+        "xy_goal_tolerance_m": 0.35 if heading_mode == "free" else 0.12,
+        "yaw_goal_tolerance_rad": None if heading_mode == "free" else 0.25,
+        "position_observer_margin_m": (
+            VALIDATION.POSITION_OBSERVER_MARGIN_M),
+        "yaw_observer_margin_rad": VALIDATION.YAW_OBSERVER_MARGIN_RAD,
+        "goal_error_m": 0.01,
+        "target_yaw_rad": 0.0 if heading_mode == "locked" else None,
+        "goal_yaw_error_rad": 0.01 if heading_mode == "locked" else None,
+        "signed_goal_yaw_error_rad": (
+            0.01 if heading_mode == "locked" else None
+        ),
+        "path_messages": 1,
+        "controller_cmd_linear_min": minimum,
+        "controller_cmd_linear_max": maximum,
+        "cmd_linear_min": minimum,
+        "cmd_linear_max": maximum,
+        "waypoints_passed": [
+            {"id": goal["id"], "min_distance_m": 0.10}
+            for goal in goals
+        ],
+        "contract_errors": [],
+    }
+
+
+def manifest_from_waypoint_snapshot(snapshot):
+    errors = []
+    stages = VALIDATION._reconstructed_action_stages(snapshot, errors)
+    if errors or stages is None:
+        raise AssertionError(f"cannot materialize test snapshot: {errors}")
+    results = []
+    for stage in stages:
+        if len(stage[2]) == 1:
+            results.append(_single_goal_result(stage[2][0]))
+        else:
+            results.append(_through_poses_result(stage))
+    manifest = {
+        "overall_outcome": "completed",
+        "expected_goal_count": sum(len(stage[2]) for stage in stages),
+        "results": results,
+        "route": {
+            "segments": [
+                {
+                    "id": segment_id,
+                    "direction": direction,
+                    "goals": [
+                        {
+                            key: copy.deepcopy(value)
+                            for key, value in goal.items()
+                            if key != "task"
+                        }
+                        for goal in goals
+                    ],
+                }
+                for segment_id, direction, goals in stages
+            ],
+        },
+        "execution": {"use_through_poses": True},
+        "inputs": valid_manifest()["inputs"],
+        "timestamp": 200.0,
+    }
+    manifest["inputs"]["waypoints_file"].update({
+        "path": "/run/source/nav_only.yaml",
+        "realpath": "/run/source/nav_only.yaml",
+        "sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
+    })
+    return manifest, stages
 
 
 class SimResultValidationTests(unittest.TestCase):
@@ -301,66 +449,146 @@ class SimResultValidationTests(unittest.TestCase):
 
         self.assertTrue(any("must use NavigateThroughPoses" in error for error in errors))
 
-    def test_waypoint_snapshot_binds_route_pose_and_file_hash(self):
+    def test_waypoint_snapshot_reconstructs_the_complete_action_route(self):
+        manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
+
+        self.assertEqual(
+            [stage[0] for stage in stages],
+            [
+                "action_1_a_task_observe_to_a_task_observe",
+                "action_2_b_corridor_gate_to_b_corridor_enter",
+                "action_3_c_entry_west_to_c_corner_3",
+                "action_4_c_corner_4_to_b_corridor_return_enter",
+                "action_5_b_corridor_return_drop_to_p_finish",
+            ],
+        )
+        self.assertEqual(
+            VALIDATION.validate_manifest(
+                manifest, 199.0, NAV_ONLY_WAYPOINTS), [])
+
+        manifest["inputs"]["waypoints_file"]["sha256"] = "b" * 64
+        hash_errors = VALIDATION.validate_manifest(
+            manifest, 199.0, NAV_ONLY_WAYPOINTS)
+        self.assertTrue(any(
+            "SHA256 does not match" in error for error in hash_errors))
+        manifest["inputs"]["waypoints_file"]["sha256"] = (
+            hashlib.sha256(NAV_ONLY_WAYPOINTS.read_bytes()).hexdigest())
+
+        # A start_goal_id/end_goal_id trial writes a truncated manifest.  It
+        # cannot become evidence for a complete-route run.
+        manifest["route"]["segments"] = manifest["route"]["segments"][:1]
+        manifest["results"] = manifest["results"][:1]
+        manifest["expected_goal_count"] = 1
+        errors = VALIDATION.validate_manifest(
+            manifest, 199.0, NAV_ONLY_WAYPOINTS)
+
+        self.assertTrue(any(
+            "every reconstructed action" in error for error in errors))
+        self.assertTrue(any(
+            "expected_goal_count must be" in error for error in errors))
+
+    def test_waypoint_snapshot_requires_zero_transit_quaternions(self):
+        manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
+        reverse_stage = stages[1]
+        self.assertGreater(len(reverse_stage[2]), 1)
+        source = yaml.safe_load(NAV_ONLY_WAYPOINTS.read_text(encoding="utf-8"))
+        source_goal = next(
+            waypoint for waypoint in source["waypoints"]
+            if waypoint["id"] == "b_corridor_gate")
+        self.assertNotIn("orientation", source_goal["pose"])
+        first_reverse_goal = manifest["route"]["segments"][1]["goals"][0]
+        self.assertEqual(first_reverse_goal["id"], "b_corridor_gate")
+        self.assertEqual(
+            first_reverse_goal["pose"]["orientation"],
+            {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
+        )
+        finish_goal = manifest["route"]["segments"][-1]["goals"][-1]
+        self.assertEqual(finish_goal["id"], "p_finish")
+        self.assertAlmostEqual(
+            sum(
+                component * component
+                for component in finish_goal["pose"]["orientation"].values()
+            ),
+            1.0,
+        )
+
+        first_reverse_goal["pose"]["orientation"] = {
+            "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0,
+        }
+        errors = VALIDATION.validate_manifest(
+            manifest, 199.0, NAV_ONLY_WAYPOINTS)
+
+        self.assertTrue(any(
+            "free-heading zero quaternion" in error
+            for error in errors
+        ))
+
+    def test_heading_mode_controls_yaw_evidence_contract(self):
+        # The production nav-only snapshot intentionally uses a locked
+        # `task: nav` proxy at the QR position.  Exercise the free-terminal
+        # evidence rule with an isolated dynamic route instead of assuming
+        # the first production action remains position-only.
         manifest = dynamic_manifest()
-        waypoints = []
-        for segment in manifest["route"]["segments"]:
-            for goal in segment["goals"]:
-                waypoints.append({
-                    "id": goal["id"],
-                    "frame_id": goal["frame_id"],
-                    "pose": copy.deepcopy(goal["pose"]),
-                    "goal_profile": goal["goal_profile"],
-                })
-        with tempfile.TemporaryDirectory() as temporary:
-            snapshot = Path(temporary) / "nav_only.yaml"
-            snapshot.write_text(
-                yaml.safe_dump({"waypoints": waypoints}, sort_keys=False),
-                encoding="utf-8",
-            )
-            manifest["inputs"]["waypoints_file"].update({
-                "path": "/run/source/nav_only.yaml",
-                "realpath": "/run/source/nav_only.yaml",
-                "sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
-            })
-            self.assertEqual(
-                VALIDATION.validate_manifest(manifest, 199.0, snapshot), [])
+        free_goal = manifest["route"]["segments"][0]["goals"][0]
+        free_goal["heading_mode"] = "free"
+        free_goal["pose"]["orientation"] = {
+            "x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0,
+        }
+        free_result = manifest["results"][0]
+        free_result["heading_mode"] = "free"
+        free_result["goal_checker"] = "transit_goal_checker"
+        free_result["xy_goal_tolerance_m"] = 0.35
+        free_result["yaw_goal_tolerance_rad"] = None
+        free_result["target_yaw_rad"] = None
+        free_result["goal_yaw_error_rad"] = None
+        free_result["signed_goal_yaw_error_rad"] = None
+        free_result["signed_plan_goal_yaw_error_rad"] = None
+        self.assertEqual(free_result["heading_mode"], "free")
+        self.assertIsNone(free_result["target_yaw_rad"])
+        self.assertIsNone(free_result["goal_yaw_error_rad"])
+        self.assertIsNone(free_result["signed_goal_yaw_error_rad"])
+        self.assertEqual(
+            VALIDATION.validate_manifest(
+                manifest, 199.0), []
+        )
 
-            manifest["route"]["segments"][1]["goals"][0]["pose"]["position"]["x"] = 9.0
-            errors = VALIDATION.validate_manifest(manifest, 199.0, snapshot)
+        free_result["xy_goal_tolerance_m"] = 0.50
+        self.assertEqual(VALIDATION.validate_manifest(manifest, 199.0), [])
 
-        self.assertTrue(any("pose differs" in error for error in errors))
+        free_result["xy_goal_tolerance_m"] = 0.501
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any(
+            "xy_goal_tolerance_m exceeds its safe contract" in error
+            for error in errors
+        ))
 
-    def test_waypoint_snapshot_accepts_orientation_free_through_pose(self):
+        free_result["xy_goal_tolerance_m"] = 0.35
+        free_result["yaw_goal_tolerance_rad"] = 0.25
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any(
+            "must not report yaw_goal_tolerance_rad" in error
+            for error in errors
+        ))
+
+        free_result["yaw_goal_tolerance_rad"] = None
+        free_result["goal_yaw_error_rad"] = 0.10
+        errors = VALIDATION.validate_manifest(
+            manifest, 199.0)
+        self.assertTrue(any(
+            "free-heading goal must not report goal_yaw_error_rad" in error
+            for error in errors
+        ))
+
         manifest = dynamic_manifest()
-        waypoints = []
-        for segment in manifest["route"]["segments"]:
-            for goal in segment["goals"]:
-                waypoint = {
-                    "id": goal["id"],
-                    "frame_id": goal["frame_id"],
-                    "pose": copy.deepcopy(goal["pose"]),
-                    "goal_profile": goal["goal_profile"],
-                }
-                if waypoint["id"] == "reverse_a":
-                    waypoint["pose"].pop("orientation")
-                    goal["pose"]["orientation"] = {
-                        "x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0,
-                    }
-                waypoints.append(waypoint)
-        with tempfile.TemporaryDirectory() as temporary:
-            snapshot = Path(temporary) / "nav_only.yaml"
-            snapshot.write_text(
-                yaml.safe_dump({"waypoints": waypoints}, sort_keys=False),
-                encoding="utf-8",
-            )
-            manifest["inputs"]["waypoints_file"].update({
-                "path": "/run/source/nav_only.yaml",
-                "realpath": "/run/source/nav_only.yaml",
-                "sha256": hashlib.sha256(snapshot.read_bytes()).hexdigest(),
-            })
-            self.assertEqual(
-                VALIDATION.validate_manifest(manifest, 199.0, snapshot), [])
+        locked_result = manifest["results"][0]
+        self.assertEqual(locked_result["heading_mode"], "locked")
+        locked_result["goal_yaw_error_rad"] = 0.50
+        errors = VALIDATION.validate_manifest(
+            manifest, 199.0)
+        self.assertTrue(any(
+            "final goal yaw is outside tolerance" in error
+            for error in errors
+        ))
 
     def test_dynamic_through_poses_rejects_nonstandard_goal_profiles(self):
         manifest = dynamic_manifest()

@@ -1,5 +1,19 @@
 # Simulation-only overlay. This file is layered after smartcar_nav2's resolved
 # base parameters, so the real vehicle never loads the KeepoutFilter plugin.
+controller_server:
+  ros__parameters:
+    FollowPath:
+      # Keep RPP's cost-distance model within the simulation-only inflation
+      # field below. The real vehicle retains its production 0.25 m setting.
+      cost_scaling_dist: 0.20
+      # The 1.0 m B-corridor needs a shorter carrot than the production
+      # open-field setting. This is a Gazebo-only tracking adjustment: it
+      # prevents RPP from sweeping its first reverse arc into a B-wall while
+      # the planner path remains corridor-centred.
+      lookahead_dist: 0.45
+      min_lookahead_dist: 0.35
+      max_lookahead_dist: 0.75
+
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -12,8 +26,10 @@ local_costmap:
       # half-width is 0.16 m, so the real-system 0.55 m inflation radius
       # would mark the entire simulated opening impassable.  Gazebo still
       # retains the physical B walls; this overlay leaves a 0.20 m planning
-      # clearance without changing the real-vehicle configuration. The scalar
-      # is synchronized from smartcar_tools/config/routes/route_planning.yaml.
+      # preference without changing the real-vehicle configuration. It is not
+      # the robot collision envelope: KeepoutFilter owns lethal mask cells
+      # independently of this InflationLayer setting.
+      # The scalar is synchronized from route_planning.yaml.
       inflation_layer:
         inflation_radius: 0.20
 

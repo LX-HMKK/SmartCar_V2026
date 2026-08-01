@@ -51,11 +51,7 @@ bool validExpectedPose(const geometry_msgs::msg::PoseStamped & pose)
   {
     return false;
   }
-  // Zero quaternion is the Nav2 convention for "orientation unconstrained"
-  // (pass-through waypoint). Expected start and goal poses may therefore
-  // omit orientation, unlike planner-returned path poses.
-  const double norm = quaternionNorm(pose.pose.orientation);
-  return norm <= 1.0e-6 || std::abs(norm - 1.0) <= kQuaternionNormTolerance;
+  return validUnitQuaternion(pose.pose.orientation);
 }
 
 bool validPathPose(const geometry_msgs::msg::PoseStamped & pose)
@@ -121,13 +117,6 @@ bool rotateYawByPi(
   if (!finiteQuaternion(input)) {
     return false;
   }
-  const double norm = quaternionNorm(input);
-  // Zero quaternion: pass-through waypoint with no orientation constraint.
-  // Preserve as-is (no yaw to rotate).
-  if (norm <= 1.0e-6) {
-    output = input;
-    return true;
-  }
   if (!validUnitQuaternion(input)) {
     return false;
   }
@@ -184,17 +173,11 @@ ReversePathValidationResult validateReversePath(
 
   const auto & path_start = path.poses.front();
   const auto & path_goal = path.poses.back();
-  const bool start_orient_constrained =
-      quaternionNorm(expected_start.pose.orientation) > 1.0e-6;
-  const bool goal_orient_constrained =
-      quaternionNorm(expected_goal.pose.orientation) > 1.0e-6;
-
   if (planarDistance(path_start, expected_start) > options.start_position_tolerance) {
     return invalidResult("start_position_mismatch", 0,
       planarDistance(path_start, expected_start), options.start_position_tolerance);
   }
-  if (start_orient_constrained &&
-      angularDistance(
+  if (angularDistance(
         tf2::getYaw(path_start.pose.orientation),
         tf2::getYaw(expected_start.pose.orientation)) > options.start_yaw_tolerance)
   {
@@ -207,8 +190,7 @@ ReversePathValidationResult validateReversePath(
     return invalidResult("goal_position_mismatch", 0,
       planarDistance(path_goal, expected_goal), options.goal_position_tolerance);
   }
-  if (goal_orient_constrained &&
-      angularDistance(
+  if (angularDistance(
         tf2::getYaw(path_goal.pose.orientation),
         tf2::getYaw(expected_goal.pose.orientation)) > options.goal_yaw_tolerance)
   {

@@ -1,32 +1,74 @@
 <!-- Reverse Ackermann-safe through-poses tree: no backup, no wait, no spin.
-     Uses ComputePathThroughPoses for path geometry and reverse_goal_checker
-     so FollowPath drives the segment in reverse. -->
+     The free-heading node resolves ordinary position constraints against the
+     live costmap before reverse_goal_checker follows the resulting path. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <Sequence name="NavigateReverseThroughWithSingleRetreat">
+      <LatchSuccess name="InitializeReverseThroughRetreatGate">
+        <SetBlackboard value="false" output_key="reverse_retreat_used"/>
+      </LatchSuccess>
     <RecoveryNode number_of_retries="3" name="NavigateReverseThroughRecovery">
       <PipelineSequence name="NavigateReverseThroughWithReplanning">
-        <RateController hz="0.5">
-          <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
-            <Sequence>
-              <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.15" global_frame="odom_combined" robot_base_frame="base_footprint"/>
-              <ComputeReversePathThroughPoses
-                  goals="{goals}"
-                  path="{path}"
-                  planner_id="GridBased"
-                  minimum_turning_radius="0.55"
-                  curvature_tolerance="1.05"
-                  maximum_direction_error="0.60"
-                  start_position_tolerance="0.50"
-                  start_yaw_tolerance="0.70"
-                  goal_position_tolerance="0.12"
-                  goal_yaw_tolerance="0.15"
-                  minimum_segment_length="0.0001"/>
+        <!-- Goal removal runs on every tick. The full route stays latched
+             while FollowPath runs, avoiding publication of a path whose start
+             has become stale during the bounded full-chain search. -->
+        <!-- Transit constraints are pass-through gates, not stop points. -->
+        <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.50" global_frame="odom_combined" robot_base_frame="base_footprint"/>
+        <LatchSuccess name="LatchReverseFreeHeadingPathThroughPoses">
+          <RecoveryNode number_of_retries="1" name="ComputeReverseThroughPathAfterRetreat">
+            <RecoveryNode number_of_retries="1" name="ComputeFreeHeadingPathThroughPoses">
+              <ComputeReverseFreeHeadingPathThroughPoses
+                goals="{goals}"
+                path="{path}"
+                recovery_eligible="{reverse_planner_unreachable}"
+                planner_id="GridBased"
+                heading_samples="12"
+                candidate_timeout_ms="1000"
+                search_budget_ms="2400"
+                through_search_budget_ms="12000"
+                fallback_candidate_limit="4"
+                lookahead_fallback_candidate_limit="0"
+                through_solution_limit="4"
+                max_initial_path_length_ratio="1.60"
+                max_start_drift_m="0.10"
+                footprint_half_length_m="0.30"
+                footprint_half_width_m="0.16"
+                footprint_sweep_step_m="0.025"
+                footprint_lethal_cost="253"
+                minimum_turning_radius="0.55"
+                curvature_tolerance="0.20"
+                maximum_direction_error="0.60"
+                start_position_tolerance="0.50"
+                start_yaw_tolerance="0.70"
+                goal_position_tolerance="0.30"
+                goal_yaw_tolerance="0.15"
+                minimum_segment_length="0.0001"/>
+              <ClearEntireCostmap name="ClearGlobalCostmap-ReverseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
+            </RecoveryNode>
+            <Sequence name="ReverseThroughRetreatBeforeReplan">
+              <AckermannReverseRetreat
+                allow_retreat="{reverse_planner_unreachable}"
+                retreat_used="{reverse_retreat_used}"
+                path="{reverse_retreat_path}"
+                controller_id="ReverseRecovery"
+                goal_checker_id="recovery_goal_checker"
+                retreat_distance_m="0.15"
+                costmap_max_age_ms="1500"
+                footprint_half_length_m="0.30"
+                footprint_half_width_m="0.16"
+                footprint_sweep_step_m="0.025"
+                footprint_lethal_cost="253"/>
+              <ClearEntireCostmap name="ClearLocalCostmap-AfterReverseThroughRetreat" service_name="local_costmap/clear_entirely_local_costmap"/>
+              <ClearEntireCostmap name="ClearGlobalCostmap-AfterReverseThroughRetreat" service_name="global_costmap/clear_entirely_global_costmap"/>
             </Sequence>
-            <ClearEntireCostmap name="ClearGlobalCostmap-ReverseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
-        </RateController>
+        </LatchSuccess>
         <RecoveryNode number_of_retries="1" name="FollowReversePath">
-          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="reverse_goal_checker"/>
+          <!-- RPP may switch to a positive command when its carrot crosses a
+               free-heading transit gate. The virtual-forward MPPI wrapper
+               restores the path to the real frame and fails closed unless
+               every physical command is reverse. -->
+          <FollowPath path="{path}" controller_id="ReverseHandoff" goal_checker_id="transit_goal_checker"/>
           <ClearEntireCostmap name="ClearLocalCostmap-ReverseContext" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </PipelineSequence>
@@ -35,5 +77,6 @@
         <ClearEntireCostmap name="ClearGlobalCostmap-ReverseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
       </Sequence>
     </RecoveryNode>
+    </Sequence>
   </BehaviorTree>
 </root>

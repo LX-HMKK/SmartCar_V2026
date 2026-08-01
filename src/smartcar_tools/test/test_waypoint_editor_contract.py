@@ -138,7 +138,7 @@ class TestWaypointEditorContract(unittest.TestCase):
         for legacy in ("load_route", "RoutePoint", "full_course_route"):
             self.assertNotIn(legacy, source)
 
-    def test_editor_uses_latched_markers_and_draggable_xy_yaw_controls(self):
+    def test_editor_uses_latched_markers_and_semantic_heading_controls(self):
         source = NODE.read_text(encoding="utf-8")
         self.assertIn("MarkerArray", source)
         self.assertIn("InteractiveMarkerServer", source)
@@ -151,6 +151,12 @@ class TestWaypointEditorContract(unittest.TestCase):
         self.assertIn("Marker.LINE_STRIP", source)
         self.assertIn("Marker.ARROW", source)
         self.assertIn("Marker.TEXT_VIEW_FACING", source)
+        self.assertIn("is_heading_locked", source)
+        self.assertNotIn("HEADING_LOCKED_TASKS", source)
+        self.assertIn("materialize_free_yaws", source)
+        self.assertIn('" [position-only]"', source)
+        self.assertIn("not is_zero_quaternion(display_waypoint.orientation)", source)
+        self.assertNotIn("automatic tangent", source)
 
     def test_drag_editor_exposes_segment_controls_and_local_preflight(self):
         source = DRAG_EDITOR.read_text(encoding="utf-8")
@@ -176,8 +182,10 @@ class TestWaypointEditorContract(unittest.TestCase):
             "加入已有点",
             "上移",
             "下移",
-            "设为无朝向",
-            "恢复路线朝向",
+            "位置约束",
+            "运行时由代价地图选朝向",
+            "materialize_free_yaws",
+            "is_heading_locked",
             "几何预检",
             "保存路线",
             "保存已阻止",
@@ -194,6 +202,8 @@ class TestWaypointEditorContract(unittest.TestCase):
         )
         self.assertNotIn("/mnt/c/Windows/Fonts", source)
         self.assertIn("route = materialize_route(self._waypoints, self._segments)", source)
+        self.assertIn("orientation=(0.0, 0.0, 0.0, 0.0)", source)
+        self.assertNotIn("自动路线切线", source)
 
     def test_qt_draw_callback_only_captures_the_blit_background(self):
         """A Qt paint callback must not recursively request another repaint."""
@@ -255,7 +265,14 @@ class TestWaypointEditorContract(unittest.TestCase):
         self.assertIn("index not in (0, len(self._waypoints) - 1)", source)
         self.assertIn("x_m = original.position[0] if index in", source)
         self.assertIn("y_m = original.position[1] if index in", source)
-        self.assertIn("yaw = 0.0 if index == 0", source)
+        self.assertIn("is_heading_locked", source)
+        self.assertNotIn("HEADING_LOCKED_TASKS", source)
+        self.assertIn("materialize_free_yaws", source)
+        self.assertIn("to_save = tuple(", source)
+        self.assertIn("else (0.0, 0.0, 0.0, 0.0)", source)
+        self.assertIn(
+            "if index != 0 and self._uses_authored_heading(waypoint)", source
+        )
 
     def test_rviz_shows_field_and_semantic_waypoints_and_routes_goal_updates(self):
         document = yaml.safe_load(RVIZ.read_text(encoding="utf-8"))

@@ -15,11 +15,16 @@ import heapq
 import math
 from typing import Any, Iterable, Sequence
 
-from smartcar_task.waypoints import is_zero_quaternion
+from smartcar_task.route_geometry import materialize_free_yaws
+from smartcar_task.waypoints import is_heading_locked
 
-from smartcar_tools.field_keepouts import keepout_bounds
+from smartcar_tools.field_keepouts import keepout_mask_bounds
 from smartcar_tools.field_reference import Bounds2D, FieldReference, Point2D
-from smartcar_tools.planning_segments import PlanningSegment
+from smartcar_tools.planning_segments import (
+    PlanningSegment,
+    materialize_navigation_segments,
+    materialize_route,
+)
 from smartcar_tools.route_planning import (
     RoutePlanningConfig,
     load_route_planning_config,
@@ -38,7 +43,7 @@ class Pose2D:
 
 @dataclass(frozen=True)
 class _PoseConstraint:
-    """A route waypoint whose heading may be intentionally unconstrained."""
+    """A route waypoint represented with its executable planning heading."""
 
     x: float
     y: float
@@ -52,6 +57,21 @@ class _ThroughPlan:
     legs: tuple[tuple[Point2D, ...], ...]
     expanded_states: tuple[int, ...]
     completed_goals: int
+
+
+@dataclass(frozen=True)
+class _NavigationAction:
+    """One bounded runtime navigation action and its explicit segment.
+
+    ``planning_segments`` is the runtime action model.  Each explicit segment
+    starts a fresh Nav2 request, so preflight preserves that replanning
+    boundary rather than carrying an earlier action's free-heading state into
+    the next region.
+    """
+
+    start_id: str
+    segments: tuple[PlanningSegment, ...]
+    goal_ids: tuple[str, ...]
 
 
 @dataclass(frozen=True)
@@ -135,27 +155,65 @@ class LatticePreflightPlanner:
         self._field = reference.field
         self._config = config or load_route_planning_config()
         self._preflight = self._config.preflight
-        self._keepouts = keepout_bounds(reference, self._config)
+        # KeepoutFilter consumes PGM cells, not mathematical lines. Matching
+        # those cell edges avoids clearing a route inside its final black cell.
+        self._keepouts = keepout_mask_bounds(reference, self._config)
 
     @property
     def config(self) -> RoutePlanningConfig:
         """Return the exact shared configuration used for this preflight."""
         return self._config
 
-    def _inside_rect(self, x: float, y: float, bounds: Bounds2D) -> bool:
-        radius = self._config.footprint_envelope_radius_m
-        return (
-            bounds.x_min - radius <= x <= bounds.x_max + radius
-            and bounds.y_min - radius <= y <= bounds.y_max + radius
-        )
+    def _intersects_keepout(self, pose: Pose2D, bounds: Bounds2D) -> bool:
+        """Test the padded Nav2 OBB against one axis-aligned mask rectangle."""
+        footprint = self._config.runtime_footprint
+        half_length = footprint.padded_half_length_m
+        half_width = footprint.padded_half_width_m
+        cosine = math.cos(pose.yaw)
+        sine = math.sin(pose.yaw)
+        delta_x = bounds.center.x - pose.x
+        delta_y = bounds.center.y - pose.y
+        obstacle_half_x = bounds.width / 2.0
+        obstacle_half_y = bounds.height / 2.0
 
-    def _is_free(self, x: float, y: float) -> bool:
+        # Separating-axis test for an oriented robot rectangle vs an AABB.
+        if abs(delta_x) > obstacle_half_x + half_length * abs(cosine) + half_width * abs(sine):
+            return False
+        if abs(delta_y) > obstacle_half_y + half_length * abs(sine) + half_width * abs(cosine):
+            return False
+        local_x = delta_x * cosine + delta_y * sine
+        local_y = -delta_x * sine + delta_y * cosine
+        if abs(local_x) > half_length + obstacle_half_x * abs(cosine) + obstacle_half_y * abs(sine):
+            return False
+        if abs(local_y) > half_width + obstacle_half_x * abs(sine) + obstacle_half_y * abs(cosine):
+            return False
+        return True
+
+    def _is_free(self, x: float, y: float, yaw: float = 0.0) -> bool:
+        if not all(math.isfinite(value) for value in (x, y, yaw)):
+            return False
+        footprint = self._config.runtime_footprint
+        cosine = math.cos(yaw)
+        sine = math.sin(yaw)
+        extent_x = (
+            footprint.padded_half_length_m * abs(cosine)
+            + footprint.padded_half_width_m * abs(sine)
+        )
+        extent_y = (
+            footprint.padded_half_length_m * abs(sine)
+            + footprint.padded_half_width_m * abs(cosine)
+        )
         if not (
-            self._field.x_min <= x <= self._field.x_max
-            and self._field.y_min <= y <= self._field.y_max
+            self._field.x_min <= x - extent_x
+            and x + extent_x <= self._field.x_max
+            and self._field.y_min <= y - extent_y
+            and y + extent_y <= self._field.y_max
         ):
             return False
-        return not any(self._inside_rect(x, y, obstacle) for obstacle in self._keepouts)
+        pose = Pose2D(x, y, yaw)
+        return not any(
+            self._intersects_keepout(pose, obstacle) for obstacle in self._keepouts
+        )
 
     def _state_key(self, pose: Pose2D) -> tuple[int, int, int]:
         resolution = self._preflight.grid_resolution_m
@@ -191,7 +249,7 @@ class LatticePreflightPlanner:
                 curvature,
                 self._preflight.step_length_m * sample / samples,
             )
-            if not self._is_free(next_pose.x, next_pose.y):
+            if not self._is_free(next_pose.x, next_pose.y, next_pose.yaw):
                 return False, next_pose
         return True, next_pose
 
@@ -442,7 +500,9 @@ class LatticePreflightPlanner:
                     point_pose = self._advance(
                         pose, curvature, distance * sample / samples
                     )
-                    if not self._is_free(point_pose.x, point_pose.y):
+                    if not self._is_free(
+                        point_pose.x, point_pose.y, point_pose.yaw
+                    ):
                         collision_free = False
                         break
                     points.append(Point2D(point_pose.x, point_pose.y))
@@ -479,9 +539,7 @@ class LatticePreflightPlanner:
 
     def plan(self, start: Pose2D, goal: Pose2D) -> tuple[tuple[Point2D, ...], int] | None:
         """Find one collision-free, minimum-turning-radius path or return None."""
-        if not self._is_free(start.x, start.y):
-            return None
-        if not self._is_free(goal.x, goal.y):
+        if not self._is_free(start.x, start.y, start.yaw):
             return None
 
         start_key = self._state_key(start)
@@ -593,9 +651,7 @@ class LatticePreflightPlanner:
         targets = tuple(goals)
         if not targets:
             raise ValueError("through-pose planning requires at least one goal")
-        if not self._is_free(start.x, start.y) or any(
-            not self._is_free(goal.x, goal.y) for goal in targets
-        ):
+        if not self._is_free(start.x, start.y, start.yaw):
             return _ThroughPlan((), (0,) * len(targets), 0)
 
         start_key = (0, *self._state_key(start))
@@ -719,22 +775,228 @@ def _segment_waypoints(
     return tuple((waypoint_id, indexed[waypoint_id]) for waypoint_id in segment.route_ids)
 
 
+def _runtime_navigation_actions(
+    waypoints: Sequence[Any],
+    segments: Sequence[PlanningSegment],
+) -> tuple[_NavigationAction, ...]:
+    """Reconstruct the explicit runtime actions used by the task layer.
+
+    ``materialize_navigation_segments`` is the runtime authority.  Its action
+    lists omit the current robot pose and segment id, so consume each action's
+    goals against the ordered explicit segments to recover its start
+    constraint.
+    """
+    runtime_actions = materialize_navigation_segments(waypoints, segments)
+    result: list[_NavigationAction] = []
+    segment_index = 0
+
+    for runtime_action in runtime_actions:
+        goal_ids = tuple(waypoint.id for waypoint in runtime_action)
+        if not goal_ids:
+            raise ValueError("runtime navigation action has no goals")
+
+        action_segments: list[PlanningSegment] = []
+        consumed_goal_ids: list[str] = []
+        while tuple(consumed_goal_ids) != goal_ids:
+            if segment_index >= len(segments):
+                raise ValueError(
+                    "runtime navigation action cannot be mapped to planning segments"
+                )
+            segment = segments[segment_index]
+            action_segments.append(segment)
+            consumed_goal_ids.extend((*segment.through_ids, segment.end_id))
+            if tuple(consumed_goal_ids) != goal_ids[:len(consumed_goal_ids)]:
+                raise ValueError(
+                    "runtime navigation action diverges from planning segment order"
+                )
+            segment_index += 1
+
+        result.append(_NavigationAction(
+            start_id=action_segments[0].start_id,
+            segments=tuple(action_segments),
+            goal_ids=goal_ids,
+        ))
+
+    if segment_index != len(segments):
+        raise ValueError("planning segments are not represented by runtime actions")
+    return tuple(result)
+
+
 def _constraints_for_segment(
     items: Sequence[tuple[str, Any]], warnings: list[str]
 ) -> tuple[_PoseConstraint, ...]:
     result: list[_PoseConstraint] = []
     for waypoint_id, waypoint in items:
         point = _point(waypoint)
-        if not is_zero_quaternion(waypoint.orientation):
-            yaw = _yaw_from_waypoint(waypoint)
-        else:
-            yaw = None
+        if not is_heading_locked(waypoint):
             warnings.append(
-                f"{waypoint_id}: orientation unconstrained; preflight selects "
-                "a continuous heading"
+                f"{waypoint_id}: position-only; preflight leaves heading free"
             )
+            yaw = None
+        else:
+            yaw = _yaw_from_waypoint(waypoint)
         result.append(_PoseConstraint(point.x, point.y, yaw))
     return tuple(result)
+
+
+def _through_plan_length(plan: _ThroughPlan) -> float:
+    return sum(_polyline_length(leg) for leg in plan.legs)
+
+
+def _plan_segment_through_constraints(
+    planner: LatticePreflightPlanner,
+    constraints: Sequence[_PoseConstraint],
+    direction: str,
+) -> _ThroughPlan:
+    """Plan ordered position constraints, sampling an unknown action start.
+
+    A semantic boundary can reverse after an ordinary point.  That point has no
+    prescribed yaw, so the editor samples the virtual forward heading instead
+    of fabricating a tangent.  Runtime performs the equivalent choice against
+    Nav2's live costmap.
+    """
+    if len(constraints) < 2:
+        raise ValueError("planning segment needs at least two constraints")
+    virtual_offset = math.pi if direction == "reverse" else 0.0
+    start = constraints[0]
+    goals = tuple(
+        _PoseConstraint(
+            constraint.x,
+            constraint.y,
+            None if constraint.yaw is None else constraint.yaw + virtual_offset,
+        )
+        for constraint in constraints[1:]
+    )
+    if start.yaw is not None:
+        return planner.plan_through(
+            Pose2D(start.x, start.y, start.yaw + virtual_offset), goals
+        )
+
+    # A 20-degree scan matches the user-facing preflight lattice while keeping
+    # interactive edits responsive. It is only used at a free semantic handoff.
+    heading_samples = max(8, planner.config.preflight.heading_bins // 2)
+    best: _ThroughPlan | None = None
+    for index in range(heading_samples):
+        candidate = planner.plan_through(
+            Pose2D(
+                start.x,
+                start.y,
+                2.0 * math.pi * index / heading_samples,
+            ),
+            goals,
+        )
+        if len(candidate.legs) != len(goals):
+            continue
+        if best is None or _through_plan_length(candidate) < _through_plan_length(best):
+            best = candidate
+    if best is not None:
+        return best
+    return _ThroughPlan((), (0,) * len(goals), 0)
+
+
+def _successful_action_reports(
+    action: _NavigationAction,
+    planned: _ThroughPlan,
+) -> tuple[SegmentPreflight, ...]:
+    """Split one verified runtime action back into editor segment reports."""
+    reports: list[SegmentPreflight] = []
+    goal_offset = 0
+    for segment in action.segments:
+        segment_goal_ids = (*segment.through_ids, segment.end_id)
+        goal_count = len(segment_goal_ids)
+        if (
+            action.goal_ids[goal_offset:goal_offset + goal_count]
+            != segment_goal_ids
+        ):
+            raise ValueError("runtime action goal order does not match segment")
+        legs: list[LegPreflight] = []
+        for local_index, goal_id in enumerate(segment_goal_ids):
+            goal_index = goal_offset + local_index
+            start_id = (
+                action.start_id
+                if goal_index == 0
+                else action.goal_ids[goal_index - 1]
+            )
+            points = planned.legs[goal_index]
+            legs.append(LegPreflight(
+                start_id,
+                goal_id,
+                points,
+                _polyline_length(points),
+                planned.expanded_states[goal_index],
+                True,
+            ))
+        reports.append(SegmentPreflight(
+            segment_id=segment.id,
+            direction=segment.direction,
+            legs=tuple(legs),
+            feasible=True,
+            length_m=sum(leg.length_m for leg in legs),
+        ))
+        goal_offset += goal_count
+    if goal_offset != len(action.goal_ids):
+        raise ValueError("runtime action goals were not fully reported")
+    return tuple(reports)
+
+
+def _failed_action_reports(
+    action: _NavigationAction,
+    planned: _ThroughPlan,
+) -> tuple[SegmentPreflight, ...]:
+    """Report a failed action without implying its prefix will be executed."""
+    failed_goal_index = min(
+        max(planned.completed_goals, 0),
+        len(action.goal_ids) - 1,
+    )
+    start_id = (
+        action.start_id
+        if failed_goal_index == 0
+        else action.goal_ids[failed_goal_index - 1]
+    )
+    end_id = action.goal_ids[failed_goal_index]
+    action_kind = (
+        "continuous ThroughPoses action"
+        if len(action.goal_ids) > 1
+        else "navigation action"
+    )
+    message = (
+        f"{start_id} -> {end_id}: no collision-free minimum-radius route "
+        f"in {action_kind}"
+    )
+    expanded = (
+        planned.expanded_states[failed_goal_index]
+        if failed_goal_index < len(planned.expanded_states)
+        else 0
+    )
+    reports: list[SegmentPreflight] = []
+    goal_offset = 0
+    for segment in action.segments:
+        goal_count = len(segment.through_ids) + 1
+        owns_failed_leg = goal_offset <= failed_goal_index < goal_offset + goal_count
+        legs = ()
+        if owns_failed_leg:
+            legs = (LegPreflight(
+                start_id,
+                end_id,
+                (),
+                0.0,
+                expanded,
+                False,
+                message,
+            ),)
+        # ComputeFreeHeadingPathAction never publishes a partial prefix: mark
+        # every editor segment in this runtime action as blocked rather than
+        # presenting a green prefix that the robot will not receive.
+        reports.append(SegmentPreflight(
+            segment_id=segment.id,
+            direction=segment.direction,
+            legs=legs,
+            feasible=False,
+            length_m=0.0,
+            message=message,
+        ))
+        goal_offset += goal_count
+    return tuple(reports)
 
 
 def preflight_route(
@@ -742,144 +1004,39 @@ def preflight_route(
     waypoints: Iterable[Any],
     segments: Sequence[PlanningSegment],
 ) -> RoutePreflight:
-    """Check each segment against static geometry and report a blocked leg.
+    """Check each explicit runtime navigation action against static geometry.
 
-    This offline result is not a Nav2 planning or reachability result.
+    Each report corresponds to one planning segment and one fresh Nav2 action.
+    Ordinary points within a multi-goal segment remain continuous
+    ``NavigateThroughPoses`` constraints. This is still an offline geometric
+    result, not a Nav2 planning or reachability result.
     """
-    indexed = {waypoint.id: waypoint for waypoint in waypoints}
+    source = tuple(waypoints)
+    checked_segments = tuple(segments)
+    # The YAML stores transit points as positions. Their quaternion is never a
+    # route constraint: use the same zero-quaternion action inputs that the
+    # Nav2 free-heading BT node receives at runtime.
+    ordered = materialize_route(source, checked_segments)
+    executable_route = materialize_free_yaws(ordered)
+    indexed = {waypoint.id: waypoint for waypoint in executable_route}
     planner = LatticePreflightPlanner(reference)
     warnings: list[str] = []
-    reports: list[SegmentPreflight] = []
+    reports_by_id: dict[str, SegmentPreflight] = {}
 
-    for segment in segments:
-        items = _segment_waypoints(segment, indexed)
-        constraints = _constraints_for_segment(items, warnings)
-        virtual_offset = math.pi if segment.direction == "reverse" else 0.0
-        legs: list[LegPreflight] = []
-        failed_message = ""
-
-        if constraints[0].yaw is None:
-            start_id, _start = items[0]
-            end_id, _end = items[1]
-            message = (
-                f"{start_id} -> {end_id}: orientation-unconstrained segment starts "
-                "cannot be checked offline"
-            )
-            legs.append(LegPreflight(start_id, end_id, (), 0.0, 0, False, message))
-            reports.append(SegmentPreflight(
-                segment_id=segment.id,
-                direction=segment.direction,
-                legs=tuple(legs),
-                feasible=False,
-                length_m=0.0,
-                message=message,
-            ))
-            continue
-
-        if any(constraint.yaw is None for constraint in constraints[1:]):
-            virtual_start = Pose2D(
-                constraints[0].x,
-                constraints[0].y,
-                constraints[0].yaw + virtual_offset,
-            )
-            virtual_goals = tuple(
-                _PoseConstraint(
-                    constraint.x,
-                    constraint.y,
-                    None if constraint.yaw is None else constraint.yaw + virtual_offset,
-                )
-                for constraint in constraints[1:]
-            )
-            planned_through = planner.plan_through(virtual_start, virtual_goals)
-            if len(planned_through.legs) != len(virtual_goals):
-                failed_leg_index = min(
-                    planned_through.completed_goals,
-                    len(items) - 2,
-                )
-                start_id, _start = items[failed_leg_index]
-                end_id, _end = items[failed_leg_index + 1]
-                message = (
-                    f"{start_id} -> {end_id}: no collision-free "
-                    "minimum-radius route"
-                )
-                legs.append(LegPreflight(
-                    start_id,
-                    end_id,
-                    (),
-                    0.0,
-                    planned_through.expanded_states[failed_leg_index],
-                    False,
-                    message,
-                ))
-                failed_message = message
-            else:
-                for (
-                    (start_id, _start),
-                    (end_id, _end),
-                    points,
-                    expanded,
-                ) in zip(
-                    items,
-                    items[1:],
-                    planned_through.legs,
-                    planned_through.expanded_states,
-                ):
-                    legs.append(LegPreflight(
-                        start_id,
-                        end_id,
-                        points,
-                        _polyline_length(points),
-                        expanded,
-                        True,
-                    ))
-            feasible = not failed_message and len(legs) == len(items) - 1
-            reports.append(SegmentPreflight(
-                segment_id=segment.id,
-                direction=segment.direction,
-                legs=tuple(legs),
-                feasible=feasible,
-                length_m=sum(leg.length_m for leg in legs),
-                message=failed_message,
-            ))
-            continue
-
-        poses = tuple(
-            Pose2D(constraint.x, constraint.y, constraint.yaw)
-            for constraint in constraints
+    for action in _runtime_navigation_actions(source, checked_segments):
+        action_items = (
+            (action.start_id, indexed[action.start_id]),
+            *((goal_id, indexed[goal_id]) for goal_id in action.goal_ids),
         )
-        for (start_id, _start), (end_id, _end), start_pose, end_pose in zip(
-            items,
-            items[1:],
-            poses,
-            poses[1:],
-        ):
-            virtual_start = Pose2D(start_pose.x, start_pose.y, start_pose.yaw + virtual_offset)
-            virtual_end = Pose2D(end_pose.x, end_pose.y, end_pose.yaw + virtual_offset)
-            planned = planner.plan(virtual_start, virtual_end)
-            if planned is None:
-                message = (
-                    f"{start_id} -> {end_id}: no collision-free "
-                    "minimum-radius route"
-                )
-                legs.append(LegPreflight(start_id, end_id, (), 0.0, 0, False, message))
-                failed_message = message
-                break
-            points, expanded = planned
-            legs.append(LegPreflight(
-                start_id,
-                end_id,
-                points,
-                _polyline_length(points),
-                expanded,
-                True,
-            ))
-        feasible = not failed_message and len(legs) == len(items) - 1
-        reports.append(SegmentPreflight(
-            segment_id=segment.id,
-            direction=segment.direction,
-            legs=tuple(legs),
-            feasible=feasible,
-            length_m=sum(leg.length_m for leg in legs),
-            message=failed_message,
-        ))
-    return RoutePreflight(tuple(reports), tuple(dict.fromkeys(warnings)))
+        constraints = _constraints_for_segment(action_items, warnings)
+        planned_through = _plan_segment_through_constraints(
+            planner, constraints, action.segments[0].direction
+        )
+        if len(planned_through.legs) == len(action.goal_ids):
+            action_reports = _successful_action_reports(action, planned_through)
+        else:
+            action_reports = _failed_action_reports(action, planned_through)
+        reports_by_id.update({report.segment_id: report for report in action_reports})
+
+    reports = tuple(reports_by_id[segment.id] for segment in checked_segments)
+    return RoutePreflight(reports, tuple(dict.fromkeys(warnings)))

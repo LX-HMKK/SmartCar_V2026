@@ -62,11 +62,14 @@ class TaskLaunchContractTests(unittest.TestCase):
         ):
             self.assertIn(token, source)
 
-    def test_navigate_to_pose_goal_is_uuid_and_direction_bound(self):
+    def test_navigation_goals_are_uuid_and_direction_bound(self):
         source = NODE.read_text(encoding="utf-8")
         self.assertIn("goal = NavigateToPose.Goal()", source)
-        self.assertIn("goal.pose.header.frame_id = waypoint.frame_id", source)
+        self.assertIn("goal.pose = self._pose_stamped(waypoint)", source)
+        self.assertIn("pose.header.frame_id = waypoint.frame_id", source)
         self.assertIn("goal.behavior_tree = behavior_tree", source)
+        self.assertIn("goal = NavigateThroughPoses.Goal()", source)
+        self.assertIn("goal.poses = [self._pose_stamped(waypoint)", source)
         self.assertIn("goal, goal_uuid=action_uuid", source)
         self.assertIn("motion_direction(reverse_direction)", source)
         self.assertNotIn("FollowWaypoints", source)

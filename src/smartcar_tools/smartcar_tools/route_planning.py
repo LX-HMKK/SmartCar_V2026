@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 CONFIG_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
 
 
@@ -34,6 +34,23 @@ class RoutePlanningConfigError(ValueError):
 class CZoneKeepoutConfig:
     horizontal_inset_m: float
     vertical_inset_m: float
+
+
+@dataclass(frozen=True)
+class RuntimeFootprintConfig:
+    """Nav2 footprint vertices and padding expressed as half extents."""
+
+    half_length_m: float
+    half_width_m: float
+    padding_m: float
+
+    @property
+    def padded_half_length_m(self) -> float:
+        return self.half_length_m + self.padding_m
+
+    @property
+    def padded_half_width_m(self) -> float:
+        return self.half_width_m + self.padding_m
 
 
 @dataclass(frozen=True)
@@ -55,12 +72,13 @@ class PreflightConfig:
 @dataclass(frozen=True)
 class SimulationKeepoutConfig:
     map_resolution_m: float
+    costmap_inflation_radius_m: float
 
 
 @dataclass(frozen=True)
 class RoutePlanningConfig:
     minimum_turning_radius_m: float
-    footprint_envelope_radius_m: float
+    runtime_footprint: RuntimeFootprintConfig
     c_zone_keepout: CZoneKeepoutConfig
     preflight: PreflightConfig
     simulation_keepout: SimulationKeepoutConfig
@@ -187,7 +205,7 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             "schema_version",
             "name",
             "minimum_turning_radius_m",
-            "footprint_envelope_radius_m",
+            "runtime_footprint",
             "c_zone_keepout",
             "preflight",
             "simulation_keepout",
@@ -206,6 +224,12 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
         c_zone,
         {"horizontal_inset_m", "vertical_inset_m"},
         "c_zone_keepout",
+    )
+    footprint = _mapping(root["runtime_footprint"], "runtime_footprint")
+    _exact_fields(
+        footprint,
+        {"half_length_m", "half_width_m", "padding_m"},
+        "runtime_footprint",
     )
     preflight = _mapping(root["preflight"], "preflight")
     _exact_fields(
@@ -227,15 +251,26 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
         "preflight",
     )
     simulation = _mapping(root["simulation_keepout"], "simulation_keepout")
-    _exact_fields(simulation, {"map_resolution_m"}, "simulation_keepout")
+    _exact_fields(
+        simulation,
+        {"map_resolution_m", "costmap_inflation_radius_m"},
+        "simulation_keepout",
+    )
 
     result = RoutePlanningConfig(
         minimum_turning_radius_m=_positive_number(
             root["minimum_turning_radius_m"], "minimum_turning_radius_m"
         ),
-        footprint_envelope_radius_m=_positive_number(
-            root["footprint_envelope_radius_m"],
-            "footprint_envelope_radius_m",
+        runtime_footprint=RuntimeFootprintConfig(
+            half_length_m=_positive_number(
+                footprint["half_length_m"], "runtime_footprint.half_length_m"
+            ),
+            half_width_m=_positive_number(
+                footprint["half_width_m"], "runtime_footprint.half_width_m"
+            ),
+            padding_m=_nonnegative_number(
+                footprint["padding_m"], "runtime_footprint.padding_m"
+            ),
         ),
         c_zone_keepout=CZoneKeepoutConfig(
             horizontal_inset_m=_nonnegative_number(
@@ -294,6 +329,10 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             map_resolution_m=_positive_number(
                 simulation["map_resolution_m"],
                 "simulation_keepout.map_resolution_m",
+            ),
+            costmap_inflation_radius_m=_positive_number(
+                simulation["costmap_inflation_radius_m"],
+                "simulation_keepout.costmap_inflation_radius_m",
             ),
         ),
     )

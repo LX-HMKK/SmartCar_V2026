@@ -8,6 +8,8 @@ the real vehicle.
 
 from __future__ import annotations
 
+import math
+
 from smartcar_tools.field_reference import Bounds2D, FieldReference
 from smartcar_tools.route_planning import (
     RoutePlanningConfig,
@@ -50,4 +52,46 @@ def keepout_bounds(
         Bounds2D(field.x_min, field.x_max, outer.y_max, field.y_max),
         Bounds2D(field.x_min, outer.x_min, outer.y_min, outer.y_max),
         Bounds2D(outer.x_max, field.x_max, outer.y_min, outer.y_max),
+    )
+
+
+def _rasterized_bounds(
+    bounds: Bounds2D,
+    field: Bounds2D,
+    resolution: float,
+) -> Bounds2D:
+    """Return the full PGM cells occupied by ``generate_field_map.fill_rect``."""
+    x_min = max(
+        field.x_min,
+        field.x_min
+        + math.floor((bounds.x_min - field.x_min) / resolution) * resolution,
+    )
+    x_max = min(
+        field.x_max,
+        field.x_min
+        + math.ceil((bounds.x_max - field.x_min) / resolution) * resolution,
+    )
+    y_min = max(
+        field.y_min,
+        field.y_min
+        + math.floor((bounds.y_min - field.y_min) / resolution) * resolution,
+    )
+    y_max = min(
+        field.y_max,
+        field.y_min
+        + math.ceil((bounds.y_max - field.y_min) / resolution) * resolution,
+    )
+    return Bounds2D(x_min, x_max, y_min, y_max)
+
+
+def keepout_mask_bounds(
+    reference: FieldReference,
+    config: RoutePlanningConfig | None = None,
+) -> tuple[Bounds2D, ...]:
+    """Return occupied PGM-cell bounds used by simulation KeepoutFilter."""
+    settings = config or load_route_planning_config()
+    resolution = settings.simulation_keepout.map_resolution_m
+    return tuple(
+        _rasterized_bounds(bounds, reference.field, resolution)
+        for bounds in keepout_bounds(reference, settings)
     )

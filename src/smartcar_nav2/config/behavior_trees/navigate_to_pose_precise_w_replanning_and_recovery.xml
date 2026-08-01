@@ -4,8 +4,19 @@
     <RecoveryNode number_of_retries="6" name="NavigatePreciseRecovery">
       <PipelineSequence name="NavigatePreciseWithReplanning">
         <RateController hz="0.5">
-          <RecoveryNode number_of_retries="1" name="ComputePrecisePathToPose">
-            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+          <RecoveryNode number_of_retries="1" name="ComputePreciseFreeHeadingPathToPose">
+            <ComputeFreeHeadingPathToPose
+                goal="{goal}"
+                path="{path}"
+                planner_id="GridBased"
+                heading_samples="12"
+                candidate_timeout_ms="3500"
+                max_initial_path_length_ratio="1.60"
+                max_start_drift_m="0.10"
+                footprint_half_length_m="0.30"
+                footprint_half_width_m="0.16"
+                footprint_sweep_step_m="0.025"
+                footprint_lethal_cost="253"/>
             <ClearEntireCostmap name="ClearGlobalCostmap-PreciseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>

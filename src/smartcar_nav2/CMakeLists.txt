@@ -94,6 +94,57 @@ ament_target_dependencies(smartcar_compute_reverse_path_through_poses_action_bt_
   tf2_ros
 )
 
+add_library(smartcar_compute_free_heading_path_action_bt_node SHARED
+  src/compute_free_heading_path_action.cpp
+)
+target_compile_definitions(smartcar_compute_free_heading_path_action_bt_node PRIVATE
+  BT_PLUGIN_EXPORT
+)
+target_include_directories(smartcar_compute_free_heading_path_action_bt_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+target_link_libraries(smartcar_compute_free_heading_path_action_bt_node
+  reverse_path_utils
+)
+ament_target_dependencies(smartcar_compute_free_heading_path_action_bt_node
+  behaviortree_cpp_v3
+  geometry_msgs
+  nav2_behavior_tree
+  nav2_msgs
+  nav2_util
+  nav_msgs
+  rclcpp
+  rclcpp_action
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
+)
+
+add_library(smartcar_ackermann_reverse_retreat_action_bt_node SHARED
+  src/ackermann_reverse_retreat_action.cpp
+)
+target_compile_definitions(smartcar_ackermann_reverse_retreat_action_bt_node PRIVATE
+  BT_PLUGIN_EXPORT
+)
+target_include_directories(smartcar_ackermann_reverse_retreat_action_bt_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(smartcar_ackermann_reverse_retreat_action_bt_node
+  behaviortree_cpp_v3
+  geometry_msgs
+  nav2_behavior_tree
+  nav2_msgs
+  nav2_util
+  nav_msgs
+  rclcpp
+  rclcpp_action
+  tf2
+  tf2_geometry_msgs
+  tf2_ros
+)
+
 add_library(smartcar_reverse_only_mppi_controller SHARED
   src/reverse_only_mppi_controller.cpp
 )
@@ -139,6 +190,7 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
 set(SMARTCAR_NAV2_BEHAVIOR_TREE_FILES
   config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_through_poses_reverse_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_precise_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml
@@ -162,6 +214,8 @@ install(TARGETS
   reverse_path_utils
   smartcar_compute_reverse_path_to_pose_action_bt_node
   smartcar_compute_reverse_path_through_poses_action_bt_node
+  smartcar_compute_free_heading_path_action_bt_node
+  smartcar_ackermann_reverse_retreat_action_bt_node
   smartcar_reverse_only_mppi_controller
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
@@ -180,11 +234,42 @@ if(BUILD_TESTING)
   ament_add_gtest(test_reverse_command_filter
     test/test_reverse_command_filter.cpp
   )
+  ament_add_gtest(test_free_transit_goal_samples
+    test/test_free_transit_goal_samples.cpp
+  )
+  ament_add_gtest(test_costmap_footprint_sweep
+    test/test_costmap_footprint_sweep.cpp
+  )
+  ament_add_gtest(test_ackermann_reverse_retreat_path
+    test/test_ackermann_reverse_retreat_path.cpp
+  )
+  target_include_directories(test_free_transit_goal_samples PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_include_directories(test_costmap_footprint_sweep PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
+  target_include_directories(test_ackermann_reverse_retreat_path PRIVATE
+    ${CMAKE_CURRENT_SOURCE_DIR}/include
+  )
   target_include_directories(test_reverse_command_filter PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_link_libraries(test_reverse_path_utils reverse_path_utils)
   ament_target_dependencies(test_reverse_path_utils
+    geometry_msgs
+    nav_msgs
+    tf2
+    tf2_geometry_msgs
+  )
+  ament_target_dependencies(test_costmap_footprint_sweep
+    geometry_msgs
+    nav2_msgs
+    nav_msgs
+    tf2
+    tf2_geometry_msgs
+  )
+  ament_target_dependencies(test_ackermann_reverse_retreat_path
     geometry_msgs
     nav_msgs
     tf2

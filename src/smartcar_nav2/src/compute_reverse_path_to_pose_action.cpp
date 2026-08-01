@@ -26,6 +26,7 @@ ComputeReversePathToPoseAction::ComputeReversePathToPoseAction(
 void ComputeReversePathToPoseAction::on_tick()
 {
   goal_ = nav2_msgs::action::ComputePathToPose::Goal();
+  setOutput("recovery_eligible", false);
   if (!getInput("goal", real_goal_)) {
     RCLCPP_ERROR(node_->get_logger(), "Reverse planner goal is missing");
     should_send_goal_ = false;
@@ -65,6 +66,7 @@ BT::NodeStatus ComputeReversePathToPoseAction::on_success()
 {
   if (!result_.result) {
     clearPathOutput();
+    setOutput("recovery_eligible", true);
     RCLCPP_ERROR(node_->get_logger(), "Reverse planner returned no result");
     return BT::NodeStatus::FAILURE;
   }
@@ -84,6 +86,7 @@ BT::NodeStatus ComputeReversePathToPoseAction::on_success()
     restored_path, real_start_, real_goal_, validation_options_);
   if (!validation.valid) {
     clearPathOutput();
+    setOutput("recovery_eligible", true);
     RCLCPP_ERROR(
       node_->get_logger(),
       "Rejected reverse path: %s at segment %zu/%zu (observed=%.6f, limit=%.6f)",
@@ -117,12 +120,14 @@ BT::NodeStatus ComputeReversePathToPoseAction::on_success()
 BT::NodeStatus ComputeReversePathToPoseAction::on_aborted()
 {
   clearPathOutput();
+  setOutput("recovery_eligible", true);
   return BT::NodeStatus::FAILURE;
 }
 
 BT::NodeStatus ComputeReversePathToPoseAction::on_cancelled()
 {
   clearPathOutput();
+  setOutput("recovery_eligible", false);
   return BT::NodeStatus::FAILURE;
 }
 

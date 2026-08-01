@@ -8,8 +8,6 @@ import math
 import re
 from pathlib import Path
 
-import yaml
-
 
 SUCCEEDED_STATUS = 4
 VELOCITY_EPSILON = 1.0e-3
@@ -21,37 +19,48 @@ HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
 HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
-# The reverse ThroughPoses BT removes a waypoint at 0.15 m.  Keep only the
+# The free ThroughPoses BT removes a normal waypoint at 0.50 m. Keep only the
 # odometry observer margin beyond that runtime contract.
-THROUGH_POSE_DISTANCE_TOLERANCE_M = 0.17
+THROUGH_POSE_DISTANCE_TOLERANCE_M = 0.52
 EXPECTED_ROUTE = (
     ("a_task_observe", "forward", "precise"),
+    ("b_corridor_gate", "reverse", "standard"),
     ("b_corridor_enter", "reverse", "standard"),
+    ("c_entry_west", "reverse", "standard"),
     ("c_corner_1", "reverse", "standard"),
     ("c_corner_2", "reverse", "standard"),
     ("c_corner_3", "reverse", "standard"),
     ("c_corner_4", "reverse", "standard"),
     ("b_corridor_return_enter", "reverse", "standard"),
+    ("b_corridor_return_drop", "reverse", "standard"),
     ("b_corridor_return", "reverse", "standard"),
     ("p_finish", "reverse", "standard"),
 )
 EXPECTED_GOAL_CONTRACTS = {
     "a_task_observe": ("precise_goal_checker", (0.08, 0.25), (0.10, 0.30)),
-    "b_corridor_enter": ("reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
-    "c_corner_1": ("reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
-    "c_corner_2": ("reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
-    "c_corner_3": ("reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
-    "c_corner_4": ("reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
+    "b_corridor_gate": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "b_corridor_enter": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_entry_west": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_corner_1": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_corner_2": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_corner_3": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_corner_4": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
     "b_corridor_return_enter": (
-        "reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
+        "reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "b_corridor_return_drop": (
+        "reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
     "b_corridor_return": (
-        "reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
-    "p_finish": ("reverse_goal_checker", (0.08, 0.25), (0.10, 0.50)),
+        "reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "p_finish": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
 }
 EXPECTED_BEHAVIOR_TREES = {
     "a_task_observe": (
         "navigate_to_pose_precise_w_replanning_and_recovery.xml"),
+    "b_corridor_gate": (
+        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
     "b_corridor_enter": (
+        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
+    "c_entry_west": (
         "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
     "c_corner_1": (
         "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
@@ -62,6 +71,8 @@ EXPECTED_BEHAVIOR_TREES = {
     "c_corner_4": (
         "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
     "b_corridor_return_enter": (
+        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
+    "b_corridor_return_drop": (
         "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
     "b_corridor_return": (
         "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
@@ -83,14 +94,20 @@ ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
 ALLOWED_GOAL_PROFILES = frozenset({
     "standard", "precise", "reverse_handoff",
 })
+ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
 MAX_DYNAMIC_GOAL_TOLERANCES = {
     ("forward", "standard"): (0.25, 0.50),
     ("forward", "precise"): (0.25, 0.30),
-    ("reverse", "standard"): (0.25, 0.50),
+    ("reverse", "standard"): (0.35, 0.50),
     ("reverse", "reverse_handoff"): (0.20, 0.30),
 }
+# Position-only transit gates may use the temporary 0.50 m verification
+# envelope. Semantic task poses use their dedicated tighter checkers.
+MAX_TRANSIT_XY_GOAL_TOLERANCE_M = 0.50
 POSE_POSITION_FIELDS = ("x", "y", "z")
 POSE_ORIENTATION_FIELDS = ("x", "y", "z", "w")
+QUATERNION_NORM_TOLERANCE = 1.0e-3
+HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm", "return"})
 
 
 def _finite_number(value):
@@ -105,7 +122,7 @@ def _nonempty_string(value):
     return isinstance(value, str) and bool(value.strip())
 
 
-def _route_goal_pose(goal, label, errors):
+def _route_goal_pose(goal, label, errors, heading_mode=None):
     """Validate and normalize one physical goal snapshot from auto_train."""
     frame_id = goal.get("frame_id")
     if not _nonempty_string(frame_id):
@@ -141,6 +158,25 @@ def _route_goal_pose(goal, label, errors):
         else:
             normalized_orientation[field] = float(value)
     if not valid:
+        return None
+    quaternion_norm = math.sqrt(
+        sum(component * component for component in normalized_orientation.values())
+    )
+    is_zero = quaternion_norm <= QUATERNION_NORM_TOLERANCE
+    is_unit = abs(quaternion_norm - 1.0) <= QUATERNION_NORM_TOLERANCE
+    if heading_mode == "free" and not is_zero:
+        errors.append(
+            f"{label}.pose.orientation must be the free-heading zero quaternion"
+        )
+        return None
+    if heading_mode == "locked" and not is_unit:
+        errors.append(f"{label}.pose.orientation must be a unit quaternion")
+        return None
+    if heading_mode is None and not (is_zero or is_unit):
+        errors.append(
+            f"{label}.pose.orientation must be a unit quaternion or "
+            "the free-heading zero quaternion"
+        )
         return None
     return str(frame_id), normalized_position, normalized_orientation
 
@@ -188,6 +224,7 @@ def _dynamic_route_stages(data):
             goal_id = raw_goal.get("id")
             goal_direction = raw_goal.get("direction")
             goal_profile = raw_goal.get("goal_profile", "standard")
+            heading_mode = raw_goal.get("heading_mode")
             if not _nonempty_string(goal_id):
                 errors.append(f"{goal_label}.id must be non-empty")
                 continue
@@ -202,8 +239,12 @@ def _dynamic_route_stages(data):
                 errors.append(f"{goal_label}.precise goal must be forward")
             if goal_profile == "reverse_handoff" and direction != "reverse":
                 errors.append(f"{goal_label}.reverse_handoff goal must be reverse")
-            _route_goal_pose(raw_goal, goal_label, errors)
-            parsed_goals.append((goal_id, goal_direction, goal_profile))
+            if heading_mode not in ALLOWED_HEADING_MODES:
+                errors.append(f"{goal_label}.heading_mode must be free or locked")
+            _route_goal_pose(raw_goal, goal_label, errors, heading_mode)
+            parsed_goals.append(
+                (goal_id, goal_direction, goal_profile, heading_mode)
+            )
         stages.append((segment_id, direction, tuple(parsed_goals)))
     return tuple(stages), errors
 
@@ -218,28 +259,54 @@ def _goal_behavior_tree(direction, goal_profile):
     return "navigate_to_pose_w_replanning_and_recovery.xml"
 
 
-def _goal_checker(direction, goal_profile):
+def _goal_checker(direction, goal_profile, heading_mode):
     if goal_profile == "precise":
         return "precise_goal_checker"
+    if heading_mode == "free":
+        return "transit_goal_checker"
     if direction == "reverse":
         return "reverse_goal_checker"
     return "goal_checker"
 
 
-def _validate_goal_completion(result, direction, goal_profile, label, errors):
+def _goal_tolerance_limits(direction, goal_profile, heading_mode):
+    """Return the maximum accepted execution tolerance for one goal."""
+    if goal_profile == "precise":
+        return MAX_DYNAMIC_GOAL_TOLERANCES[(direction, goal_profile)]
+    if heading_mode == "free":
+        return MAX_TRANSIT_XY_GOAL_TOLERANCE_M, None
+    return MAX_DYNAMIC_GOAL_TOLERANCES[(direction, goal_profile)]
+
+
+def _validate_goal_completion(
+    result, direction, goal_profile, heading_mode, label, errors
+):
     """Check observed terminal pose against the goal checker recorded at run time."""
-    expected_checker = _goal_checker(direction, goal_profile)
+    expected_checker = _goal_checker(direction, goal_profile, heading_mode)
     if result.get("goal_checker") != expected_checker:
-        errors.append(f"{label} goal_checker does not match its direction/profile")
+        errors.append(
+            f"{label} goal_checker does not match its direction/profile/heading"
+        )
     xy_tolerance = result.get("xy_goal_tolerance_m")
     yaw_tolerance = result.get("yaw_goal_tolerance_rad")
-    if not _finite_number(xy_tolerance) or not _finite_number(yaw_tolerance):
-        errors.append(f"{label} goal tolerances must be finite")
+    if not _finite_number(xy_tolerance):
+        errors.append(f"{label} xy_goal_tolerance_m must be finite")
         return
-    max_xy, max_yaw = MAX_DYNAMIC_GOAL_TOLERANCES[(direction, goal_profile)]
+    max_xy, max_yaw = _goal_tolerance_limits(
+        direction, goal_profile, heading_mode
+    )
     if float(xy_tolerance) <= 0.0 or float(xy_tolerance) > max_xy:
         errors.append(f"{label} xy_goal_tolerance_m exceeds its safe contract")
-    if float(yaw_tolerance) <= 0.0 or float(yaw_tolerance) > max_yaw:
+    if max_yaw is None:
+        if yaw_tolerance is not None:
+            errors.append(
+                f"{label} free-heading goal must not report yaw_goal_tolerance_rad"
+            )
+    elif (
+        not _finite_number(yaw_tolerance)
+        or float(yaw_tolerance) <= 0.0
+        or float(yaw_tolerance) > max_yaw
+    ):
         errors.append(f"{label} yaw_goal_tolerance_rad exceeds its safe contract")
     if result.get("position_observer_margin_m") != POSITION_OBSERVER_MARGIN_M:
         errors.append(f"{label} position observer margin is invalid")
@@ -247,16 +314,35 @@ def _validate_goal_completion(result, direction, goal_profile, label, errors):
         errors.append(f"{label} yaw observer margin is invalid")
     position_error = result.get("goal_error_m")
     yaw_error = result.get("goal_yaw_error_rad")
+    if result.get("heading_mode") != heading_mode:
+        errors.append(f"{label} heading_mode does not match its saved route")
     if (
         not _finite_number(position_error)
         or float(position_error) > float(xy_tolerance) + POSITION_OBSERVER_MARGIN_M
     ):
         errors.append(f"{label} final goal position is outside tolerance")
-    if (
-        not _finite_number(yaw_error)
-        or float(yaw_error) > float(yaw_tolerance) + YAW_OBSERVER_MARGIN_RAD
+    if heading_mode == "locked":
+        if (
+            not _finite_number(yaw_error)
+            or float(yaw_error) > float(yaw_tolerance) + YAW_OBSERVER_MARGIN_RAD
+        ):
+            errors.append(f"{label} final goal yaw is outside tolerance")
+        return
+    for field in (
+        "target_yaw_rad",
+        "goal_yaw_error_rad",
+        "signed_goal_yaw_error_rad",
     ):
-        errors.append(f"{label} final goal yaw is outside tolerance")
+        if field not in result or result[field] is not None:
+            errors.append(f"{label} free-heading goal must not report {field}")
+    if (
+        "signed_plan_goal_yaw_error_rad" in result
+        and result["signed_plan_goal_yaw_error_rad"] is not None
+    ):
+        errors.append(
+            f"{label} free-heading goal must not report "
+            "signed_plan_goal_yaw_error_rad"
+        )
 
 
 def _validate_command_direction(result, direction, label, errors):
@@ -279,13 +365,15 @@ def _validate_command_direction(result, direction, label, errors):
 
 
 def _validate_dynamic_single_goal(result, expected, label, errors):
-    waypoint_id, direction, goal_profile = expected
+    waypoint_id, direction, goal_profile, heading_mode = expected
     if not isinstance(result, dict):
         errors.append(f"{label} must be an object")
         return
     actual = (result.get("id"), result.get("direction"), result.get("goal_profile"))
-    if actual != expected:
-        errors.append(f"{label} route mismatch: expected {expected}, got {actual}")
+    if actual != expected[:3]:
+        errors.append(
+            f"{label} route mismatch: expected {expected[:3]}, got {actual}"
+        )
     if result.get("outcome") != "succeeded":
         errors.append(f"{label} outcome must be succeeded")
     if result.get("status") != SUCCEEDED_STATUS:
@@ -295,7 +383,9 @@ def _validate_dynamic_single_goal(result, expected, label, errors):
     expected_tree = _goal_behavior_tree(direction, goal_profile)
     if result.get("behavior_tree") != expected_tree:
         errors.append(f"{label} behavior_tree must be {expected_tree}")
-    _validate_goal_completion(result, direction, goal_profile, label, errors)
+    _validate_goal_completion(
+        result, direction, goal_profile, heading_mode, label, errors
+    )
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
         errors.append(f"{label} path_messages must be positive")
@@ -306,6 +396,7 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     segment_id, direction, goals = stage
     expected_ids = [goal[0] for goal in goals]
     expected_profiles = [goal[2] for goal in goals]
+    terminal_heading_mode = goals[-1][3]
     if not isinstance(result, dict):
         errors.append(f"{label} must be an object")
         return
@@ -337,7 +428,9 @@ def _validate_dynamic_through_result(result, stage, label, errors):
         errors.append(f"{label} status must be {SUCCEEDED_STATUS}")
     if result.get("contract_errors") != []:
         errors.append(f"{label} contract_errors must be empty")
-    _validate_goal_completion(result, direction, "standard", label, errors)
+    _validate_goal_completion(
+        result, direction, "standard", terminal_heading_mode, label, errors
+    )
     _validate_command_direction(result, direction, label, errors)
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
@@ -430,106 +523,248 @@ def _validate_traceability(data, started_after, errors):
         errors.append("timestamp predates this simulation run")
 
 
-def _waypoint_snapshot_index(path, errors):
+def _route_materializers():
+    """Import the runtime route helpers, including when tests use source trees.
+
+    ``validate_sim_results.py`` normally runs after ``install/setup.bash`` has
+    made ``smartcar_task`` importable.  The repository-level unit tests load
+    this script directly, so fall back to its adjacent source package only in
+    that case.  The expected route always comes from the same helpers used by
+    ``auto_train``.
+    """
     try:
-        document = yaml.safe_load(path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError) as error:
-        errors.append(f"cannot read waypoint snapshot {path}: {error}")
-        return None
-    if not isinstance(document, dict) or not isinstance(document.get("waypoints"), list):
-        errors.append(f"waypoint snapshot {path} has no waypoint list")
-        return None
-    indexed = {}
-    for index, waypoint in enumerate(document["waypoints"]):
-        label = f"waypoint snapshot[{index}]"
-        if not isinstance(waypoint, dict) or not _nonempty_string(waypoint.get("id")):
-            errors.append(f"{label} must have a non-empty id")
-            continue
-        waypoint_id = waypoint["id"]
-        if waypoint_id in indexed:
-            errors.append(f"waypoint snapshot has duplicate id {waypoint_id!r}")
-            continue
-        pose = waypoint.get("pose")
-        position = pose.get("position") if isinstance(pose, dict) else None
-        orientation = pose.get("orientation") if isinstance(pose, dict) else None
-        normalized = {
-            "frame_id": waypoint.get("frame_id", "odom_combined"),
-            "pose": {
-                "position": {
-                    "x": position.get("x") if isinstance(position, dict) else None,
-                    "y": position.get("y") if isinstance(position, dict) else None,
-                    "z": (
-                        position.get("z", 0.0)
-                        if isinstance(position, dict) else None
-                    ),
-                },
-                "orientation": {
-                    field: (
-                        orientation.get(field, 0.0)
-                        if isinstance(orientation, dict) else 0.0
-                    )
-                    for field in POSE_ORIENTATION_FIELDS
-                },
-            },
-        }
-        normalized = _route_goal_pose(normalized, label, errors)
-        if normalized is not None:
-            indexed[waypoint_id] = (
-                normalized,
-                waypoint.get("goal_profile", "standard"),
-            )
-    return indexed
+        from smartcar_task.planning_segments import (
+            load_planning_segments,
+            materialize_mission_route,
+            materialize_navigation_segments,
+        )
+        from smartcar_task.route_geometry import materialize_free_yaws
+        from smartcar_task.waypoints import is_heading_locked, load_waypoint_document
+    except ModuleNotFoundError as error:
+        if error.name != "smartcar_task":
+            raise
+        import sys
 
-
-def _poses_match(actual, expected):
-    actual_frame, actual_position, actual_orientation = actual
-    expected_frame, expected_position, expected_orientation = expected
-    if actual_frame != expected_frame:
-        return False
-    return all(
-        math.isclose(actual_position[field], expected_position[field], abs_tol=1.0e-9)
-        for field in POSE_POSITION_FIELDS
-    ) and all(
-        math.isclose(
-            actual_orientation[field], expected_orientation[field], abs_tol=1.0e-9)
-        for field in POSE_ORIENTATION_FIELDS
+        source_package = Path(__file__).resolve().parents[2] / "smartcar_task"
+        if not source_package.is_dir():
+            raise
+        sys.path.insert(0, str(source_package))
+        from smartcar_task.planning_segments import (
+            load_planning_segments,
+            materialize_mission_route,
+            materialize_navigation_segments,
+        )
+        from smartcar_task.route_geometry import materialize_free_yaws
+        from smartcar_task.waypoints import is_heading_locked, load_waypoint_document
+    return (
+        load_planning_segments,
+        materialize_mission_route,
+        materialize_navigation_segments,
+        materialize_free_yaws,
+        is_heading_locked,
+        load_waypoint_document,
     )
 
 
-def _validate_waypoint_snapshot(data, path, errors):
-    """Tie a result manifest to the exact waypoint snapshot given to CI."""
+def _snapshot_goal(waypoint, is_heading_locked):
+    """Serialize one materialized Waypoint exactly as auto_train does."""
+    x, y, z = waypoint.position
+    qx, qy, qz, qw = waypoint.orientation
+    return {
+        "id": waypoint.id,
+        "task": waypoint.task,
+        "heading_mode": "locked" if is_heading_locked(waypoint) else "free",
+        "direction": waypoint.direction,
+        "goal_profile": waypoint.goal_profile,
+        "frame_id": waypoint.frame_id,
+        "pose": {
+            "position": {"x": float(x), "y": float(y), "z": float(z)},
+            "orientation": {"x": qx, "y": qy, "z": qz, "w": qw},
+        },
+    }
+
+
+def _reconstructed_action_stages(path, errors):
+    """Rebuild the complete, unfiltered action route from a YAML snapshot."""
     snapshot = Path(path)
     if not snapshot.is_file():
         errors.append(f"waypoint snapshot is not a file: {snapshot}")
-        return
-    expected_hash = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+        return None
+    try:
+        (
+            load_planning_segments,
+            materialize_mission_route,
+            materialize_navigation_segments,
+            materialize_free_yaws,
+            is_heading_locked,
+            load_waypoint_document,
+        ) = _route_materializers()
+        document, authored_waypoints = load_waypoint_document(snapshot)
+        segments = load_planning_segments(document, authored_waypoints)
+        ordered_waypoints = materialize_mission_route(
+            authored_waypoints, segments)
+        materialized_route = materialize_free_yaws(ordered_waypoints)
+        action_segments = materialize_navigation_segments(
+            authored_waypoints, segments)
+    except (OSError, ValueError) as error:
+        errors.append(
+            f"waypoint snapshot cannot reconstruct complete route: {error}")
+        return None
+
+    materialized_by_id = {
+        waypoint.id: waypoint for waypoint in materialized_route
+    }
+    stages = []
+    for index, action_segment in enumerate(action_segments, start=1):
+        goals = tuple(
+            _snapshot_goal(materialized_by_id[source.id], is_heading_locked)
+            for source in action_segment
+        )
+        if not goals:
+            errors.append(
+                f"waypoint snapshot generated an empty action {index}")
+            return None
+        stages.append((
+            f"action_{index}_{goals[0]['id']}_to_{goals[-1]['id']}",
+            goals[0]["direction"],
+            goals,
+        ))
+    return tuple(stages)
+
+
+def _goal_pose_matches(actual, expected):
+    actual_frame, actual_position, actual_orientation = actual
+    expected_frame, expected_position, expected_orientation = expected
+    return (
+        actual_frame == expected_frame
+        and all(
+            math.isclose(
+                actual_position[field], expected_position[field],
+                rel_tol=0.0, abs_tol=1.0e-9,
+            )
+            for field in POSE_POSITION_FIELDS
+        )
+        and all(
+            math.isclose(
+                actual_orientation[field], expected_orientation[field],
+                rel_tol=0.0, abs_tol=1.0e-9,
+            )
+            for field in POSE_ORIENTATION_FIELDS
+        )
+    )
+
+
+def _snapshot_heading_mode(goal):
+    return goal.get(
+        "heading_mode",
+        "locked" if goal["task"] in HEADING_LOCKED_TASKS else "free",
+    )
+
+
+def _validate_reconstructed_route(data, path, errors):
+    """Bind the manifest to the snapshot's full runtime-materialized route."""
+    snapshot = Path(path)
+    if not snapshot.is_file():
+        errors.append(f"waypoint snapshot is not a file: {snapshot}")
+        return None
+    try:
+        expected_hash = hashlib.sha256(snapshot.read_bytes()).hexdigest()
+    except OSError as error:
+        errors.append(f"cannot read waypoint snapshot {snapshot}: {error}")
+        return None
     inputs = data.get("inputs")
-    source_hash = inputs.get("waypoints_file", {}).get("sha256") if isinstance(inputs, dict) else None
+    source_hash = (
+        inputs.get("waypoints_file", {}).get("sha256")
+        if isinstance(inputs, dict) else None
+    )
     if source_hash != expected_hash:
         errors.append("waypoints_file SHA256 does not match the validated snapshot")
-    indexed = _waypoint_snapshot_index(snapshot, errors)
+
+    expected_stages = _reconstructed_action_stages(snapshot, errors)
+    if expected_stages is None:
+        return None
+
     route = data.get("route")
-    if indexed is None or not isinstance(route, dict):
-        return
-    for stage_index, stage in enumerate(route.get("segments", [])):
-        goals = stage.get("goals", []) if isinstance(stage, dict) else []
-        if not isinstance(goals, list):
+    if not isinstance(route, dict):
+        errors.append("route must record the complete reconstructed action route")
+        return expected_stages
+    actual_stages = route.get("segments")
+    if not isinstance(actual_stages, list):
+        errors.append("route.segments must record the complete reconstructed route")
+        return expected_stages
+    if len(actual_stages) != len(expected_stages):
+        errors.append(
+            "route.segments must contain every reconstructed action "
+            f"({len(expected_stages)} expected, got {len(actual_stages)})"
+        )
+
+    for stage_index, expected_stage in enumerate(expected_stages):
+        if stage_index >= len(actual_stages):
+            break
+        stage_label = f"route.segments[{stage_index}]"
+        actual_stage = actual_stages[stage_index]
+        if not isinstance(actual_stage, dict):
             continue
-        for goal_index, goal in enumerate(goals):
-            label = f"route.segments[{stage_index}].goals[{goal_index}]"
-            if not isinstance(goal, dict):
+        expected_id, expected_direction, expected_goals = expected_stage
+        if actual_stage.get("id") != expected_id:
+            errors.append(
+                f"{stage_label}.id must be reconstructed action {expected_id!r}")
+        if actual_stage.get("direction") != expected_direction:
+            errors.append(
+                f"{stage_label}.direction must be {expected_direction}")
+        actual_goals = actual_stage.get("goals")
+        if not isinstance(actual_goals, list):
+            continue
+        if len(actual_goals) != len(expected_goals):
+            errors.append(
+                f"{stage_label}.goals must contain every reconstructed goal "
+                f"({len(expected_goals)} expected, got {len(actual_goals)})"
+            )
+        for goal_index, expected_goal in enumerate(expected_goals):
+            if goal_index >= len(actual_goals):
+                break
+            goal_label = f"{stage_label}.goals[{goal_index}]"
+            actual_goal = actual_goals[goal_index]
+            if not isinstance(actual_goal, dict):
                 continue
-            waypoint_id = goal.get("id")
-            source = indexed.get(waypoint_id)
-            if source is None:
-                errors.append(f"{label}.id is absent from waypoint snapshot")
-                continue
-            actual = _route_goal_pose(goal, label, errors)
-            expected, expected_profile = source
-            if actual is not None and not _poses_match(actual, expected):
-                errors.append(f"{label} pose differs from waypoint snapshot")
-            if goal.get("goal_profile", "standard") != expected_profile:
-                errors.append(f"{label}.goal_profile differs from waypoint snapshot")
+            for field in ("id", "direction", "goal_profile", "heading_mode"):
+                default = "standard" if field == "goal_profile" else None
+                if actual_goal.get(field, default) != expected_goal[field]:
+                    errors.append(
+                        f"{goal_label}.{field} differs from the reconstructed route")
+            heading_mode = _snapshot_heading_mode(expected_goal)
+            actual_pose = _route_goal_pose(
+                actual_goal, goal_label, errors, heading_mode)
+            expected_pose = _route_goal_pose(
+                expected_goal, "expected route goal", [], heading_mode)
+            if (
+                actual_pose is not None
+                and expected_pose is not None
+                and not _goal_pose_matches(actual_pose, expected_pose)
+            ):
+                errors.append(
+                    f"{goal_label} pose differs from the reconstructed route")
+    return expected_stages
+
+
+def _result_stage_contract(stages):
+    """Reduce reconstructed goals to the contract consumed by result checks."""
+    return tuple(
+        (
+            segment_id,
+            direction,
+            tuple(
+                (
+                    goal["id"],
+                    goal["direction"],
+                    goal["goal_profile"],
+                    goal["heading_mode"],
+                )
+                for goal in goals
+            ),
+        )
+        for segment_id, direction, goals in stages
+    )
 
 
 def validate_manifest(data, started_after=None, waypoint_snapshot=None):
@@ -541,10 +776,18 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
     if data.get("overall_outcome") != "completed":
         errors.append("overall_outcome must be completed")
     dynamic_stages, route_errors = _dynamic_route_stages(data)
+    snapshot_stages = None
+    if waypoint_snapshot is not None:
+        snapshot_stages = _validate_reconstructed_route(
+            data, waypoint_snapshot, errors)
     if dynamic_stages is not None:
         errors.extend(route_errors)
         use_through_poses = _validate_execution(data, errors)
-        expected_goal_count = sum(len(stage[2]) for stage in dynamic_stages)
+        expected_stages = (
+            _result_stage_contract(snapshot_stages)
+            if snapshot_stages is not None else dynamic_stages
+        )
+        expected_goal_count = sum(len(stage[2]) for stage in expected_stages)
         if data.get("expected_goal_count") != expected_goal_count:
             errors.append(
                 f"expected_goal_count must be {expected_goal_count}")
@@ -553,10 +796,8 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
             results = []
         if not route_errors and use_through_poses is not None:
             _validate_dynamic_results(
-                results, dynamic_stages, use_through_poses, errors)
+                results, expected_stages, use_through_poses, errors)
         _validate_traceability(data, started_after, errors)
-        if waypoint_snapshot is not None:
-            _validate_waypoint_snapshot(data, waypoint_snapshot, errors)
         return errors
 
     if data.get("expected_goal_count") != len(EXPECTED_ROUTE):
@@ -862,8 +1103,6 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
                     f"{label} took too long to converge after XY entry")
 
     _validate_traceability(data, started_after, errors)
-    if waypoint_snapshot is not None:
-        _validate_waypoint_snapshot(data, waypoint_snapshot, errors)
     return errors
 
 

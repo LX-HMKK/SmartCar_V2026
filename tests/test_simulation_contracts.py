@@ -15,6 +15,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+LOCAL_SIM = ROOT / "scripts" / "local_sim.sh"
 SIM = ROOT / "src" / "smartcar_sim"
 LAUNCH = SIM / "launch" / "sim.launch.py"
 SIM_ENV = SIM / "scripts" / "sim_env.sh"
@@ -34,6 +35,8 @@ FIELD_MAP_GENERATOR = SIM / "scripts" / "generate_field_map.py"
 FIELD_MAP = SIM / "maps" / "field_map.pgm"
 FIELD_MAP_YAML = SIM / "maps" / "field_map.yaml"
 KEEPOUT_OVERLAY = SIM / "config" / "nav2_keepout_filter.yaml"
+SIM_SPEED_PROFILES = SIM / "launch" / "sim_speed_profiles.py"
+NAV2_PARAMS = ROOT / "src" / "smartcar_nav2" / "config" / "nav2_params.yaml"
 PACKAGE_XML = SIM / "package.xml"
 
 
@@ -65,7 +68,136 @@ def pgm_value_at(
     return pixels[row * width + col]
 
 
+def load_sim_speed_profiles():
+    spec = importlib.util.spec_from_file_location(
+        "sim_speed_profiles_for_test", SIM_SPEED_PROFILES)
+    module = importlib.util.module_from_spec(spec)
+    sys.modules[spec.name] = module
+    try:
+        spec.loader.exec_module(module)
+    finally:
+        sys.modules.pop(spec.name, None)
+    return module
+
+
 class SimulationContractTests(unittest.TestCase):
+    def test_local_sim_clears_snap_gui_runtime_without_losing_desktop_session(self) -> None:
+        runner = LOCAL_SIM.read_text(encoding="utf-8")
+
+        self.assertIn("is_snap_terminal=false", runner)
+        self.assertIn("SNAP_REAL_HOME", runner)
+        self.assertIn("XDG_DATA_DIRS_VSCODE_SNAP_ORIG", runner)
+        self.assertIn("XDG_CONFIG_DIRS_VSCODE_SNAP_ORIG", runner)
+        for variable in (
+            "LD_PRELOAD",
+            "GTK_DATA_PREFIX",
+            "GTK_EXE_PREFIX",
+            "GTK_PATH",
+            "GTK_IM_MODULE_FILE",
+            "GDK_PIXBUF_MODULE_FILE",
+            "GDK_PIXBUF_MODULEDIR",
+            "GIO_EXTRA_MODULES",
+            "GIO_MODULE_DIR",
+            "GSETTINGS_SCHEMA_DIR",
+            "GI_TYPELIB_PATH",
+        ):
+            with self.subTest(variable=variable):
+                self.assertIn(variable, runner)
+        for session_variable in (
+            "DISPLAY",
+            "WAYLAND_DISPLAY",
+            "XAUTHORITY",
+            "XDG_RUNTIME_DIR",
+            "DBUS_SESSION_BUS_ADDRESS",
+        ):
+            with self.subTest(session_variable=session_variable):
+                self.assertNotIn(f"unset {session_variable}", runner)
+
+    def test_sim_speed_profiles_are_constrained_and_preserve_keepout(self) -> None:
+        profiles = load_sim_speed_profiles()
+        config_dir = SIM / "config"
+
+        self.assertEqual(
+            set(profiles.SIM_SPEED_PROFILES), {"baseline", "0.20", "0.25"})
+        baseline = profiles.resolve_sim_speed_profile("baseline", config_dir)
+        self.assertEqual(baseline.linear_speed_mps, 0.15)
+        self.assertIsNone(profiles.speed_overlay_path(baseline, config_dir))
+
+        keepout = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
+        for name, expected_speed in (("0.20", 0.20), ("0.25", 0.25)):
+            with self.subTest(profile=name):
+                profile = profiles.resolve_sim_speed_profile(name, config_dir)
+                overlay_path = profiles.speed_overlay_path(profile, config_dir)
+                self.assertIsNotNone(overlay_path)
+                profiles.validate_speed_overlay(profile, overlay_path)
+                overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8"))
+                controller = overlay["controller_server"]["ros__parameters"]
+                smoother = overlay["velocity_smoother"]["ros__parameters"]
+                self.assertEqual(
+                    controller["FollowPath"]["desired_linear_vel"],
+                    expected_speed,
+                )
+                self.assertEqual(
+                    smoother["max_velocity"], [expected_speed, 0.0, 0.75])
+                self.assertEqual(
+                    smoother["min_velocity"], [-expected_speed, 0.0, -0.75])
+                self.assertNotIn("ReverseHandoff", controller)
+
+                with tempfile.TemporaryDirectory() as temporary:
+                    merged_path = Path(temporary) / "merged.yaml"
+                    profiles.write_merged_nav2_overlay(
+                        KEEPOUT_OVERLAY, overlay_path, merged_path)
+                    merged = yaml.safe_load(merged_path.read_text(encoding="utf-8"))
+                self.assertEqual(
+                    merged["controller_server"]["ros__parameters"]
+                    ["FollowPath"]["desired_linear_vel"],
+                    expected_speed,
+                )
+                self.assertEqual(
+                    merged["local_costmap"]["local_costmap"]["ros__parameters"]
+                    ["filters"],
+                    keepout["local_costmap"]["local_costmap"]["ros__parameters"]
+                    ["filters"],
+                )
+
+        with self.assertRaises(ValueError):
+            profiles.resolve_sim_speed_profile("0.30", config_dir)
+
+    def test_sim_speed_launch_is_opt_in_and_keeps_real_defaults(self) -> None:
+        launch = LAUNCH.read_text(encoding="utf-8")
+        runner = AUTO_TRAIN.read_text(encoding="utf-8")
+        params = yaml.safe_load(NAV2_PARAMS.read_text(encoding="utf-8"))
+
+        self.assertIn('LaunchConfiguration("sim_speed_profile")', launch)
+        self.assertIn('"sim_speed_profile",\n            default_value="baseline"', launch)
+        self.assertIn(
+            "from launch_ros.parameter_descriptions import ParameterValue", launch
+        )
+        self.assertIn(
+            "ParameterValue(\n                sim_speed_profile, value_type=str)", launch
+        )
+        self.assertIn("prepare_sim_speed_overlay", launch)
+        self.assertIn("validate_speed_overlay", launch)
+        self.assertIn("write_merged_nav2_overlay", launch)
+        self.assertIn('"nav2_params_overlay_file": active_nav2_overlay_file', launch)
+        self.assertIn("OnShutdown", launch)
+        self.assertIn('self.declare_parameter("nav2_params_overlay_file", "")', runner)
+        self.assertIn('self.declare_parameter("sim_speed_profile", "baseline")', runner)
+        self.assertIn('"sim_speed_profile": str(', runner)
+        self.assertEqual(
+            params["controller_server"]["ros__parameters"]["FollowPath"]
+            ["desired_linear_vel"],
+            0.15,
+        )
+        self.assertEqual(
+            params["velocity_smoother"]["ros__parameters"]["max_velocity"][0],
+            0.15,
+        )
+        self.assertEqual(
+            params["velocity_smoother"]["ros__parameters"]["min_velocity"][0],
+            -0.15,
+        )
+
     def test_fastdds_uses_default_transport_across_entrypoints(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
         sim_env = SIM_ENV.read_text(encoding="utf-8")
@@ -292,6 +424,21 @@ class SimulationContractTests(unittest.TestCase):
                 )
                 self.assertIn("if rclpy.ok():", source)
 
+    def test_odom_combined_relay_uses_wall_clock_and_preserves_input_stamp(self) -> None:
+        launch = LAUNCH.read_text(encoding="utf-8")
+        relay = ODOM_COMBINED_RELAY.read_text(encoding="utf-8")
+
+        self.assertIn(
+            'name="odom_combined_relay",\n        parameters=[{"use_sim_time": False}]',
+            launch,
+        )
+        self.assertIn("stamp = msg.header.stamp", relay)
+        self.assertIn("msg.header.stamp = stamp", relay)
+        self.assertIn("t.header.stamp = stamp", relay)
+        self.assertNotIn("create_timer(", relay)
+        self.assertNotIn("get_clock()", relay)
+        self.assertNotIn("_fallback", relay)
+
     def test_start_script_has_no_wsl_network_dependency(self) -> None:
         source = SIM_START.read_text(encoding="utf-8")
 
@@ -376,6 +523,9 @@ class SimulationContractTests(unittest.TestCase):
     def test_keepout_filter_is_scoped_to_simulation_and_ready_before_nav2(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
         overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
+        rpp_cost_distance = overlay["controller_server"]["ros__parameters"][
+            "FollowPath"
+        ]["cost_scaling_dist"]
 
         for costmap_name in ("local_costmap", "global_costmap"):
             parameters = overlay[costmap_name][costmap_name]["ros__parameters"]
@@ -385,6 +535,10 @@ class SimulationContractTests(unittest.TestCase):
             self.assertIs(keepout["enabled"], True)
             self.assertEqual(keepout["filter_info_topic"], "/keepout_filter_info")
             self.assertEqual(parameters["inflation_layer"]["inflation_radius"], 0.20)
+            self.assertLessEqual(
+                rpp_cost_distance,
+                parameters["inflation_layer"]["inflation_radius"],
+            )
 
         self.assertIn('executable="costmap_filter_info_server"', launch)
         self.assertIn('"topic_name": "/keepout_filter_mask"', launch)
@@ -394,7 +548,15 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn('"bond_timeout": 20.0', launch)
         self.assertIn("launch_nav2_once", launch)
         self.assertIn("OpaqueFunction(function=launch_nav2_once)", launch)
-        self.assertIn('"params_overlay_file": nav2_keepout_overlay', launch)
+        # Every trial starts from the same simulation-only keepout overlay;
+        # optional speed caps are merged into a temporary file before Nav2.
+        self.assertIn(
+            "keepout_overlay_path = Path(nav2_keepout_overlay.perform(context))",
+            launch,
+        )
+        self.assertIn("write_merged_nav2_overlay(", launch)
+        self.assertIn('"params_overlay_file": str(overlay_path)', launch)
+        self.assertIn('"lifecycle_manager_delay_sec": "2.0"', launch)
         self.assertNotIn("ros2 lifecycle set /map_server", launch)
 
     def test_run_route_uses_an_isolated_switch_and_explicit_trees(self) -> None:
@@ -424,7 +586,11 @@ class SimulationContractTests(unittest.TestCase):
             self.assertIn(parameter, runner)
         self.assertNotIn("TRAIN_WAYPOINTS", runner)
         self.assertIn('goal.behavior_tree = str(behavior_tree)', runner)
-        self.assertIn("segment.end_id", runner)
+        self.assertIn("materialize_navigation_segments", runner)
+        self.assertIn("materialize_free_yaws", runner)
+        self.assertIn("NavigateThroughPoses", runner)
+        self.assertIn("NavigateThroughPoses.Goal()", runner)
+        self.assertIn("goal.poses.append(ps)", runner)
         self.assertIn("os.replace(temporary, path)", runner)
         self.assertIn("raise SystemExit(exit_code)", runner)
         self.assertIn("self._input_manifest_cache = self._input_manifest()", runner)
@@ -459,16 +625,39 @@ class SimulationContractTests(unittest.TestCase):
             ],
         )
         reverse_corridor, reverse_c_entry = nav_only["planning_segments"][1:3]
-        self.assertEqual(reverse_corridor["through_ids"], [])
+        self.assertEqual(
+            reverse_corridor["through_ids"],
+            ["b_corridor_gate"],
+        )
         self.assertEqual(
             reverse_c_entry["through_ids"],
-            ["c_corner_1", "c_corner_2"],
+            ["c_entry_west", "c_corner_1", "c_corner_2"],
         )
+        return_to_p = nav_only["planning_segments"][-1]
+        self.assertEqual(
+            return_to_p["through_ids"],
+            ["b_corridor_return_drop", "b_corridor_return"],
+        )
+        c_entry_west = next(
+            waypoint for waypoint in nav_only["waypoints"]
+            if waypoint["id"] == "c_entry_west"
+        )
+        self.assertEqual(c_entry_west["task"], "via")
+        self.assertEqual(c_entry_west["direction"], "reverse")
+        self.assertNotIn("orientation", c_entry_west["pose"])
+        return_drop = next(
+            waypoint for waypoint in nav_only["waypoints"]
+            if waypoint["id"] == "b_corridor_return_drop"
+        )
+        self.assertEqual(return_drop["task"], "via")
+        self.assertEqual(return_drop["direction"], "reverse")
+        self.assertNotIn("orientation", return_drop["pose"])
 
     def test_route_results_preserve_planning_and_execution_yaw_evidence(self) -> None:
         runner = AUTO_TRAIN.read_text(encoding="utf-8")
 
         for field in (
+            '"heading_mode"',
             '"target_yaw_rad"',
             '"final_yaw_rad"',
             '"signed_goal_yaw_error_rad"',
@@ -483,6 +672,8 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("matching_paths[-1][2]", runner)
         self.assertIn('contract_errors.append("reverse_velocity_sign")', runner)
         self.assertIn("if positive_command_samples > 0:", runner)
+        self.assertIn('if heading_mode == "locked":', runner)
+        self.assertIn("free-heading route goals must use the zero quaternion", runner)
 
     def test_rviz_path_qos_matches_nav2_volatile_publishers(self) -> None:
         rviz = RVIZ.read_text(encoding="utf-8")

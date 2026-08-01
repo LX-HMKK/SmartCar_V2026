@@ -1,27 +1,54 @@
 <!-- Reverse handoff tree: preserve strict goal checks and finish the terminal arc at low speed. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <Sequence name="NavigateReverseHandoffWithSingleRetreat">
+      <LatchSuccess name="InitializeReverseHandoffRetreatGate">
+        <SetBlackboard value="false" output_key="reverse_retreat_used"/>
+      </LatchSuccess>
     <RecoveryNode number_of_retries="6" name="NavigateReverseHandoffRecovery">
       <Sequence name="NavigateReverseHandoffWithFailureReplanning">
-        <RecoveryNode number_of_retries="1" name="ComputeValidatedReverseHandoffPath">
-          <Sequence>
-            <ComputeReversePathToPose
-              goal="{goal}"
-              path="{path}"
-              planner_id="GridBased"
-              minimum_turning_radius="0.55"
-              curvature_tolerance="0.20"
-              maximum_direction_error="0.35"
-              start_position_tolerance="0.10"
-              start_yaw_tolerance="0.15"
-              goal_position_tolerance="0.12"
-              goal_yaw_tolerance="0.15"
-              minimum_segment_length="0.0001"/>
-            <IsPathValid path="{path}" server_timeout="100"/>
+        <RecoveryNode number_of_retries="1" name="ComputeReverseHandoffPathAfterRetreat">
+          <RecoveryNode number_of_retries="1" name="ComputeValidatedReverseHandoffPath">
+            <Sequence>
+              <ComputeReversePathToPose
+                goal="{goal}"
+                path="{path}"
+                recovery_eligible="{reverse_handoff_planner_unreachable}"
+                planner_id="GridBased"
+                minimum_turning_radius="0.55"
+                curvature_tolerance="0.20"
+                maximum_direction_error="0.35"
+                start_position_tolerance="0.10"
+                start_yaw_tolerance="0.15"
+                goal_position_tolerance="0.12"
+                goal_yaw_tolerance="0.15"
+                minimum_segment_length="0.0001"/>
+              <IsPathValid path="{path}" server_timeout="100"/>
+            </Sequence>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-ReverseHandoffContext"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+          <Sequence name="ReverseHandoffRetreatBeforeReplan">
+            <AckermannReverseRetreat
+              allow_retreat="{reverse_handoff_planner_unreachable}"
+              retreat_used="{reverse_retreat_used}"
+              path="{reverse_retreat_path}"
+              controller_id="ReverseRecovery"
+              goal_checker_id="recovery_goal_checker"
+              retreat_distance_m="0.15"
+              costmap_max_age_ms="1500"
+              footprint_half_length_m="0.30"
+              footprint_half_width_m="0.16"
+              footprint_sweep_step_m="0.025"
+              footprint_lethal_cost="253"/>
+            <ClearEntireCostmap
+              name="ClearLocalCostmap-AfterReverseHandoffRetreat"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-AfterReverseHandoffRetreat"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <ClearEntireCostmap
-            name="ClearGlobalCostmap-ReverseHandoffContext"
-            service_name="global_costmap/clear_entirely_global_costmap"/>
         </RecoveryNode>
         <RecoveryNode number_of_retries="1" name="FollowValidatedReverseHandoffPath">
           <FollowPath
@@ -42,5 +69,6 @@
           service_name="global_costmap/clear_entirely_global_costmap"/>
       </Sequence>
     </RecoveryNode>
+    </Sequence>
   </BehaviorTree>
 </root>

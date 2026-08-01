@@ -15,10 +15,12 @@ from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
+from smartcar_task.route_geometry import materialize_free_yaws
 from smartcar_task.waypoints import (
     is_zero_quaternion,
-    load_waypoints as load_mission_waypoints,
+    load_waypoint_document,
 )
+from smartcar_tools.planning_segments import load_planning_segments, materialize_route
 from visualization_msgs.msg import Marker, MarkerArray
 
 
@@ -52,9 +54,14 @@ def _yaw_quaternion(yaw_rad):
 def load_waypoints(path):
     """Return validated display tuples including stable waypoint IDs.
 
-    Each tuple: (frame_id, x, y, yaw, task, waypoint_id, has_orientation).
-    has_orientation is False for zero-quaternion (unconstrained) waypoints.
+    Each tuple: (frame_id, x, y, yaw, task, waypoint_id, has_heading).
+    Transit points are position-only constraints. Their heading is selected at
+    runtime against Nav2's costmap, so this offline marker deliberately draws
+    no direction arrow for them.
     """
+    document, authored = load_waypoint_document(path)
+    segments = load_planning_segments(document, authored)
+    executable = materialize_free_yaws(materialize_route(authored, segments))
     return [
         (
             item.frame_id,
@@ -65,7 +72,7 @@ def load_waypoints(path):
             item.id,
             not is_zero_quaternion(item.orientation),
         )
-        for item in load_mission_waypoints(path)
+        for item in executable
     ]
 
 
@@ -164,7 +171,7 @@ class WaypointVizNode(Node):
         msg.markers.append(line)
 
         # ── per-waypoint sphere / arrow / label ──────────────────────
-        for i, (_fid, x, y, yaw, task, waypoint_id, has_orient) in enumerate(
+        for i, (_fid, x, y, yaw, task, waypoint_id, has_heading) in enumerate(
             self._waypoints
         ):
             r, g, b = _TASK_COLORS.get(task, _DEFAULT_COLOR)
@@ -187,7 +194,7 @@ class WaypointVizNode(Node):
             sphere.color.a = 1.0
             msg.markers.append(sphere)
 
-            if has_orient:
+            if has_heading:
                 arrow = Marker()
                 arrow.header.frame_id = frame_id
                 arrow.header.stamp = stamp
@@ -228,7 +235,8 @@ class WaypointVizNode(Node):
             label.color.g = 1.0
             label.color.b = 1.0
             label.color.a = 1.0
-            label.text = f"{i}: {waypoint_id} [{task}]"
+            heading_mark = " [固定朝向]" if has_heading else " [位置约束]"
+            label.text = f"{i}: {waypoint_id} [{task}]{heading_mark}"
             msg.markers.append(label)
 
         self._publisher.publish(msg)

@@ -1,33 +1,68 @@
 <!-- Reverse-only Ackermann tree: no spin, backup, wait, or direction changes. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <Sequence name="NavigateReverseWithSingleRetreat">
+      <LatchSuccess name="InitializeReverseRetreatGate">
+        <SetBlackboard value="false" output_key="reverse_retreat_used"/>
+      </LatchSuccess>
     <RecoveryNode number_of_retries="6" name="NavigateReverseRecovery">
       <Sequence name="NavigateReverseWithFailureReplanning">
-        <RecoveryNode number_of_retries="1" name="ComputeValidatedReversePath">
-          <Sequence>
-            <ComputeReversePathToPose
-              goal="{goal}"
-              path="{path}"
-              planner_id="GridBased"
-              minimum_turning_radius="0.55"
-              curvature_tolerance="0.20"
-              maximum_direction_error="0.35"
-              start_position_tolerance="0.10"
-              start_yaw_tolerance="0.15"
-              goal_position_tolerance="0.12"
-              goal_yaw_tolerance="0.15"
-              minimum_segment_length="0.0001"/>
-            <IsPathValid path="{path}" server_timeout="100"/>
+        <RecoveryNode number_of_retries="1" name="ComputeReversePathAfterRetreat">
+          <RecoveryNode number_of_retries="1" name="ComputeValidatedReverseFreeHeadingPath">
+            <Sequence>
+              <ComputeReverseFreeHeadingPathToPose
+                goal="{goal}"
+                path="{path}"
+                recovery_eligible="{reverse_planner_unreachable}"
+                planner_id="GridBased"
+                heading_samples="12"
+                candidate_timeout_ms="3500"
+                max_initial_path_length_ratio="1.60"
+                max_start_drift_m="0.10"
+                footprint_half_length_m="0.30"
+                footprint_half_width_m="0.16"
+                footprint_sweep_step_m="0.025"
+                footprint_lethal_cost="253"
+                minimum_turning_radius="0.55"
+                curvature_tolerance="0.20"
+                maximum_direction_error="0.35"
+                start_position_tolerance="0.10"
+                start_yaw_tolerance="0.15"
+                goal_position_tolerance="0.12"
+                goal_yaw_tolerance="0.15"
+                minimum_segment_length="0.0001"/>
+              <IsPathValid path="{path}" server_timeout="100"/>
+            </Sequence>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-ReverseContext"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+          <Sequence name="ReverseRetreatBeforeReplan">
+            <AckermannReverseRetreat
+              allow_retreat="{reverse_planner_unreachable}"
+              retreat_used="{reverse_retreat_used}"
+              path="{reverse_retreat_path}"
+              controller_id="ReverseRecovery"
+              goal_checker_id="recovery_goal_checker"
+              retreat_distance_m="0.15"
+              costmap_max_age_ms="1500"
+              footprint_half_length_m="0.30"
+              footprint_half_width_m="0.16"
+              footprint_sweep_step_m="0.025"
+              footprint_lethal_cost="253"/>
+            <ClearEntireCostmap
+              name="ClearLocalCostmap-AfterReverseRetreat"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+            <ClearEntireCostmap
+              name="ClearGlobalCostmap-AfterReverseRetreat"
+              service_name="global_costmap/clear_entirely_global_costmap"/>
           </Sequence>
-          <ClearEntireCostmap
-            name="ClearGlobalCostmap-ReverseContext"
-            service_name="global_costmap/clear_entirely_global_costmap"/>
         </RecoveryNode>
         <RecoveryNode number_of_retries="1" name="FollowValidatedReversePath">
           <FollowPath
             path="{path}"
-            controller_id="FollowPath"
-            goal_checker_id="reverse_goal_checker"/>
+            controller_id="ReverseHandoff"
+            goal_checker_id="transit_goal_checker"/>
           <ClearEntireCostmap
             name="ClearLocalCostmap-ReverseContext"
             service_name="local_costmap/clear_entirely_local_costmap"/>
@@ -42,5 +77,6 @@
           service_name="global_costmap/clear_entirely_global_costmap"/>
       </Sequence>
     </RecoveryNode>
+    </Sequence>
   </BehaviorTree>
 </root>

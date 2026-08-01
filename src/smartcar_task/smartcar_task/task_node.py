@@ -8,7 +8,7 @@ from uuid import uuid4
 
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
-from nav2_msgs.action import NavigateToPose
+from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 import rclpy
 from rclpy.action import ActionClient
 from rclpy.callback_groups import (
@@ -32,6 +32,12 @@ from std_srvs.srv import Trigger
 from unique_identifier_msgs.msg import UUID
 
 from smartcar_task.mission import Mission, MissionConfig, OperationResult
+from smartcar_task.planning_segments import (
+    PlanningSegmentError,
+    load_planning_segments,
+    materialize_mission_route,
+    materialize_navigation_segments,
+)
 from smartcar_task.protocols import (
     MotionDirectionProtocol,
     classify_navigate_to_pose_result,
@@ -41,7 +47,8 @@ from smartcar_task.protocols import (
     run_reset_sequence,
     twist_is_stopped,
 )
-from smartcar_task.waypoints import load_waypoints
+from smartcar_task.route_geometry import RouteGeometryError, materialize_free_yaws
+from smartcar_task.waypoints import is_heading_locked, load_waypoint_document
 
 
 def _positive_finite(name, value):
@@ -298,7 +305,7 @@ class RosDirectionGuard:
 
 
 class RosNavigator:
-    """One guarded NavigateToPose goal at a time, with terminal proof."""
+    """One guarded Nav2 action at a time, with terminal proof."""
 
     def __init__(
         self,
@@ -314,12 +321,21 @@ class RosNavigator:
         direction_renew_period_sec,
         direction_prepare_timeout_sec,
         direction_prepare_retry_period_sec,
+        through_poses_behavior_tree="",
+        reverse_through_poses_behavior_tree="",
+        reverse_locked_through_poses_behavior_tree="",
     ):
         self._node = node
         self._client = ActionClient(
             node,
             NavigateToPose,
             "/navigate_to_pose",
+            callback_group=callback_group,
+        )
+        self._through_client = ActionClient(
+            node,
+            NavigateThroughPoses,
+            "/navigate_through_poses",
             callback_group=callback_group,
         )
         self._direction_guard = direction_guard
@@ -348,6 +364,12 @@ class RosNavigator:
             goal_profile="precise",
             precise_forward_behavior_tree=self._precise_forward_behavior_tree,
         )
+        self._through_poses_behavior_tree = str(
+            through_poses_behavior_tree).strip()
+        self._reverse_through_poses_behavior_tree = str(
+            reverse_through_poses_behavior_tree).strip()
+        self._reverse_locked_through_poses_behavior_tree = str(
+            reverse_locked_through_poses_behavior_tree).strip()
         self._navigation_timeout_sec = _positive_finite(
             "navigation_timeout_sec", navigation_timeout_sec)
         self._goal_response_timeout_sec = _positive_finite(
@@ -386,14 +408,23 @@ class RosNavigator:
         ):
             return False
         poll_interval = 0.5
-        while True:
-            remaining = deadline - time.monotonic()
-            if remaining <= 0.0:
-                return False
-            if self._client.wait_for_server(
-                timeout_sec=min(poll_interval, remaining)
-            ):
-                return True
+        clients = [self._client]
+        if (
+            self._through_poses_behavior_tree
+            or self._reverse_through_poses_behavior_tree
+            or self._reverse_locked_through_poses_behavior_tree
+        ):
+            clients.append(self._through_client)
+        for client in clients:
+            while True:
+                remaining = deadline - time.monotonic()
+                if remaining <= 0.0:
+                    return False
+                if client.wait_for_server(
+                    timeout_sec=min(poll_interval, remaining)
+                ):
+                    break
+        return True
 
     def navigate(self, waypoint, reverse_direction=False):
         try:
@@ -409,6 +440,82 @@ class RosNavigator:
         except ValueError as error:
             return OperationResult(False, f"navigation_config:{error}")
 
+        try:
+            goal = NavigateToPose.Goal()
+            goal.pose = self._pose_stamped(waypoint)
+            goal.behavior_tree = behavior_tree
+        except (TypeError, ValueError) as error:
+            return OperationResult(False, f"navigation_config:{error}")
+        return self._navigate_goal(goal, self._client, reverse_direction)
+
+    def navigate_through(self, waypoints, reverse_direction=False):
+        """Run one constant-direction segment without stopping at through goals."""
+        goals = tuple(waypoints)
+        if len(goals) < 2:
+            return OperationResult(
+                False, "navigation_through_requires_multiple_goals")
+        if any(
+            waypoint.direction != goals[0].direction for waypoint in goals
+        ):
+            return OperationResult(False, "navigation_through_direction_mismatch")
+        nonstandard = [
+            waypoint.id or str(index)
+            for index, waypoint in enumerate(goals)
+            if waypoint.goal_profile != "standard"
+        ]
+        if nonstandard:
+            return OperationResult(
+                False,
+                "navigation_through_nonstandard_goal_profile:"
+                + ",".join(nonstandard),
+            )
+        try:
+            behavior_tree = self._through_behavior_tree(
+                reverse_direction, is_heading_locked(goals[-1]))
+            goal = NavigateThroughPoses.Goal()
+            goal.poses = [self._pose_stamped(waypoint) for waypoint in goals]
+            goal.behavior_tree = behavior_tree
+        except (TypeError, ValueError) as error:
+            return OperationResult(False, f"navigation_config:{error}")
+        return self._navigate_goal(goal, self._through_client, reverse_direction)
+
+    def _through_behavior_tree(self, reverse_direction, terminal_heading_locked):
+        if reverse_direction and terminal_heading_locked:
+            behavior_tree = self._reverse_locked_through_poses_behavior_tree
+            direction = "reverse_locked"
+        elif reverse_direction:
+            behavior_tree = self._reverse_through_poses_behavior_tree
+            direction = "reverse"
+        else:
+            behavior_tree = self._through_poses_behavior_tree
+            direction = "forward"
+        if not behavior_tree:
+            raise ValueError(
+                f"{direction}_through_poses_behavior_tree must not be empty"
+            )
+        return behavior_tree
+
+    def _pose_stamped(self, waypoint):
+        qx, qy, qz, qw = waypoint.orientation
+        norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
+        if not math.isfinite(norm) or (
+            norm > 1.0e-3 and abs(norm - 1.0) > 1.0e-3
+        ):
+            raise ValueError(
+                "navigation goal orientation must be a unit quaternion or "
+                "the free-heading zero sentinel"
+            )
+        pose = PoseStamped()
+        pose.header.stamp = self._node.get_clock().now().to_msg()
+        pose.header.frame_id = waypoint.frame_id
+        pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = (
+            waypoint.position
+        )
+        pose.pose.orientation.x, pose.pose.orientation.y = qx, qy
+        pose.pose.orientation.z, pose.pose.orientation.w = qz, qw
+        return pose
+
+    def _navigate_goal(self, goal, action_client, reverse_direction=False):
         action_uuid = UUID(uuid=list(uuid4().bytes))
         direction = motion_direction(reverse_direction)
         with self._condition:
@@ -448,27 +555,9 @@ class RosNavigator:
                 generation, poison=not stopped.success)
             return OperationResult(False, "navigation_canceled")
 
-        goal = NavigateToPose.Goal()
-        goal.pose = PoseStamped()
-        goal.pose.header.stamp = self._node.get_clock().now().to_msg()
-        goal.pose.header.frame_id = waypoint.frame_id
-        (
-            goal.pose.pose.position.x,
-            goal.pose.pose.position.y,
-            goal.pose.pose.position.z,
-        ) = waypoint.position
-        qx, qy, qz, qw = waypoint.orientation
-        (
-            goal.pose.pose.orientation.x,
-            goal.pose.pose.orientation.y,
-            goal.pose.pose.orientation.z,
-            goal.pose.pose.orientation.w,
-        ) = (qx, qy, qz, qw)
-        goal.behavior_tree = behavior_tree
-
         with self._condition:
             try:
-                future = self._client.send_goal_async(
+                future = action_client.send_goal_async(
                     goal, goal_uuid=action_uuid)
             except Exception as error:
                 send_error = OperationResult(
@@ -1162,6 +1251,24 @@ class TaskNode(Node):
             "config/behavior_trees/"
             "navigate_to_pose_precise_w_replanning_and_recovery.xml",
         )
+        self.declare_parameter(
+            "through_poses_behavior_tree",
+            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
+            "config/behavior_trees/"
+            "navigate_through_poses_w_replanning_and_recovery.xml",
+        )
+        self.declare_parameter(
+            "reverse_through_poses_behavior_tree",
+            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
+            "config/behavior_trees/"
+            "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
+        )
+        self.declare_parameter(
+            "reverse_locked_through_poses_behavior_tree",
+            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
+            "config/behavior_trees/"
+            "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+        )
         self.declare_parameter("direction_service_timeout_sec", 0.08)
         self.declare_parameter("direction_lease_timeout_sec", 0.25)
         self.declare_parameter("direction_prepare_timeout_sec", 1.0)
@@ -1197,7 +1304,32 @@ class TaskNode(Node):
             self.get_parameter("waypoints_file").value).strip()
         if not waypoints_file:
             raise ValueError("waypoints_file must be provided")
-        self._waypoints = load_waypoints(waypoints_file)
+        try:
+            waypoint_document, authored_waypoints = load_waypoint_document(
+                waypoints_file
+            )
+            planning_segments = load_planning_segments(
+                waypoint_document,
+                authored_waypoints,
+            )
+            ordered_waypoints = materialize_mission_route(
+                authored_waypoints,
+                planning_segments,
+            )
+            self._waypoints = materialize_free_yaws(ordered_waypoints)
+            materialized_by_id = {
+                waypoint.id: waypoint for waypoint in self._waypoints
+            }
+            authored_navigation_segments = materialize_navigation_segments(
+                authored_waypoints,
+                planning_segments,
+            )
+            self._navigation_segments = tuple(
+                tuple(materialized_by_id[waypoint.id] for waypoint in segment)
+                for segment in authored_navigation_segments
+            )
+        except (PlanningSegmentError, RouteGeometryError, ValueError) as error:
+            raise ValueError(f"invalid mission route: {error}") from error
         self._motion_gates = {
             name: bool(self.get_parameter(name).value)
             for name in (
@@ -1260,6 +1392,10 @@ class TaskNode(Node):
             direction_renew_period,
             self.get_parameter("direction_prepare_timeout_sec").value,
             self.get_parameter("direction_prepare_retry_period_sec").value,
+            self.get_parameter("through_poses_behavior_tree").value,
+            self.get_parameter("reverse_through_poses_behavior_tree").value,
+            self.get_parameter(
+                "reverse_locked_through_poses_behavior_tree").value,
         )
         self._vision = RosVision(self, self._io_group)
         self._localization = RosLocalization(
@@ -1325,7 +1461,8 @@ class TaskNode(Node):
                 callback_group=self._service_group,
             )
         self.get_logger().info(
-            f"Loaded {len(self._waypoints)} semantic waypoints")
+            f"Loaded {len(self._waypoints)} semantic waypoints in "
+            f"{len(self._navigation_segments)} planning segments")
 
     def _start_worker(self):
         with self._worker_lock:
@@ -1353,7 +1490,11 @@ class TaskNode(Node):
         return True, "mission started"
 
     def _run_mission(self, generation):
-        result = self._mission.run_reserved(generation, self._waypoints)
+        result = self._mission.run_reserved(
+            generation,
+            self._waypoints,
+            self._navigation_segments,
+        )
         if result.success:
             self.get_logger().info(result.status)
         else:

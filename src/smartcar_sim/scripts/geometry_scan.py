@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
-"""Geometry scanner for c_corner waypoint optimization.
+"""Offline geometry scanner for C-return and B-opening waypoint candidates.
 
-Enumerates candidate positions and yaws for c_corner_2/3/4 and
-b_corridor_return_enter, computes Dubins paths for the three critical
-segments, checks wall collisions, and ranks candidates by path quality.
+The C mode enumerates return-path candidates. The B mode scans only ordinary
+``b_corridor_gate`` and ``b_corridor_enter`` positions, verifies a reverse
+chain through the B opening, and never turns its diagnostic headings into
+semantic waypoint orientations.
 
 Pure geometry — no ROS or Gazebo process is required.
 """
@@ -17,12 +18,100 @@ from itertools import product
 from pathlib import Path
 from typing import List, Optional, Sequence, Tuple
 
+import yaml
+
 # ── constants ──────────────────────────────────────────────────────────
-MIN_TURNING_RADIUS = 0.55          # minimum turning radius (m)
-FOOTPRINT_RADIUS = 0.40            # conservative circular footprint (m)
-INFLATION_MARGIN = 0.05            # geometric margin for collision check (m)
-TOTAL_CLEARANCE = FOOTPRINT_RADIUS + INFLATION_MARGIN  # 0.45 m
-WAYPOINT_EXCLUSION_RADIUS = 0.30   # exclude waypoint vicinity from collision
+# The scanner is source-only, so load the same shared planning configuration
+# and effective (rasterized) PGM keepouts that simulation Nav2 consumes.
+SCRIPT = Path(__file__).resolve()
+SOURCE_ROOT = SCRIPT.parents[2]
+SOURCE_TOOLS_ROOT = SOURCE_ROOT / "smartcar_tools"
+GEOMETRY_RELATIVE_PATH = Path("config") / "routes" / "field_geometry.yaml"
+ROUTE_PLANNING_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
+DEFAULT_GEOMETRY = SOURCE_TOOLS_ROOT / GEOMETRY_RELATIVE_PATH
+DEFAULT_ROUTE_PLANNING_CONFIG = SOURCE_TOOLS_ROOT / ROUTE_PLANNING_RELATIVE_PATH
+DEFAULT_NAV_ONLY_WAYPOINTS = (
+    SOURCE_ROOT / "smartcar_nav2" / "config" / "waypoints" / "nav_only.yaml"
+)
+
+try:
+    from smartcar_tools.field_keepouts import keepout_mask_bounds
+    from smartcar_tools.field_reference import Bounds2D, FieldReference, load_field_reference
+    from smartcar_tools.route_planning import (
+        RoutePlanningConfig,
+        load_route_planning_config,
+    )
+except ModuleNotFoundError:
+    sys.path.insert(0, str(SOURCE_TOOLS_ROOT))
+    from smartcar_tools.field_keepouts import keepout_mask_bounds  # type: ignore[no-redef]
+    from smartcar_tools.field_reference import (  # type: ignore[no-redef]
+        Bounds2D,
+        FieldReference,
+        load_field_reference,
+    )
+    from smartcar_tools.route_planning import (  # type: ignore[no-redef]
+        RoutePlanningConfig,
+        load_route_planning_config,
+    )
+
+
+# ``keepout_bounds`` has a stable order in smartcar_tools.field_keepouts:
+# west/east B walls, central C core, then the three rasterized outer C limits.
+KEEP_OUT_NAMES = (
+    "b_wall_west",
+    "b_wall_east",
+    "c_core",
+    "pgm_c_north",
+    "pgm_c_west",
+    "pgm_c_east",
+)
+
+
+@dataclass(frozen=True)
+class GeometryContext:
+    """Authoritative field, motion, and PGM keepout geometry for one scan."""
+
+    reference: FieldReference
+    config: RoutePlanningConfig
+    keepouts: Tuple[Bounds2D, ...]
+    keepout_names: Tuple[str, ...] = KEEP_OUT_NAMES
+
+    @property
+    def half_length_m(self) -> float:
+        return self.config.runtime_footprint.padded_half_length_m
+
+    @property
+    def half_width_m(self) -> float:
+        return self.config.runtime_footprint.padded_half_width_m
+
+
+_DEFAULT_CONTEXT: Optional[GeometryContext] = None
+
+
+def load_geometry_context(
+    route_planning_file: str | Path | None = None,
+    geometry_file: str | Path | None = None,
+) -> GeometryContext:
+    """Load the shared route constraints and effective PGM keepout bounds."""
+    config = load_route_planning_config(
+        route_planning_file or DEFAULT_ROUTE_PLANNING_CONFIG
+    )
+    reference = load_field_reference(geometry_file or DEFAULT_GEOMETRY)
+    keepouts = tuple(keepout_mask_bounds(reference, config))
+    if len(keepouts) != len(KEEP_OUT_NAMES):
+        raise ValueError(
+            "unexpected keepout geometry: expected "
+            f"{len(KEEP_OUT_NAMES)} rectangles, got {len(keepouts)}"
+        )
+    return GeometryContext(reference, config, keepouts)
+
+
+def default_geometry_context() -> GeometryContext:
+    """Return the cached source-tree geometry used by direct helper calls."""
+    global _DEFAULT_CONTEXT
+    if _DEFAULT_CONTEXT is None:
+        _DEFAULT_CONTEXT = load_geometry_context()
+    return _DEFAULT_CONTEXT
 GOAL_XY_TOLERANCE = 0.25           # standard goal checker XY tolerance (m)
 GOAL_YAW_TOLERANCE = 0.50          # standard goal checker yaw tolerance (rad)
 DUBINS_STEP = 0.02                 # path discretisation step (m)
@@ -89,8 +178,10 @@ class SegmentResult:
     straight_length: float
     total_turn_angle: float          # rad
     is_loop: bool
-    wall_collisions: int
-    boundary_collisions: int
+    wall_collisions: int             # B-wall OBB collisions
+    core_collisions: int             # central C-core OBB collisions
+    boundary_collisions: int         # outer PGM/field-boundary OBB collisions
+    pgm_keepout_collisions: int      # all effective PGM keepout collisions
     feasible: bool
 
 
@@ -306,162 +397,389 @@ def _trace_arc(cx: float, cy: float, r: float, a0: float, a1: float,
     return pts
 
 
-def compute_dubins(start: Pose, end: Pose, r: float = MIN_TURNING_RADIUS,
+def _standard_dubins_candidates(
+    start: Pose,
+    end: Pose,
+    radius: float,
+) -> List[Tuple[str, Tuple[float, float, float]]]:
+    """Return exact Dubins words in units of the turning radius.
+
+    The previous scanner kept separately-derived turn angles, then recreated
+    the second circle with the wrong preceding turn sign. Sampling the word
+    directly from the standard normalized Dubins equations keeps collision
+    checks aligned with the path length used for ranking.
+    """
+    dx = end.x - start.x
+    dy = end.y - start.y
+    distance = math.hypot(dx, dy)
+    if distance <= 1.0e-9:
+        return []
+    d = distance / radius
+    theta = math.atan2(dy, dx)
+    alpha = _mod2pi_pos(start.yaw - theta)
+    beta = _mod2pi_pos(end.yaw - theta)
+    sin_alpha = math.sin(alpha)
+    sin_beta = math.sin(beta)
+    cos_alpha = math.cos(alpha)
+    cos_beta = math.cos(beta)
+    cos_alpha_beta = math.cos(alpha - beta)
+    candidates: List[Tuple[str, Tuple[float, float, float]]] = []
+
+    def append(word: str, first: float, middle: float, last: float) -> None:
+        values = (first, middle, last)
+        if not all(math.isfinite(value) for value in values):
+            return
+        if any(
+            symbol == "S" and value < -1.0e-9
+            for symbol, value in zip(word, values)
+        ):
+            return
+        candidates.append((
+            word,
+            tuple(
+                0.0 if abs(value) <= 1.0e-9 else _mod2pi_pos(value)
+                if word[index] != "S" else max(0.0, value)
+                for index, value in enumerate(values)
+            ),
+        ))
+
+    # LSL
+    squared = (
+        2.0 + d * d - 2.0 * cos_alpha_beta
+        + 2.0 * d * (sin_alpha - sin_beta)
+    )
+    if squared >= -1.0e-9:
+        middle = math.sqrt(max(0.0, squared))
+        temporary = math.atan2(
+            cos_beta - cos_alpha, d + sin_alpha - sin_beta
+        )
+        append("LSL", -alpha + temporary, middle, beta - temporary)
+
+    # RSR
+    squared = (
+        2.0 + d * d - 2.0 * cos_alpha_beta
+        + 2.0 * d * (sin_beta - sin_alpha)
+    )
+    if squared >= -1.0e-9:
+        middle = math.sqrt(max(0.0, squared))
+        temporary = math.atan2(
+            cos_alpha - cos_beta, d - sin_alpha + sin_beta
+        )
+        append("RSR", alpha - temporary, middle, -beta + temporary)
+
+    # LSR
+    squared = (
+        -2.0 + d * d + 2.0 * cos_alpha_beta
+        + 2.0 * d * (sin_alpha + sin_beta)
+    )
+    if squared >= -1.0e-9:
+        middle = math.sqrt(max(0.0, squared))
+        temporary = (
+            math.atan2(-cos_alpha - cos_beta, d + sin_alpha + sin_beta)
+            - math.atan2(-2.0, middle)
+        )
+        append("LSR", -alpha + temporary, middle, -beta + temporary)
+
+    # RSL
+    squared = (
+        -2.0 + d * d + 2.0 * cos_alpha_beta
+        - 2.0 * d * (sin_alpha + sin_beta)
+    )
+    if squared >= -1.0e-9:
+        middle = math.sqrt(max(0.0, squared))
+        temporary = (
+            math.atan2(cos_alpha + cos_beta, d - sin_alpha - sin_beta)
+            - math.atan2(2.0, middle)
+        )
+        append("RSL", alpha - temporary, middle, beta - temporary)
+
+    # RLR
+    temporary = (
+        6.0 - d * d + 2.0 * cos_alpha_beta
+        + 2.0 * d * (sin_alpha - sin_beta)
+    ) / 8.0
+    if -1.0 <= temporary <= 1.0:
+        middle = _mod2pi_pos(2.0 * math.pi - math.acos(temporary))
+        first = _mod2pi_pos(
+            alpha
+            - math.atan2(cos_alpha - cos_beta, d - sin_alpha + sin_beta)
+            + middle / 2.0
+        )
+        append("RLR", first, middle, alpha - beta - first + middle)
+
+    # LRL
+    temporary = (
+        6.0 - d * d + 2.0 * cos_alpha_beta
+        + 2.0 * d * (-sin_alpha + sin_beta)
+    ) / 8.0
+    if -1.0 <= temporary <= 1.0:
+        middle = _mod2pi_pos(2.0 * math.pi - math.acos(temporary))
+        first = _mod2pi_pos(
+            -alpha
+            - math.atan2(cos_alpha - cos_beta, d + sin_alpha - sin_beta)
+            + middle / 2.0
+        )
+        append("LRL", first, middle, beta - alpha - first + middle)
+
+    return candidates
+
+
+def _advance_dubins_pose(
+    pose: Pose,
+    symbol: str,
+    distance: float,
+    radius: float,
+) -> Pose:
+    """Advance one exact Dubins primitive by a nonnegative distance."""
+    if symbol == "S":
+        return Pose(
+            pose.x + distance * math.cos(pose.yaw),
+            pose.y + distance * math.sin(pose.yaw),
+            pose.yaw,
+        )
+    curvature = 1.0 / radius if symbol == "L" else -1.0 / radius
+    yaw = pose.yaw + curvature * distance
+    return Pose(
+        pose.x + (math.sin(yaw) - math.sin(pose.yaw)) / curvature,
+        pose.y - (math.cos(yaw) - math.cos(pose.yaw)) / curvature,
+        yaw,
+    )
+
+
+def _sample_dubins_word(
+    start: Pose,
+    word: str,
+    normalized_lengths: Tuple[float, float, float],
+    radius: float,
+    step: float,
+) -> Tuple[List[Tuple[float, float]], Pose]:
+    """Sample an exact word without reconstructing circle centers manually."""
+    current = start
+    points = [(current.x, current.y)]
+    for symbol, normalized_length in zip(word, normalized_lengths):
+        distance = normalized_length * radius
+        samples = max(1, int(math.ceil(distance / step)))
+        primitive_start = current
+        for index in range(1, samples + 1):
+            current = _advance_dubins_pose(
+                primitive_start, symbol, distance * index / samples, radius
+            )
+            points.append((current.x, current.y))
+    return points, current
+
+
+def compute_dubins(start: Pose, end: Pose, r: Optional[float] = None,
                    step: float = DUBINS_STEP) -> Optional[SegmentResult]:
     """Compute the shortest feasible Dubins path between two poses.
 
-    Returns the shortest among all 6 Dubins types, with path discretisation."
+    Returns the shortest among all 6 Dubins types, with path discretisation.
     """
+    if r is None:
+        r = default_geometry_context().config.minimum_turning_radius_m
+    if r <= 0.0:
+        raise ValueError("turning radius must be positive")
+
     dist = start.dist_to(end)
     if dist < 1e-6:
         return None
 
-    best = None
-    best_len = float("inf")
-
-    for name, solver in DUBINS_SOLVERS:
-        sol = solver(start, end, r)
-        if sol is None:
-            continue
-        L, alpha, beta = sol
-        total = r * (alpha + beta) + L
-        if total < best_len:
-            best_len = total
-            best = (name, L, alpha, beta)
-
-    if best is None:
+    candidates = _standard_dubins_candidates(start, end, r)
+    if not candidates:
         return None
-
-    name, L, alpha, beta = best
-    # Discretise the path
-    points: List[Tuple[float, float]] = []
-    pts = [(start.x, start.y)]
-
-    for turn_idx, (turn_angle, is_left) in enumerate([
-        (alpha, name[0] == "L"),
-        (beta, name[2] == "L"),
-    ]):
-        if turn_angle < 0.001:
-            continue
-        # centre of turning circle
-        sign = 1.0 if is_left else -1.0
-        t0 = start.yaw if turn_idx == 0 else None  # computed after straight
-        if turn_idx == 0:
-            cx = start.x + sign * r * math.cos(start.yaw - sign * math.pi / 2)
-            cy = start.y + sign * r * math.sin(start.yaw - sign * math.pi / 2)
-            a0 = start.yaw - sign * math.pi / 2
-        else:
-            # After straight segment
-            mid_yaw = _mod2pi(start.yaw - sign * alpha if name[0] == "R"
-                              else start.yaw + alpha)
-            mid_x = (start.x - sign * r * math.cos(start.yaw - sign * math.pi / 2)
-                     + sign * r * math.cos(mid_yaw - sign * math.pi / 2))
-            mid_y = (start.y - sign * r * math.sin(start.yaw - sign * math.pi / 2)
-                     + sign * r * math.sin(mid_yaw - sign * math.pi / 2))
-            # after straight of length L
-            if L > 0.001:
-                straight_dir = mid_yaw
-                mid_x += L * math.cos(straight_dir)
-                mid_y += L * math.sin(straight_dir)
-                # Add straight segment points
-                n_s = max(2, int(L / step))
-                for i in range(1, n_s + 1):
-                    t = i / n_s
-                    pts.append((pts[-1][0] * (1 - t) + mid_x * t,
-                                pts[-1][1] * (1 - t) + mid_y * t))
-            mid_yaw_straight = mid_yaw
-            next_sign = 1.0 if name[2] == "L" else -1.0
-            cx = mid_x + next_sign * r * math.cos(
-                mid_yaw_straight - next_sign * math.pi / 2)
-            cy = mid_y + next_sign * r * math.sin(
-                mid_yaw_straight - next_sign * math.pi / 2)
-            a0 = mid_yaw_straight - next_sign * math.pi / 2
-
-        a1 = a0 + (turn_angle if is_left else -turn_angle)
-        arc_pts = _trace_arc(cx, cy, r, a0, a1, is_left, step)
-        if turn_idx == 0 and L > 0.001:
-            pts.extend(arc_pts)
-        elif turn_idx == 0:
-            pts.extend(arc_pts)
-        elif L > 0.001:
-            pts.extend(arc_pts)
-        else:
-            pts.extend(arc_pts[1:])
-
-    points = pts
+    best = min(candidates, key=lambda item: sum(item[1]) * r)
+    name, normalized_lengths = best
+    points, endpoint = _sample_dubins_word(
+        start, name, normalized_lengths, r, step
+    )
+    if (
+        math.hypot(endpoint.x - end.x, endpoint.y - end.y) > 1.0e-5
+        or abs(_mod2pi(endpoint.yaw - end.yaw)) > 1.0e-5
+    ):
+        return None
+    path_length = sum(normalized_lengths) * r
+    straight_length = (
+        normalized_lengths[1] * r if name[1] == "S" else 0.0
+    )
+    total_turn_angle = sum(
+        length
+        for symbol, length in zip(name, normalized_lengths)
+        if symbol != "S"
+    )
 
     return SegmentResult(
         segment="",
         start_pose=start,
         end_pose=end,
         dubins_type=name,
-        path_length=best_len,
+        path_length=path_length,
         path_points=points,
-        straight_length=L,
-        total_turn_angle=alpha + beta,
+        straight_length=straight_length,
+        total_turn_angle=total_turn_angle,
         is_loop=False,       # filled in later
         wall_collisions=0,    # filled in later
+        core_collisions=0,
         boundary_collisions=0,
+        pgm_keepout_collisions=0,
         feasible=True,
     )
 
 
 # ── collision checks ───────────────────────────────────────────────────
 
-def _rect_collision(px: float, py: float, rect) -> bool:
-    """Check if point is inside or too close to a rectangular obstacle."""
-    (rx0, ry0), (rx1, ry1) = rect
-    # Expand by clearance
-    mx0, my0 = rx0 - TOTAL_CLEARANCE, ry0 - TOTAL_CLEARANCE
-    mx1, my1 = rx1 + TOTAL_CLEARANCE, ry1 + TOTAL_CLEARANCE
-    return mx0 <= px <= mx1 and my0 <= py <= my1
-
-
 def _in_rect(px: float, py: float, rect) -> bool:
     (rx0, ry0), (rx1, ry1) = rect
     return rx0 <= px <= rx1 and ry0 <= py <= ry1
 
 
-def check_wall_collision(points: List[Tuple[float, float]],
-                         start_xy=None, end_xy=None) -> int:
-    """Count points that are INSIDE physical wall rectangles (no clearance).
+def _footprint_extents(pose: Pose, context: GeometryContext) -> Tuple[float, float]:
+    """Return the world-axis extents of the padded runtime OBB."""
+    cosine = math.cos(pose.yaw)
+    sine = math.sin(pose.yaw)
+    return (
+        context.half_length_m * abs(cosine) + context.half_width_m * abs(sine),
+        context.half_length_m * abs(sine) + context.half_width_m * abs(cosine),
+    )
 
-    Points within WAYPOINT_EXCLUSION_RADIUS of start/end are skipped.
-    Boundary violations are not checked — Nav2 handles field boundaries.
+
+def obb_intersects_keepout(
+    pose: Pose,
+    bounds: Bounds2D,
+    context: Optional[GeometryContext] = None,
+) -> bool:
+    """Test the padded vehicle OBB against one effective PGM AABB.
+
+    This is the same four-axis separating-axis test used by the waypoint
+    editor preflight. ``bounds`` must be from ``keepout_mask_bounds`` rather
+    than an idealized rule-diagram rectangle, so the scanner sees the final
+    black PGM cells that Nav2's KeepoutFilter sees.
     """
-    hits = 0
-    excl2 = WAYPOINT_EXCLUSION_RADIUS ** 2
-    for x, y in points:
-        if start_xy is not None:
-            dx = x - start_xy[0]; dy = y - start_xy[1]
-            if dx*dx + dy*dy < excl2:
-                continue
-        if end_xy is not None:
-            dx = x - end_xy[0]; dy = y - end_xy[1]
-            if dx*dx + dy*dy < excl2:
-                continue
-        # Check physical wall interior (no expansion)
-        for (rx0, ry0), (rx1, ry1) in [WEST_WALL, EAST_WALL]:
-            if rx0 <= x <= rx1 and ry0 <= y <= ry1:
-                hits += 1
+    settings = context or default_geometry_context()
+    cosine = math.cos(pose.yaw)
+    sine = math.sin(pose.yaw)
+    delta_x = bounds.center.x - pose.x
+    delta_y = bounds.center.y - pose.y
+    obstacle_half_x = bounds.width / 2.0
+    obstacle_half_y = bounds.height / 2.0
+    half_length = settings.half_length_m
+    half_width = settings.half_width_m
+
+    # AABB world X/Y axes.
+    if abs(delta_x) > obstacle_half_x + half_length * abs(cosine) + half_width * abs(sine):
+        return False
+    if abs(delta_y) > obstacle_half_y + half_length * abs(sine) + half_width * abs(cosine):
+        return False
+
+    # Vehicle longitudinal/lateral axes.
+    local_x = delta_x * cosine + delta_y * sine
+    local_y = -delta_x * sine + delta_y * cosine
+    if abs(local_x) > half_length + obstacle_half_x * abs(cosine) + obstacle_half_y * abs(sine):
+        return False
+    if abs(local_y) > half_width + obstacle_half_x * abs(sine) + obstacle_half_y * abs(cosine):
+        return False
+    return True
+
+
+def _footprint_inside_field(pose: Pose, context: GeometryContext) -> bool:
+    """Reject an OBB that projects outside the generated PGM extent."""
+    extent_x, extent_y = _footprint_extents(pose, context)
+    field = context.reference.field
+    return (
+        field.x_min <= pose.x - extent_x
+        and pose.x + extent_x <= field.x_max
+        and field.y_min <= pose.y - extent_y
+        and pose.y + extent_y <= field.y_max
+    )
+
+
+def path_tangent_poses(
+    points: Sequence[Tuple[float, float]],
+    fallback_yaw: float = 0.0,
+) -> List[Pose]:
+    """Attach path-tangent yaws to discrete path points.
+
+    At an arc sample the center-point heading is not enough: the OBB must be
+    rotated along the actual travel tangent. Duplicate points are skipped when
+    computing the finite difference, which also handles Smac-like angle-bin
+    duplicates should they appear in a generated path.
+    """
+    poses: List[Pose] = []
+    for index, (x, y) in enumerate(points):
+        previous = None
+        for candidate in range(index - 1, -1, -1):
+            dx = x - points[candidate][0]
+            dy = y - points[candidate][1]
+            if dx * dx + dy * dy > 1.0e-12:
+                previous = points[candidate]
                 break
-    return hits
+        following = None
+        for candidate in range(index + 1, len(points)):
+            dx = points[candidate][0] - x
+            dy = points[candidate][1] - y
+            if dx * dx + dy * dy > 1.0e-12:
+                following = points[candidate]
+                break
+
+        if previous is not None and following is not None:
+            yaw = math.atan2(following[1] - previous[1], following[0] - previous[0])
+        elif following is not None:
+            yaw = math.atan2(following[1] - y, following[0] - x)
+        elif previous is not None:
+            yaw = math.atan2(y - previous[1], x - previous[0])
+        else:
+            yaw = fallback_yaw
+        poses.append(Pose(x, y, yaw))
+    return poses
 
 
-def check_corridor_passable(points: List[Tuple[float, float]]) -> bool:
-    """Check if the path crosses the B-zone corridor gap feasibly.
+def check_path_collisions(
+    points: Sequence[Tuple[float, float]],
+    context: Optional[GeometryContext] = None,
+) -> dict[str, int]:
+    """Count padded-OBB collisions against every effective PGM keepout."""
+    settings = context or default_geometry_context()
+    counts = {name: 0 for name in settings.keepout_names}
+    counts["field_boundary"] = 0
+    for pose in path_tangent_poses(points):
+        if not _footprint_inside_field(pose, settings):
+            counts["field_boundary"] += 1
+        for name, bounds in zip(settings.keepout_names, settings.keepouts):
+            if obb_intersects_keepout(pose, bounds, settings):
+                counts[name] += 1
+    return counts
 
-    The corridor gap is between the two walls: x ∈ [1.5, 2.5], y ∈ [2.0, 2.5].
-    With footprint radius 0.40m, the minimum passable width is 0.20m.
-    We check that at least one path point passes through the gap center region.
+
+def check_wall_collision(
+    points: Sequence[Tuple[float, float]],
+    start_xy=None,
+    end_xy=None,
+    context: Optional[GeometryContext] = None,
+) -> int:
+    """Count B-wall collisions using tangent-aligned padded OBBs.
+
+    ``start_xy`` and ``end_xy`` remain accepted for callers of the old helper,
+    but are intentionally not exempted: a vehicle at a waypoint can still
+    collide with a PGM keepout and must be rejected by the scanner.
     """
-    gap_x_min = 1.5 + FOOTPRINT_RADIUS
-    gap_x_max = 2.5 - FOOTPRINT_RADIUS
-    gap_y_min = 2.0
-    gap_y_max = 2.5
+    del start_xy, end_xy
+    counts = check_path_collisions(points, context)
+    return counts["b_wall_west"] + counts["b_wall_east"]
 
-    for x, y in points:
-        if (gap_x_min <= x <= gap_x_max and gap_y_min <= y <= gap_y_max):
+
+def check_corridor_passable(
+    points: Sequence[Tuple[float, float]],
+    context: Optional[GeometryContext] = None,
+) -> bool:
+    """Require one tangent-aligned, B-wall-clear sample in the real corridor."""
+    settings = context or default_geometry_context()
+    corridor = settings.reference.corridor
+    b_walls = settings.keepouts[:2]
+    for pose in path_tangent_poses(points):
+        if not (
+            corridor.x_min <= pose.x <= corridor.x_max
+            and corridor.y_min <= pose.y <= corridor.y_max
+        ):
+            continue
+        if not any(obb_intersects_keepout(pose, wall, settings) for wall in b_walls):
             return True
     return False
 
@@ -557,6 +875,298 @@ def generate_c2_candidates() -> List[Pose]:
     return candidates
 
 
+WEST_B_CORNER = (1.50, 2.25)
+DEFAULT_B_MIN_CORNER_CLEARANCE_M = 0.48
+
+
+@dataclass
+class BSegmentCandidate:
+    """One collision-checked reverse route through the B opening."""
+
+    gate: Pose
+    enter: Pose
+    start_to_gate: SegmentResult
+    gate_to_enter: SegmentResult
+    gate_heading_rank: int
+    selected_gate_virtual_yaw: float
+    selected_enter_virtual_yaw: float
+    min_west_corner_clearance_m: float
+    score: float
+
+    @property
+    def total_path_m(self) -> float:
+        return self.start_to_gate.path_length + self.gate_to_enter.path_length
+
+
+def generate_b_gate_positions() -> List[Pose]:
+    """Return B-opening targets kept east and north of the west-wall corner."""
+    return [
+        Pose(x, y, 0.0)
+        for x in (1.70, 1.80, 1.90, 2.00, 2.10)
+        for y in (2.65, 2.75, 2.85, 2.95)
+    ]
+
+
+def generate_b_enter_positions() -> List[Pose]:
+    """Return free targets in the lower-left C approach lane above B."""
+    return [
+        Pose(x, y, 0.0)
+        for x in (0.90, 1.00, 1.10, 1.20)
+        for y in (2.75, 2.85, 2.95)
+    ]
+
+
+def _free_goal_reference_yaw(
+    start: Pose,
+    target: Pose,
+    next_target: Optional[Pose] = None,
+) -> float:
+    """Mirror the runtime free-goal bisector without prescribing a YAML yaw."""
+    incoming_x = target.x - start.x
+    incoming_y = target.y - start.y
+    incoming_length = math.hypot(incoming_x, incoming_y)
+    outgoing_x = 0.0
+    outgoing_y = 0.0
+    outgoing_length = 0.0
+    if next_target is not None:
+        outgoing_x = next_target.x - target.x
+        outgoing_y = next_target.y - target.y
+        outgoing_length = math.hypot(outgoing_x, outgoing_y)
+    if incoming_length > 1.0e-9 and outgoing_length > 1.0e-9:
+        bisector_x = incoming_x / incoming_length + outgoing_x / outgoing_length
+        bisector_y = incoming_y / incoming_length + outgoing_y / outgoing_length
+        if math.hypot(bisector_x, bisector_y) > 1.0e-9:
+            return math.atan2(bisector_y, bisector_x)
+    if outgoing_length > 1.0e-9:
+        return math.atan2(outgoing_y, outgoing_x)
+    if incoming_length > 1.0e-9:
+        return math.atan2(incoming_y, incoming_x)
+    return start.yaw
+
+
+def free_goal_heading_candidates(
+    start: Pose,
+    target: Pose,
+    next_target: Optional[Pose],
+    heading_samples: int = 12,
+    fallback_limit: int = 4,
+) -> List[float]:
+    """Generate the same reference and bounded fallback headings as Nav2."""
+    if heading_samples < 2:
+        raise ValueError("heading_samples must be at least 2")
+    if fallback_limit < 0:
+        raise ValueError("fallback_limit must not be negative")
+    reference = _free_goal_reference_yaw(start, target, next_target)
+    headings = [reference]
+    step = 2.0 * math.pi / heading_samples
+    proposed = [
+        math.floor(reference / step) * step,
+        math.ceil(reference / step) * step,
+    ]
+    if next_target is not None:
+        proposed.append(math.atan2(
+            next_target.y - target.y, next_target.x - target.x
+        ))
+    proposed.append(math.atan2(target.y - start.y, target.x - start.x))
+    for heading in proposed:
+        if len(headings) - 1 >= fallback_limit:
+            break
+        normalized = math.remainder(heading, 2.0 * math.pi)
+        if any(
+            abs(math.remainder(normalized - existing, 2.0 * math.pi)) <= 1.0e-9
+            for existing in headings
+        ):
+            continue
+        headings.append(normalized)
+    return headings
+
+
+def _west_corner_clearance(*segments: SegmentResult) -> float:
+    """Return centerline clearance from the rasterized west-wall top corner."""
+    return min(
+        math.hypot(point_x - WEST_B_CORNER[0], point_y - WEST_B_CORNER[1])
+        for segment in segments
+        for point_x, point_y in segment.path_points
+    )
+
+
+def scan_b_segment_candidates(
+    start_pose: Pose,
+    gate_positions: Optional[Sequence[Pose]] = None,
+    enter_positions: Optional[Sequence[Pose]] = None,
+    *,
+    heading_samples: int = 12,
+    fallback_limit: int = 4,
+    min_west_corner_clearance_m: float = DEFAULT_B_MIN_CORNER_CLEARANCE_M,
+    collision_context: Optional[GeometryContext] = None,
+) -> List[BSegmentCandidate]:
+    """Find bounded reverse B-segment geometry with a protected west corner.
+
+    ``start_pose`` is in Nav2's virtual-forward frame. The two returned point
+    coordinates are still position-only semantic targets; selected headings
+    are diagnostics used to verify that the runtime's bounded free-heading
+    search has at least one collision-free chain.
+    """
+    if min_west_corner_clearance_m <= 0.0:
+        raise ValueError("min_west_corner_clearance_m must be positive")
+    context = collision_context or default_geometry_context()
+    radius = context.config.minimum_turning_radius_m
+    gate_options = tuple(gate_positions or generate_b_gate_positions())
+    enter_options = tuple(enter_positions or generate_b_enter_positions())
+    results: List[BSegmentCandidate] = []
+
+    for gate_position in gate_options:
+        gate_target = Pose(gate_position.x, gate_position.y, 0.0)
+        for enter_position in enter_options:
+            enter_target = Pose(enter_position.x, enter_position.y, 0.0)
+            gate_headings = free_goal_heading_candidates(
+                start_pose,
+                gate_target,
+                enter_target,
+                heading_samples=heading_samples,
+                fallback_limit=fallback_limit,
+            )
+            for gate_heading_rank, gate_yaw in enumerate(gate_headings):
+                gate = Pose(gate_target.x, gate_target.y, gate_yaw)
+                start_to_gate = _classify_segment(
+                    compute_dubins(start_pose, gate, r=radius),
+                    "a_task_observe->b_corridor_gate",
+                    check_corridor=True,
+                    context=context,
+                )
+                if (
+                    start_to_gate is None
+                    or not start_to_gate.feasible
+                    or start_to_gate.is_loop
+                ):
+                    continue
+                enter_yaw = _free_goal_reference_yaw(gate, enter_target)
+                enter = Pose(enter_target.x, enter_target.y, enter_yaw)
+                gate_to_enter = _classify_segment(
+                    compute_dubins(gate, enter, r=radius),
+                    "b_corridor_gate->b_corridor_enter",
+                    context=context,
+                )
+                if (
+                    gate_to_enter is None
+                    or not gate_to_enter.feasible
+                    or gate_to_enter.is_loop
+                ):
+                    continue
+                clearance = _west_corner_clearance(start_to_gate, gate_to_enter)
+                if clearance < min_west_corner_clearance_m:
+                    continue
+                total_path = start_to_gate.path_length + gate_to_enter.path_length
+                total_turn = (
+                    start_to_gate.total_turn_angle + gate_to_enter.total_turn_angle
+                )
+                results.append(BSegmentCandidate(
+                    gate=gate,
+                    enter=enter,
+                    start_to_gate=start_to_gate,
+                    gate_to_enter=gate_to_enter,
+                    gate_heading_rank=gate_heading_rank,
+                    selected_gate_virtual_yaw=gate_yaw,
+                    selected_enter_virtual_yaw=enter_yaw,
+                    min_west_corner_clearance_m=clearance,
+                    score=total_path + 0.05 * total_turn - 0.75 * clearance,
+                ))
+
+    # No persisted ordinary-point yaw is allowed. Prefer the runtime's primary
+    # heading before a fallback, then rank safety before shortness so a path
+    # that merely grazes the top-left B corner cannot win.
+    results.sort(key=lambda candidate: (
+        candidate.gate_heading_rank,
+        -candidate.min_west_corner_clearance_m,
+        candidate.total_path_m,
+        candidate.score,
+    ))
+    return results
+
+
+def load_reverse_virtual_start_pose(
+    waypoints_file: str | Path,
+    waypoint_id: str = "a_task_observe",
+) -> Pose:
+    """Load one protected start pose and rotate it into reverse plan space."""
+    source = Path(waypoints_file)
+    root = yaml.safe_load(source.read_text(encoding="utf-8"))
+    if not isinstance(root, dict) or not isinstance(root.get("waypoints"), list):
+        raise ValueError("waypoints file has no waypoint list")
+    waypoint = next(
+        (item for item in root["waypoints"] if item.get("id") == waypoint_id),
+        None,
+    )
+    if not isinstance(waypoint, dict):
+        raise ValueError(f"waypoint {waypoint_id!r} was not found")
+    pose = waypoint.get("pose")
+    position = pose.get("position") if isinstance(pose, dict) else None
+    orientation = pose.get("orientation") if isinstance(pose, dict) else None
+    if not isinstance(position, dict) or not isinstance(orientation, dict):
+        raise ValueError(f"waypoint {waypoint_id!r} must have a pose orientation")
+    try:
+        x = float(position["x"])
+        y = float(position["y"])
+        qx = float(orientation["x"])
+        qy = float(orientation["y"])
+        qz = float(orientation["z"])
+        qw = float(orientation["w"])
+    except (KeyError, TypeError, ValueError) as error:
+        raise ValueError(f"waypoint {waypoint_id!r} pose is invalid") from error
+    yaw = math.atan2(
+        2.0 * (qw * qz + qx * qy),
+        1.0 - 2.0 * (qy * qy + qz * qz),
+    )
+    return Pose(x, y, math.remainder(yaw + math.pi, 2.0 * math.pi))
+
+
+def b_candidate_json(candidate: BSegmentCandidate) -> dict:
+    """Serialize a B scan result in the format consumed by apply_candidate."""
+    return {
+        "score": round(candidate.score, 3),
+        "total_path_m": round(candidate.total_path_m, 3),
+        "min_west_corner_clearance_m": round(
+            candidate.min_west_corner_clearance_m, 3
+        ),
+        "runtime_gate_heading_rank": candidate.gate_heading_rank,
+        "b_corridor_gate": {
+            "x": round(candidate.gate.x, 3),
+            "y": round(candidate.gate.y, 3),
+            "yaw_deg": round(_deg_from_yaw(candidate.selected_gate_virtual_yaw), 1),
+        },
+        "b_corridor_enter": {
+            "x": round(candidate.enter.x, 3),
+            "y": round(candidate.enter.y, 3),
+            "yaw_deg": round(_deg_from_yaw(candidate.selected_enter_virtual_yaw), 1),
+        },
+        "segments": {
+            "a_to_gate": {
+                "type": candidate.start_to_gate.dubins_type,
+                "length_m": round(candidate.start_to_gate.path_length, 3),
+            },
+            "gate_to_enter": {
+                "type": candidate.gate_to_enter.dubins_type,
+                "length_m": round(candidate.gate_to_enter.path_length, 3),
+            },
+        },
+    }
+
+
+def print_top_b(results: Sequence[BSegmentCandidate], count: int = 30) -> None:
+    """Print concise diagnostics for B segment candidates."""
+    print(f"\nTop {min(count, len(results))} B-segment candidates")
+    for index, candidate in enumerate(results[:count], start=1):
+        print(
+            f"#{index} gate=({candidate.gate.x:.3f}, {candidate.gate.y:.3f}) "
+            f"enter=({candidate.enter.x:.3f}, {candidate.enter.y:.3f}) "
+            f"total={candidate.total_path_m:.3f}m "
+            f"west-corner-clearance={candidate.min_west_corner_clearance_m:.3f}m "
+            f"heading-rank={candidate.gate_heading_rank} "
+            f"virtual-yaws=({_deg_from_yaw(candidate.selected_gate_virtual_yaw):.1f}, "
+            f"{_deg_from_yaw(candidate.selected_enter_virtual_yaw):.1f}) deg"
+        )
+
+
 # ── main scan ───────────────────────────────────────────────────────────
 
 @dataclass
@@ -590,8 +1200,12 @@ class CandidateSet:
         return True
 
 
-def _classify_segment(result: Optional[SegmentResult], name: str,
-                      check_corridor: bool = False) -> Optional[SegmentResult]:
+def _classify_segment(
+    result: Optional[SegmentResult],
+    name: str,
+    check_corridor: bool = False,
+    context: Optional[GeometryContext] = None,
+) -> Optional[SegmentResult]:
     """Classify whether a path is a loop or suspicious, and set metadata.
 
     If check_corridor is True, also verifies the path crosses the B-zone
@@ -600,16 +1214,23 @@ def _classify_segment(result: Optional[SegmentResult], name: str,
     if result is None:
         return None
     result.segment = name
-    sx, sy = result.start_pose.x, result.start_pose.y
-    ex, ey = result.end_pose.x, result.end_pose.y
-    result.wall_collisions = check_wall_collision(
-        result.path_points, start_xy=(sx, sy), end_xy=(ex, ey))
-    result.boundary_collisions = 0
+    collisions = check_path_collisions(result.path_points, context)
+    result.wall_collisions = (
+        collisions["b_wall_west"] + collisions["b_wall_east"]
+    )
+    result.core_collisions = collisions["c_core"]
+    result.pgm_keepout_collisions = sum(
+        value for name, value in collisions.items() if name != "field_boundary"
+    )
+    result.boundary_collisions = (
+        collisions["field_boundary"]
+        + result.pgm_keepout_collisions
+        - result.wall_collisions
+        - result.core_collisions
+    )
     result.is_loop = result.path_length > LOOP_THRESHOLD
-    result.feasible = True
-    if result.wall_collisions > 0:
-        result.feasible = False
-    if check_corridor and not check_corridor_passable(result.path_points):
+    result.feasible = result.pgm_keepout_collisions == 0 and result.boundary_collisions == 0
+    if check_corridor and not check_corridor_passable(result.path_points, context):
         result.feasible = False
     return result
 
@@ -621,11 +1242,14 @@ def scan_candidates(
     ret_candidates: List[Pose],
     c1_pose: Pose,
     max_candidates: int = 200,
+    collision_context: Optional[GeometryContext] = None,
 ) -> List[CandidateSet]:
     """Staged scan: c3→c4 robust → c4→ret corridor → c2→c3 → c1→c2.
 
     This is more efficient than brute-force 4D product.
     """
+    context = collision_context or default_geometry_context()
+    turning_radius = context.config.minimum_turning_radius_m
     results: List[CandidateSet] = []
 
     # ── Stage 1: Find robust c3→c4 pairs ──
@@ -644,7 +1268,7 @@ def scan_candidates(
                     if dx == 0 and dy == 0 and dyaw == 0:
                         continue
                     s = c3.offset(dx, dy, dyaw)
-                    seg = compute_dubins(s, c4_candidates[0])  # placeholder
+                    seg = compute_dubins(s, c4_candidates[0], r=turning_radius)  # placeholder
                     # Actually need to test each c4
         # This per-c3 sampling is independent of c4 — let me restructure
 
@@ -661,7 +1285,7 @@ def scan_candidates(
                 continue
 
             # Nominal path
-            nominal = compute_dubins(c3, c4)
+            nominal = compute_dubins(c3, c4, r=turning_radius)
             if nominal is None:
                 continue
 
@@ -674,7 +1298,7 @@ def scan_candidates(
                         if dx == 0 and dy == 0 and dyaw == 0:
                             continue
                         s = c3.offset(dx, dy, dyaw)
-                        seg = compute_dubins(s, c4)
+                        seg = compute_dubins(s, c4, r=turning_radius)
                         if seg is None:
                             worst_loop = True
                             break
@@ -690,7 +1314,7 @@ def scan_candidates(
             if worst_loop:
                 continue
 
-            nominal = _classify_segment(nominal, "c3→c4")
+            nominal = _classify_segment(nominal, "c3→c4", context=context)
             if not nominal.feasible:
                 continue
 
@@ -717,10 +1341,12 @@ def scan_candidates(
         for ret in ret_pool:
             if c4.dist_to(ret) < 0.3:
                 continue
-            seg = compute_dubins(c4, ret)
+            seg = compute_dubins(c4, ret, r=turning_radius)
             if seg is None:
                 continue
-            seg = _classify_segment(seg, "c4→return", check_corridor=True)
+            seg = _classify_segment(
+                seg, "c4→return", check_corridor=True, context=context
+            )
             if not seg.feasible:
                 continue
             if seg.is_loop:
@@ -751,17 +1377,17 @@ def scan_candidates(
             if c2.dist_to(c3) < 1.5:  # c2→c3 must be meaningful distance
                 continue
             # Check c1→c2 first (quick filter)
-            c1c2 = compute_dubins(c1_pose, c2)
+            c1c2 = compute_dubins(c1_pose, c2, r=turning_radius)
             if c1c2 is None:
                 continue
-            c1c2 = _classify_segment(c1c2, "c1→c2")
+            c1c2 = _classify_segment(c1c2, "c1→c2", context=context)
             if not c1c2.feasible or c1c2.is_loop:
                 continue
 
-            seg = compute_dubins(c2, c3)
+            seg = compute_dubins(c2, c3, r=turning_radius)
             if seg is None:
                 continue
-            seg = _classify_segment(seg, "c2→c3")
+            seg = _classify_segment(seg, "c2→c3", context=context)
             if not seg.feasible or seg.is_loop:
                 continue
             if seg.path_length < best_c2_len:
@@ -809,8 +1435,10 @@ def print_top(results: List[CandidateSet], n: int = 30):
                     flag = " ⚠LOOP"
                 if seg.wall_collisions > 0:
                     flag += f" ⚠WALL({seg.wall_collisions})"
+                if seg.core_collisions > 0:
+                    flag += f" ⚠C-CORE({seg.core_collisions})"
                 if seg.boundary_collisions > 0:
-                    flag += f" ⚠BOUNDARY({seg.boundary_collisions})"
+                    flag += f" ⚠PGM/BOUNDARY({seg.boundary_collisions})"
                 print(f"  {seg.segment:8s} {seg.dubins_type:4s} "
                       f"length={seg.path_length:.2f}m "
                       f"L={seg.straight_length:.2f}m "
@@ -819,20 +1447,87 @@ def print_top(results: List[CandidateSet], n: int = 30):
 
 def main():
     parser = argparse.ArgumentParser(description="Geometry scan for waypoint optimization")
+    parser.add_argument(
+        "--mode", choices=("c", "b"), default="c",
+        help="Scan C return geometry (c) or the reverse B opening (b)",
+    )
     parser.add_argument("--top", type=int, default=30,
                         help="Number of top candidates to print")
     parser.add_argument("--json", type=str, default=None,
                         help="Save top candidates as JSON")
     parser.add_argument("--c1-pose", type=str, default="0.387,2.682,60",
                         help="c_corner_1 pose: x,y,yaw_deg")
+    parser.add_argument(
+        "--waypoints", type=Path, default=DEFAULT_NAV_ONLY_WAYPOINTS,
+        help="waypoint YAML used to load the protected B-segment start pose",
+    )
+    parser.add_argument(
+        "--b-start-id", default="a_task_observe",
+        help="locked waypoint used as the reverse B-segment start",
+    )
+    parser.add_argument(
+        "--b-heading-samples", type=int, default=12,
+        help="runtime free-heading bin count used by the B scan",
+    )
+    parser.add_argument(
+        "--b-min-west-corner-clearance-m", type=float,
+        default=DEFAULT_B_MIN_CORNER_CLEARANCE_M,
+        help="minimum centerline clearance from the west B-wall top corner",
+    )
+    parser.add_argument(
+        "--route-planning-config", type=Path,
+        default=DEFAULT_ROUTE_PLANNING_CONFIG,
+        help="shared route_planning.yaml used by Nav2 keepout generation",
+    )
+    parser.add_argument(
+        "--geometry", type=Path, default=DEFAULT_GEOMETRY,
+        help="shared field_geometry.yaml used by the simulation PGM",
+    )
     args = parser.parse_args()
+
+    try:
+        context = load_geometry_context(args.route_planning_config, args.geometry)
+    except (OSError, ValueError) as error:
+        print(f"cannot load shared scan geometry: {error}", file=sys.stderr)
+        return 2
 
     # Parse c1 (fixed, not optimized but used for c1→c2 check)
     parts = args.c1_pose.split(",")
     c1_pose = Pose(float(parts[0]), float(parts[1]),
                    _yaw_from_deg(float(parts[2])))
 
-    print("Generating candidates...")
+    print(
+        "Generating candidates with padded OBB "
+        f"{context.half_length_m * 2.0:.2f}x{context.half_width_m * 2.0:.2f} m "
+        "against effective PGM keepouts..."
+    )
+    if args.mode == "b":
+        try:
+            start_pose = load_reverse_virtual_start_pose(
+                args.waypoints, args.b_start_id
+            )
+            results = scan_b_segment_candidates(
+                start_pose,
+                heading_samples=args.b_heading_samples,
+                min_west_corner_clearance_m=args.b_min_west_corner_clearance_m,
+                collision_context=context,
+            )
+        except (OSError, ValueError) as error:
+            print(f"cannot scan B geometry: {error}", file=sys.stderr)
+            return 2
+        if not results:
+            print("No collision-free B-segment candidates found.")
+            return 1
+        print_top_b(results, args.top)
+        if args.json:
+            top_data = [b_candidate_json(candidate) for candidate in results[:args.top]]
+            Path(args.json).write_text(
+                json.dumps(top_data, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+            print(f"Saved top {len(top_data)} B candidates to {args.json}")
+        return 0
+
     c2_cands = generate_c2_candidates()
     c3_cands = generate_c3_candidates()
     c4_cands = generate_c4_candidates()
@@ -844,7 +1539,9 @@ def main():
     print(f"  return_enter: {len(ret_cands)} candidates")
 
     results = scan_candidates(
-        c2_cands, c3_cands, c4_cands, ret_cands, c1_pose)
+        c2_cands, c3_cands, c4_cands, ret_cands, c1_pose,
+        collision_context=context,
+    )
 
     if not results:
         print("\nNo viable candidates found!")

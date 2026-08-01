@@ -25,6 +25,12 @@ ALLOWED_GOAL_PROFILES = frozenset({
     "precise",
     "reverse_handoff",
 })
+ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
+# These are the only mission positions whose physical base-frame heading is
+# authored by the operator.  All transit positions are position constraints;
+# their runtime goal headings are derived from the route tangent immediately
+# before Nav2 receives them.
+HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm", "return"})
 ORIGIN_TOLERANCE = 1e-9
 QUATERNION_NORM_TOLERANCE = 1e-3
 WAYPOINT_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
@@ -39,6 +45,9 @@ class Waypoint:
     direction: str = "forward"
     id: str = ""
     goal_profile: str = "standard"
+    # ``nav`` substitutes may preserve the physical heading of a QR/VLM
+    # location while deliberately suppressing its media subtask.
+    heading_mode: str | None = None
 
 
 def _mapping(value, label):
@@ -108,6 +117,17 @@ def _parse_waypoint(raw, index):
         raise ValueError(
             f"waypoints[{index}] reverse_handoff goals must be reverse")
 
+    heading_mode = item.get("heading_mode")
+    if heading_mode is not None and (
+        not isinstance(heading_mode, str)
+        or heading_mode not in ALLOWED_HEADING_MODES
+    ):
+        raise ValueError(
+            f"waypoints[{index}] heading_mode must be free or locked")
+    if heading_mode == "free" and task in HEADING_LOCKED_TASKS:
+        raise ValueError(
+            f"waypoints[{index}] {task} waypoint cannot use a free heading")
+
     pose = _mapping(item.get("pose"), f"waypoints[{index}].pose")
     position = _components(
         _mapping(
@@ -119,8 +139,9 @@ def _parse_waypoint(raw, index):
     )
     orientation_raw = pose.get("orientation")
     if orientation_raw is None:
-        # Intermediate pass-through waypoint: no orientation at all.
-        # Treated as all-zeros (no yaw constraint).
+        # Configuration sentinel for an operator-free transit heading.  It is
+        # never a valid Nav2 goal quaternion: route_geometry materializes a
+        # unit tangent quaternion at runtime.
         orientation = (0.0, 0.0, 0.0, 0.0)
     else:
         orientation = _components(
@@ -146,13 +167,31 @@ def _parse_waypoint(raw, index):
         direction=direction,
         id=waypoint_id.strip(),
         goal_profile=goal_profile,
+        heading_mode=heading_mode,
     )
 
 
 def is_zero_quaternion(orientation):
-    """Check if orientation tuple is all zeros (Nav2 convention for orientation
-    unconstrained pass-through waypoints in ThroughPoses segments)."""
+    """Check the YAML sentinel for an operator-unconstrained transit heading.
+
+    Nav2 Humble Smac does not treat a zero quaternion as a free heading.  It
+    must be converted to a valid tangent quaternion before sending an action.
+    """
     return all(abs(v) <= QUATERNION_NORM_TOLERANCE for v in orientation)
+
+
+def waypoint_heading_mode(waypoint):
+    """Return the effective heading contract for a semantic waypoint."""
+    explicit_mode = getattr(waypoint, "heading_mode", None)
+    if explicit_mode is not None:
+        if explicit_mode not in ALLOWED_HEADING_MODES:
+            raise ValueError("waypoint heading_mode must be free or locked")
+        return explicit_mode
+    return "locked" if waypoint.task in HEADING_LOCKED_TASKS else "free"
+
+
+def is_heading_locked(waypoint):
+    return waypoint_heading_mode(waypoint) == "locked"
 
 
 def _is_origin_position(waypoint):
@@ -193,9 +232,10 @@ def _waypoint_mapping(waypoint, index=None):
         "direction": waypoint.direction,
         "goal_profile": waypoint.goal_profile,
     }
-    # Only include orientation if it has a meaningful quaternion
-    # (non-zero norm). Intermediate pass-through waypoints omit
-    # orientation entirely.
+    if waypoint.heading_mode is not None:
+        result["heading_mode"] = waypoint.heading_mode
+    # Preserve an operator-free transit heading as an omitted YAML field.  The
+    # runtime route materializer supplies its valid Nav2 quaternion later.
     orient_norm = math.sqrt(qx*qx + qy*qy + qz*qz + qw*qw)
     if orient_norm > 1e-9:
         result["pose"]["orientation"] = {"x": qx, "y": qy, "z": qz, "w": qw}
@@ -301,6 +341,14 @@ def validate_waypoints(waypoints):
             "mission order must be start, (qr|nav), corridor transit(s), "
             "(vlm|nav), optional loop corner(s), corridor transit(s), return"
         )
+    for waypoint in waypoints:
+        if (
+            is_heading_locked(waypoint)
+            and is_zero_quaternion(waypoint.orientation)
+        ):
+            raise ValueError(
+                f"{waypoint.task} waypoint requires an authored orientation"
+            )
     if not _is_origin_position(waypoints[0]) or not _faces_positive_x(
         waypoints[0]
     ):

@@ -13,6 +13,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_task.waypoints import (  # noqa: E402
+    is_heading_locked,
     is_zero_quaternion,
     load_waypoint_document,
     load_waypoints,
@@ -246,6 +247,62 @@ class WaypointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, r"start.*\+X"):
                 load_waypoints(self.write_document(directory, document))
 
+    def test_requires_authored_headings_at_p_qr_and_vlm_positions(self):
+        for index, task in ((0, "start"), (1, "qr"), (2, "vlm"), (-1, "return")):
+            document = valid_document()
+            document["waypoints"][index]["pose"].pop("orientation")
+            with tempfile.TemporaryDirectory() as directory:
+                with self.subTest(task=task):
+                    with self.assertRaisesRegex(
+                        ValueError, f"{task} waypoint requires an authored orientation"
+                    ):
+                        load_waypoints(self.write_document(directory, document))
+
+    def test_nav_heading_mode_can_explicitly_lock_a_substitute_goal(self):
+        document = valid_document()
+        document["waypoints"][1]["task"] = "nav"
+        document["waypoints"][1]["heading_mode"] = "locked"
+        with tempfile.TemporaryDirectory() as directory:
+            waypoints = load_waypoints(self.write_document(directory, document))
+
+        self.assertEqual(waypoints[1].task, "nav")
+        self.assertEqual(waypoints[1].heading_mode, "locked")
+        self.assertTrue(is_heading_locked(waypoints[1]))
+        self.assertFalse(is_zero_quaternion(waypoints[1].orientation))
+
+        document = valid_document()
+        document["waypoints"][1]["task"] = "nav"
+        document["waypoints"][1]["heading_mode"] = "locked"
+        document["waypoints"][1]["pose"].pop("orientation")
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(
+                ValueError, "nav waypoint requires an authored orientation"
+            ):
+                load_waypoints(self.write_document(directory, document))
+
+    def test_heading_mode_rejects_invalid_and_free_protected_values(self):
+        document = valid_document()
+        document["waypoints"][1]["heading_mode"] = "sideways"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "heading_mode must be free or locked"):
+                load_waypoints(self.write_document(directory, document))
+
+        document = valid_document()
+        document["waypoints"][1]["heading_mode"] = "free"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "cannot use a free heading"):
+                load_waypoints(self.write_document(directory, document))
+
+    def test_transit_heading_may_be_omitted_for_runtime_materialization(self):
+        document = valid_document()
+        for index in (3, 4):
+            document["waypoints"][index]["pose"].pop("orientation")
+        with tempfile.TemporaryDirectory() as directory:
+            waypoints = load_waypoints(self.write_document(directory, document))
+
+        self.assertTrue(is_zero_quaternion(waypoints[3].orientation))
+        self.assertTrue(is_zero_quaternion(waypoints[4].orientation))
+
     def test_semantic_sequence_allows_transit_points_but_not_reordered_tasks(self):
         with tempfile.TemporaryDirectory() as directory:
             waypoints = load_waypoints(
@@ -337,19 +394,34 @@ class WaypointTests(unittest.TestCase):
             [
                 "forward", "forward", "reverse", "reverse", "reverse",
                 "reverse", "reverse", "reverse", "reverse", "reverse",
+                "reverse", "reverse", "reverse",
             ],
         )
         self.assertEqual(nav_only[1].goal_profile, "precise")
-        self.assertEqual(nav_only[2].id, "b_corridor_enter")
-        self.assertEqual(nav_only[3].id, "c_corner_1")
-        self.assertEqual(nav_only[3].goal_profile, "standard")
-        self.assertEqual(nav_only[4].id, "c_corner_2")
-        self.assertEqual(nav_only[4].task, "loop")
-        self.assertEqual(nav_only[4].direction, "reverse")
-        self.assertEqual(nav_only[6].id, "c_corner_4")
+        self.assertEqual(nav_only[2].id, "b_corridor_gate")
+        self.assertEqual(nav_only[2].position, (1.80, 2.85, 0.0))
+        self.assertEqual(nav_only[3].id, "b_corridor_enter")
+        self.assertEqual(nav_only[3].position, (1.10, 2.85, 0.0))
+        self.assertEqual(nav_only[4].id, "c_entry_west")
+        self.assertEqual(nav_only[4].position, (0.447950, 3.245847, 0.0))
+        self.assertEqual(nav_only[4].task, "via")
+        self.assertTrue(is_zero_quaternion(nav_only[4].orientation))
+        self.assertEqual(nav_only[4].goal_profile, "standard")
+        self.assertEqual(nav_only[5].id, "c_corner_1")
+        self.assertEqual(nav_only[6].id, "c_corner_2")
         self.assertEqual(nav_only[6].task, "loop")
-        self.assertEqual(nav_only[7].id, "b_corridor_return_enter")
-        self.assertEqual(nav_only[7].task, "corridor")
+        self.assertEqual(nav_only[6].direction, "reverse")
+        self.assertEqual(nav_only[8].id, "c_corner_4")
+        self.assertEqual(nav_only[8].task, "loop")
+        self.assertEqual(nav_only[9].id, "b_corridor_return_enter")
+        self.assertEqual(nav_only[9].task, "corridor")
+        self.assertEqual(nav_only[10].id, "b_corridor_return_drop")
+        self.assertEqual(nav_only[10].task, "via")
+        self.assertEqual(nav_only[9].position, (2.20, 2.35, 0.0))
+        self.assertEqual(nav_only[10].position, (1.60, 1.30, 0.0))
+        self.assertTrue(is_zero_quaternion(nav_only[10].orientation))
+        self.assertEqual(nav_only[11].id, "b_corridor_return")
+        self.assertEqual(nav_only[11].position, (1.40, 0.40, 0.0))
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(nav_only)
@@ -357,7 +429,10 @@ class WaypointTests(unittest.TestCase):
         ))
 
         nav_only_document = yaml.safe_load(nav_only_file.read_text(encoding="utf-8"))
-        nav_only_document["waypoints"][5]["direction"] = "forward"
+        next(
+            waypoint for waypoint in nav_only_document["waypoints"]
+            if waypoint["id"] == "c_corner_3"
+        )["direction"] = "forward"
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "direction must be reverse"):
                 load_waypoints(self.write_document(directory, nav_only_document))

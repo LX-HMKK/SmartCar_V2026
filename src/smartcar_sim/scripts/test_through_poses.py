@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
-"""Validate NavigateThroughPoses for the forward segment in simulation.
+"""Exercise the mission's configured NavigateThroughPoses action in simulation.
 
-This is a standalone test script — it does NOT modify any production code.
-It replaces the per-waypoint NavigateToPose loop for the forward segment
-(c_corner_2 .. p_finish, 6 waypoints) with a single NavigateThroughPoses
-call, while keeping the reverse segment per-waypoint.
+This diagnostic runner uses the same semantic waypoint, planning-segment, and
+automatic-heading materialization chain as ``task_node`` and ``auto_train``.
+It never reads an omitted transit orientation as a Nav2 goal yaw.
 
 Usage (inside the local Gazebo simulation):
     ros2 run smartcar_sim test_through_poses.py --ros-args \
       -p waypoints_file:=<path_to_nav_only.yaml> \
       -p through_poses_bt:=<path_to_through_poses_bt.xml> \
+      -p reverse_through_poses_bt:=<path_to_reverse_through_poses_bt.xml> \
       -p forward_behavior_tree:=<path_to_forward_bt.xml> \
       -p precise_behavior_tree:=<path_to_precise_bt.xml> \
       -p reverse_behavior_tree:=<path_to_reverse_bt.xml> \
@@ -34,11 +34,13 @@ from nav_msgs.msg import Odometry, Path as NavPath
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
-
-# ── Route structure (must match nav_only.yaml) ──
-# Waypoints before c_corner_2 use per-waypoint NavigateToPose (reverse segment).
-# Waypoints from c_corner_2 onward use a single NavigateThroughPoses.
-THROUGH_POSES_START = "c_corner_2"
+from smartcar_task.planning_segments import (
+    load_planning_segments,
+    materialize_mission_route,
+    materialize_navigation_segments,
+)
+from smartcar_task.route_geometry import materialize_free_yaws
+from smartcar_task.waypoints import load_waypoint_document
 
 VELOCITY_EPSILON = 1.0e-3
 POSITION_OBSERVER_MARGIN_M = 2.0e-2
@@ -47,7 +49,7 @@ CONFIG_TOLERANCE_EPSILON = 2.0e-3
 
 
 class ThroughPosesTester(Node):
-    """Hybrid test: per-waypoint for reverse, ThroughPoses for forward."""
+    """Run single-goal actions and configured multi-goal actions faithfully."""
 
     def __init__(self):
         super().__init__("test_through_poses")
@@ -56,6 +58,7 @@ class ThroughPosesTester(Node):
         # Pass --ros-args -p use_sim_time:=true on the command line instead.
         self.declare_parameter("waypoints_file", "")
         self.declare_parameter("through_poses_bt", "")
+        self.declare_parameter("reverse_through_poses_bt", "")
         self.declare_parameter("forward_behavior_tree", "")
         self.declare_parameter("precise_behavior_tree", "")
         self.declare_parameter("reverse_behavior_tree", "")
@@ -146,32 +149,47 @@ class ThroughPosesTester(Node):
             for a, b in zip(samples, samples[1:])
         )
 
-    def _load_waypoints(self):
+    @staticmethod
+    def _goal_mapping(waypoint):
+        x, y, z = waypoint.position
+        qx, qy, qz, qw = waypoint.orientation
+        return {
+            "id": waypoint.id,
+            "frame_id": waypoint.frame_id,
+            "task": waypoint.task,
+            "direction": waypoint.direction,
+            "goal_profile": waypoint.goal_profile,
+            "pose": {
+                "position": {"x": x, "y": y, "z": z},
+                "orientation": {"x": qx, "y": qy, "z": qz, "w": qw},
+            },
+        }
+
+    def _load_actions(self):
         path = self._required_path("waypoints_file")
-        doc = yaml.safe_load(path.read_text(encoding="utf-8"))
-        waypoints = doc.get("waypoints", [])
-        route = [w for w in waypoints if w.get("task") != "start"]
-        # Split at THROUGH_POSES_START
-        single = []
-        through = []
-        collecting_through = False
-        for w in route:
-            if w["id"] == THROUGH_POSES_START:
-                collecting_through = True
-            if collecting_through:
-                through.append(w)
-            else:
-                single.append(w)
-        if not through:
-            raise ValueError(
-                f"ThroughPoses start waypoint '{THROUGH_POSES_START}' not found")
+        document, authored_waypoints = load_waypoint_document(path)
+        segments = load_planning_segments(document, authored_waypoints)
+        ordered = materialize_mission_route(authored_waypoints, segments)
+        materialized = materialize_free_yaws(ordered)
+        materialized_by_id = {waypoint.id: waypoint for waypoint in materialized}
+        action_segments = materialize_navigation_segments(
+            authored_waypoints, segments
+        )
+        actions = [
+            [self._goal_mapping(materialized_by_id[waypoint.id]) for waypoint in action]
+            for action in action_segments
+        ]
+        if not any(len(action) > 1 for action in actions):
+            raise ValueError("configured route contains no NavigateThroughPoses action")
         self.get_logger().info(
-            f"Split: {len(single)} single-pose + {len(through)} through-poses")
-        for w in single:
-            self.get_logger().info(f"  single: {w['id']} dir={w.get('direction')}")
-        for w in through:
-            self.get_logger().info(f"  through: {w['id']} dir={w.get('direction')}")
-        return single, through
+            "Route actions: " + "; ".join(
+                f"{action[0]['direction']}["
+                + ",".join(goal["id"] for goal in action)
+                + "]"
+                for action in actions
+            )
+        )
+        return actions
 
     def _single_bt(self, waypoint):
         if waypoint.get("goal_profile") == "reverse_handoff":
@@ -200,7 +218,7 @@ class ThroughPosesTester(Node):
             float(checker["yaw_goal_tolerance"]),
         )
 
-    # ── single-pose navigation (for reverse segment) ──
+    # ── single-pose navigation ──
 
     def _send_single_goal(self, waypoint):
         bt = self._single_bt(waypoint)
@@ -256,11 +274,18 @@ class ThroughPosesTester(Node):
         return self._make_result(waypoint, bt, outcome, start_time, start_pose,
                                  odom_start, status)
 
-    # ── ThroughPoses navigation (for forward segment) ──
+    # ── ThroughPoses navigation ──
 
     def _send_through_poses(self, waypoints):
-        """Send all forward waypoints as a single NavigateThroughPoses goal."""
-        bt = self._required_path("through_poses_bt")
+        """Send one configured multi-goal action without synthetic stops."""
+        direction = waypoints[0].get("direction", "forward")
+        if any(waypoint.get("direction", "forward") != direction for waypoint in waypoints):
+            raise ValueError("NavigateThroughPoses action changes direction")
+        bt = self._required_path(
+            "reverse_through_poses_bt"
+            if direction == "reverse"
+            else "through_poses_bt"
+        )
         timeout = float(self.get_parameter("goal_timeout_sec").value)
         start_time = time.monotonic()
         odom_start = len(self._odom_samples)
@@ -439,7 +464,7 @@ class ThroughPosesTester(Node):
     # ── main ──
 
     def run(self):
-        single_wps, through_wps = self._load_waypoints()
+        actions = self._load_actions()
 
         # Wait for action servers
         if not self._single_client.wait_for_server(timeout_sec=90.0):
@@ -447,8 +472,9 @@ class ThroughPosesTester(Node):
         if not self._through_client.wait_for_server(timeout_sec=30.0):
             self.get_logger().warn(
                 "/navigate_through_poses action server unavailable — "
-                "will only test single-pose navigation")
-            through_wps = []  # skip through-poses test
+                "cannot test this configured route")
+            self._save_results("error", "navigate_through_poses_unavailable")
+            return False
         if not self._wait_for_odom():
             raise RuntimeError("odom_combined unavailable")
 
@@ -460,24 +486,16 @@ class ThroughPosesTester(Node):
             while time.monotonic() < deadline:
                 rclpy.spin_once(self, timeout_sec=0.2)
 
-        # Phase 1: Per-waypoint single-pose navigation (reverse segment)
-        for w in single_wps:
-            result = self._send_single_goal(w)
+        for action in actions:
+            if len(action) == 1:
+                result = self._send_single_goal(action[0])
+                failure = "single_pose_failure"
+            else:
+                result = self._send_through_poses(action)
+                failure = "through_poses_failure"
             self._results.append(result)
             if result["outcome"] != "succeeded":
-                self._save_results("failed", "single_pose_failure")
-                return False
-            # Brief pause between goals
-            deadline = time.monotonic() + 1.0
-            while time.monotonic() < deadline:
-                rclpy.spin_once(self, timeout_sec=0.1)
-
-        # Phase 2: Single NavigateThroughPoses (forward segment)
-        if through_wps:
-            result = self._send_through_poses(through_wps)
-            self._results.append(result)
-            if result["outcome"] != "succeeded":
-                self._save_results("failed", "through_poses_failure")
+                self._save_results("failed", failure)
                 return False
 
         self._save_results("completed")
@@ -487,8 +505,7 @@ class ThroughPosesTester(Node):
         path = Path(str(self.get_parameter("results_file").value))
         data = {
             "overall_outcome": outcome,
-            "mode": "hybrid_single_through_poses",
-            "through_poses_start": THROUGH_POSES_START,
+            "mode": "configured_single_and_through_poses",
             "results": self._results,
         }
         if error:

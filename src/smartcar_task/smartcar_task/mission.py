@@ -143,20 +143,24 @@ class Mission:
         self._set_state(MissionState.WAITING_FOR_SERVERS, generation)
         return generation
 
-    def execute(self, waypoints):
+    def execute(self, waypoints, navigation_segments=None):
         generation = self.reserve_start()
         if generation is None:
             return OperationResult(False, "mission_not_idle")
-        return self.run_reserved(generation, waypoints)
+        return self.run_reserved(generation, waypoints, navigation_segments)
 
-    def run_reserved(self, generation, waypoints):
+    def run_reserved(self, generation, waypoints, navigation_segments=None):
         with self._lock:
             if generation != self._generation or not self._reserved:
                 return OperationResult(False, "mission_generation_invalid")
             self._reserved = False
             self._running = True
         try:
-            return self._run(generation, tuple(waypoints))
+            return self._run(
+                generation,
+                tuple(waypoints),
+                navigation_segments,
+            )
         except Exception as error:
             if self._stop_requested.is_set():
                 return self._finish_stopped(generation)
@@ -218,7 +222,7 @@ class Mission:
         self._set_state(MissionState.IDLE)
         return OperationResult(True, "ok")
 
-    def _run(self, generation, waypoints):
+    def _run(self, generation, waypoints, navigation_segments=None):
         if not waypoints:
             return self._fail(generation, "waypoints_empty")
         if self._stop_requested.is_set():
@@ -239,7 +243,14 @@ class Mission:
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
 
-        for segment in self._navigation_segments(waypoints):
+        if navigation_segments is None:
+            segments = tuple(self._navigation_segments(waypoints))
+        else:
+            segments = tuple(tuple(segment) for segment in navigation_segments)
+        for segment in segments:
+            invalid_segment = self._navigation_segment_error(segment)
+            if invalid_segment is not None:
+                return self._fail(generation, invalid_segment)
             navigation = self._navigate(generation, segment)
             if not navigation.success:
                 return navigation
@@ -279,36 +290,67 @@ class Mission:
         if segment:
             yield tuple(segment)
 
+    @staticmethod
+    def _navigation_segment_error(segment):
+        """Reject a malformed explicit segment before it reaches Nav2."""
+        if not segment:
+            return "navigation_segment_empty"
+        if any(waypoint.task == "start" for waypoint in segment):
+            return "navigation_segment_contains_start"
+        direction = segment[0].direction
+        if any(waypoint.direction != direction for waypoint in segment):
+            return "navigation_segment_direction_mismatch"
+        if any(
+            waypoint.task in {"qr", "vlm", "return"}
+            for waypoint in segment[:-1]
+        ):
+            return "navigation_segment_semantic_boundary"
+        if len(segment) > 1 and any(
+            getattr(waypoint, "goal_profile", "standard") != "standard"
+            for waypoint in segment
+        ):
+            return "navigation_segment_nonstandard_goal_profile"
+        return None
+
     def _navigate(self, generation, segment):
         self._set_state(MissionState.NAVIGATING, generation)
-        for waypoint in segment:
-            attempts = self._config.navigation_retries + 1
-            last_status = "navigation_failed"
-            for attempt in range(attempts):
-                if self._stop_requested.is_set():
-                    return self._finish_stopped(generation)
+        reverse_direction = segment[0].direction == "reverse"
+        attempts = self._config.navigation_retries + 1
+        last_status = "navigation_failed"
+        for attempt in range(attempts):
+            if self._stop_requested.is_set():
+                return self._finish_stopped(generation)
+            if len(segment) == 1:
                 result = self._navigator.navigate(
-                    waypoint,
-                    reverse_direction=waypoint.direction == "reverse",
+                    segment[0],
+                    reverse_direction=reverse_direction,
                 )
-                if self._stop_requested.is_set():
-                    return self._finish_stopped(generation)
-                if result.success:
-                    break
-                last_status = result.status
-                if self._navigator.is_active():
+            else:
+                try:
+                    result = self._navigator.navigate_through(
+                        segment,
+                        reverse_direction=reverse_direction,
+                    )
+                except AttributeError:
                     return self._fail(
                         generation,
-                        f"navigation_not_terminal:{last_status}",
+                        "navigation_through_unavailable",
                     )
-                if attempt + 1 < attempts and not self._interruptible_sleep(
-                    self._config.navigation_retry_delay_sec
-                ):
-                    return self._finish_stopped(generation)
-            else:
+            if self._stop_requested.is_set():
+                return self._finish_stopped(generation)
+            if result.success:
+                return OperationResult(True, "ok")
+            last_status = result.status
+            if self._navigator.is_active():
                 return self._fail(
-                    generation, f"navigation_failed:{last_status}")
-        return OperationResult(True, "ok")
+                    generation,
+                    f"navigation_not_terminal:{last_status}",
+                )
+            if attempt + 1 < attempts and not self._interruptible_sleep(
+                self._config.navigation_retry_delay_sec
+            ):
+                return self._finish_stopped(generation)
+        return self._fail(generation, f"navigation_failed:{last_status}")
 
     def _run_qr(self, generation):
         self._set_state(MissionState.RUNNING_QR, generation)

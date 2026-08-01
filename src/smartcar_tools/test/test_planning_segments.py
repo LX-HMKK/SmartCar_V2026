@@ -1,16 +1,22 @@
 """Contracts for the editable planning-segment route model."""
+from dataclasses import replace
 import math
 from pathlib import Path
 import sys
 import unittest
+from unittest import mock
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 sys.path.insert(0, str(PACKAGE_ROOT.parent / "smartcar_task"))
 
+from smartcar_task.route_geometry import materialize_free_yaws  # noqa: E402
 from smartcar_task.waypoints import (  # noqa: E402
+    HEADING_LOCKED_TASKS,
     Waypoint,
+    is_heading_locked,
+    is_zero_quaternion,
     load_waypoint_document,
     validate_waypoints,
 )
@@ -29,22 +35,37 @@ from smartcar_tools.route_preflight import (  # noqa: E402
     Pose2D,
     preflight_route,
 )
+import smartcar_tools.route_preflight as route_preflight_module  # noqa: E402
 
 
 GEOMETRY_FILE = PACKAGE_ROOT / "config" / "routes" / "field_geometry.yaml"
 NAV_ONLY_FILE = (
     PACKAGE_ROOT.parent / "smartcar_nav2" / "config" / "waypoints" / "nav_only.yaml"
 )
+DEFAULT_WAYPOINTS_FILE = (
+    PACKAGE_ROOT.parent
+    / "smartcar_nav2"
+    / "config"
+    / "waypoints"
+    / "default_waypoints.yaml"
+)
 
 
-def waypoint(waypoint_id, task, x, y, direction="forward"):
+def waypoint(waypoint_id, task, x, y, direction="forward", heading_mode=None):
     return Waypoint(
         frame_id="odom_combined",
         position=(x, y, 0.0),
-        orientation=(0.0, 0.0, 0.0, 1.0),
+        orientation=(
+            (0.0, 0.0, 0.0, 1.0)
+            if heading_mode == "locked" or (
+                heading_mode is None and task in HEADING_LOCKED_TASKS
+            )
+            else (0.0, 0.0, 0.0, 0.0)
+        ),
         task=task,
         direction=direction,
         id=waypoint_id,
+        heading_mode=heading_mode,
     )
 
 
@@ -61,6 +82,16 @@ def mission_waypoints():
 
 
 class PlanningSegmentTests(unittest.TestCase):
+    def assert_position_only_orientation_contract(self, route):
+        for item in route:
+            with self.subTest(waypoint=item.id):
+                norm = math.sqrt(sum(value * value for value in item.orientation))
+                if is_heading_locked(item):
+                    self.assertFalse(is_zero_quaternion(item.orientation))
+                    self.assertAlmostEqual(norm, 1.0)
+                else:
+                    self.assertEqual(item.orientation, (0.0, 0.0, 0.0, 0.0))
+
     def test_segments_materialize_an_ordered_semantic_route(self):
         source = mission_waypoints()
         segments = (
@@ -91,6 +122,9 @@ class PlanningSegmentTests(unittest.TestCase):
             ],
         )
         self.assertEqual(validate_waypoints(route), route)
+        self.assert_position_only_orientation_contract(
+            materialize_free_yaws(route)
+        )
 
     def test_segments_require_one_contiguous_coverage_of_all_waypoints(self):
         source = mission_waypoints()
@@ -128,6 +162,18 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(reloaded, derived)
         self.assertIn("planning_segments", root)
 
+    def test_yaml_and_action_routes_keep_transit_headings_free(self):
+        for waypoint_file in (NAV_ONLY_FILE, DEFAULT_WAYPOINTS_FILE):
+            with self.subTest(waypoint_file=waypoint_file.name):
+                document, authored = load_waypoint_document(waypoint_file)
+                segments = load_planning_segments(document, authored)
+                executable = materialize_free_yaws(
+                    materialize_route(authored, segments)
+                )
+
+                self.assert_position_only_orientation_contract(authored)
+                self.assert_position_only_orientation_contract(executable)
+
     def test_local_preflight_finds_open_space_and_rejects_keepout_center(self):
         planner = LatticePreflightPlanner(load_field_reference(GEOMETRY_FILE))
         open_path = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(1.0, 0.0, 0.0))
@@ -139,7 +185,7 @@ class PlanningSegmentTests(unittest.TestCase):
         blocked = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(2.0, 3.3, 0.0))
         self.assertIsNone(blocked)
 
-    def test_orientation_free_through_pose_keeps_a_continuous_joint_heading(self):
+    def test_transit_heading_remains_free_in_preflight(self):
         source = (
             Waypoint(
                 frame_id="odom_combined",
@@ -178,8 +224,7 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(
             report.warnings,
             (
-                "middle: orientation unconstrained; preflight selects "
-                "a continuous heading",
+                "middle: position-only; preflight leaves heading free",
             ),
         )
         first_leg, second_leg = report.segments[0].legs
@@ -189,12 +234,197 @@ class PlanningSegmentTests(unittest.TestCase):
             0.15,
         )
 
-    def test_simulation_segment_baseline_reports_current_c_entry_blocked(self):
-        document, source = load_waypoint_document(NAV_ONLY_FILE)
-        segments = load_planning_segments(document, source)
-        report = preflight_route(load_field_reference(GEOMETRY_FILE), source, segments)
+    def test_preflight_normalizes_legacy_transit_yaw_to_free_heading(self):
+        source = (
+            waypoint("start", "start", 0.0, 0.0),
+            waypoint("middle", "via", 0.7, 0.0),
+            waypoint("end", "return", 1.5, 0.0),
+        )
+        segment = PlanningSegment("pass", "forward", "start", "end", ("middle",))
+        reference = load_field_reference(GEOMETRY_FILE)
+        baseline = preflight_route(reference, source, (segment,))
+        authored_yaw = replace(
+            source[1], orientation=(0.0, 0.0, 1.0, 0.0)
+        )
+        changed = preflight_route(
+            reference, (source[0], authored_yaw, source[2]), (segment,)
+        )
+
+        self.assertEqual(baseline, changed)
+        self.assertEqual(
+            baseline.warnings,
+            ("middle: position-only; preflight leaves heading free",),
+        )
+
+    def test_preflight_preserves_adjacent_transit_action_boundaries(self):
+        source = (
+            waypoint("p_start", "start", 0.0, 0.0),
+            waypoint("middle", "via", 0.8, 0.0),
+            waypoint("p_finish", "return", 0.0, 0.0),
+        )
+        segments = (
+            PlanningSegment("first", "forward", "p_start", "middle"),
+            PlanningSegment("second", "forward", "middle", "p_finish"),
+        )
+        first_action = route_preflight_module._ThroughPlan(
+            legs=((
+                route_preflight_module.Point2D(0.0, 0.0),
+                route_preflight_module.Point2D(0.8, 0.0),
+            ),),
+            expanded_states=(2,),
+            completed_goals=1,
+        )
+        second_action = route_preflight_module._ThroughPlan(
+            legs=((
+                route_preflight_module.Point2D(0.8, 0.0),
+                route_preflight_module.Point2D(0.0, 0.0),
+            ),),
+            expanded_states=(3,),
+            completed_goals=1,
+        )
+        with mock.patch.object(
+            route_preflight_module,
+            "_plan_segment_through_constraints",
+            autospec=True,
+            side_effect=(first_action, second_action),
+        ) as plan_segment:
+            report = preflight_route(
+                load_field_reference(GEOMETRY_FILE), source, segments
+            )
+
+        self.assertEqual(plan_segment.call_count, 2)
+        self.assertEqual(
+            [
+                [constraint.yaw for constraint in call.args[1]]
+                for call in plan_segment.call_args_list
+            ],
+            [[0.0, None], [None, 0.0]],
+        )
+        self.assertTrue(report.feasible)
+        self.assertEqual(
+            [item.segment_id for item in report.segments], ["first", "second"]
+        )
+        first_leg, second_leg = report.segments[0].legs[0], report.segments[1].legs[0]
+        self.assertEqual(first_leg.points[-1], second_leg.points[0])
+
+    def test_preflight_failure_is_bounded_to_its_explicit_action(self):
+        source = (
+            waypoint("p_start", "start", 0.0, 0.0),
+            waypoint("middle", "via", 0.8, 0.0),
+            waypoint("p_finish", "return", 0.0, 0.0),
+        )
+        segments = (
+            PlanningSegment("first", "forward", "p_start", "middle"),
+            PlanningSegment("second", "forward", "middle", "p_finish"),
+        )
+        failed = route_preflight_module._ThroughPlan(
+            legs=(), expanded_states=(4,), completed_goals=0
+        )
+        succeeding = route_preflight_module._ThroughPlan(
+            legs=((
+                route_preflight_module.Point2D(0.8, 0.0),
+                route_preflight_module.Point2D(0.0, 0.0),
+            ),),
+            expanded_states=(5,),
+            completed_goals=1,
+        )
+        with mock.patch.object(
+            route_preflight_module,
+            "_plan_segment_through_constraints",
+            autospec=True,
+            side_effect=(failed, succeeding),
+        ):
+            report = preflight_route(
+                load_field_reference(GEOMETRY_FILE), source, segments
+            )
 
         self.assertFalse(report.feasible)
+        self.assertEqual(
+            [item.feasible for item in report.segments], [False, True]
+        )
+        self.assertEqual(
+            (report.segments[0].legs[0].start_id, report.segments[0].legs[0].end_id),
+            ("p_start", "middle"),
+        )
+        self.assertEqual(report.segments[1].legs[0].start_id, "middle")
+        self.assertIn("navigation action", report.segments[0].message)
+
+    def test_simulation_segment_baseline_preserves_guided_c_entry_constraints(self):
+        document, source = load_waypoint_document(NAV_ONLY_FILE)
+        segments = load_planning_segments(document, source)
+        runtime_actions = route_preflight_module._runtime_navigation_actions(
+            source, segments
+        )
+        self.assertEqual(len(runtime_actions), 5)
+        self.assertEqual(
+            [
+                (
+                    action.start_id,
+                    tuple(segment.id for segment in action.segments),
+                    action.goal_ids,
+                )
+                for action in runtime_actions
+            ],
+            [
+                ("p_start", ("p_to_qr",), ("a_task_observe",)),
+                (
+                    "a_task_observe",
+                    ("reverse_corridor",),
+                    ("b_corridor_gate", "b_corridor_enter"),
+                ),
+                (
+                    "b_corridor_enter",
+                    ("reverse_c_entry",),
+                    (
+                        "c_entry_west",
+                        "c_corner_1",
+                        "c_corner_2",
+                        "c_corner_3",
+                    ),
+                ),
+                (
+                    "c_corner_3",
+                    ("c_exit",),
+                    ("c_corner_4", "b_corridor_return_enter"),
+                ),
+                (
+                    "b_corridor_return_enter",
+                    ("return_to_p",),
+                    (
+                        "b_corridor_return_drop",
+                        "b_corridor_return",
+                        "p_finish",
+                    ),
+                ),
+            ],
+        )
+
+        def planned_action(_planner, constraints, _direction):
+            points = tuple(
+                (
+                    route_preflight_module.Point2D(start.x, start.y),
+                    route_preflight_module.Point2D(end.x, end.y),
+                )
+                for start, end in zip(constraints, constraints[1:])
+            )
+            return route_preflight_module._ThroughPlan(
+                legs=points,
+                expanded_states=(1,) * len(points),
+                completed_goals=len(points),
+            )
+
+        with mock.patch.object(
+            route_preflight_module,
+            "_plan_segment_through_constraints",
+            autospec=True,
+            side_effect=planned_action,
+        ) as plan_segment:
+            report = preflight_route(
+                load_field_reference(GEOMETRY_FILE), source, segments
+            )
+
+        self.assertTrue(report.feasible)
+        self.assertEqual(plan_segment.call_count, 5)
         self.assertEqual(
             [item.segment_id for item in report.segments],
             [
@@ -205,18 +435,41 @@ class PlanningSegmentTests(unittest.TestCase):
                 "return_to_p",
             ],
         )
-        self.assertEqual(
-            report.warnings,
-            (
-                "c_corner_1: orientation unconstrained; preflight selects "
-                "a continuous heading",
-            ),
+        expected_warnings = tuple(
+            f"{waypoint.id}: position-only; preflight leaves heading free"
+            for waypoint in source
+            if not is_heading_locked(waypoint)
+        )
+        self.assertEqual(report.warnings, expected_warnings)
+        self.assert_position_only_orientation_contract(source)
+        self.assert_position_only_orientation_contract(
+            materialize_free_yaws(materialize_route(source, segments))
         )
         c_entry = next(
             item for item in report.segments if item.segment_id == "reverse_c_entry"
         )
-        self.assertFalse(c_entry.feasible)
-        self.assertIn("b_corridor_enter -> c_corner_1", c_entry.message)
+        self.assertTrue(c_entry.feasible)
+        self.assertEqual(
+            [(leg.start_id, leg.end_id) for leg in c_entry.legs],
+            [
+                ("b_corridor_enter", "c_entry_west"),
+                ("c_entry_west", "c_corner_1"),
+                ("c_corner_1", "c_corner_2"),
+                ("c_corner_2", "c_corner_3"),
+            ],
+        )
+        return_to_p = next(
+            item for item in report.segments if item.segment_id == "return_to_p"
+        )
+        self.assertTrue(return_to_p.feasible)
+        self.assertEqual(
+            [(leg.start_id, leg.end_id) for leg in return_to_p.legs],
+            [
+                ("b_corridor_return_enter", "b_corridor_return_drop"),
+                ("b_corridor_return_drop", "b_corridor_return"),
+                ("b_corridor_return", "p_finish"),
+            ],
+        )
 
 
 if __name__ == "__main__":

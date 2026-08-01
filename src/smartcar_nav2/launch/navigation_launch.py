@@ -14,6 +14,7 @@
 
 """Nav2 Humble 1.1.20 navigation launch with a single smoothed command path."""
 
+import math
 import os
 
 from ament_index_python.packages import get_package_share_directory
@@ -23,6 +24,7 @@ from launch.actions import (
     GroupAction,
     OpaqueFunction,
     SetEnvironmentVariable,
+    TimerAction,
 )
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
@@ -52,8 +54,21 @@ def _lifecycle_manager_actions(
     *,
     use_sim_time,
     autostart,
+    lifecycle_manager_delay_sec,
     log_level,
 ):
+    delay_text = lifecycle_manager_delay_sec.perform(context).strip()
+    try:
+        delay_sec = float(delay_text)
+    except ValueError as error:
+        raise RuntimeError(
+            "lifecycle_manager_delay_sec must be a non-negative finite number"
+        ) from error
+    if not math.isfinite(delay_sec) or delay_sec < 0.0:
+        raise RuntimeError(
+            "lifecycle_manager_delay_sec must be a non-negative finite number"
+        )
+
     lifecycle_nodes = list(CORE_LIFECYCLE_NODES)
 
     parameters = [{
@@ -61,14 +76,17 @@ def _lifecycle_manager_actions(
         'autostart': autostart,
         'node_names': lifecycle_nodes,
     }]
-    return [Node(
+    lifecycle_manager = Node(
         package='nav2_lifecycle_manager',
         executable='lifecycle_manager',
         name='lifecycle_manager_navigation',
         output='screen',
         arguments=['--ros-args', '--log-level', log_level],
         parameters=parameters,
-    )]
+    )
+    if delay_sec == 0.0:
+        return [lifecycle_manager]
+    return [TimerAction(period=delay_sec, actions=[lifecycle_manager])]
 
 
 def _navigation_node_actions(
@@ -156,6 +174,8 @@ def generate_launch_description():
     namespace = LaunchConfiguration('namespace')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
+    lifecycle_manager_delay_sec = LaunchConfiguration(
+        'lifecycle_manager_delay_sec')
     params_file = LaunchConfiguration('params_file')
     params_overlay_file = LaunchConfiguration('params_overlay_file')
     use_respawn = LaunchConfiguration('use_respawn')
@@ -188,6 +208,14 @@ def generate_launch_description():
         default_value='true',
         description='Automatically startup the nav2 stack',
     )
+    declare_lifecycle_manager_delay_cmd = DeclareLaunchArgument(
+        'lifecycle_manager_delay_sec',
+        default_value='0.0',
+        description=(
+            'Wall-clock delay before starting the Nav2 lifecycle manager; '
+            'use 0.0 for the normal bringup order'
+        ),
+    )
     declare_use_respawn_cmd = DeclareLaunchArgument(
         'use_respawn',
         default_value='False',
@@ -213,6 +241,7 @@ def generate_launch_description():
         kwargs={
             'use_sim_time': use_sim_time,
             'autostart': autostart,
+            'lifecycle_manager_delay_sec': lifecycle_manager_delay_sec,
             'log_level': log_level,
         },
     )
@@ -224,6 +253,7 @@ def generate_launch_description():
     launch_description.add_action(declare_params_file_cmd)
     launch_description.add_action(declare_params_overlay_file_cmd)
     launch_description.add_action(declare_autostart_cmd)
+    launch_description.add_action(declare_lifecycle_manager_delay_cmd)
     launch_description.add_action(declare_use_respawn_cmd)
     launch_description.add_action(declare_log_level_cmd)
     launch_description.add_action(load_nodes)

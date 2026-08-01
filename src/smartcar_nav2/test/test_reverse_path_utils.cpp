@@ -169,7 +169,7 @@ TEST(ReversePathUtils, RejectsInvalidPoseAndWrongGoal)
   EXPECT_EQ(result.reason, "goal_position_mismatch");
 }
 
-TEST(ReversePathUtils, AllowsUnconstrainedExpectedOrientations)
+TEST(ReversePathUtils, RejectsZeroQuaternionExpectedOrientations)
 {
   const auto path_start = makePose(0.0, 0.0, 0.0);
   const auto path_goal = makePose(-1.0, 0.0, 0.0);
@@ -187,7 +187,14 @@ TEST(ReversePathUtils, AllowsUnconstrainedExpectedOrientations)
   const auto result = smartcar_nav2::validateReversePath(
     path, expected_start, expected_goal,
     smartcar_nav2::ReversePathValidationOptions());
-  EXPECT_TRUE(result.valid) << result.reason;
+  EXPECT_FALSE(result.valid);
+  EXPECT_EQ(result.reason, "expected_pose_invalid");
+}
+
+TEST(ReversePathUtils, RejectsZeroQuaternionRotation)
+{
+  geometry_msgs::msg::Quaternion output;
+  EXPECT_FALSE(smartcar_nav2::rotateYawByPi(makeZeroQuaternion(), output));
 }
 
 TEST(ReversePathUtils, RejectsUnconstrainedQuaternionInPlannedPath)
