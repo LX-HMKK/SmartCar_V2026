@@ -1,10 +1,19 @@
-schema_version: 2
+schema_version: 5
 name: shared_route_planning_constraints
 
 # This file is the shared tuning surface for the waypoint editor preflight
 # and the simulation keepout-map generator. sim_tune.sh projects these exact
 # dimensions into simulation Nav2. It is not a SLAM/localization map.
-minimum_turning_radius_m: 0.55
+# The physical car measured about 0.20 m at the proven 0.70 rad command.
+# Keep 0.22 m as the planning/preflight lower bound instead of using that
+# measurement limit directly.
+minimum_turning_radius_m: 0.22
+
+# Gazebo has a separately constrained Ackermann model. This value is used by
+# the simulation geometry scan and synchronized only into the simulation Nav2
+# overlay; it remains independently synchronized from the real-vehicle
+# preflight radius above.
+simulation_minimum_turning_radius_m: 0.22
 
 # Nav2 costmaps use this rectangle plus padding. The preflight checker uses
 # the same padded, heading-dependent rectangle instead of a circular proxy.
@@ -38,7 +47,17 @@ preflight:
   max_expansions_per_leg: 30000
 
 simulation_keepout:
-  map_resolution_m: 0.10
+  # Keep the mask finer than the padded footprint sweep. The old 0.10 m
+  # cells allowed the controller to track a path just outside the visible
+  # field edge before the filter could react.
+  map_resolution_m: 0.025
+  # The PGM extends beyond the playable field by this amount and paints that
+  # outer ring lethal. It prevents Nav2 from using unmodelled space around
+  # the field as a shortcut while leaving P at (0, 0) initially valid.
+  boundary_padding_m: 0.25
   # Cost preference around the simulation-only KeepoutFilter mask. This is
   # separate from the collision footprint: filters own their lethal cells.
-  costmap_inflation_radius_m: 0.20
+  # 0.30 m keeps Hybrid-A* away from the A-zone obstacle before the padded
+  # body sweep would clip it, while retaining a centred, physically usable
+  # B-corridor route in Gazebo.
+  costmap_inflation_radius_m: 0.30

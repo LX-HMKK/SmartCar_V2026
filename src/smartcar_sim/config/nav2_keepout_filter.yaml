@@ -1,22 +1,176 @@
 # Simulation-only overlay. This file is layered after smartcar_nav2's resolved
 # base parameters, so the real vehicle never loads the KeepoutFilter plugin.
+# Gazebo's model uses a 0.189 m wheelbase and a 1.00 rad inner-wheel limit.
+# This permits the requested 0.22 m rear-axle radius. The real chain now uses
+# the same conservative lower bound after a measured approximately 0.20 m
+# physical circle; simulation-only controller and keepout tuning stay local.
+bt_navigator:
+  ros__parameters:
+    # Keep the custom free-heading path validator in the exact same kinematic
+    # envelope as the simulation-only Smac and controller overrides below.
+    free_heading_minimum_turning_radius: 0.22
+
+bt_navigator_navigate_through_poses_rclcpp_node:
+  ros__parameters:
+    free_heading_minimum_turning_radius: 0.22
+
+bt_navigator_navigate_to_pose_rclcpp_node:
+  ros__parameters:
+    free_heading_minimum_turning_radius: 0.22
+
 controller_server:
   ros__parameters:
-    FollowPath:
-      # Keep RPP's cost-distance model within the simulation-only inflation
-      # field below. The real vehicle retains its production 0.25 m setting.
-      cost_scaling_dist: 0.20
-      # The 1.0 m B-corridor needs a shorter carrot than the production
-      # open-field setting. This is a Gazebo-only tracking adjustment: it
-      # prevents RPP from sweeping its first reverse arc into a B-wall while
-      # the planner path remains corridor-centred.
-      lookahead_dist: 0.45
-      min_lookahead_dist: 0.35
-      max_lookahead_dist: 0.75
+    ForwardAvoidance:
+      # The P-only escape connector transitions through two radii before a
+      # northbound straight. A long inherited carrot sees through that leg
+      # into the following right turn, then can keep correcting a small
+      # lateral error as a left arc. Keep the carrot inside the straight leg
+      # so RPP first converges to the body-swept connector before it starts
+      # the obstacle-clear turn.
+      lookahead_dist: 0.30
+      min_lookahead_dist: 0.30
+      max_lookahead_dist: 0.30
+      use_velocity_scaled_lookahead_dist: false
+      regulated_linear_scaling_min_radius: 0.22
+      forward_max_angular_velocity: 0.6818181818181818
+      forward_min_turning_radius: 0.22
+      # Do not let RPP recover a connector-tracking error by cutting toward
+      # an obstacle or beginning a new large circle. The controller fails to
+      # the BT's existing clear/replan branch outside this swept path band.
+      forward_path_max_cross_track_error: 0.12
+    ForwardHandoff:
+      # Humble MPPI scores raw Gaussian samples before applying its Ackermann
+      # constraints, then the output wrapper rejects the tighter command.
+      # That model/execution mismatch lets the vehicle drift into the A-zone
+      # keepout. Use the same collision-projecting, forward-only RPP wrapper
+      # as ForwardAvoidance for Gazebo's precise P -> A handoff. This is a
+      # simulation-only override; the real vehicle keeps its MPPI handoff.
+      plugin: "smartcar_nav2::ForwardOnlyRPPController"
+      desired_linear_vel: 0.15
+      # Keep the native RPP fallback's target inside the swept P connector.
+      # The enabled curvature tracker below supplies the actual command from
+      # the local path tangent and curvature, then collision-projects that
+      # exact command against the filtered local costmap.
+      lookahead_dist: 0.15
+      min_lookahead_dist: 0.15
+      max_lookahead_dist: 0.15
+      lookahead_time: 1.5
+      use_velocity_scaled_lookahead_dist: false
+      transform_tolerance: 0.1
+      min_approach_linear_velocity: 0.05
+      approach_velocity_scaling_dist: 0.6
+      max_allowed_time_to_collision_up_to_carrot: 1.0
+      use_collision_detection: true
+      use_cost_regulated_linear_velocity_scaling: true
+      cost_scaling_dist: 0.25
+      cost_scaling_gain: 1.0
+      inflation_cost_scaling_factor: 5.0
+      regulated_linear_scaling_min_radius: 0.22
+      # Keep this at the tight-turn cap. Otherwise RPP's constraint stage
+      # raises a requested 0.04 m/s back to 0.05 m/s before it reaches the
+      # simulated steering actuator.
+      regulated_linear_scaling_min_speed: 0.04
+      use_rotate_to_heading: false
+      allow_reversing: false
+      forward_max_angular_velocity: 0.6818181818181818
+      forward_min_turning_radius: 0.22
+      forward_path_max_cross_track_error: 0.12
+      # This signature is matched against each accepted FollowPath plan. A
+      # P-only one-sided envelope never leaks into a later ordinary replan.
+      forward_path_lateral_profile: "p_departure_south_v1"
+      forward_path_lateral_profile_frame_id: "odom_combined"
+      forward_path_lateral_profile_start_x_m: 0.0
+      forward_path_lateral_profile_start_y_m: 0.0
+      forward_path_lateral_profile_start_yaw_rad: 0.0
+      forward_path_lateral_profile_start_position_tolerance_m: 0.001
+      forward_path_lateral_profile_start_yaw_tolerance_rad: 0.001
+      forward_path_use_curvature_tracking: true
+      # On the northbound leg, heading-only damping previously held about
+      # 8 cm of left offset until the following right arc. Favor transverse
+      # convergence there, before the one-sided 50 mm south envelope begins.
+      # Command clipping and collision projection remain active.
+      forward_path_heading_gain: 3.0
+      forward_path_cross_track_gain: 6.0
+      forward_path_collision_projection_m: 0.15
+      # The Fortress steering joints still accumulate a small path-right
+      # error at 0.05 m/s on the 0.22 m terminal arc. Give the actuator one
+      # additional control interval per 5 cm of arc; straight and gentle-arc
+      # sections remain eligible for the selected simulation speed profile.
+      forward_path_tight_turn_speed_mps: 0.04
+      forward_path_tight_turn_radius_m: 0.30
+      forward_path_tight_turn_preview_m: 0.50
+      # Only after the P departure and straight terminal approach are
+      # complete, shorten RPP's own collision-projected carrot. This keeps
+      # the final locked-yaw arc ahead of the controller instead of letting
+      # it drive through the task point and attempt a prohibited loop.
+      forward_terminal_lookahead_m: 0.05
+      forward_terminal_activation_distance_m: 0.50
+    ReverseHandoff:
+      wz_max: 0.42
+      AckermannConstraints:
+        min_turning_r: 0.22
+    ReverseRecovery:
+      AckermannConstraints:
+        min_turning_r: 0.22
+
+planner_server:
+  ros__parameters:
+    GridBased:
+      # The full-body sweep is authoritative for accepting a plan. Bias the
+      # simulation-only Hybrid-A* search away from the corresponding obstacle
+      # halo so it finds a safe arc before that independent guard rejects it.
+      # This does not alter the on-vehicle planner configuration.
+      # The padded-body sweep is stricter than Smac's discrete state check.
+      # Increase the simulation-only cost bias so the lattice prefers a
+      # visibly clear side of an A-zone obstacle before the independent sweep
+      # has to reject the path.
+      cost_penalty: 10.0
+      # The P connector terminates 1.25 m from the locked A task pose. Permit
+      # one bounded analytic terminal Dubins connection so its final tangent
+      # agrees with the task yaw instead of merely overwriting the last pose
+      # orientation on a lattice segment. ComputeFreeHeadingPath still sweeps
+      # the complete padded footprint against fresh raw costmap and keepout
+      # data before FollowPath can receive it.
+      analytic_expansion_max_length: 1.5
+      # A local-Gazebo-only vehicle constraint. The matching controller limits
+      # and SDF steering geometry are changed together.
+      minimum_turning_radius: 0.22
+      # Smac collision-checks precomputed footprint headings.  At 72 bins the
+      # nearest footprint can differ from an executing arc by 2.5 degrees,
+      # enough to create a false clearance beside a narrow obstacle edge.
+      # Use 144 bins with the 0.025 m global grid to reduce this discrete
+      # heading error below one grid cell. The continuous body sweep remains
+      # the authoritative acceptance check.
+      angle_quantization_bins: 144
+      # The base 20 m lookup table expands to 800 cells at this simulation's
+      # 0.025 m resolution and makes every headless route wait more than a
+      # minute during planner configuration. All current route chords are
+      # below 3.3 m; keep a 6 m local cache and let Smac compute any longer
+      # heuristic on demand. This affects startup cost only, never collision
+      # checking or the planner's reachable state space.
+      lookup_table_size: 6.0
 
 local_costmap:
   local_costmap:
     ros__parameters:
+      # RPP collision projection must use the same grid as the P-departure
+      # full-footprint sweep and the static KeepoutFilter mask.  At the old
+      # 0.03 m inherited grid, the south boundary was rounded inward by a
+      # whole local cell and rejected an independently swept-clear first arc.
+      # This aligns discretization; it does not shrink the footprint or turn
+      # off controller collision prediction.
+      resolution: 0.025
+      # Publish every internal update in local Gazebo so RViz and the custom
+      # full-body path validator do not observe a half-second-old obstacle map.
+      publish_frequency: 10.0
+      # Keep scan timestamps tightly coupled to the Gazebo odom->base TF.
+      # A larger default window hides a delayed bridge queue as a valid
+      # observation and makes RViz / costmap obstacle positions look stale.
+      transform_tolerance: 0.10
+      # Shared simulation footprint; sync_route_planning.py updates this
+      # overlay without ever changing the real-vehicle costmap parameters.
+      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint_padding: 0.03
       filters: ["keepout_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
@@ -25,21 +179,50 @@ local_costmap:
       # The official B-zone opening is 1.0 m wide.  The vehicle's padded
       # half-width is 0.16 m, so the real-system 0.55 m inflation radius
       # would mark the entire simulated opening impassable.  Gazebo still
-      # retains the physical B walls; this overlay leaves a 0.20 m planning
+      # retains the physical B walls; this overlay leaves a 0.30 m planning
       # preference without changing the real-vehicle configuration. It is not
       # the robot collision envelope: KeepoutFilter owns lethal mask cells
       # independently of this InflationLayer setting.
       # The scalar is synchronized from route_planning.yaml.
       inflation_layer:
-        inflation_radius: 0.20
+        inflation_radius: 0.3
+      obstacle_layer:
+        # The headless GPU lidar runs at 20 Hz. Retain only the newest scan and mark
+        # the buffer stale if two expected frames are missed; this makes a
+        # bridge or TF failure visible instead of silently planning through it.
+        observation_persistence: 0.0
+        expected_update_rate: 0.10
+        scan:
+          min_obstacle_height: 0.05
+          max_obstacle_height: 0.50
+          inf_is_valid: false
 
 global_costmap:
   global_costmap:
     ros__parameters:
+      # Humble Smac validates only discrete hybrid states. At the production
+      # 0.05 m grid, an analytic Dubins connection can step across a narrow
+      # obstacle edge that the continuous padded-body sweep correctly finds.
+      # This local-Gazebo grid makes those checks no coarser than 0.025 m;
+      # it is intentionally an overlay, not a real-vehicle CPU setting.
+      resolution: 0.025
+      # Keep the published raw map at the 5 Hz global update rate. The
+      # simulation-only planner validator consumes this topic directly.
+      publish_frequency: 5.0
+      transform_tolerance: 0.10
+      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint_padding: 0.03
       filters: ["keepout_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: true
         filter_info_topic: "/keepout_filter_info"
       inflation_layer:
-        inflation_radius: 0.20
+        inflation_radius: 0.3
+      obstacle_layer:
+        observation_persistence: 0.0
+        expected_update_rate: 0.10
+        scan:
+          min_obstacle_height: 0.05
+          max_obstacle_height: 0.50
+          inf_is_valid: false

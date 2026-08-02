@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 5
 CONFIG_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
 
 
@@ -72,12 +72,16 @@ class PreflightConfig:
 @dataclass(frozen=True)
 class SimulationKeepoutConfig:
     map_resolution_m: float
+    boundary_padding_m: float
     costmap_inflation_radius_m: float
 
 
 @dataclass(frozen=True)
 class RoutePlanningConfig:
+    """Shared real-vehicle constraints plus explicit Gazebo-only overrides."""
+
     minimum_turning_radius_m: float
+    simulation_minimum_turning_radius_m: float
     runtime_footprint: RuntimeFootprintConfig
     c_zone_keepout: CZoneKeepoutConfig
     preflight: PreflightConfig
@@ -205,6 +209,7 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             "schema_version",
             "name",
             "minimum_turning_radius_m",
+            "simulation_minimum_turning_radius_m",
             "runtime_footprint",
             "c_zone_keepout",
             "preflight",
@@ -253,13 +258,21 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
     simulation = _mapping(root["simulation_keepout"], "simulation_keepout")
     _exact_fields(
         simulation,
-        {"map_resolution_m", "costmap_inflation_radius_m"},
+        {
+            "map_resolution_m",
+            "boundary_padding_m",
+            "costmap_inflation_radius_m",
+        },
         "simulation_keepout",
     )
 
     result = RoutePlanningConfig(
         minimum_turning_radius_m=_positive_number(
             root["minimum_turning_radius_m"], "minimum_turning_radius_m"
+        ),
+        simulation_minimum_turning_radius_m=_positive_number(
+            root["simulation_minimum_turning_radius_m"],
+            "simulation_minimum_turning_radius_m",
         ),
         runtime_footprint=RuntimeFootprintConfig(
             half_length_m=_positive_number(
@@ -329,6 +342,10 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             map_resolution_m=_positive_number(
                 simulation["map_resolution_m"],
                 "simulation_keepout.map_resolution_m",
+            ),
+            boundary_padding_m=_positive_number(
+                simulation["boundary_padding_m"],
+                "simulation_keepout.boundary_padding_m",
             ),
             costmap_inflation_radius_m=_positive_number(
                 simulation["costmap_inflation_radius_m"],

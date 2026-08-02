@@ -56,7 +56,8 @@ except ModuleNotFoundError:
 
 
 # ``keepout_bounds`` has a stable order in smartcar_tools.field_keepouts:
-# west/east B walls, central C core, then the three rasterized outer C limits.
+# west/east B walls, central C core, three C-zone limits, then the exterior
+# PGM ring. Keep the offline scanner aligned with the generated Nav2 mask.
 KEEP_OUT_NAMES = (
     "b_wall_west",
     "b_wall_east",
@@ -64,6 +65,10 @@ KEEP_OUT_NAMES = (
     "pgm_c_north",
     "pgm_c_west",
     "pgm_c_east",
+    "pgm_field_south",
+    "pgm_field_west",
+    "pgm_field_east",
+    "pgm_field_north",
 )
 
 
@@ -575,7 +580,7 @@ def compute_dubins(start: Pose, end: Pose, r: Optional[float] = None,
     Returns the shortest among all 6 Dubins types, with path discretisation.
     """
     if r is None:
-        r = default_geometry_context().config.minimum_turning_radius_m
+        r = default_geometry_context().config.simulation_minimum_turning_radius_m
     if r <= 0.0:
         raise ValueError("turning radius must be positive")
 
@@ -1010,7 +1015,7 @@ def scan_b_segment_candidates(
     if min_west_corner_clearance_m <= 0.0:
         raise ValueError("min_west_corner_clearance_m must be positive")
     context = collision_context or default_geometry_context()
-    radius = context.config.minimum_turning_radius_m
+    radius = context.config.simulation_minimum_turning_radius_m
     gate_options = tuple(gate_positions or generate_b_gate_positions())
     enter_options = tuple(enter_positions or generate_b_enter_positions())
     results: List[BSegmentCandidate] = []
@@ -1249,7 +1254,7 @@ def scan_candidates(
     This is more efficient than brute-force 4D product.
     """
     context = collision_context or default_geometry_context()
-    turning_radius = context.config.minimum_turning_radius_m
+    turning_radius = context.config.simulation_minimum_turning_radius_m
     results: List[CandidateSet] = []
 
     # ── Stage 1: Find robust c3→c4 pairs ──

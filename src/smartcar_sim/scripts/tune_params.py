@@ -1,5 +1,12 @@
 #!/usr/bin/env python3
-"""Edit navigation tuning parameters without reformatting nav2_params.yaml."""
+"""Edit real-vehicle Nav2 tuning parameters without reformatting their YAML.
+
+Gazebo's minimum turning radius is deliberately excluded.  It belongs to
+``route_planning.yaml`` as ``simulation_minimum_turning_radius_m`` and is
+projected only into the simulation overlay by ``sync_route_planning.py``.
+Keeping the two tuning surfaces separate prevents a local simulator trial
+from loosening the physical vehicle's Ackermann constraint.
+"""
 
 import argparse
 import copy
@@ -39,14 +46,6 @@ LOCK_FILE = Path(os.environ.get(
 
 TUNABLE_PARAMS = {
     "1": {
-        "name": "minimum_turning_radius",
-        "path": "planner_server.ros__parameters.GridBased.minimum_turning_radius",
-        "desc": "最小转弯半径 (m)",
-        "default": 0.55,
-        "range": (0.35, 0.80),
-        "step": 0.05,
-    },
-    "2": {
         "name": "precise_yaw_goal_tolerance",
         "path": "controller_server.ros__parameters.precise_goal_checker.yaw_goal_tolerance",
         "desc": "QR 精确目标朝向容差 (rad)",
@@ -54,7 +53,7 @@ TUNABLE_PARAMS = {
         "range": (0.10, 0.30),
         "step": 0.05,
     },
-    "3": {
+    "2": {
         "name": "precise_xy_goal_tolerance",
         "path": "controller_server.ros__parameters.precise_goal_checker.xy_goal_tolerance",
         "desc": "QR 精确目标位置容差 (m)",
@@ -62,7 +61,7 @@ TUNABLE_PARAMS = {
         "range": (0.08, 0.25),
         "step": 0.01,
     },
-    "4": {
+    "3": {
         "name": "yaw_goal_tolerance",
         "path": "controller_server.ros__parameters.goal_checker.yaw_goal_tolerance",
         "desc": "普通目标朝向容差 (rad)",
@@ -70,7 +69,7 @@ TUNABLE_PARAMS = {
         "range": (0.25, 1.00),
         "step": 0.05,
     },
-    "5": {
+    "4": {
         "name": "xy_goal_tolerance",
         "path": "controller_server.ros__parameters.goal_checker.xy_goal_tolerance",
         "desc": "普通目标位置容差 (m)",
@@ -78,15 +77,15 @@ TUNABLE_PARAMS = {
         "range": (0.10, 0.50),
         "step": 0.05,
     },
-    "6": {
-        "name": "lookahead_dist",
-        "path": "controller_server.ros__parameters.FollowPath.lookahead_dist",
-        "desc": "RPP 前视距离 (m)",
-        "default": 0.8,
-        "range": (0.30, 2.00),
-        "step": 0.10,
+    "5": {
+        "name": "forward_lookahead_dist",
+        "path": "controller_server.ros__parameters.ForwardAvoidance.lookahead_dist",
+        "desc": "前进 RPP 前视距离 (m)",
+        "default": 0.40,
+        "range": (0.30, 0.65),
+        "step": 0.05,
     },
-    "7": {
+    "6": {
         "name": "local_inflation_radius",
         "path": "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius",
         "desc": "局部膨胀半径 (m)",
@@ -94,7 +93,7 @@ TUNABLE_PARAMS = {
         "range": (0.30, 0.80),
         "step": 0.05,
     },
-    "8": {
+    "7": {
         "name": "global_inflation_radius",
         "path": "global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius",
         "desc": "全局膨胀半径 (m)",
@@ -102,15 +101,7 @@ TUNABLE_PARAMS = {
         "range": (0.40, 1.00),
         "step": 0.05,
     },
-    "9": {
-        "name": "desired_linear_vel",
-        "path": "controller_server.ros__parameters.FollowPath.desired_linear_vel",
-        "desc": "期望线速度 (m/s)",
-        "default": 0.15,
-        "range": (0.05, 0.30),
-        "step": 0.05,
-    },
-    "10": {
+    "8": {
         "name": "reverse_handoff_vx_max",
         "path": "controller_server.ros__parameters.ReverseHandoff.vx_max",
         "desc": "倒车交接 MPPI 虚拟正向最大速度 (m/s)",
@@ -118,7 +109,7 @@ TUNABLE_PARAMS = {
         "range": (0.04, 0.10),
         "step": 0.01,
     },
-    "11": {
+    "9": {
         "name": "reverse_handoff_goal_angle_weight",
         "path": "controller_server.ros__parameters.ReverseHandoff.GoalAngleCritic.cost_weight",
         "desc": "倒车交接 MPPI 终点航向权重",
@@ -303,6 +294,11 @@ def interactive():
     backup_params()
     print("\nSmartCar 仿真参数调参工具")
     print(f"参数源: {PARAMS_FILE}")
+    print(
+        "Gazebo 最小转弯半径由 "
+        "smartcar_tools/config/routes/route_planning.yaml 的 "
+        "simulation_minimum_turning_radius_m 管理；本工具不会修改实体半径。"
+    )
 
     while True:
         print("\n当前参数值:")

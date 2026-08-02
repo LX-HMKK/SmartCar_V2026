@@ -663,9 +663,9 @@ origincar_base::origincar_base()
   this->declare_parameter<double>("yaw_velocity_scale", 1.0);
   this->declare_parameter<double>("gyro_z_scale", 1.0);
   this->declare_parameter<double>("gyro_z_bias", 0.0);
-  this->declare_parameter<double>("steering_command_scale", 0.5);
+  this->declare_parameter<double>("steering_command_scale", 1.0);
   this->declare_parameter<double>("steering_command_offset_rad", 0.0);
-  this->declare_parameter<double>("max_calibrated_steering_command_rad", 0.225);
+  this->declare_parameter<double>("max_calibrated_steering_command_rad", 0.70);
   this->declare_parameter<std::vector<double>>(
     "odom_pose_covariance_diagonal",
     std::vector<double>{0.25, 0.25, 1e6, 1e6, 1e6, 0.50});

@@ -11,8 +11,8 @@ namespace smartcar_nav2
 struct ReverseCommandLimits
 {
   double vx_min{-0.09};
-  double wz_max{0.20};
-  double min_turning_radius{0.55};
+  double wz_max{0.42};
+  double min_turning_radius{0.22};
 };
 
 /// ROS-independent representation of the six Twist fields.

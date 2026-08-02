@@ -384,11 +384,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "gyro_z_bias", default_value="0.000614"),
         DeclareLaunchArgument(
-            "steering_command_scale", default_value="0.5"),
+            "steering_command_scale", default_value="1.0"),
         DeclareLaunchArgument(
             "steering_command_offset_rad", default_value="0.0"),
         DeclareLaunchArgument(
-            "max_calibrated_steering_command_rad", default_value="0.225"),
+            "max_calibrated_steering_command_rad", default_value="0.70"),
     ]
     declarations.extend(
         DeclareLaunchArgument(

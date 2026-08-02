@@ -349,13 +349,13 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(report.segments[1].legs[0].start_id, "middle")
         self.assertIn("navigation action", report.segments[0].message)
 
-    def test_simulation_segment_baseline_preserves_guided_c_entry_constraints(self):
+    def test_simulation_segment_baseline_uses_only_semantic_replanning_boundaries(self):
         document, source = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, source)
         runtime_actions = route_preflight_module._runtime_navigation_actions(
             source, segments
         )
-        self.assertEqual(len(runtime_actions), 5)
+        self.assertEqual(len(runtime_actions), 3)
         self.assertEqual(
             [
                 (
@@ -369,32 +369,13 @@ class PlanningSegmentTests(unittest.TestCase):
                 ("p_start", ("p_to_qr",), ("a_task_observe",)),
                 (
                     "a_task_observe",
-                    ("reverse_corridor",),
-                    ("b_corridor_gate", "b_corridor_enter"),
+                    ("qr_to_vlm",),
+                    ("c_corner_1",),
                 ),
                 (
-                    "b_corridor_enter",
-                    ("reverse_c_entry",),
-                    (
-                        "c_entry_west",
-                        "c_corner_1",
-                        "c_corner_2",
-                        "c_corner_3",
-                    ),
-                ),
-                (
-                    "c_corner_3",
-                    ("c_exit",),
-                    ("c_corner_4", "b_corridor_return_enter"),
-                ),
-                (
-                    "b_corridor_return_enter",
+                    "c_corner_1",
                     ("return_to_p",),
-                    (
-                        "b_corridor_return_drop",
-                        "b_corridor_return",
-                        "p_finish",
-                    ),
+                    ("p_finish",),
                 ),
             ],
         )
@@ -424,14 +405,12 @@ class PlanningSegmentTests(unittest.TestCase):
             )
 
         self.assertTrue(report.feasible)
-        self.assertEqual(plan_segment.call_count, 5)
+        self.assertEqual(plan_segment.call_count, 3)
         self.assertEqual(
             [item.segment_id for item in report.segments],
             [
                 "p_to_qr",
-                "reverse_corridor",
-                "reverse_c_entry",
-                "c_exit",
+                "qr_to_vlm",
                 "return_to_p",
             ],
         )
@@ -445,18 +424,13 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assert_position_only_orientation_contract(
             materialize_free_yaws(materialize_route(source, segments))
         )
-        c_entry = next(
-            item for item in report.segments if item.segment_id == "reverse_c_entry"
+        qr_to_vlm = next(
+            item for item in report.segments if item.segment_id == "qr_to_vlm"
         )
-        self.assertTrue(c_entry.feasible)
+        self.assertTrue(qr_to_vlm.feasible)
         self.assertEqual(
-            [(leg.start_id, leg.end_id) for leg in c_entry.legs],
-            [
-                ("b_corridor_enter", "c_entry_west"),
-                ("c_entry_west", "c_corner_1"),
-                ("c_corner_1", "c_corner_2"),
-                ("c_corner_2", "c_corner_3"),
-            ],
+            [(leg.start_id, leg.end_id) for leg in qr_to_vlm.legs],
+            [("a_task_observe", "c_corner_1")],
         )
         return_to_p = next(
             item for item in report.segments if item.segment_id == "return_to_p"
@@ -464,12 +438,35 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertTrue(return_to_p.feasible)
         self.assertEqual(
             [(leg.start_id, leg.end_id) for leg in return_to_p.legs],
-            [
-                ("b_corridor_return_enter", "b_corridor_return_drop"),
-                ("b_corridor_return_drop", "b_corridor_return"),
-                ("b_corridor_return", "p_finish"),
-            ],
+            [("c_corner_1", "p_finish")],
         )
+
+    def test_direct_vlm_return_passes_preflight_without_transit_points(self):
+        document, source = load_waypoint_document(NAV_ONLY_FILE)
+        segments = load_planning_segments(document, source)
+
+        report = preflight_route(
+            load_field_reference(GEOMETRY_FILE), source, segments
+        )
+
+        self.assertTrue(report.feasible)
+        direct_return = next(
+            item for item in report.segments if item.segment_id == "return_to_p"
+        )
+        self.assertTrue(direct_return.feasible)
+        self.assertEqual(
+            [(leg.start_id, leg.end_id) for leg in direct_return.legs],
+            [("c_corner_1", "p_finish")],
+        )
+        direct_leg = direct_return.legs[0]
+        start = next(item for item in source if item.id == direct_leg.start_id)
+        end = next(item for item in source if item.id == direct_leg.end_id)
+        chord = math.hypot(
+            end.position[0] - start.position[0],
+            end.position[1] - start.position[1],
+        )
+        self.assertGreater(chord, 0.0)
+        self.assertLessEqual(direct_leg.length_m, chord * 1.75)
 
 
 if __name__ == "__main__":

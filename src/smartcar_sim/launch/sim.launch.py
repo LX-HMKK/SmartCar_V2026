@@ -32,6 +32,7 @@ from sim_speed_profiles import (
     speed_overlay_path,
     validate_speed_overlay,
     write_merged_nav2_overlay,
+    write_merged_nav2_parameters,
 )
 
 from launch import LaunchDescription
@@ -85,10 +86,16 @@ def generate_launch_description():
     world = LaunchConfiguration("world", default="track")
     headless = LaunchConfiguration("headless", default="false")
     use_rviz = LaunchConfiguration("use_rviz", default="false")
+    enable_perception_monitor = LaunchConfiguration(
+        "enable_perception_monitor", default="true")
+    sensor_preflight_timeout_sec = LaunchConfiguration(
+        "sensor_preflight_timeout_sec", default="35.0")
     run_route = LaunchConfiguration("run_route", default="false")
     sim_speed_profile = LaunchConfiguration("sim_speed_profile")
     active_nav2_overlay_file = LaunchConfiguration(
         "sim_active_nav2_overlay_file")
+    active_nav2_params_file = LaunchConfiguration(
+        "sim_active_nav2_params_file")
     shutdown_on_route_exit = LaunchConfiguration(
         "shutdown_on_route_exit", default="false")
     waypoints_file = LaunchConfiguration("waypoints_file")
@@ -100,18 +107,23 @@ def generate_launch_description():
 
     # ── Gazebo ──
     # 注意：gz_server 和 gz_server_headless 互斥，只启动其中一个。
-    # headless:=false → 带 GUI（ogre 渲染）；headless:=true → server-only (-s)。
+    # Both paths use Ogre2 because Fortress' GPU lidar only receives valid
+    # ranges when the server owns a render scene.  --headless-rendering keeps
+    # that scene off-screen for route/CI runs without opening a Gazebo GUI.
     world_path = PathJoinSubstitution([pkg_sim, "worlds", PythonExpression(["'", world, ".world'"])])
 
     gz_server = ExecuteProcess(
-        cmd=["ign", "gazebo", "-r", "-v", "3", "--render-engine", "ogre", world_path],
+        cmd=["ign", "gazebo", "-r", "-v", "3", "--render-engine", "ogre2", world_path],
         output="screen",
         condition=UnlessCondition(headless),
         name="gz_server",
     )
 
     gz_server_headless = ExecuteProcess(
-        cmd=["ign", "gazebo", "-r", "-s", "-v", "3", "--render-engine", "ogre", world_path],
+        cmd=[
+            "ign", "gazebo", "-r", "-s", "-v", "3",
+            "--headless-rendering", "--render-engine", "ogre2", world_path,
+        ],
         output="screen",
         condition=IfCondition(headless),
         name="gz_server_headless",
@@ -130,7 +142,7 @@ def generate_launch_description():
     # Robot is embedded in world file via <include> — no spawn needed
 
     # ── Static TF publishers (match real system) ──
-    # TF chain: odom_combined → base_footprint (odom_combined_relay, /tf)
+    # TF chain: odom_combined → base_footprint (ground-truth relay, /tf)
     #           base_footprint → base_link (static, /tf_static)
     #           base_link → laser_link (static, /tf_static)
     # Note: robot_state_publisher is intentionally NOT used here — all joints are
@@ -141,7 +153,6 @@ def generate_launch_description():
         package="tf2_ros",
         executable="static_transform_publisher",
         arguments=["0.0841", "0", "0.03", "0", "0", "0", "base_footprint", "base_link"],
-        parameters=[{"use_sim_time": True}],
     )
 
     # base_link → laser
@@ -149,7 +160,6 @@ def generate_launch_description():
         package="tf2_ros",
         executable="static_transform_publisher",
         arguments=["-0.05", "0", "0.23", "0", "0", "0", "base_link", "laser_link"],
-        parameters=[{"use_sim_time": True}],
     )
 
     # Identity TF: ROS laser_link → Gazebo LiDAR sensor frame.
@@ -160,7 +170,6 @@ def generate_launch_description():
         package="tf2_ros",
         executable="static_transform_publisher",
         arguments=["0", "0", "0", "0", "0", "0", "laser_link", "origincar/laser_link/lidar_sensor"],
-        parameters=[{"use_sim_time": True}],
     )
 
     # ── ros_gz_bridge: bridge Gazebo ↔ ROS ──
@@ -185,15 +194,77 @@ def generate_launch_description():
         parameters=[{"use_sim_time": True}],
     )
 
-    # ── Odom combined relay: /odom_clean → /odom_combined + TF ──
-    # 绕过 EKF，直接用 Gazebo 地面真值里程计
-    # The relay forwards the incoming Gazebo stamp verbatim. Keep its executor
-    # on wall time so a delayed /clock cannot stall its startup callbacks.
-    odom_combined_relay = Node(
+    # ── Ground-truth odometry: Gazebo model pose → /odom_combined + TF ──
+    # Do not use the Ackermann plugin's integrated /odom as Nav2's TF owner:
+    # it can diverge from the DART world pose carrying the lidar sensor. The
+    # relay consumes the model-local continuous PosePublisher stream and is
+    # the sole publisher of odom_combined → base_footprint in local Gazebo.
+    ground_truth_odom_relay = Node(
         package="smartcar_sim",
-        executable="odom_combined_relay.py",
-        name="odom_combined_relay",
-        parameters=[{"use_sim_time": False}],
+        executable="gazebo_ground_truth_odom_relay.py",
+        name="gazebo_ground_truth_odom_relay",
+        parameters=[{
+            "use_sim_time": True,
+            "physical_pose_topic": "/model/origincar/pose",
+        }],
+    )
+
+    # Do not configure Nav2 against an empty or stale sensor graph.  In
+    # particular, an interrupted headless Ogre2 instance can still advertise
+    # /scan while every range is the lidar minimum and /odom never appears.
+    # This short-lived process only observes /clock, /odom_combined and /scan;
+    # its successful exit is the launch-level prerequisite for the keepout
+    # stack and Nav2 below.
+    sensor_preflight = Node(
+        package="smartcar_sim",
+        executable="sim_sensor_preflight.py",
+        name="sim_sensor_preflight",
+        parameters=[{
+            "use_sim_time": False,
+            "timeout_sec": sensor_preflight_timeout_sec,
+            "min_sensor_stream_span_sec": 1.0,
+            "min_odom_samples": 15,
+            "min_scan_samples": 5,
+        }],
+        output="screen",
+    )
+
+    # The first preflight intentionally runs before the static sensor frames
+    # exist. After it proves the Gazebo streams are live, start this second
+    # gate only after publishing those frames. Nav2 must never construct an
+    # obstacle layer until a scan can be transformed at its own source stamp.
+    sensor_tf_preflight = Node(
+        package="smartcar_sim",
+        executable="sim_sensor_preflight.py",
+        name="sim_sensor_tf_preflight",
+        parameters=[{
+            "use_sim_time": False,
+            "timeout_sec": sensor_preflight_timeout_sec,
+            "min_sensor_stream_span_sec": 1.0,
+            "min_odom_samples": 15,
+            "min_scan_samples": 5,
+            "require_scan_time_tf": True,
+            "tf_target_frame": "odom_combined",
+        }],
+        output="screen",
+    )
+
+    # Read-only health signal for the scan -> TF -> raw-costmap path.  It never
+    # sends motion commands or changes Nav2 state, but catches an invalid
+    # headless lidar or a TF message-filter regression before route evidence is
+    # accepted.
+    perception_monitor = Node(
+        package="smartcar_sim",
+        executable="sim_perception_monitor.py",
+        name="sim_perception_monitor",
+        parameters=[{
+            "use_sim_time": True,
+            # Parse the physical A-zone cone collision boxes from this exact
+            # world so scan/costmap agreement cannot hide a shared bad frame.
+            "track_world_file": world_path,
+        }],
+        output="screen",
+        condition=IfCondition(enable_perception_monitor),
     )
 
     # ── Direction guard: SKIP in simulation (no lease needed) ──
@@ -279,29 +350,33 @@ def generate_launch_description():
     bt_forward = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_w_replanning_and_recovery.xml"])
     bt_precise = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
-        "navigate_to_pose_precise_w_replanning_and_recovery.xml"])
+        "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"])
     bt_reverse = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"])
+        "navigate_to_pose_reverse_sim_w_replanning_and_recovery.xml"])
     bt_reverse_handoff = PathJoinSubstitution([
         pkg_nav2, "config", "behavior_trees",
-        "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
+        "navigate_to_pose_reverse_handoff_sim_w_replanning_and_recovery.xml",
     ])
     bt_reverse_through_poses = PathJoinSubstitution([
         pkg_nav2, "config", "behavior_trees",
-        "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
+        "navigate_through_poses_reverse_sim_w_replanning_and_recovery.xml",
     ])
     bt_reverse_locked_through_poses = PathJoinSubstitution([
         pkg_nav2, "config", "behavior_trees",
-        "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+        "navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml",
     ])
 
     active_nav2_overlay = None
+    active_nav2_params = None
     generated_speed_overlay = None
+    generated_nav2_params = None
 
     def prepare_sim_speed_overlay(context):
         """Validate a named local speed tier before Gazebo or Nav2 starts."""
         nonlocal active_nav2_overlay
+        nonlocal active_nav2_params
         nonlocal generated_speed_overlay
+        nonlocal generated_nav2_params
 
         config_dir = Path(pkg_sim) / "config"
         profile = resolve_sim_speed_profile(
@@ -322,9 +397,27 @@ def generate_launch_description():
                 overlay_path,
                 generated_speed_overlay,
             )
+        # Use one resolved parameter file for the local simulator. Passing a
+        # base file and an overlay as independent ``--params-file`` entries
+        # left controller plugin replacement order implementation-dependent:
+        # ForwardHandoff could still instantiate MPPI while validation read
+        # RPP from the overlay. The materialized file is the exact runtime
+        # contract and is removed on launch shutdown.
+        generated_nav2_params = (
+            Path(tempfile.gettempdir())
+            / f"smartcar_sim_nav2_{os.getpid()}_params"
+            / "nav2_params_fixed.yaml"
+        )
+        active_nav2_params = write_merged_nav2_parameters(
+            Path(nav2_fixed_params.perform(context)),
+            active_nav2_overlay,
+            generated_nav2_params,
+        )
         return [
             SetLaunchConfiguration(
                 "sim_active_nav2_overlay_file", str(active_nav2_overlay)),
+            SetLaunchConfiguration(
+                "sim_active_nav2_params_file", str(active_nav2_params)),
             LogInfo(msg=(
                 "[sim] Nav2 local-Gazebo speed profile "
                 f"{profile.name} ({profile.linear_speed_mps:.2f} m/s); "
@@ -335,9 +428,18 @@ def generate_launch_description():
     def remove_generated_speed_overlay(context):
         if generated_speed_overlay is not None:
             generated_speed_overlay.unlink(missing_ok=True)
+        if generated_nav2_params is not None:
+            generated_nav2_params.unlink(missing_ok=True)
+            try:
+                generated_nav2_params.parent.rmdir()
+            except OSError:
+                # A failed launch may leave an auxiliary diagnostic file in
+                # this run-specific directory. It is safer to leave that
+                # empty-or-diagnostic directory than fail shutdown cleanup.
+                pass
         return []
 
-    def make_nav2_launch(overlay_path):
+    def make_nav2_launch(params_path):
         return IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution([
@@ -345,17 +447,39 @@ def generate_launch_description():
             ),
             launch_arguments={
                 "use_sim_time": "true",
-                "params_file": nav2_fixed_params,
-                "params_overlay_file": str(overlay_path),
+                "params_file": str(params_path),
+                "params_overlay_file": "",
                 "bt_xml_file": bt_forward,
                 "bt_through_poses_xml_file": bt_forward,
-                "autostart": "true",
-                # Fast DDS can discover a lifecycle manager before all Nav2
-                # lifecycle services are ready. Keep this local to Gazebo;
+                # Let the verified helper below issue STARTUP only after the
+                # lifecycle manager has created and warmed its Fast DDS
+                # response readers. Autostart can race controller plugin
+                # configuration and strand the manager in Gazebo.
+                "autostart": "false",
+                # Fast DDS can discover lifecycle services before their reply
+                # readers are stable. A 2 s delay still let controller_server
+                # finish configuring after its manager had abandoned the
+                # change_state response. Keep the larger wait local to Gazebo;
                 # the production Nav2 launch retains its zero-delay default.
-                "lifecycle_manager_delay_sec": "2.0",
+                "lifecycle_manager_delay_sec": "6.0",
             }.items(),
         )
+
+    nav2_lifecycle_startup = Node(
+        package="smartcar_sim",
+        executable="nav2_lifecycle_startup.py",
+        name="nav2_lifecycle_startup",
+        parameters=[{
+            # Use wall-time limits: this gate is responsible for reporting a
+            # dead lifecycle graph even if Gazebo's simulated clock stalls.
+            "use_sim_time": False,
+            "warmup_sec": 4.0,
+            "service_timeout_sec": 30.0,
+            "startup_timeout_sec": 90.0,
+            "state_timeout_sec": 15.0,
+        }],
+        output="screen",
+    )
     # A lifecycle manager can reactivate the filter after a transient startup
     # delay. Launch Nav2 exactly once: repeating this include creates duplicate
     # controller/planner nodes that fight over the same lifecycle services.
@@ -365,16 +489,105 @@ def generate_launch_description():
         nonlocal nav2_started
         if nav2_started:
             return []
-        if active_nav2_overlay is None:
-            raise RuntimeError("sim speed profile was not prepared before Nav2")
+        if active_nav2_params is None:
+            raise RuntimeError("sim Nav2 parameters were not prepared before Nav2")
         nav2_started = True
-        return [make_nav2_launch(active_nav2_overlay)]
+        return [make_nav2_launch(active_nav2_params), nav2_lifecycle_startup]
 
     nav2_after_keepout = RegisterEventHandler(
         OnStateTransition(
             target_lifecycle_node=keepout_filter_info_server,
             goal_state="active",
             entities=[OpaqueFunction(function=launch_nav2_once)],
+        )
+    )
+
+    def start_after_nav2_lifecycle(event, context):
+        """Release the optional route only after verified Nav2 activation."""
+        if event.returncode == 0:
+            return [
+                LogInfo(msg="[sim] Nav2 lifecycle startup verified"),
+                # Activation returns before both rolling costmaps have their
+                # first obstacle-layer update.
+                TimerAction(period=2.0, actions=[auto_train]),
+            ]
+        return [
+            LogInfo(msg=(
+                "[sim] Nav2 lifecycle startup failed; auto_train is not "
+                "started")),
+            EmitEvent(event=Shutdown(
+                reason="Nav2 lifecycle startup failed")),
+        ]
+
+    nav2_lifecycle_startup_exit = RegisterEventHandler(
+        OnProcessExit(
+            target_action=nav2_lifecycle_startup,
+            on_exit=start_after_nav2_lifecycle,
+        )
+    )
+
+    def start_after_sensor_preflight(event, context):
+        """Publish static sensor frames after the raw stream preflight."""
+        if event.returncode == 0:
+            return [
+                LogInfo(msg=(
+                    "[sim] sensor preflight passed; publishing static TF, then "
+                    "checking scan-time TF"
+                )),
+                # Static transforms published before the Gazebo clock / Fast
+                # DDS graph is live can be absent from late Nav2 subscribers
+                # despite their transient-local QoS. Publish them after the
+                # live scan+odom gate, then allow discovery to settle before
+                # either costmap starts its laser message filter.
+                tf_base,
+                tf_laser,
+                tf_lidar,
+                TimerAction(period=1.0, actions=[sensor_tf_preflight]),
+            ]
+        return [
+            LogInfo(msg=(
+                "[sim] sensor preflight failed; Nav2 and auto_train are "
+                "not started"
+            )),
+            EmitEvent(event=Shutdown(
+                reason="Gazebo sensor preflight failed")),
+        ]
+
+    sensor_preflight_exit = RegisterEventHandler(
+        OnProcessExit(
+            target_action=sensor_preflight,
+            # OnProcessExit supplies both the ProcessExited event and launch
+            # context to a callable.  OpaqueFunction only receives context,
+            # which loses the exit code and would leave Nav2 blocked after a
+            # healthy preflight.
+            on_exit=start_after_sensor_preflight,
+        )
+    )
+
+    def start_after_sensor_tf_preflight(event, context):
+        """Release keepout and Nav2 only after scan-time TF is proven live."""
+        if event.returncode == 0:
+            return [
+                LogInfo(msg=(
+                    "[sim] scan-time TF preflight passed; starting keepout "
+                    "and Nav2"
+                )),
+                keepout_mask_server,
+                keepout_filter_info_server,
+            ]
+        return [
+            LogInfo(msg=(
+                "[sim] scan-time TF preflight failed; Nav2 and auto_train are "
+                "not started"
+            )),
+            EmitEvent(event=Shutdown(
+                reason="Gazebo scan-time TF preflight failed")),
+        ]
+
+    sensor_tf_preflight_exit = RegisterEventHandler(
+        OnProcessExit(
+            target_action=sensor_tf_preflight,
+            on_exit=start_after_sensor_tf_preflight,
         )
     )
 
@@ -428,14 +641,11 @@ def generate_launch_description():
                 pkg_nav2, "config", "behavior_trees",
                 "navigate_through_poses_w_replanning_and_recovery.xml",
             ]),
-            "through_poses_reverse_behavior_tree": PathJoinSubstitution([
-                pkg_nav2, "config", "behavior_trees",
-                "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
-            ]),
+            "through_poses_reverse_behavior_tree": bt_reverse_through_poses,
             "through_poses_reverse_locked_behavior_tree": (
                 bt_reverse_locked_through_poses),
             "use_through_poses": use_through_poses_lc,
-            "nav2_params_file": nav2_fixed_params,
+            "nav2_params_file": active_nav2_params_file,
             "nav2_params_overlay_file": active_nav2_overlay_file,
             # Numeric-looking launch arguments are normally YAML-coerced when
             # rendered into a node parameter file.  Keep profile names such as
@@ -471,26 +681,22 @@ def generate_launch_description():
     start_after_cleanup = GroupAction(actions=[
         gz_server,
         gz_server_headless,
-        tf_base,
-        tf_laser,
-        tf_lidar,
         gz_bridge,
         odom_relay,
-        odom_combined_relay,
+        ground_truth_odom_relay,
+        sensor_preflight_exit,
+        sensor_tf_preflight_exit,
+        sensor_preflight,
+        perception_monitor,
         waypoint_viz,
         field_reference,
         auto_train_exit,
+        nav2_lifecycle_startup_exit,
         # Start the mask lifecycle stack after Gazebo begins publishing /clock.
-        # Nav2 itself is released only after the filter-info node is active.
+        # Nav2 itself is released only after the sensor preflight and
+        # filter-info activation both succeed.
         nav2_after_keepout,
         keepout_lifecycle_after_servers,
-        TimerAction(period=6.0, actions=[
-            keepout_mask_server,
-            keepout_filter_info_server,
-        ]),
-        # Complete route runner, opt-in via run_route:=true. This name must not
-        # collide with Nav2's lifecycle autostart launch argument.
-        TimerAction(period=30.0, actions=[auto_train]),
         # RViz 延迟 8s 启动（等 Gazebo + odom_combined TF frame 就绪）
         # 修复原因：原 5s 在 Gazebo 启动耗时长时不够，/clock 未发布
         # → RViz 一直停在 "No tf data. Fixed frame [odom_combined] does not exist"
@@ -501,6 +707,10 @@ def generate_launch_description():
         DeclareLaunchArgument("world", default_value="track"),
         DeclareLaunchArgument("headless", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
+        DeclareLaunchArgument(
+            "enable_perception_monitor", default_value="true"),
+        DeclareLaunchArgument(
+            "sensor_preflight_timeout_sec", default_value="35.0"),
         DeclareLaunchArgument("run_route", default_value="false"),
         # Only these exact values are accepted by prepare_sim_speed_overlay.
         # baseline uses the unchanged 0.15 m/s smartcar_nav2 defaults.

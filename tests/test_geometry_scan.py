@@ -4,7 +4,10 @@ import importlib.util
 import math
 from pathlib import Path
 import sys
+import tempfile
 import unittest
+
+import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -37,7 +40,43 @@ class GeometryScanTests(unittest.TestCase):
         self.assertAlmostEqual(final_x, end.x, places=6)
         self.assertAlmostEqual(final_y, end.y, places=6)
 
-    def test_b_scan_rejects_corner_grazing_points_and_returns_clear_chain(self):
+    def test_default_dubins_radius_uses_simulation_constraint(self):
+        module = load_script_module()
+        planning = yaml.safe_load(
+            module.DEFAULT_ROUTE_PLANNING_CONFIG.read_text(encoding="utf-8")
+        )
+        planning["minimum_turning_radius_m"] = 0.63
+        planning["simulation_minimum_turning_radius_m"] = 0.22
+
+        with tempfile.TemporaryDirectory() as temporary:
+            planning_file = Path(temporary) / "route_planning.yaml"
+            planning_file.write_text(
+                yaml.safe_dump(planning, sort_keys=False), encoding="utf-8"
+            )
+            context = module.load_geometry_context(planning_file)
+
+        previous_context = module._DEFAULT_CONTEXT
+        module._DEFAULT_CONTEXT = context
+        try:
+            start = module.Pose(0.0, 0.0, 0.0)
+            end = module.Pose(1.0, 1.0, math.pi / 2.0)
+            implicit = module.compute_dubins(start, end)
+        finally:
+            module._DEFAULT_CONTEXT = previous_context
+
+        simulated = module.compute_dubins(start, end, r=0.22)
+        real_preflight = module.compute_dubins(start, end, r=0.63)
+        self.assertIsNotNone(implicit)
+        self.assertIsNotNone(simulated)
+        self.assertIsNotNone(real_preflight)
+        assert implicit is not None
+        assert simulated is not None
+        assert real_preflight is not None
+        self.assertAlmostEqual(implicit.path_length, simulated.path_length)
+        self.assertNotAlmostEqual(implicit.path_length, real_preflight.path_length)
+
+    def test_b_scan_rejects_obsolete_dense_guides_at_simulation_radius(self):
+        """The retired B guides must fail closed instead of inventing a loop."""
         module = load_script_module()
         context = module.load_geometry_context()
         start = module.Pose(
@@ -52,7 +91,7 @@ class GeometryScanTests(unittest.TestCase):
             enter_positions=(module.Pose(1.60, 2.65, 0.0),),
             collision_context=context,
         )
-        candidates = module.scan_b_segment_candidates(
+        obsolete_guides = module.scan_b_segment_candidates(
             start,
             gate_positions=(module.Pose(1.80, 2.85, 0.0),),
             enter_positions=(module.Pose(1.10, 2.85, 0.0),),
@@ -60,29 +99,41 @@ class GeometryScanTests(unittest.TestCase):
         )
 
         self.assertEqual(rejected, [])
-        self.assertTrue(candidates)
-        candidate = candidates[0]
-        self.assertEqual(candidate.gate_heading_rank, 0)
-        self.assertGreaterEqual(
-            candidate.min_west_corner_clearance_m,
-            module.DEFAULT_B_MIN_CORNER_CLEARANCE_M,
-        )
-        self.assertTrue(candidate.start_to_gate.feasible)
-        self.assertTrue(candidate.gate_to_enter.feasible)
-        self.assertTrue(module.check_corridor_passable(
-            candidate.start_to_gate.path_points, context
-        ))
-        candidate_json = module.b_candidate_json(candidate)
-        self.assertTrue(
-            set(candidate_json) >= {"b_corridor_gate", "b_corridor_enter"}
-        )
-        self.assertNotEqual(
-            (
-                candidate_json["b_corridor_gate"]["x"],
-                candidate_json["b_corridor_gate"]["y"],
-            ),
-            (1.80, 2.50),
-        )
+        self.assertEqual(obsolete_guides, [])
+
+    def test_compact_c_route_has_direct_short_safe_legs(self):
+        """C guides are removed only when each replacement leg is feasible."""
+        module = load_script_module()
+        context = module.load_geometry_context()
+        headings = [
+            -math.pi + index * 2.0 * math.pi / 24.0
+            for index in range(24)
+        ]
+
+        def shortest_safe_leg(start_xy, end_xy):
+            candidates = []
+            for start_yaw in headings:
+                for end_yaw in headings:
+                    segment = module.compute_dubins(
+                        module.Pose(*start_xy, start_yaw),
+                        module.Pose(*end_xy, end_yaw),
+                        r=context.config.simulation_minimum_turning_radius_m,
+                    )
+                    if segment is None:
+                        continue
+                    segment = module._classify_segment(
+                        segment, "compact", context=context
+                    )
+                    if segment.feasible and not segment.is_loop:
+                        candidates.append(segment)
+            self.assertTrue(candidates)
+            return min(candidates, key=lambda segment: segment.path_length)
+
+        c_entry = shortest_safe_leg((1.10, 2.85), (0.9979495132, 3.7958472007))
+        c_exit = shortest_safe_leg((0.9979495132, 3.7958472007), (2.20, 2.35))
+
+        self.assertLess(c_entry.path_length, 1.25)
+        self.assertLess(c_exit.path_length, 2.50)
 
 
 if __name__ == "__main__":

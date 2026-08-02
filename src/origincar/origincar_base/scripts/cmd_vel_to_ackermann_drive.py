@@ -15,7 +15,7 @@ class CmdVel2AckermannDriveNode(Node):
         super().__init__('cmd_vel_to_ackermann_drive')
         self.wheelbase = self.declare_parameter('wheelbase', 0.189).value
         self.max_steering_angle = self.declare_parameter(
-            'max_steering_angle', 0.45
+            'max_steering_angle', 0.70
         ).value
         input_topic = self.declare_parameter(
             'input_topic', '/cmd_vel_safe'

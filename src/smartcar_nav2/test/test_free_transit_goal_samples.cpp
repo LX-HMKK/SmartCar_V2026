@@ -63,4 +63,36 @@ TEST(FreeTransitGoalSamples, CapsTheDeterministicHeadingSetAtItsBudget)
   EXPECT_TRUE(containsHeading(first, -kPi / 4.0));
 }
 
+TEST(FreeTransitGoalSamples, LockedGoalAlternativesStayInsideAuthoredTolerance)
+{
+  const double authored = 0.30;
+  const double tolerance = 0.15;
+  const auto headings = smartcar_nav2::lockedGoalHeadingHints(authored, tolerance);
+
+  ASSERT_EQ(headings.size(), 3U);
+  EXPECT_TRUE(containsHeading(headings, authored));
+  for (const double heading : headings) {
+    EXPECT_LE(
+      std::abs(std::remainder(heading - authored, 2.0 * kPi)),
+      tolerance + 1.0e-12);
+  }
+  EXPECT_TRUE(containsHeading(headings, authored + 0.10));
+  EXPECT_TRUE(containsHeading(headings, authored - 0.10));
+}
+
+TEST(FreeTransitGoalSamples, LockedGoalAlternativesCollapseForZeroTolerance)
+{
+  const auto headings = smartcar_nav2::lockedGoalHeadingHints(-0.4, 0.0);
+  ASSERT_EQ(headings.size(), 1U);
+  EXPECT_TRUE(containsHeading(headings, -0.4));
+}
+
+TEST(FreeTransitGoalSamples, LockedGoalAlternativesRemainBoundedForLooseTolerance)
+{
+  const auto headings = smartcar_nav2::lockedGoalHeadingHints(0.0, 0.50);
+  ASSERT_EQ(headings.size(), 3U);
+  EXPECT_TRUE(containsHeading(headings, 0.10));
+  EXPECT_TRUE(containsHeading(headings, -0.10));
+}
+
 }  // namespace

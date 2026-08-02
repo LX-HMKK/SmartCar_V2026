@@ -59,14 +59,18 @@ Visualization Manager:
     - Class: rviz_default_plugins/LaserScan
       Name: LaserScan
       Topic:
-        Depth: 5
+        # Do not queue several simulated frames while RViz is rendering.
+        # The display is diagnostic, so the newest sample is more useful than
+        # a history that visually trails the odometry.
+        Depth: 1
         Durability Policy: Volatile
         Reliability Policy: Best Effort
         Value: /scan
+      Queue Size: 1
       Size (m): 0.02
       Style: Points
       Color: 255; 0; 0
-      Decay Time: 0.5
+      Decay Time: 0.0
       Enabled: true
 
     # ── Local Costmap ──
@@ -94,27 +98,46 @@ Visualization Manager:
       Draw Behind: true
       Enabled: true
 
-    # ── Actual Nav2 global path ──
+    # `/plan` contains every free-heading candidate, including candidates
+    # rejected before FollowPath. Keep it available for diagnosis, but do not
+    # render it as the vehicle's intended route.
     - Class: rviz_default_plugins/Path
-      Name: Actual Nav2 Global Path (/plan)
+      Name: Planner Candidate Path (/plan)
       Topic:
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
         Value: /plan
+      Color: 160; 160; 160
+      Line Style: Solid
+      Line Width: 0.04
+      Enabled: false
+
+    # This project topic is published only after controller_server accepts a
+    # raw FollowPath goal. Unlike Humble RPP's clipped tracking window, it is
+    # the full global route actually handed to the active controller.
+    - Class: rviz_default_plugins/Path
+      Name: Accepted Global Path (/smartcar/accepted_global_plan)
+      Topic:
+        Depth: 1
+        Durability Policy: Transient Local
+        Reliability Policy: Reliable
+        Value: /smartcar/accepted_global_plan
       Color: 0; 255; 0
       Line Style: Solid
       Line Width: 0.08
       Enabled: true
 
-    # ── Actual Nav2 local control path ──
+    # RPP's transformed window is the current tracking subset, unlike the
+    # planner's global candidate topic. Humble does not publish /local_plan
+    # for this controller plugin.
     - Class: rviz_default_plugins/Path
-      Name: Actual Nav2 Local Path (/local_plan)
+      Name: Controller Tracking Window (/transformed_global_plan)
       Topic:
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
-        Value: /local_plan
+        Value: /transformed_global_plan
       Color: 255; 200; 0
       Line Width: 0.06
       Enabled: true

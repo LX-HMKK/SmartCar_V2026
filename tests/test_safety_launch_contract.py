@@ -8,6 +8,8 @@ import ast
 from pathlib import Path
 import unittest
 
+import yaml
+
 
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 ORIGINCAR_BRINGUP = (
@@ -46,6 +48,27 @@ BASE_SERIAL = (
     / "origincar_base"
     / "launch"
     / "base_serial.launch.py"
+)
+SAFETY_CONFIG = (
+    REPOSITORY_ROOT
+    / "src"
+    / "smartcar_safety"
+    / "config"
+    / "safety.yaml"
+)
+CPP_SAFETY_NODE = (
+    REPOSITORY_ROOT
+    / "src"
+    / "smartcar_safety"
+    / "src"
+    / "safety_node.cpp"
+)
+PYTHON_SAFETY_NODE = (
+    REPOSITORY_ROOT
+    / "src"
+    / "smartcar_safety"
+    / "smartcar_safety"
+    / "safety_node.py"
 )
 
 
@@ -104,6 +127,18 @@ def chassis_input_expression_parts(tree):
 
 
 class SafetyLaunchContractTests(unittest.TestCase):
+    def test_ackermann_steering_cap_matches_the_verified_command_limit(self):
+        params = yaml.safe_load(SAFETY_CONFIG.read_text(encoding="utf-8"))["safety_node"][
+            "ros__parameters"
+        ]
+        self.assertAlmostEqual(params["wheelbase"], 0.189)
+        self.assertAlmostEqual(params["max_steering_angle"], 0.70)
+
+        for node in (CPP_SAFETY_NODE, PYTHON_SAFETY_NODE):
+            with self.subTest(node=node.name):
+                source = node.read_text(encoding="utf-8")
+                self.assertIn('"max_steering_angle", 0.70', source)
+
     def test_safety_launch_exposes_required_raw_odom_switch(self):
         tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
         values = string_values(tree)

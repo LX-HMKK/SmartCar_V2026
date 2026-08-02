@@ -135,6 +135,10 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 `via_N` 保存为 `task: via`，且不写 `pose.orientation`。它仍继承所属分段的前进或
 倒车方向；“无朝向”只表示该点不强制终点航向。预检会按前后路线切线推导它的朝向。
 
+当前 Gazebo `nav_only.yaml` 刻意不含任何 `via`。不要为掩盖控制器横向误差、不可达或
+规划绕行而增加密集经过点；只有规则或静态安全边界确实要求通过某一位置时，才应添加一个
+经过点，并重新完成完整仿真验收。
+
 ### 5.3 将已有点作为途经点
 
 1. 在场地上选中要使用的已有点。
@@ -171,11 +175,13 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 
 | 字段 | 影响范围 |
 |---|---|
-| `minimum_turning_radius_m` | 编辑器预检；`sim_tune.sh` 会同步它到 Smac Hybrid 和 ReverseHandoff 的最小转弯半径。它写入共享的 `nav2_params.yaml`，不是纯视觉参数。 |
-| `footprint_envelope_radius_m` | 编辑器预检的车辆包络，以及仿真 KeepoutFilter 的膨胀半径；不改变实车 obstacle layer 的膨胀半径。 |
+| `minimum_turning_radius_m` | 编辑器和实车路线预检使用的保守物理半径，当前为 `0.22 m`（实测极限约 `0.20 m`）；仿真调参不会改写实车 `nav2_params.yaml`。 |
+| `simulation_minimum_turning_radius_m` | 仅 Gazebo：离线几何扫描和仿真 overlay 中的 Smac、正/倒车 controller、free-heading 校验，当前授权为 `0.22 m`。 |
+| `runtime_footprint` | 编辑器预检和仿真 costmap 的共享车辆足迹；同步只写 Gazebo overlay，不改变实车 obstacle layer。 |
 | `c_zone_keepout` | C 区中央禁区的水平/竖直内缩，保留外圈绕行车道。 |
 | `preflight` | 本地预检的网格、采样、终点容差和搜索预算。 |
 | `simulation_keepout.map_resolution_m` | 仿真 keepout PGM 的分辨率。 |
+| `simulation_keepout.boundary_padding_m` | PGM 在赛场四周延伸的黑色禁行环宽度，防止规划或控制从场外绕行。 |
 
 修改该 YAML 后，在本机仓库中运行以下命令完成验证：
 
@@ -184,9 +190,10 @@ cd /home/zyh/SmartCar_V2026
 bash src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
 ```
 
-`sim_tune.sh` 会依次重生成 `field_map.pgm`、同步 Smac/ReverseHandoff 与仿真
-KeepoutFilter 参数、构建并运行 Gazebo 自动路线。它会发布 Gazebo 的非零速度，绝
-不能用于实体底盘。调参、航点和生成物均以当前本机仓库为唯一权威源。
+`sim_tune.sh` 会依次重生成 `field_map.pgm`、同步仿真 Smac、正/倒车 controller、
+free-heading、足迹和 KeepoutFilter 参数到 `nav2_keepout_filter.yaml`，再构建并运行
+Gazebo 自动路线。它不会修改实车 `nav2_params.yaml`。脚本会发布 Gazebo 的非零速度，
+绝不能用于实体底盘。调参、航点和生成物均以当前本机仓库为唯一权威源。
 
 仅检查生成物是否与当前共享配置一致：
 

@@ -69,6 +69,7 @@ try:
     from smartcar_tools.field_keepouts import (  # type: ignore[import-not-found]
         central_c_keepout as _central_c_keepout,
         keepout_bounds as _keepout_bounds,
+        simulation_map_bounds as _simulation_map_bounds,
     )
     from smartcar_tools.route_planning import (  # type: ignore[import-not-found]
         RoutePlanningConfig,
@@ -84,6 +85,7 @@ except ModuleNotFoundError:
     from smartcar_tools.field_keepouts import (  # type: ignore[no-redef]
         central_c_keepout as _central_c_keepout,
         keepout_bounds as _keepout_bounds,
+        simulation_map_bounds as _simulation_map_bounds,
     )
     from smartcar_tools.route_planning import (  # type: ignore[no-redef]
         RoutePlanningConfig,
@@ -112,13 +114,14 @@ def map_spec(
     reference: FieldReference,
     config: RoutePlanningConfig | None = None,
 ) -> MapSpec:
-    """Build a PGM extent exactly covering the authoritative field bounds."""
+    """Build a PGM extent with a lethal exterior ring around the field."""
     settings = config or load_route_planning_config()
+    bounds = _simulation_map_bounds(reference, settings)
     return MapSpec(
-        origin_x=reference.field.x_min,
-        origin_y=reference.field.y_min,
-        width_m=reference.field.width,
-        height_m=reference.field.height,
+        origin_x=bounds.x_min,
+        origin_y=bounds.y_min,
+        width_m=bounds.width,
+        height_m=bounds.height,
         resolution=settings.simulation_keepout.map_resolution_m,
     )
 
@@ -135,7 +138,7 @@ def keepout_bounds(
     reference: FieldReference,
     config: RoutePlanningConfig | None = None,
 ) -> tuple[Bounds2D, ...]:
-    """Return the shared permanent B-wall and C-zone constraints."""
+    """Return the physical field and permanent keepouts painted into the PGM."""
     return _keepout_bounds(reference, config)
 
 

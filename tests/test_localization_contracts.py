@@ -131,6 +131,25 @@ class BaseDriverContractTests(unittest.TestCase):
             "default_value='0.25')",
             launch_source,
         )
+        self.assertIn(
+            "DeclareLaunchArgument('steering_command_scale', default_value='1.0')",
+            launch_source,
+        )
+        self.assertIn(
+            "'max_calibrated_steering_command_rad', default_value='0.70'",
+            launch_source,
+        )
+
+    def test_direct_pass_through_steering_defaults_are_consistent(self):
+        calibration = CALIBRATION_HEADER_FILE.read_text(encoding="utf-8")
+        source = BASE_SOURCE_FILE.read_text(encoding="utf-8")
+        launch_source = BASE_LAUNCH_FILE.read_text(encoding="utf-8")
+
+        self.assertIn("steering_command_scale(1.0)", calibration)
+        self.assertIn("max_calibrated_steering_command_rad(0.70)", calibration)
+        self.assertIn('"steering_command_scale", 1.0', source)
+        self.assertIn('"max_calibrated_steering_command_rad", 0.70', source)
+        self.assertIn("DeclareLaunchArgument('max_steering_angle', default_value='0.70')", launch_source)
 
     def test_calibration_and_covariance_parameters_exist(self):
         self.assertTrue(CALIBRATION_HEADER_FILE.is_file())

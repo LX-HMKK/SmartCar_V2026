@@ -20,9 +20,10 @@ TEST(SensorCalibrationTest, DefaultsPreserveExistingCalibration)
   EXPECT_DOUBLE_EQ(calibration.yaw_velocity_scale, 1.0);
   EXPECT_DOUBLE_EQ(calibration.gyro_z_scale, 1.0);
   EXPECT_DOUBLE_EQ(calibration.gyro_z_bias, 0.0);
-  EXPECT_DOUBLE_EQ(calibration.steering_command_scale, 0.5);
+  EXPECT_DOUBLE_EQ(calibration.steering_command_scale, 1.0);
   EXPECT_DOUBLE_EQ(calibration.steering_command_offset_rad, 0.0);
-  EXPECT_DOUBLE_EQ(calibration.max_calibrated_steering_command_rad, 0.225);
+  EXPECT_DOUBLE_EQ(calibration.max_calibrated_steering_command_rad, 0.70);
+  EXPECT_DOUBLE_EQ(calibrate_steering_command(0.70, calibration), 0.70);
 }
 
 TEST(SensorCalibrationTest, CalibratesSensorSampleExactlyOnce)

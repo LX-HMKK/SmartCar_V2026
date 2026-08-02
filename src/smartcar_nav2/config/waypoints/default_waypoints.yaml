@@ -1,4 +1,20 @@
 calibrated: false
+planning_segments:
+- id: p_to_qr
+  direction: forward
+  start_id: p_start
+  end_id: a_task_observe
+  through_ids: []
+- id: qr_to_vlm
+  direction: reverse
+  start_id: a_task_observe
+  end_id: c_corner_1
+  through_ids: []
+- id: return_to_p
+  direction: forward
+  start_id: c_corner_1
+  end_id: p_finish
+  through_ids: []
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -44,24 +60,6 @@ waypoints:
   task: vlm
   direction: reverse
   goal_profile: reverse_handoff
-- id: c_corner_3
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 3.175
-      y: 3.9
-      z: 0.0
-  task: loop
-  direction: forward
-- id: b_corridor_return
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 1.883
-      y: 1.825
-      z: 0.0
-  task: corridor
-  direction: forward
 - id: p_finish
   frame_id: odom_combined
   pose:

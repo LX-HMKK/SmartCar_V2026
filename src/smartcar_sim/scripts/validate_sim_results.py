@@ -19,65 +19,62 @@ HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
 HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
+FORWARD_AVOIDANCE_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
+# Gazebo's keepout overlay uses RPP for the precise handoff as well. The base
+# Nav2 configuration deliberately remains MPPI for the physical vehicle.
+FORWARD_HANDOFF_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
+# These values are local-Gazebo contracts from nav2_keepout_filter.yaml. They
+# deliberately do not describe the real vehicle's uncalibrated base settings.
+SIMULATION_MINIMUM_TURNING_RADIUS_M = 0.22
+SIMULATION_FORWARD_SPEED_CAP_MPS = 0.15
+SIMULATION_FORWARD_WZ_CAP_RADPS = (
+    SIMULATION_FORWARD_SPEED_CAP_MPS / SIMULATION_MINIMUM_TURNING_RADIUS_M
+)
+SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M = 0.12
+SIMULATION_HANDOFF_WZ_CAP_RADPS = 0.42
 # The free ThroughPoses BT removes a normal waypoint at 0.50 m. Keep only the
 # odometry observer margin beyond that runtime contract.
 THROUGH_POSE_DISTANCE_TOLERANCE_M = 0.52
+MAX_PLANNED_PATH_DETOUR_RATIO = 1.75
+MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M = 0.80
+MAX_EXECUTED_TRAVEL_DETOUR_RATIO = 2.00
+MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M = 0.80
+MAX_EXECUTION_TRACE_SAMPLES = 128
+EXECUTION_TRACE_SCHEMA_VERSION = 1
+PERCEPTION_READY_TOPIC = "/smartcar/sim_perception_ready"
+PERCEPTION_STATUS_SCHEMA_VERSION = 2
+PERCEPTION_REQUIRED_CHECKS = (
+    "scan",
+    "odom",
+    "tf",
+    "tf_odom_alignment",
+    "local",
+    "global",
+    "a_zone_probe",
+    "landmarks",
+)
+MAX_PERCEPTION_SCAN_ODOM_SKEW_SEC = 0.075
+MAX_PERCEPTION_COSTMAP_AGE_SEC = 1.5
+MAX_PERCEPTION_TF_ODOM_POSITION_ERROR_M = 0.02
+MAX_PERCEPTION_TF_ODOM_YAW_ERROR_RAD = 0.05
+MIN_PERCEPTION_LANDMARK_IDS = 3
 EXPECTED_ROUTE = (
     ("a_task_observe", "forward", "precise"),
-    ("b_corridor_gate", "reverse", "standard"),
-    ("b_corridor_enter", "reverse", "standard"),
-    ("c_entry_west", "reverse", "standard"),
-    ("c_corner_1", "reverse", "standard"),
-    ("c_corner_2", "reverse", "standard"),
-    ("c_corner_3", "reverse", "standard"),
-    ("c_corner_4", "reverse", "standard"),
-    ("b_corridor_return_enter", "reverse", "standard"),
-    ("b_corridor_return_drop", "reverse", "standard"),
-    ("b_corridor_return", "reverse", "standard"),
-    ("p_finish", "reverse", "standard"),
+    ("c_corner_1", "reverse", "reverse_handoff"),
+    ("p_finish", "forward", "standard"),
 )
 EXPECTED_GOAL_CONTRACTS = {
     "a_task_observe": ("precise_goal_checker", (0.08, 0.25), (0.10, 0.30)),
-    "b_corridor_gate": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "b_corridor_enter": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "c_entry_west": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
     "c_corner_1": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "c_corner_2": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "c_corner_3": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "c_corner_4": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "b_corridor_return_enter": (
-        "reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "b_corridor_return_drop": (
-        "reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "b_corridor_return": (
-        "reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "p_finish": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "p_finish": ("goal_checker", (0.08, 0.35), (0.10, 0.50)),
 }
 EXPECTED_BEHAVIOR_TREES = {
     "a_task_observe": (
-        "navigate_to_pose_precise_w_replanning_and_recovery.xml"),
-    "b_corridor_gate": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "b_corridor_enter": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "c_entry_west": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
+        "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"),
     "c_corner_1": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "c_corner_2": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "c_corner_3": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "c_corner_4": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "b_corridor_return_enter": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "b_corridor_return_drop": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-    "b_corridor_return": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
+        "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"),
     "p_finish": (
-        "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
+        "navigate_to_pose_w_replanning_and_recovery.xml"),
 }
 REQUIRED_INPUTS = (
     "waypoints_file",
@@ -255,7 +252,7 @@ def _goal_behavior_tree(direction, goal_profile):
     if direction == "reverse":
         return "navigate_to_pose_reverse_w_replanning_and_recovery.xml"
     if goal_profile == "precise":
-        return "navigate_to_pose_precise_w_replanning_and_recovery.xml"
+        return "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"
     return "navigate_to_pose_w_replanning_and_recovery.xml"
 
 
@@ -364,6 +361,382 @@ def _validate_command_direction(result, direction, label, errors):
                 errors.append(f"{label} {prefix} contains a reverse command")
 
 
+def _validate_forward_ackermann_contract(
+    result, direction, goal_profile, label, errors
+):
+    """Require final forward commands to remain physically steerable."""
+    if direction != "forward":
+        return
+
+    speed_cap = result.get("forward_speed_cap_mps")
+    angular_cap = result.get("forward_wz_cap_radps")
+    turning_radius = result.get("forward_min_turning_radius_m")
+    path_max_cross_track_error = result.get(
+        "forward_path_max_cross_track_error_m")
+    expected_controller = (
+        FORWARD_HANDOFF_CONTROLLER
+        if goal_profile == "precise"
+        else FORWARD_AVOIDANCE_CONTROLLER
+    )
+    if result.get("forward_controller_plugin") != expected_controller:
+        errors.append(f"{label} forward controller must use Ackermann wrapper")
+    if result.get("forward_velocity_smoother_scale_velocities") is not True:
+        errors.append(f"{label} forward velocity smoother must scale velocities together")
+    if (
+        not _finite_number(speed_cap)
+        or abs(float(speed_cap) - SIMULATION_FORWARD_SPEED_CAP_MPS)
+        > CONFIG_TOLERANCE_EPSILON
+    ):
+        errors.append(f"{label} has invalid forward speed cap")
+    if (
+        not _finite_number(angular_cap)
+        or abs(float(angular_cap) - SIMULATION_FORWARD_WZ_CAP_RADPS)
+        > CONFIG_TOLERANCE_EPSILON
+    ):
+        errors.append(f"{label} has invalid forward angular cap")
+    if (
+        not _finite_number(turning_radius)
+        or abs(float(turning_radius) - SIMULATION_MINIMUM_TURNING_RADIUS_M)
+        > CONFIG_TOLERANCE_EPSILON
+    ):
+        errors.append(
+            f"{label} forward turning radius must be "
+            f"{SIMULATION_MINIMUM_TURNING_RADIUS_M:.2f}")
+    if (
+        not _finite_number(path_max_cross_track_error)
+        or abs(
+            float(path_max_cross_track_error) -
+            SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M
+        ) > CONFIG_TOLERANCE_EPSILON
+    ):
+        errors.append(
+            f"{label} forward path tracking threshold must be "
+            f"{SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M:.2f}")
+
+    for prefix in ("controller_cmd", "cmd"):
+        maximum = result.get(f"{prefix}_linear_max")
+        angular = result.get(f"{prefix}_angular_abs_max")
+        violations = result.get(f"{prefix}_kinematic_violation_count")
+        observed_radius = result.get(f"{prefix}_min_turning_radius_m")
+        if (
+            _finite_number(maximum)
+            and _finite_number(speed_cap)
+            and float(maximum) > float(speed_cap) + VELOCITY_EPSILON
+        ):
+            errors.append(f"{label} {prefix} exceeds forward speed cap")
+        if not _finite_number(angular):
+            errors.append(f"{label} {prefix} angular maximum must be finite")
+        elif _finite_number(angular_cap) and (
+            float(angular) > float(angular_cap) + VELOCITY_EPSILON
+        ):
+            errors.append(f"{label} {prefix} exceeds forward angular cap")
+        if (
+            isinstance(violations, bool)
+            or not isinstance(violations, int)
+            or violations != 0
+        ):
+            errors.append(f"{label} {prefix} violates forward Ackermann curvature")
+        if (
+            _finite_number(angular)
+            and float(angular) > VELOCITY_EPSILON
+            and (
+                not _finite_number(observed_radius)
+                or (
+                    _finite_number(turning_radius)
+                    and float(observed_radius)
+                    < float(turning_radius) - CONFIG_TOLERANCE_EPSILON
+                )
+            )
+        ):
+            errors.append(
+                f"{label} {prefix} forward observed turning radius is too small")
+
+
+def _validate_planned_path_detour(result, label, errors):
+    """Require a traceable, non-looping Nav2 plan for every accepted stage."""
+    fields = (
+        "planned_path_max_length_m",
+        "planned_path_max_chord_m",
+        "planned_path_max_detour_ratio",
+        "planned_path_detour_limit_m",
+    )
+    values = {field: result.get(field) for field in fields}
+    if any(not _finite_number(value) for value in values.values()):
+        errors.append(f"{label} planned path metrics must be finite")
+        return
+    length = float(values["planned_path_max_length_m"])
+    chord = float(values["planned_path_max_chord_m"])
+    ratio = float(values["planned_path_max_detour_ratio"])
+    limit = float(values["planned_path_detour_limit_m"])
+    if length < 0.0 or chord < 0.0 or ratio < 0.0 or limit <= 0.0:
+        errors.append(f"{label} planned path metrics must be non-negative")
+    expected_floor = max(
+        chord * MAX_PLANNED_PATH_DETOUR_RATIO,
+        chord + MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M,
+    )
+    if abs(limit - expected_floor) > CONFIG_TOLERANCE_EPSILON:
+        errors.append(f"{label} planned path detour limit is invalid")
+    if length > limit + CONFIG_TOLERANCE_EPSILON:
+        errors.append(f"{label} planned path exceeds its detour limit")
+    if result.get("planned_path_detour_violation") is not False:
+        errors.append(f"{label} planned path detour must be clear")
+
+
+def _validate_executed_travel_detour(result, label, errors):
+    """Reject an observed loop even when every individual replan is short."""
+    fields = (
+        "executed_travel_m",
+        "executed_travel_baseline_m",
+        "executed_travel_detour_ratio",
+        "executed_travel_limit_m",
+    )
+    values = {field: result.get(field) for field in fields}
+    if any(not _finite_number(value) for value in values.values()):
+        errors.append(f"{label} executed travel metrics must be finite")
+        return
+    travel = float(values["executed_travel_m"])
+    baseline = float(values["executed_travel_baseline_m"])
+    ratio = float(values["executed_travel_detour_ratio"])
+    limit = float(values["executed_travel_limit_m"])
+    if travel < 0.0 or baseline < 0.0 or ratio < 0.0 or limit <= 0.0:
+        errors.append(f"{label} executed travel metrics must be non-negative")
+        return
+    expected_limit = max(
+        baseline * MAX_EXECUTED_TRAVEL_DETOUR_RATIO,
+        baseline + MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M,
+    )
+    if abs(limit - expected_limit) > CONFIG_TOLERANCE_EPSILON:
+        errors.append(f"{label} executed travel detour limit is invalid")
+    if baseline > 1.0e-3:
+        expected_ratio = travel / baseline
+    elif travel > MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M:
+        expected_ratio = MAX_EXECUTED_TRAVEL_DETOUR_RATIO + 1.0
+    else:
+        expected_ratio = 0.0
+    if abs(ratio - expected_ratio) > 1.0e-2:
+        errors.append(f"{label} executed travel detour ratio is invalid")
+    legacy_travel = result.get("travel_m")
+    if (
+        not _finite_number(legacy_travel)
+        or abs(float(legacy_travel) - travel) > CONFIG_TOLERANCE_EPSILON
+    ):
+        errors.append(f"{label} travel_m must match executed travel")
+    if travel > limit + CONFIG_TOLERANCE_EPSILON:
+        errors.append(f"{label} executed travel exceeds its detour limit")
+    if result.get("executed_travel_detour_violation") is not False:
+        errors.append(f"{label} executed travel detour must be clear")
+
+
+def _validate_tracking_trace(result, label, errors, require_linked_evidence=False):
+    """Validate bounded controller/odom evidence against acknowledged paths."""
+    trace = result.get("tracking_trace")
+    if not isinstance(trace, dict):
+        if require_linked_evidence:
+            errors.append(f"{label} lacks forward path tracking evidence")
+        return
+    if trace.get("schema_version") != EXECUTION_TRACE_SCHEMA_VERSION:
+        errors.append(f"{label} tracking trace schema_version is invalid")
+    sample_limit = trace.get("sample_limit")
+    if (
+        isinstance(sample_limit, bool)
+        or not isinstance(sample_limit, int)
+        or sample_limit <= 0
+        or sample_limit > MAX_EXECUTION_TRACE_SAMPLES
+    ):
+        errors.append(f"{label} tracking trace sample_limit is invalid")
+        sample_limit = MAX_EXECUTION_TRACE_SAMPLES
+    accepted_path_count = trace.get("accepted_path_count")
+    if (
+        isinstance(accepted_path_count, bool)
+        or not isinstance(accepted_path_count, int)
+        or accepted_path_count < 0
+    ):
+        errors.append(f"{label} tracking trace accepted_path_count is invalid")
+        accepted_path_count = 0
+
+    odom = trace.get("odom_combined")
+    if not isinstance(odom, list) or len(odom) > sample_limit:
+        errors.append(f"{label} tracking trace odom_combined is unbounded or invalid")
+        odom = []
+    associated_odom_samples = 0
+    for index, sample in enumerate(odom):
+        sample_label = f"{label}.tracking_trace.odom_combined[{index}]"
+        if not isinstance(sample, dict):
+            errors.append(f"{sample_label} must be an object")
+            continue
+        for field in ("t_sec", "x", "y", "yaw_rad"):
+            if not _finite_number(sample.get(field)):
+                errors.append(f"{sample_label}.{field} must be finite")
+        sequence = sample.get("accepted_path_sequence")
+        tracking_fields = (
+            "station_m", "cross_track_m", "path_heading_error_rad",
+            "path_segment_index",
+        )
+        if sequence is None:
+            if any(sample.get(field) is not None for field in tracking_fields):
+                errors.append(
+                    f"{sample_label} cannot report path metrics without an accepted path")
+            continue
+        if (
+            isinstance(sequence, bool)
+            or not isinstance(sequence, int)
+            or sequence <= 0
+            or sequence > accepted_path_count
+        ):
+            errors.append(f"{sample_label}.accepted_path_sequence is invalid")
+            continue
+        for field in ("station_m", "cross_track_m", "path_heading_error_rad"):
+            value = sample.get(field)
+            if not _finite_number(value):
+                errors.append(f"{sample_label}.{field} must be finite")
+            elif field != "path_heading_error_rad" and float(value) < 0.0:
+                errors.append(f"{sample_label}.{field} must be non-negative")
+        segment_index = sample.get("path_segment_index")
+        if (
+            isinstance(segment_index, bool)
+            or not isinstance(segment_index, int)
+            or segment_index < 0
+        ):
+            errors.append(f"{sample_label}.path_segment_index is invalid")
+        associated_odom_samples += 1
+
+    for topic in ("cmd_vel_nav", "cmd_vel_candidate"):
+        samples = trace.get(topic)
+        if not isinstance(samples, list) or len(samples) > sample_limit:
+            errors.append(f"{label} tracking trace {topic} is unbounded or invalid")
+            continue
+        for index, sample in enumerate(samples):
+            sample_label = f"{label}.tracking_trace.{topic}[{index}]"
+            if not isinstance(sample, dict):
+                errors.append(f"{sample_label} must be an object")
+                continue
+            for field in ("t_sec", "linear_x", "angular_z"):
+                if not _finite_number(sample.get(field)):
+                    errors.append(f"{sample_label}.{field} must be finite")
+
+    if require_linked_evidence:
+        if accepted_path_count <= 0:
+            errors.append(f"{label} tracking trace has no accepted path")
+        if not odom:
+            errors.append(f"{label} tracking trace has no odometry")
+        if associated_odom_samples <= 0:
+            errors.append(f"{label} tracking trace cannot associate odometry to a path")
+        for topic in ("cmd_vel_nav", "cmd_vel_candidate"):
+            samples = trace.get(topic)
+            if not isinstance(samples, list) or not samples:
+                errors.append(f"{label} tracking trace has no {topic} samples")
+
+
+def _positive_int(value):
+    return (
+        not isinstance(value, bool)
+        and isinstance(value, int)
+        and value > 0
+    )
+
+
+def _validate_perception(data, errors):
+    """Require scan-to-raw-costmap evidence before accepting a route run."""
+    perception = data.get("perception")
+    if not isinstance(perception, dict):
+        errors.append("perception evidence must be an object")
+        return
+    if perception.get("schema_version") != PERCEPTION_STATUS_SCHEMA_VERSION:
+        errors.append("perception schema_version is invalid")
+    if perception.get("topic") != PERCEPTION_READY_TOPIC:
+        errors.append("perception topic is invalid")
+    if perception.get("ready") is not True:
+        errors.append("perception ready must be true")
+    checks = perception.get("checks")
+    if not isinstance(checks, dict):
+        errors.append("perception checks must be an object")
+    else:
+        for name in PERCEPTION_REQUIRED_CHECKS:
+            if checks.get(name) is not True:
+                errors.append(f"perception check {name} must be true")
+    valid_beams = perception.get("valid_beams")
+    if (
+        isinstance(valid_beams, bool)
+        or not isinstance(valid_beams, int)
+        or valid_beams < 5
+    ):
+        errors.append("perception valid_beams must be at least 5")
+    stamps = {}
+    for name in (
+        "scan_stamp_ns",
+        "odom_stamp_ns",
+        "local_costmap_stamp_ns",
+        "global_costmap_stamp_ns",
+    ):
+        value = perception.get(name)
+        if not _positive_int(value):
+            errors.append(f"perception {name} must be a positive integer")
+        else:
+            stamps[name] = value
+    if (
+        "scan_stamp_ns" in stamps
+        and "odom_stamp_ns" in stamps
+        and abs(stamps["scan_stamp_ns"] - stamps["odom_stamp_ns"])
+        > MAX_PERCEPTION_SCAN_ODOM_SKEW_SEC * 1.0e9
+    ):
+        errors.append("perception scan and odom timestamps are too far apart")
+    for name in ("local_costmap_stamp_ns", "global_costmap_stamp_ns"):
+        if (
+            "scan_stamp_ns" in stamps
+            and name in stamps
+            and abs(stamps[name] - stamps["scan_stamp_ns"])
+            > MAX_PERCEPTION_COSTMAP_AGE_SEC * 1.0e9
+        ):
+            errors.append(f"perception {name} is too far from scan timestamp")
+    for name, maximum in (
+        ("tf_odom_position_error_m", MAX_PERCEPTION_TF_ODOM_POSITION_ERROR_M),
+        ("tf_odom_yaw_error_rad", MAX_PERCEPTION_TF_ODOM_YAW_ERROR_RAD),
+    ):
+        value = perception.get(name)
+        if not _finite_number(value) or float(value) < 0.0:
+            errors.append(f"perception {name} must be finite and non-negative")
+        elif float(value) > maximum + CONFIG_TOLERANCE_EPSILON:
+            errors.append(f"perception {name} exceeds alignment limit")
+    required_landmark_ids = perception.get("landmark_required_ids")
+    if (
+        isinstance(required_landmark_ids, bool)
+        or not isinstance(required_landmark_ids, int)
+        or required_landmark_ids < MIN_PERCEPTION_LANDMARK_IDS
+    ):
+        errors.append(
+            "perception landmark_required_ids must be at least "
+            f"{MIN_PERCEPTION_LANDMARK_IDS}")
+    matched_landmark_ids = perception.get("landmark_matched_ids")
+    if (
+        not isinstance(matched_landmark_ids, list)
+        or len(set(matched_landmark_ids)) < MIN_PERCEPTION_LANDMARK_IDS
+        or any(not _nonempty_string(value) for value in matched_landmark_ids)
+    ):
+        errors.append(
+            "perception landmark_matched_ids must contain at least "
+            f"{MIN_PERCEPTION_LANDMARK_IDS} unique ids")
+    matched_points = perception.get("landmark_matched_points")
+    if (
+        isinstance(matched_points, bool)
+        or not isinstance(matched_points, int)
+        or matched_points <= 0
+    ):
+        errors.append("perception landmark_matched_points must be positive")
+    landmark_residual = perception.get("landmark_max_residual_m")
+    if not _finite_number(landmark_residual) or float(landmark_residual) < 0.0:
+        errors.append(
+            "perception landmark_max_residual_m must be finite and non-negative")
+    if perception.get("landmark_current_valid") is not True:
+        errors.append("perception current landmark registration must be valid")
+    for name in ("received_monotonic_sec", "status_age_sec"):
+        value = perception.get(name)
+        if not _finite_number(value) or float(value) < 0.0:
+            errors.append(f"perception {name} must be finite and non-negative")
+    age = perception.get("status_age_sec")
+    if _finite_number(age) and float(age) > 3.0:
+        errors.append("perception status is stale")
+
+
 def _validate_dynamic_single_goal(result, expected, label, errors):
     waypoint_id, direction, goal_profile, heading_mode = expected
     if not isinstance(result, dict):
@@ -389,7 +762,17 @@ def _validate_dynamic_single_goal(result, expected, label, errors):
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
         errors.append(f"{label} path_messages must be positive")
+    _validate_planned_path_detour(result, label, errors)
+    _validate_executed_travel_detour(result, label, errors)
+    _validate_tracking_trace(
+        result, label, errors,
+        require_linked_evidence=(
+            direction == "forward" and goal_profile == "precise"),
+    )
     _validate_command_direction(result, direction, label, errors)
+    _validate_forward_ackermann_contract(
+        result, direction, goal_profile, label, errors
+    )
 
 
 def _validate_dynamic_through_result(result, stage, label, errors):
@@ -432,9 +815,14 @@ def _validate_dynamic_through_result(result, stage, label, errors):
         result, direction, "standard", terminal_heading_mode, label, errors
     )
     _validate_command_direction(result, direction, label, errors)
+    _validate_forward_ackermann_contract(
+        result, direction, "standard", label, errors
+    )
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
         errors.append(f"{label} path_messages must be positive")
+    _validate_planned_path_detour(result, label, errors)
+    _validate_executed_travel_detour(result, label, errors)
     passed = result.get("waypoints_passed")
     if not isinstance(passed, list) or len(passed) != len(expected_ids):
         errors.append(f"{label} waypoints_passed must cover every segment goal")
@@ -775,6 +1163,7 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
     results = data.get("results")
     if data.get("overall_outcome") != "completed":
         errors.append("overall_outcome must be completed")
+    _validate_perception(data, errors)
     dynamic_stages, route_errors = _dynamic_route_stages(data)
     snapshot_stages = None
     if waypoint_snapshot is not None:
@@ -843,6 +1232,13 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
             or path_messages <= 0
         ):
             errors.append(f"{label} path_messages must be positive")
+        _validate_planned_path_detour(result, label, errors)
+        _validate_executed_travel_detour(result, label, errors)
+        _validate_tracking_trace(
+            result, label, errors,
+            require_linked_evidence=(
+                expected[1] == "forward" and expected[2] == "precise"),
+        )
 
         checker_name, xy_range, yaw_range = (
             EXPECTED_GOAL_CONTRACTS[expected[0]])
@@ -937,6 +1333,10 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
             if float(controller_minimum) < -VELOCITY_EPSILON:
                 errors.append(f"{label} controller contains a reverse command")
 
+        _validate_forward_ackermann_contract(
+            result, expected[1], expected[2], label, errors
+        )
+
         if expected[2] == "reverse_handoff":
             speed_cap = result.get("handoff_speed_cap_mps")
             angular_cap = result.get("handoff_wz_cap_radps")
@@ -971,15 +1371,20 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
                     f"{label} handoff speed cap must match virtual vx_max")
             if (
                 not _finite_number(angular_cap)
-                or abs(float(angular_cap) - 0.20) > CONFIG_TOLERANCE_EPSILON
-            ):
-                errors.append(f"{label} handoff angular cap must be 0.20")
-            if (
-                not _finite_number(turning_radius)
-                or abs(float(turning_radius) - 0.55)
+                or abs(float(angular_cap) - SIMULATION_HANDOFF_WZ_CAP_RADPS)
                 > CONFIG_TOLERANCE_EPSILON
             ):
-                errors.append(f"{label} handoff turning radius must be 0.55")
+                errors.append(
+                    f"{label} handoff angular cap must be "
+                    f"{SIMULATION_HANDOFF_WZ_CAP_RADPS:.2f}")
+            if (
+                not _finite_number(turning_radius)
+                or abs(float(turning_radius) - SIMULATION_MINIMUM_TURNING_RADIUS_M)
+                > CONFIG_TOLERANCE_EPSILON
+            ):
+                errors.append(
+                    f"{label} handoff turning radius must be "
+                    f"{SIMULATION_MINIMUM_TURNING_RADIUS_M:.2f}")
             if _finite_number(speed_cap):
                 for field in ("cmd_linear_min", "cmd_linear_max",
                               "controller_cmd_linear_min",

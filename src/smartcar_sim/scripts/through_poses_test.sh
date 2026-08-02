@@ -99,7 +99,7 @@ ros2 run smartcar_sim test_through_poses.py --ros-args \
     -p waypoints_file:="$NAV2_SHARE/config/waypoints/nav_only.yaml" \
     -p through_poses_bt:="$NAV2_SHARE/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml" \
     -p forward_behavior_tree:="$NAV2_SHARE/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml" \
-    -p precise_behavior_tree:="$NAV2_SHARE/config/behavior_trees/navigate_to_pose_precise_w_replanning_and_recovery.xml" \
+    -p precise_behavior_tree:="$NAV2_SHARE/config/behavior_trees/navigate_to_pose_precise_sim_w_replanning_and_recovery.xml" \
     -p reverse_behavior_tree:="$NAV2_SHARE/config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml" \
     -p reverse_handoff_behavior_tree:="$NAV2_SHARE/config/behavior_trees/navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml" \
     -p nav2_params_file:="$NAV2_SHARE/config/nav2_params_fixed.yaml" \

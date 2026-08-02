@@ -31,6 +31,11 @@ install(
   PROGRAMS
     scripts/odom_relay.py
     scripts/odom_combined_relay.py
+    scripts/gazebo_ground_truth_odom_relay.py
+    scripts/ackermann_arc_probe.py
+    scripts/sim_sensor_preflight.py
+    scripts/sim_perception_monitor.py
+    scripts/nav2_lifecycle_startup.py
     scripts/auto_train.py
     scripts/test_through_poses.py
     scripts/wall_publisher.py

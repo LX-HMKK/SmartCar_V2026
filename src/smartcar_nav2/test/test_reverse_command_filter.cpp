@@ -14,8 +14,8 @@ using smartcar_nav2::ReverseCommandFilterStatus;
 using smartcar_nav2::ReverseCommandLimits;
 
 constexpr double kVxMin = -0.09;
-constexpr double kWzMax = 0.20;
-constexpr double kTurningRadius = 0.55;
+constexpr double kWzMax = 0.42;
+constexpr double kTurningRadius = 0.22;
 
 ReverseCommandLimits limits()
 {
@@ -74,7 +74,7 @@ TEST(ReverseCommandFilter, MapsVirtualForwardSpeedWithoutFlippingYawRate)
     reverse_command, limits());
   ASSERT_EQ(filtered.status, ReverseCommandFilterStatus::kAccepted);
   EXPECT_DOUBLE_EQ(filtered.command.linear_x, -0.05);
-  EXPECT_DOUBLE_EQ(filtered.command.angular_z, -0.05 / kTurningRadius);
+  EXPECT_DOUBLE_EQ(filtered.command.angular_z, virtual_command.angular_z);
 }
 
 TEST(ReverseCommandFilter, RejectsVirtualReverseLeakAfterMapping)

@@ -54,13 +54,25 @@ def waypoint(
 
 
 class PlanningSegmentActionTests(unittest.TestCase):
-    def test_strict_route_rejects_segment_direction_override(self):
+    def test_strict_route_rejects_reverse_handoff_and_direct_return_direction_overrides(self):
         document, waypoints = load_waypoint_document(NAV_ONLY_FILE)
         segments = list(load_planning_segments(document, waypoints))
-        segments[2] = replace(segments[2], direction="forward")
+        reverse_handoff_segments = list(segments)
+        reverse_handoff_segments[1] = replace(
+            reverse_handoff_segments[1], direction="forward")
+        semantic_waypoints = list(waypoints)
+        semantic_waypoints[2] = replace(
+            semantic_waypoints[2], goal_profile="standard")
 
         with self.assertRaisesRegex(ValueError, "direction must be reverse"):
-            materialize_mission_route(waypoints, segments)
+            materialize_mission_route(
+                semantic_waypoints, reverse_handoff_segments)
+
+        direct_return_segments = list(segments)
+        direct_return_segments[2] = replace(
+            direct_return_segments[2], direction="reverse")
+        with self.assertRaisesRegex(ValueError, "direction must be forward"):
+            materialize_mission_route(waypoints, direct_return_segments)
 
     def test_strict_route_rejects_reordered_qr_and_vlm_waypoints(self):
         _document, waypoints = load_waypoint_document(DEFAULT_WAYPOINTS_FILE)
@@ -69,7 +81,6 @@ class PlanningSegmentActionTests(unittest.TestCase):
             PlanningSegment("to_qr", "forward", "c_corner_1", "a_task_observe"),
             PlanningSegment(
                 "return", "forward", "a_task_observe", "p_finish",
-                ("c_corner_3", "b_corridor_return"),
             ),
         )
 
@@ -117,7 +128,7 @@ class PlanningSegmentActionTests(unittest.TestCase):
             [["qr"], ["via", "vlm"], ["p_finish"]],
         )
 
-    def test_nav_only_route_uses_bounded_reverse_actions(self):
+    def test_nav_only_route_uses_three_semantic_single_goal_actions(self):
         document, waypoints = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, waypoints)
 
@@ -130,16 +141,8 @@ class PlanningSegmentActionTests(unittest.TestCase):
             ],
             [
                 ("forward", ["a_task_observe"]),
-                ("reverse", ["b_corridor_gate", "b_corridor_enter"]),
-                (
-                    "reverse",
-                    ["c_entry_west", "c_corner_1", "c_corner_2", "c_corner_3"],
-                ),
-                ("reverse", ["c_corner_4", "b_corridor_return_enter"]),
-                (
-                    "reverse",
-                    ["b_corridor_return_drop", "b_corridor_return", "p_finish"],
-                ),
+                ("reverse", ["c_corner_1"]),
+                ("forward", ["p_finish"]),
             ],
         )
 

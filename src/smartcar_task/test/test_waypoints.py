@@ -390,54 +390,59 @@ class WaypointTests(unittest.TestCase):
         )
         nav_only = load_waypoints(nav_only_file)
         self.assertEqual(
+            [item.id for item in nav_only],
+            ["p_start", "a_task_observe", "c_corner_1", "p_finish"],
+        )
+        self.assertEqual(
+            [item.task for item in nav_only],
+            ["start", "nav", "nav", "return"],
+        )
+        self.assertEqual(
             [item.direction for item in nav_only],
             [
-                "forward", "forward", "reverse", "reverse", "reverse",
-                "reverse", "reverse", "reverse", "reverse", "reverse",
-                "reverse", "reverse", "reverse",
+                "forward", "forward", "reverse", "forward",
             ],
         )
-        self.assertEqual(nav_only[1].goal_profile, "precise")
-        self.assertEqual(nav_only[2].id, "b_corridor_gate")
-        self.assertEqual(nav_only[2].position, (1.80, 2.85, 0.0))
-        self.assertEqual(nav_only[3].id, "b_corridor_enter")
-        self.assertEqual(nav_only[3].position, (1.10, 2.85, 0.0))
-        self.assertEqual(nav_only[4].id, "c_entry_west")
-        self.assertEqual(nav_only[4].position, (0.447950, 3.245847, 0.0))
-        self.assertEqual(nav_only[4].task, "via")
-        self.assertTrue(is_zero_quaternion(nav_only[4].orientation))
-        self.assertEqual(nav_only[4].goal_profile, "standard")
-        self.assertEqual(nav_only[5].id, "c_corner_1")
-        self.assertEqual(nav_only[6].id, "c_corner_2")
-        self.assertEqual(nav_only[6].task, "loop")
-        self.assertEqual(nav_only[6].direction, "reverse")
-        self.assertEqual(nav_only[8].id, "c_corner_4")
-        self.assertEqual(nav_only[8].task, "loop")
-        self.assertEqual(nav_only[9].id, "b_corridor_return_enter")
-        self.assertEqual(nav_only[9].task, "corridor")
-        self.assertEqual(nav_only[10].id, "b_corridor_return_drop")
-        self.assertEqual(nav_only[10].task, "via")
-        self.assertEqual(nav_only[9].position, (2.20, 2.35, 0.0))
-        self.assertEqual(nav_only[10].position, (1.60, 1.30, 0.0))
-        self.assertTrue(is_zero_quaternion(nav_only[10].orientation))
-        self.assertEqual(nav_only[11].id, "b_corridor_return")
-        self.assertEqual(nav_only[11].position, (1.40, 0.40, 0.0))
+        self.assertEqual(
+            [item.goal_profile for item in nav_only],
+            ["standard", "precise", "reverse_handoff", "standard"],
+        )
+        self.assertTrue(all(is_heading_locked(item) for item in nav_only))
         self.assertTrue(all(
-            item.goal_profile == "standard"
-            for index, item in enumerate(nav_only)
-            if index != 1
+            not is_zero_quaternion(item.orientation) for item in nav_only
         ))
+        self.assertEqual(nav_only[1].goal_profile, "precise")
+        self.assertEqual(nav_only[2].task, "nav")
+        self.assertEqual(nav_only[2].position, (0.3867094808286349, 2.65, 0.0))
+        self.assertEqual(nav_only[2].goal_profile, "reverse_handoff")
+        self.assertEqual(nav_only[3].task, "return")
+        self.assertEqual(nav_only[3].direction, "forward")
 
         nav_only_document = yaml.safe_load(nav_only_file.read_text(encoding="utf-8"))
         next(
             waypoint for waypoint in nav_only_document["waypoints"]
-            if waypoint["id"] == "c_corner_3"
+            if waypoint["id"] == "c_corner_1"
         )["direction"] = "forward"
+        next(
+            waypoint for waypoint in nav_only_document["waypoints"]
+            if waypoint["id"] == "c_corner_1"
+        )["goal_profile"] = "standard"
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "direction must be reverse"):
                 load_waypoints(self.write_document(directory, nav_only_document))
 
-    def test_rule_baseline_uses_four_clockwise_corners_and_vlm_faces_left(self):
+        direct_return_document = yaml.safe_load(
+            nav_only_file.read_text(encoding="utf-8"))
+        next(
+            waypoint for waypoint in direct_return_document["waypoints"]
+            if waypoint["id"] == "p_finish"
+        )["direction"] = "reverse"
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaisesRegex(ValueError, "direction must be forward"):
+                load_waypoints(
+                    self.write_document(directory, direct_return_document))
+
+    def test_rule_baseline_uses_direct_vlm_handoff_heading(self):
         waypoints = load_waypoints(
             PACKAGE_ROOT.parent
             / "smartcar_nav2"
@@ -453,7 +458,7 @@ class WaypointTests(unittest.TestCase):
         yaw = math.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
         self.assertAlmostEqual(yaw, 1.0471975511965976, delta=1.0e-6)
 
-    def test_rule_baseline_keeps_standoff_and_reuses_the_corridor_bidirectionally(self):
+    def test_rule_baseline_keeps_qr_standoff_and_direct_semantic_return(self):
         default_file = (
             PACKAGE_ROOT.parent
             / "smartcar_nav2"
@@ -465,17 +470,23 @@ class WaypointTests(unittest.TestCase):
         self.assertIs(document["calibrated"], False)
         waypoints = load_waypoints(default_file)
         qr = waypoints[1]
-        # outbound: corridor entry was removed (B-zone walls guide the planner);
-        # inbound: return corridor still exists as a through-pose.
-        inbound_center = waypoints[-2]   # b_corridor_return
+        vlm = waypoints[2]
+        direct_return = waypoints[-1]
         self.assertEqual(qr.position, (3.127294927294929, 0.9765623265623269, 0.0))
         standoff = math.hypot(4.15 - qr.position[0], 1.35 - qr.position[1])
         self.assertAlmostEqual(standoff, 1.08875220, delta=1.0e-6)
         self.assertGreater(standoff, 0.5)
-        self.assertEqual(inbound_center.task, "corridor")
-        # Waypoint positions diverge after user editing — corridor entrance
-        # and exit are distinct coordinates; the bidirectional-reuse
-        # constraint no longer applies.
+        self.assertEqual(
+            [item.id for item in waypoints],
+            ["p_start", "a_task_observe", "c_corner_1", "p_finish"],
+        )
+        self.assertEqual(vlm.task, "vlm")
+        self.assertEqual(vlm.direction, "reverse")
+        self.assertEqual(direct_return.task, "return")
+        self.assertEqual(direct_return.direction, "forward")
+        self.assertFalse({"via", "corridor", "loop"} & {
+            item.task for item in waypoints
+        })
 
     def test_atomic_editor_write_preserves_ids_and_clears_calibration(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -526,7 +537,7 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.task for item in waypoints],
             [
-                "start", "qr", "vlm", "loop", "corridor", "return",
+                "start", "qr", "vlm", "return",
             ],
         )
         self.assertEqual(
@@ -535,8 +546,6 @@ class WaypointTests(unittest.TestCase):
                 "p_start",
                 "a_task_observe",
                 "c_corner_1",
-                "c_corner_3",
-                "b_corridor_return",
                 "p_finish",
             ],
         )

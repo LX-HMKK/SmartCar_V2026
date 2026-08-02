@@ -10,4 +10,8 @@ safety_node:
     require_scan: true
     require_odom: true
     require_raw_odom: true
+    # The direct-pass-through firmware and ground-circle test verified the
+    # 0.70 rad command. This is intentionally below no untested command range.
+    wheelbase: 0.189
+    max_steering_angle: 0.70
     emergency_stop_on_start: false

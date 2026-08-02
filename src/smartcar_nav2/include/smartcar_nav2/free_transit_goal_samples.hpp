@@ -15,6 +15,10 @@ namespace smartcar_nav2
 constexpr double kMaximumFreeTransitGoalOffsetM = 0.10;
 constexpr double kFreeTransitGoalSamplesPi = 3.14159265358979323846;
 constexpr double kFreeTransitHeadingDedupTolerance = 1.0e-6;
+// Keep locked-goal alternatives small even when a caller configures a loose
+// controller tolerance.  The authored task heading remains the centre of the
+// candidate set and the final semantic check still enforces its full limit.
+constexpr double kMaximumLockedGoalYawCandidateOffsetRad = 0.10;
 
 struct FreeTransitGoalOffset
 {
@@ -163,6 +167,40 @@ inline std::vector<double> freeTransitHeadingHints(
     }
     append_unique(*best_heading);
   }
+  return headings;
+}
+
+// A nonzero task quaternion is a real semantic constraint, but the planner's
+// discrete heading lattice can make one exact terminal bin collide with a
+// nearby obstacle.  Query the authored heading and two bounded alternatives;
+// callers must still validate the returned endpoint against the authored yaw.
+inline std::vector<double> lockedGoalHeadingHints(
+  double authored_yaw,
+  double goal_yaw_tolerance)
+{
+  std::vector<double> headings;
+  if (!std::isfinite(authored_yaw) || !std::isfinite(goal_yaw_tolerance) ||
+    goal_yaw_tolerance < 0.0)
+  {
+    return headings;
+  }
+
+  const auto normalized = [](double yaw) {
+      return std::remainder(yaw, 2.0 * kFreeTransitGoalSamplesPi);
+    };
+  headings.push_back(normalized(authored_yaw));
+  if (goal_yaw_tolerance <= kFreeTransitHeadingDedupTolerance) {
+    return headings;
+  }
+
+  const double offset = std::min(
+    kMaximumLockedGoalYawCandidateOffsetRad,
+    goal_yaw_tolerance * (2.0 / 3.0));
+  if (offset <= kFreeTransitHeadingDedupTolerance) {
+    return headings;
+  }
+  headings.push_back(normalized(authored_yaw + offset));
+  headings.push_back(normalized(authored_yaw - offset));
   return headings;
 }
 

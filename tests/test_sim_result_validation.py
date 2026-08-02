@@ -33,6 +33,124 @@ VALIDATION = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(VALIDATION)
 
 
+def planned_path_fields(chord=1.0, length=1.0):
+    limit = max(
+        chord * VALIDATION.MAX_PLANNED_PATH_DETOUR_RATIO,
+        chord + VALIDATION.MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M,
+    )
+    return {
+        "planned_path_max_length_m": length,
+        "planned_path_max_chord_m": chord,
+        "planned_path_max_detour_ratio": length / chord if chord else 0.0,
+        "planned_path_detour_limit_m": limit,
+        "planned_path_detour_violation": False,
+    }
+
+
+def executed_travel_fields(baseline=1.0, travel=1.0):
+    limit = max(
+        baseline * VALIDATION.MAX_EXECUTED_TRAVEL_DETOUR_RATIO,
+        baseline + VALIDATION.MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M,
+    )
+    if baseline > 1.0e-3:
+        ratio = travel / baseline
+    elif travel > VALIDATION.MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M:
+        ratio = VALIDATION.MAX_EXECUTED_TRAVEL_DETOUR_RATIO + 1.0
+    else:
+        ratio = 0.0
+    return {
+        "travel_m": travel,
+        "executed_travel_m": travel,
+        "executed_travel_baseline_m": baseline,
+        "executed_travel_detour_ratio": ratio,
+        "executed_travel_limit_m": limit,
+        "executed_travel_detour_violation": False,
+    }
+
+
+def forward_ackermann_fields(direction, goal_profile="standard"):
+    if direction != "forward":
+        return {
+            "forward_speed_cap_mps": None,
+            "forward_wz_cap_radps": None,
+            "forward_min_turning_radius_m": None,
+            "forward_path_max_cross_track_error_m": None,
+            "forward_controller_plugin": None,
+            "forward_velocity_smoother_scale_velocities": None,
+        }
+    return {
+        "forward_speed_cap_mps": 0.15,
+        "forward_wz_cap_radps": VALIDATION.SIMULATION_FORWARD_WZ_CAP_RADPS,
+        "forward_min_turning_radius_m": (
+            VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+        "forward_path_max_cross_track_error_m": (
+            VALIDATION.SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M),
+        "forward_controller_plugin": (
+            VALIDATION.FORWARD_HANDOFF_CONTROLLER
+            if goal_profile == "precise"
+            else VALIDATION.FORWARD_AVOIDANCE_CONTROLLER
+        ),
+        "forward_velocity_smoother_scale_velocities": True,
+    }
+
+
+def valid_perception():
+    return {
+        "schema_version": VALIDATION.PERCEPTION_STATUS_SCHEMA_VERSION,
+        "topic": VALIDATION.PERCEPTION_READY_TOPIC,
+        "ready": True,
+        "checks": {
+            name: True for name in VALIDATION.PERCEPTION_REQUIRED_CHECKS
+        },
+        "valid_beams": 101,
+        "scan_stamp_ns": 104_900_000_000,
+        "odom_stamp_ns": 104_965_000_000,
+        "tf_odom_position_error_m": 0.001,
+        "tf_odom_yaw_error_rad": 0.002,
+        "tf_odom_bracket_span_sec": 0.033,
+        "landmark_required_ids": 3,
+        "landmark_matched_ids": ["cone_a1", "cone_a2", "cone_a3"],
+        "landmark_matched_points": 28,
+        "landmark_max_residual_m": 0.012,
+        "landmark_current_expected_ids": ["cone_a1", "cone_a2", "cone_a3"],
+        "landmark_current_matched_ids": ["cone_a1", "cone_a2", "cone_a3"],
+        "landmark_current_matched_points": 28,
+        "landmark_current_max_residual_m": 0.012,
+        "landmark_current_valid": True,
+        "local_costmap_stamp_ns": 104_980_000_000,
+        "global_costmap_stamp_ns": 104_095_000_000,
+        "received_monotonic_sec": 100.0,
+        "status_age_sec": 0.2,
+    }
+
+
+def valid_tracking_trace():
+    return {
+        "schema_version": VALIDATION.EXECUTION_TRACE_SCHEMA_VERSION,
+        "sample_limit": VALIDATION.MAX_EXECUTION_TRACE_SAMPLES,
+        "accepted_path_count": 1,
+        "odom_combined": [
+            {
+                "t_sec": 0.1,
+                "x": 0.1,
+                "y": 0.0,
+                "yaw_rad": 0.0,
+                "accepted_path_sequence": 1,
+                "station_m": 0.1,
+                "cross_track_m": 0.0,
+                "path_heading_error_rad": 0.0,
+                "path_segment_index": 0,
+            },
+        ],
+        "cmd_vel_nav": [
+            {"t_sec": 0.1, "linear_x": 0.1, "angular_z": 0.0},
+        ],
+        "cmd_vel_candidate": [
+            {"t_sec": 0.1, "linear_x": 0.1, "angular_z": 0.0},
+        ],
+    }
+
+
 def valid_manifest():
     results = []
     for waypoint_id, direction, goal_profile in VALIDATION.EXPECTED_ROUTE:
@@ -78,12 +196,17 @@ def valid_manifest():
             "post_xy_angular_sample_count": 4,
             "post_xy_yaw_error_reduction_rad": entry_yaw_error - 0.01,
             "path_messages": 1,
+            **planned_path_fields(),
+            **executed_travel_fields(),
+            **forward_ackermann_fields(direction, goal_profile),
             "handoff_speed_cap_mps": (
                 0.09 if goal_profile == "reverse_handoff" else None),
             "handoff_wz_cap_radps": (
-                0.20 if goal_profile == "reverse_handoff" else None),
+                VALIDATION.SIMULATION_HANDOFF_WZ_CAP_RADPS
+                if goal_profile == "reverse_handoff" else None),
             "handoff_min_turning_radius_m": (
-                0.55 if goal_profile == "reverse_handoff" else None),
+                VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M
+                if goal_profile == "reverse_handoff" else None),
             "handoff_controller_plugin": (
                 VALIDATION.REVERSE_HANDOFF_CONTROLLER
                 if goal_profile == "reverse_handoff" else None),
@@ -96,13 +219,20 @@ def valid_manifest():
             "controller_cmd_linear_min": minimum,
             "controller_cmd_linear_max": maximum,
             "controller_cmd_angular_abs_max": 0.10,
-            "controller_cmd_min_turning_radius_m": 0.55,
+            "controller_cmd_min_turning_radius_m": (
+                VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
             "controller_cmd_kinematic_violation_count": 0,
             "cmd_linear_min": minimum,
             "cmd_linear_max": maximum,
             "cmd_angular_abs_max": 0.10,
-            "cmd_min_turning_radius_m": 0.55,
+            "cmd_min_turning_radius_m": (
+                VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
             "cmd_kinematic_violation_count": 0,
+            "tracking_trace": (
+                valid_tracking_trace()
+                if direction == "forward" and goal_profile == "precise"
+                else None
+            ),
             "contract_errors": [],
         })
     inputs = {
@@ -126,6 +256,7 @@ def valid_manifest():
         "expected_goal_count": len(VALIDATION.EXPECTED_ROUTE),
         "results": results,
         "inputs": inputs,
+        "perception": valid_perception(),
         "timestamp": 200.0,
     }
 
@@ -156,7 +287,7 @@ def reverse_handoff_manifest():
 def dynamic_manifest():
     """A user-edited two-segment route with one ThroughPoses stage."""
     source = valid_manifest()
-    single_goal = copy.deepcopy(source["results"][4])
+    single_goal = copy.deepcopy(source["results"][0])
     single_goal.update({
         "id": "entry",
         "direction": "forward",
@@ -169,6 +300,7 @@ def dynamic_manifest():
         "cmd_linear_min": 0.02,
         "cmd_linear_max": 0.10,
     })
+    single_goal.update(forward_ackermann_fields("forward", "standard"))
     through_result = {
         "id": "through_poses[reverse_a, reverse_b]",
         "mode": "through_poses",
@@ -183,8 +315,9 @@ def dynamic_manifest():
         "outcome": "succeeded",
         "status": VALIDATION.SUCCEEDED_STATUS,
         "duration_sec": 2.0,
-        "travel_m": 0.8,
         "path_messages": 1,
+        **planned_path_fields(),
+        **executed_travel_fields(baseline=0.8, travel=0.8),
         "goal_checker": "reverse_goal_checker",
         "xy_goal_tolerance_m": 0.12,
         "yaw_goal_tolerance_rad": 0.25,
@@ -307,10 +440,26 @@ def _single_goal_result(goal):
             0.0 if heading_mode == "locked" else None
         ),
         "path_messages": 1,
+        **planned_path_fields(),
+        **executed_travel_fields(),
+        **forward_ackermann_fields(direction, goal_profile),
         "controller_cmd_linear_min": minimum,
         "controller_cmd_linear_max": maximum,
+        "controller_cmd_angular_abs_max": 0.10,
+        "controller_cmd_min_turning_radius_m": (
+            VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+        "controller_cmd_kinematic_violation_count": 0,
         "cmd_linear_min": minimum,
         "cmd_linear_max": maximum,
+        "cmd_angular_abs_max": 0.10,
+        "cmd_min_turning_radius_m": (
+            VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+        "cmd_kinematic_violation_count": 0,
+        "tracking_trace": (
+            valid_tracking_trace()
+            if direction == "forward" and goal_profile == "precise"
+            else None
+        ),
         "contract_errors": [],
     }
 
@@ -351,10 +500,21 @@ def _through_poses_result(stage):
             0.01 if heading_mode == "locked" else None
         ),
         "path_messages": 1,
+        **planned_path_fields(),
+        **executed_travel_fields(),
+        **forward_ackermann_fields(direction, "standard"),
         "controller_cmd_linear_min": minimum,
         "controller_cmd_linear_max": maximum,
+        "controller_cmd_angular_abs_max": 0.10,
+        "controller_cmd_min_turning_radius_m": (
+            VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+        "controller_cmd_kinematic_violation_count": 0,
         "cmd_linear_min": minimum,
         "cmd_linear_max": maximum,
+        "cmd_angular_abs_max": 0.10,
+        "cmd_min_turning_radius_m": (
+            VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+        "cmd_kinematic_violation_count": 0,
         "waypoints_passed": [
             {"id": goal["id"], "min_distance_m": 0.10}
             for goal in goals
@@ -397,6 +557,7 @@ def manifest_from_waypoint_snapshot(snapshot):
         },
         "execution": {"use_through_poses": True},
         "inputs": valid_manifest()["inputs"],
+        "perception": valid_perception(),
         "timestamp": 200.0,
     }
     manifest["inputs"]["waypoints_file"].update({
@@ -411,6 +572,41 @@ class SimResultValidationTests(unittest.TestCase):
     def test_complete_current_run_is_accepted(self):
         self.assertEqual(
             VALIDATION.validate_manifest(valid_manifest(), 199.0), [])
+
+    def test_precise_forward_result_requires_bounded_linked_tracking_evidence(self):
+        manifest = valid_manifest()
+        precise = manifest["results"][0]
+        precise.pop("tracking_trace")
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any(
+            "lacks forward path tracking evidence" in error
+            for error in errors
+        ))
+
+        precise["tracking_trace"] = valid_tracking_trace()
+        precise["tracking_trace"]["sample_limit"] = (
+            VALIDATION.MAX_EXECUTION_TRACE_SAMPLES + 1)
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any(
+            "tracking trace sample_limit" in error for error in errors
+        ))
+
+        precise["tracking_trace"] = valid_tracking_trace()
+        precise["tracking_trace"]["odom_combined"][0][
+            "accepted_path_sequence"
+        ] = None
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any(
+            "cannot associate odometry to a path" in error
+            for error in errors
+        ))
+
+        precise["tracking_trace"] = valid_tracking_trace()
+        precise["forward_path_max_cross_track_error_m"] = 0.0
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any(
+            "forward path tracking threshold" in error for error in errors
+        ))
 
     def test_saved_dynamic_segments_and_through_poses_are_accepted(self):
         manifest = dynamic_manifest()
@@ -456,10 +652,8 @@ class SimResultValidationTests(unittest.TestCase):
             [stage[0] for stage in stages],
             [
                 "action_1_a_task_observe_to_a_task_observe",
-                "action_2_b_corridor_gate_to_b_corridor_enter",
-                "action_3_c_entry_west_to_c_corner_3",
-                "action_4_c_corner_4_to_b_corridor_return_enter",
-                "action_5_b_corridor_return_drop_to_p_finish",
+                "action_2_c_corner_1_to_c_corner_1",
+                "action_3_p_finish_to_p_finish",
             ],
         )
         self.assertEqual(
@@ -487,20 +681,21 @@ class SimResultValidationTests(unittest.TestCase):
         self.assertTrue(any(
             "expected_goal_count must be" in error for error in errors))
 
-    def test_waypoint_snapshot_requires_zero_transit_quaternions(self):
+    def test_waypoint_snapshot_requires_locked_semantic_quaternions(self):
         manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
         reverse_stage = stages[1]
-        self.assertGreater(len(reverse_stage[2]), 1)
+        self.assertEqual(len(reverse_stage[2]), 1)
         source = yaml.safe_load(NAV_ONLY_WAYPOINTS.read_text(encoding="utf-8"))
         source_goal = next(
             waypoint for waypoint in source["waypoints"]
-            if waypoint["id"] == "b_corridor_gate")
-        self.assertNotIn("orientation", source_goal["pose"])
+            if waypoint["id"] == "c_corner_1")
+        self.assertIn("orientation", source_goal["pose"])
         first_reverse_goal = manifest["route"]["segments"][1]["goals"][0]
-        self.assertEqual(first_reverse_goal["id"], "b_corridor_gate")
+        self.assertEqual(first_reverse_goal["id"], "c_corner_1")
+        self.assertEqual(first_reverse_goal["heading_mode"], "locked")
         self.assertEqual(
             first_reverse_goal["pose"]["orientation"],
-            {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
+            source_goal["pose"]["orientation"],
         )
         finish_goal = manifest["route"]["segments"][-1]["goals"][-1]
         self.assertEqual(finish_goal["id"], "p_finish")
@@ -513,13 +708,13 @@ class SimResultValidationTests(unittest.TestCase):
         )
 
         first_reverse_goal["pose"]["orientation"] = {
-            "x": 0.0, "y": 0.0, "z": 0.0, "w": 1.0,
+            "x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0,
         }
         errors = VALIDATION.validate_manifest(
             manifest, 199.0, NAV_ONLY_WAYPOINTS)
 
         self.assertTrue(any(
-            "free-heading zero quaternion" in error
+            "must be a unit quaternion" in error
             for error in errors
         ))
 
@@ -601,12 +796,57 @@ class SimResultValidationTests(unittest.TestCase):
 
         self.assertTrue(any("nonstandard goal profile" in error for error in errors))
 
+    def test_dynamic_route_rejects_a_planned_detour_before_it_can_pass(self):
+        manifest = dynamic_manifest()
+        result = manifest["results"][0]
+        result["planned_path_max_length_m"] = 4.0
+        result["planned_path_max_chord_m"] = 1.0
+        result["planned_path_max_detour_ratio"] = 4.0
+        result["planned_path_detour_limit_m"] = 1.75
+        result["planned_path_detour_violation"] = True
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any("planned path" in error for error in errors))
+
+    def test_dynamic_route_rejects_an_executed_detour_before_it_can_pass(self):
+        manifest = dynamic_manifest()
+        manifest["results"][0].update(executed_travel_fields(
+            baseline=1.0, travel=3.0))
+        manifest["results"][0]["executed_travel_detour_violation"] = True
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any("executed travel" in error for error in errors))
+
+    def test_perception_evidence_is_a_hard_route_requirement(self):
+        manifest = dynamic_manifest()
+        manifest["perception"]["checks"]["local"] = False
+        manifest["perception"]["global_costmap_stamp_ns"] = 0
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any("perception check local" in error for error in errors))
+        self.assertTrue(any(
+            "global_costmap_stamp_ns" in error for error in errors))
+
+    def test_perception_rejects_scan_odom_skew_above_simulator_limit(self):
+        manifest = dynamic_manifest()
+        manifest["perception"]["odom_stamp_ns"] = 104_976_000_000
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any(
+            "scan and odom timestamps are too far apart" in error
+            for error in errors
+        ))
+
     def test_route_order_and_action_status_are_strict(self):
         manifest = valid_manifest()
         manifest["results"][1], manifest["results"][2] = (
             manifest["results"][2], manifest["results"][1])
-        manifest["results"][3]["status"] = 5
-        manifest["results"][4]["behavior_tree"] = "wrong.xml"
+        manifest["results"][2]["status"] = 5
+        manifest["results"][0]["behavior_tree"] = "wrong.xml"
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any("route mismatch" in error for error in errors))
@@ -617,8 +857,8 @@ class SimResultValidationTests(unittest.TestCase):
         manifest = valid_manifest()
         manifest["results"][1]["cmd_linear_max"] = 0.05
         manifest["results"][0]["cmd_linear_min"] = -0.05
-        manifest["results"][2]["controller_cmd_linear_max"] = 0.05
-        manifest["results"][0]["controller_cmd_linear_min"] = -0.05
+        manifest["results"][1]["controller_cmd_linear_max"] = 0.05
+        manifest["results"][2]["controller_cmd_linear_min"] = -0.05
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(
@@ -630,13 +870,30 @@ class SimResultValidationTests(unittest.TestCase):
         self.assertTrue(
             any("controller contains a reverse command" in error for error in errors))
 
+    def test_forward_command_layers_must_remain_in_ackermann_envelope(self):
+        manifest = valid_manifest()
+        forward = manifest["results"][0]
+        forward["controller_cmd_kinematic_violation_count"] = 1
+        forward["cmd_min_turning_radius_m"] = 0.20
+
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any(
+            "violates forward Ackermann curvature" in error
+            for error in errors
+        ))
+        self.assertTrue(any(
+            "forward observed turning radius is too small" in error
+            for error in errors
+        ))
+
     def test_pose_tolerances_and_planned_yaw_are_strict(self):
         manifest = valid_manifest()
         manifest["results"][0]["goal_yaw_error_rad"] = 0.31
         manifest["results"][1]["goal_error_m"] = 0.20
-        manifest["results"][2]["signed_plan_goal_yaw_error_rad"] = 0.20
-        manifest["results"][2]["yaw_goal_tolerance_rad"] = 0.51
-        manifest["results"][4]["position_observer_margin_m"] = 0.05
+        manifest["results"][1]["signed_plan_goal_yaw_error_rad"] = 0.20
+        manifest["results"][1]["yaw_goal_tolerance_rad"] = 0.51
+        manifest["results"][2]["position_observer_margin_m"] = 0.05
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any("goal_yaw_error_rad" in error for error in errors))
@@ -703,7 +960,7 @@ class SimResultValidationTests(unittest.TestCase):
             handoff = manifest["results"][0]
             handoff["controller_cmd_linear_min"] = -0.12
             handoff["cmd_kinematic_violation_count"] = 1
-            handoff["controller_cmd_min_turning_radius_m"] = 0.40
+            handoff["controller_cmd_min_turning_radius_m"] = 0.20
             errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any("exceeds speed cap" in error for error in errors))
         self.assertTrue(

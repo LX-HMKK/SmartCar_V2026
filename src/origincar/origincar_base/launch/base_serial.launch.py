@@ -59,7 +59,7 @@ def generate_launch_description():
             description='Use Ackermann command conversion when true'
         ),
         DeclareLaunchArgument('wheelbase', default_value='0.189'),
-        DeclareLaunchArgument('max_steering_angle', default_value='0.45'),
+        DeclareLaunchArgument('max_steering_angle', default_value='0.70'),
         DeclareLaunchArgument('command_timeout_sec', default_value='0.35'),
         DeclareLaunchArgument('max_integration_dt_sec', default_value='0.25'),
         DeclareLaunchArgument('serial_read_timeout_ms', default_value='0'),
@@ -75,11 +75,11 @@ def generate_launch_description():
         DeclareLaunchArgument('yaw_velocity_scale', default_value='1.0'),
         DeclareLaunchArgument('gyro_z_scale', default_value='1.0'),
         DeclareLaunchArgument('gyro_z_bias', default_value='0.0'),
-        DeclareLaunchArgument('steering_command_scale', default_value='0.5'),
+        DeclareLaunchArgument('steering_command_scale', default_value='1.0'),
         DeclareLaunchArgument(
             'steering_command_offset_rad', default_value='0.0'),
         DeclareLaunchArgument(
-            'max_calibrated_steering_command_rad', default_value='0.225'),
+            'max_calibrated_steering_command_rad', default_value='0.70'),
         DeclareLaunchArgument('skip_converter', default_value='false'),
 
         launch_ros.actions.Node(

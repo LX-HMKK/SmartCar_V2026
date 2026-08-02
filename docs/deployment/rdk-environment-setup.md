@@ -144,13 +144,16 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 - 已测量 `base_link -> laser`：`(-0.05, 0, 0.23)`，`laser_yaw=1.5708`。
 - 已测量 `base_link -> camera`：`(0.1205, 0, 0.11)`。
 - 已验证 `gyro_z_bias=0.000853` 和 `longitudinal_velocity_scale=1.03`。
-- 尚未完成 `steering_command_scale` / `steering_command_offset` 和有效 `minimum_turning_radius` 标定。
+- 已验证转向直通配置：`steering_command_scale=1.0`、`steering_command_offset_rad=0.0`，
+  `0.70 rad` 指令可到达下位机；0.7 rad 地面画圆卷尺测得 `R_min ≈ 0.20 m`。运行时
+  Nav2 与路线预检使用保守的 `minimum_turning_radius=0.22 m`，不等同于完整路线验收。
 - 激光里程计：RF2O `/odom_laser` 时间戳/协方差、`base_link -> laser` 外参、异常观测拒绝和退化回退阈值。
 - 五子任务 11 点语义航点：`src/smartcar_nav2/config/waypoints/default_waypoints.yaml`
 - 官方规则图参考尺寸：`src/smartcar_tools/config/routes/field_geometry.yaml`
 - 转向参数和实车转弯半径：`origincar_base` 与 Nav2 参数
 
-`src/smartcar_bringup/config/bringup_coord.yaml` 当前只是协调和审计记录，不会自动写入 launch。运行时必须通过 launch 参数或后续实测参数文件提供真实值。
+`src/smartcar_bringup/config/bringup_coord.yaml` 是协调和审计记录；顶层 launch、底盘默认值和
+安全节点均已同步上述转向配置。运行时仍可用 launch 参数覆盖，但不得据此绕开运动门禁。
 
 五个门禁默认均为 `false`：
 
@@ -199,7 +202,7 @@ smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
 bash /root/nav_test.sh
 ```
 
-脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。必须先确认物理急停、车辆周围、RViz、P 点朝向和车轮离地条件，再人工 reset、解除急停、start。当前只测试到 VLM 后立即急停；`minimum_turning_radius: 0.55` 未标定，且 `c_corner_1 -> c_corner_2`、`c_corner_4 -> b_corridor_return_enter` 两个正向段存在解析兜圈风险，未修正前不得无人看守跑完整圈。
+脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。必须先确认物理急停、车辆周围、RViz、P 点朝向和车轮离地条件，再人工 reset、解除急停、start。运行配置的 `minimum_turning_radius` 已按实测使用保守的 `0.22 m`，但 QR→VLM 实际倒车和完整赛道仍未验证，任何全路线测试均不得无人看守。
 
 只允许把仓库根目录的 `scripts/nav_test.sh` 部署为 `/root/nav_test.sh`。`scripts/deploy/nav_test.sh` 是仍会解除急停并自动 start 的历史副本，在清理前不得复制或执行。当前 `scripts/monitor_mission.py` 也不能作为安全判据：其消息类型和格式化逻辑尚未与当前话题合同同步；安全确认必须直接观察下述 ROS 话题和物理状态。
 

@@ -15,6 +15,20 @@
   gz_type_name: "gz.msgs.Odometry"
   direction: GZ_TO_ROS
 
+# Physical model world pose: Gazebo -> ROS2. This is the model-local
+# PosePublisher stream, not SceneBroadcaster's event-only dynamic_pose topic.
+# It continues at 30 Hz while the vehicle is stationary, so a late ROS DDS
+# subscriber can always initialize physical ground-truth odometry. The
+# PosePublisher writes sim time into each inner Pose header, and Fortress'
+# TFMessage conversion preserves that header on every TransformStamped. The
+# relay consumes that exact source timestamp so scans, odometry, and TF remain
+# in one time domain. The Ackermann plugin's /odom remains diagnostics-only.
+- ros_topic_name: "/model/origincar/pose"
+  gz_topic_name: "/model/origincar/pose"
+  ros_type_name: "tf2_msgs/msg/TFMessage"
+  gz_type_name: "gz.msgs.Pose_V"
+  direction: GZ_TO_ROS
+
 # LiDAR scan: Gazebo → ROS2 (short topic when spawned)
 - ros_topic_name: "/scan"
   gz_topic_name: "/scan"

@@ -223,9 +223,9 @@ class SystemContractTests(unittest.TestCase):
         self.assertIs(config["extrinsics"]["link_to_laser"]["measured"], True)
         self.assertIs(config["extrinsics"]["link_to_camera"]["measured"], True)
         gates = config["motion_gates"]
-        self.assertIs(gates["extrinsics_calibrated"], True)
         for name in (
             "waypoints_calibrated",
+            "extrinsics_calibrated",
             "steering_calibrated",
             "emergency_stop_ready",
             "operator_approved",
@@ -270,6 +270,37 @@ class SystemContractTests(unittest.TestCase):
             launch_default(SYSTEM, "gyro_z_bias"),
             str(config["calibration"]["gyro_z_bias"]),
         )
+        for name in (
+            "longitudinal_velocity_scale",
+            "gyro_z_scale",
+            "steering_command_scale",
+            "steering_command_offset_rad",
+            "max_calibrated_steering_command_rad",
+        ):
+            with self.subTest(name=name):
+                self.assertAlmostEqual(
+                    float(launch_default(SYSTEM, name)),
+                    float(config["calibration"][name]),
+                )
+        self.assertEqual(config["calibration"]["steering_command_scale"], 1.0)
+        self.assertEqual(
+            config["calibration"]["max_calibrated_steering_command_rad"],
+            0.70,
+        )
+        self.assertEqual(config["calibration"]["max_steering_angle"], 0.70)
+        for launch_file in (SYSTEM, BRINGUP, VENDOR):
+            with self.subTest(launch_file=launch_file.name):
+                self.assertEqual(
+                    launch_default(launch_file, "steering_command_scale"),
+                    "1.0",
+                )
+                self.assertEqual(
+                    launch_default(
+                        launch_file,
+                        "max_calibrated_steering_command_rad",
+                    ),
+                    "0.70",
+                )
 
     def test_bringup_declares_direct_runtime_and_test_dependencies(self):
         source = PACKAGE_XML.read_text(encoding="utf-8")

@@ -45,7 +45,10 @@ from smartcar_tools.field_keepouts import (  # noqa: E402
     keepout_mask_bounds,
 )
 from smartcar_tools.field_reference import load_field_reference  # noqa: E402
-from smartcar_tools.route_planning import load_route_planning_config  # noqa: E402
+from smartcar_tools.route_planning import (  # noqa: E402
+    RoutePlanningConfigError,
+    load_route_planning_config,
+)
 from smartcar_tools.route_preflight import LatticePreflightPlanner, Pose2D  # noqa: E402
 
 
@@ -96,7 +99,10 @@ class SharedRoutePlanningTests(unittest.TestCase):
         config = load_route_planning_config(CONFIG_FILE)
         core = central_c_keepout(self.reference, config)
 
-        self.assertEqual(config.minimum_turning_radius_m, 0.55)
+        self.assertEqual(config.minimum_turning_radius_m, 0.22)
+        self.assertEqual(config.simulation_minimum_turning_radius_m, 0.22)
+        self.assertEqual(config.simulation_keepout.map_resolution_m, 0.025)
+        self.assertEqual(config.simulation_keepout.boundary_padding_m, 0.25)
         footprint = config.runtime_footprint
         self.assertEqual(footprint.half_length_m, 0.27)
         self.assertEqual(footprint.half_width_m, 0.13)
@@ -104,7 +110,7 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertAlmostEqual(footprint.padded_half_length_m, 0.30)
         self.assertAlmostEqual(footprint.padded_half_width_m, 0.16)
         self.assertEqual(
-            config.simulation_keepout.costmap_inflation_radius_m, 0.20
+            config.simulation_keepout.costmap_inflation_radius_m, 0.30
         )
         self.assertEqual(config.c_zone_keepout.horizontal_inset_m, 0.80)
         self.assertEqual(config.c_zone_keepout.vertical_inset_m, 0.15)
@@ -114,6 +120,48 @@ class SharedRoutePlanningTests(unittest.TestCase):
             3.15,
             3.5,
         ))
+
+    def test_simulation_radius_is_required_and_positive(self) -> None:
+        document = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
+
+        for invalid in (None, 0.0, -0.01):
+            with self.subTest(invalid=invalid):
+                altered = dict(document)
+                if invalid is None:
+                    altered.pop("simulation_minimum_turning_radius_m")
+                else:
+                    altered["simulation_minimum_turning_radius_m"] = invalid
+                with tempfile.TemporaryDirectory() as temporary:
+                    altered_path = Path(temporary) / "route_planning.yaml"
+                    altered_path.write_text(
+                        yaml.safe_dump(altered, sort_keys=False), encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(
+                        RoutePlanningConfigError,
+                        "simulation_minimum_turning_radius_m",
+                    ):
+                        load_route_planning_config(altered_path)
+
+    def test_simulation_boundary_padding_is_required_and_positive(self) -> None:
+        document = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
+
+        for invalid in (None, 0.0, -0.01):
+            with self.subTest(invalid=invalid):
+                altered = yaml.safe_load(yaml.safe_dump(document))
+                if invalid is None:
+                    altered["simulation_keepout"].pop("boundary_padding_m")
+                else:
+                    altered["simulation_keepout"]["boundary_padding_m"] = invalid
+                with tempfile.TemporaryDirectory() as temporary:
+                    altered_path = Path(temporary) / "route_planning.yaml"
+                    altered_path.write_text(
+                        yaml.safe_dump(altered, sort_keys=False), encoding="utf-8"
+                    )
+                    with self.assertRaisesRegex(
+                        RoutePlanningConfigError,
+                        "boundary_padding_m",
+                    ):
+                        load_route_planning_config(altered_path)
 
     def test_c_zone_tuning_changes_editor_keepout_and_simulation_pgm_together(self) -> None:
         generator = load_field_map_generator()
@@ -153,11 +201,13 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertIn("route_planning.yaml", sim_tune)
         self.assertIn("--route-planning-config", sim_tune)
         self.assertIn("sync_route_planning.py", sim_tune)
+        self.assertNotIn("--nav2-params", sim_tune)
 
-    def test_shared_radius_footprint_and_cost_inflation_sync_into_simulation_nav2(self) -> None:
+    def test_simulation_only_constraints_sync_into_overlay_without_mutating_base_nav2(self) -> None:
         synchronizer = load_route_planning_sync()
         planning = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
         planning["minimum_turning_radius_m"] = 0.63
+        planning["simulation_minimum_turning_radius_m"] = 0.21
         planning["runtime_footprint"] = {
             "half_length_m": 0.29,
             "half_width_m": 0.14,
@@ -179,28 +229,55 @@ class SharedRoutePlanningTests(unittest.TestCase):
             )
 
             self.assertTrue(
-                synchronizer.synchronize(planning_file, nav2_params, keepout_overlay)
+                synchronizer.synchronize(planning_file, keepout_overlay)
             )
             self.assertFalse(
                 synchronizer.synchronize(
-                    planning_file, nav2_params, keepout_overlay, check=True
+                    planning_file, keepout_overlay, check=True
                 )
             )
-            nav2 = yaml.safe_load(nav2_params.read_text(encoding="utf-8"))
+            self.assertEqual(
+                nav2_params.read_text(encoding="utf-8"),
+                NAV2_PARAMS.read_text(encoding="utf-8"),
+            )
             overlay = yaml.safe_load(keepout_overlay.read_text(encoding="utf-8"))
 
         self.assertEqual(
-            nav2["planner_server"]["ros__parameters"]["GridBased"]
+            overlay["planner_server"]["ros__parameters"]["GridBased"]
             ["minimum_turning_radius"],
-            0.63,
+            0.21,
         )
-        self.assertEqual(
-            nav2["controller_server"]["ros__parameters"]["ReverseHandoff"]
-            ["AckermannConstraints"]["min_turning_r"],
-            0.63,
-        )
+        for navigator in (
+            "bt_navigator",
+            "bt_navigator_navigate_through_poses_rclcpp_node",
+            "bt_navigator_navigate_to_pose_rclcpp_node",
+        ):
+            with self.subTest(navigator=navigator):
+                self.assertEqual(
+                    overlay[navigator]["ros__parameters"]
+                    ["free_heading_minimum_turning_radius"],
+                    0.21,
+                )
+
+        controller = overlay["controller_server"]["ros__parameters"]
+        for name in ("ForwardAvoidance", "ForwardHandoff"):
+            with self.subTest(controller=name):
+                self.assertEqual(
+                    controller[name]["regulated_linear_scaling_min_radius"],
+                    0.21,
+                )
+                self.assertEqual(
+                    controller[name]["forward_min_turning_radius"],
+                    0.21,
+                )
+        for name in ("ReverseHandoff", "ReverseRecovery"):
+            with self.subTest(controller=name):
+                self.assertEqual(
+                    controller[name]["AckermannConstraints"]["min_turning_r"],
+                    0.21,
+                )
         for name in ("local_costmap", "global_costmap"):
-            parameters = nav2[name][name]["ros__parameters"]
+            parameters = overlay[name][name]["ros__parameters"]
             self.assertEqual(
                 parameters["footprint"],
                 "[[0.29, 0.14], [0.29, -0.14], [-0.29, -0.14], [-0.29, 0.14]]",
@@ -217,17 +294,22 @@ class SharedRoutePlanningTests(unittest.TestCase):
         planner = LatticePreflightPlanner(self.reference, config)
         c_core = keepout_mask_bounds(self.reference, config)[2]
 
-        # The final occupied C-core PGM row ends at 3.55 rather than the raw
-        # 3.50 m edge, which is the actual KeepoutFilter collision boundary.
+        # The 0.025 m PGM aligns exactly with the raw C-core edges, so this
+        # is the actual KeepoutFilter collision boundary rather than a coarse
+        # one-cell expansion.
         for actual, expected in zip(
             (c_core.x_min, c_core.x_max, c_core.y_min, c_core.y_max),
-            (1.3, 2.7, 3.15, 3.55),
+            (1.3, 2.7, 3.15, 3.50),
         ):
             self.assertAlmostEqual(actual, expected)
         # A tangent vehicle clears the last C-core mask row, while the
         # diagonal entry that previously appeared in RViz intersects it.
-        self.assertTrue(planner._is_free(1.25, 3.72, 0.0))
-        self.assertFalse(planner._is_free(1.25, 3.72, 0.757))
+        self.assertTrue(planner._is_free(1.25, 3.66, 0.0))
+        self.assertFalse(planner._is_free(1.25, 3.66, 0.757))
+        # P remains valid, but no padded vehicle pose can use the map's
+        # exterior ring as an unmodelled shortcut below the south field edge.
+        self.assertTrue(planner._is_free(0.0, 0.0, 0.0))
+        self.assertFalse(planner._is_free(0.0, -0.26, 0.0))
 
     def test_terminal_route_is_tangent_continuous_not_a_straight_line_patch(self) -> None:
         planner = LatticePreflightPlanner(

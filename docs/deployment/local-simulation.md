@@ -4,8 +4,12 @@
 ROS 2 Humble、Ignition Gazebo Fortress 6.18 和本机 RTX 图形驱动；不需要 WSL、
 Windows 挂载目录或额外网络配置。
 
-GPU 加速仅覆盖 Ignition 的 Ogre 渲染和模型中的 `gpu_lidar` 传感器；本机为 RTX 4060。
+GPU 加速仅覆盖 Ignition 的 Ogre2 渲染和模型中的 `gpu_lidar` 传感器；本机为 RTX 4060。
 Nav2 规划、行为树、costmap、控制器以及 Gazebo 物理仍主要使用 CPU，不是 CUDA 计算链。
+
+`--headless` 仍会启用 Ignition 的 off-screen rendering。Fortress 6.18 的 GPU lidar
+需要该渲染场景；不要把 server-only 模式改回只带 `-s` 的启动命令，否则扫描会退化为
+最小量程，Nav2 会把它滤为车体自回波。
 
 ## 1. 安全边界
 
@@ -43,7 +47,7 @@ bash scripts/local_sim.sh --headless --rviz
 
 | 选项 | 作用 |
 |---|---|
-| `--headless` | Gazebo server-only，适合日常 Nav2 调试。 |
+| `--headless` | 不打开 Gazebo GUI，但保留 off-screen 渲染以驱动 GPU lidar，适合日常 Nav2 调试。 |
 | `--gui` | 同时打开 Gazebo GUI。 |
 | `--rviz` | 打开 RViz。 |
 | `--no-rviz` | 不启动 RViz。 |
@@ -69,11 +73,25 @@ ros2 lifecycle get /bt_navigator
 ros2 lifecycle get /velocity_smoother
 timeout 4s ros2 run tf2_ros tf2_echo \
   odom_combined origincar/laser_link/lidar_sensor
+ros2 topic echo /smartcar/sim_perception_ready --once \
+  --qos-durability transient_local
 ```
 
 四个 Nav2 lifecycle 节点应为 `active [3]`。RViz 固定坐标系为 `odom_combined`；
-`Actual Nav2 Global Path (/plan)` 和 `Actual Nav2 Local Path (/local_plan)` 是 Nav2
-真实路径，`Waypoint Reference Constraints (not a Nav2 path)` 仅是 YAML 航点参考。
+`Accepted Global Path (/smartcar/accepted_global_plan)` 是控制器确认接收的完整原始路径，
+`Controller Tracking Window (/transformed_global_plan)` 是它当前的跟踪窗口。`/plan`
+包含 free-heading 搜索的候选（包括被拒绝的候选），默认隐藏，不能作为车辆会执行的路线。
+`Waypoint Reference Constraints (not a Nav2 path)` 仅是 YAML 航点参考。
+`/smartcar/sim_perception_ready` 是 transient-local 的 `std_msgs/String` JSON。只有
+`ready=true`，且 `checks.scan`、`odom`、`tf`、`local`、`global` 和 `a_zone_probe` 都为
+`true` 时，才证明新鲜 `/scan` 能在其时间戳查询到 TF，且默认 A 区锥桶回波已同时标入
+local/global `costmap_raw`。消息还记录有效波束数和 scan、odom、两张 costmap 的时间戳。
+当前 Nav2 版本可能将 `metadata.update_time` 保持为零，诊断以较新的 header/update 时间
+为准。
+
+启用 `run_route:=true` 时，`auto_train` 必须在发送首个 Nav2 目标前取得这一完整状态，并
+将快照写入结果 JSON 的 `perception` 字段。未就绪会直接失败，不会发送导航目标。它不参与
+实车安全门或运动命令。
 
 ## 5. 航点编辑
 
@@ -90,9 +108,11 @@ bash scripts/local_waypoint_editor.sh
 
 ## 6. 自动路线和调参
 
-当前 `nav_only.yaml` 是五段路线：P→A 前进，其余四段倒车。当前证据只覆盖
-Gazebo/RViz/TF/Nav2 启动、P→A 和 A→B；B→C1 在 C 区中央禁区西南角仍会触发局部
-碰撞预测，不能标记为全程通过。
+当前 `nav_only.yaml` 只保留三个语义阶段：P→A 前进、A→C1 倒车、C1→P 前进，未使用
+中间经过点。最新 P→A 复验的全局路径长 `4.270 m`、弦长 `3.276 m`、倍率 `1.303`，不含
+大绕圈；但执行在高位紧右弯的横向反馈过冲到右侧保护包络，约行驶 `1.587 m` 后停在
+`(0.533, 1.255)`，距 A `2.609 m`。因此路线仍未通过，不能通过增加经过点、放宽保护包络
+或把 Gazebo 结果写成实体车辆验收来规避该问题。
 
 运行路线会让 Gazebo 模型运动：
 
@@ -106,6 +126,12 @@ bash scripts/local_sim.sh --headless --rviz -- run_route:=true
 python3 src/smartcar_sim/scripts/tune_params.py
 bash src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
 ```
+
+Gazebo 最小转弯半径由
+`src/smartcar_tools/config/routes/route_planning.yaml` 的
+`simulation_minimum_turning_radius_m` 单独管理，当前为 `0.22 m`；执行
+`sim_tune.sh` 会将它同步到仿真 overlay。`tune_params.py` 不会修改实体
+`nav2_params.yaml` 中同样为 `0.22 m`、但独立维护的运行基线。
 
 两者默认只操作当前仓库；如从其他工作区调用，设置 `SMARTCAR_WS=/absolute/path/to/workspace`。
 调参运行的结果 JSON 才能作为路线验收依据，离线几何预检不能替代运行时证据。
@@ -123,5 +149,5 @@ bash src/smartcar_sim/scripts/sim_cleanup.sh --kill-processes
 |---|---|
 | Gazebo/RViz 加载系统库失败 | 使用 `scripts/local_sim.sh` 或 `scripts/local_waypoint_editor.sh`，不要直接继承 Conda/Isaac 环境。 |
 | `ros2 node list` 为空或 lifecycle 卡住 | 清理残留进程和 DDS 资源后重启，并确认所有终端加载相同的 `sim_env.sh`。 |
-| RViz 不显示 `/plan` | 使用仓库内 `sim_nav.rviz`，两个 Path display 的 QoS 必须是 `Volatile`。 |
+| RViz 不显示执行路径 | 使用仓库内 `sim_nav.rviz`；`/smartcar/accepted_global_plan` 的 Path QoS 必须为 `Reliable + Transient Local`，`/transformed_global_plan` 必须为 `Reliable + Volatile`。 |
 | Gazebo 有进程但无 `/odom` | 运行清理脚本后重启，检查 bridge 日志和 `/tmp` 中残留资源。 |

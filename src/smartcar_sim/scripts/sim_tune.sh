@@ -92,7 +92,6 @@ PYTHONPATH="${source_root}/smartcar_tools${PYTHONPATH:+:${PYTHONPATH}}" \
         --maps-dir "${source_root}/smartcar_sim/maps"
 python3 "${source_root}/smartcar_sim/scripts/sync_route_planning.py" \
     --route-planning-config "${source_root}/smartcar_tools/config/routes/route_planning.yaml" \
-    --nav2-params "${source_root}/smartcar_nav2/config/nav2_params.yaml" \
     --keepout-overlay "${source_root}/smartcar_sim/config/nav2_keepout_filter.yaml"
 
 source "${workspace}/src/smartcar_sim/scripts/sim_env.sh"
@@ -155,13 +154,16 @@ for run_index in $(seq 1 "$loop_count"); do
 
     echo "[tune] Starting ${run_id} (headless=${gazebo_headless})"
     run_started_epoch=$(date +%s)
+    # Do not leak the tuning lock into Gazebo / RViz helper descendants. A
+    # crashed launch can leave display-only nodes alive briefly; they must not
+    # make a subsequent trial look like one is still active.
     ros2 launch smartcar_sim sim.launch.py \
         headless:="$gazebo_headless" \
         use_rviz:="$use_rviz" \
         run_route:=true \
         waypoints_file:="$snapshot_dir/nav_only.yaml" \
         results_file:="$result_file" \
-        >"$log_file" 2>&1 &
+        9>&- >"$log_file" 2>&1 &
     sim_pid=$!
 
     elapsed=0

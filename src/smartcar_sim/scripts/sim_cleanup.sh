@@ -43,6 +43,13 @@ if [ "$kill_processes" = true ]; then
         "ros2 launch smartcar_sim"
         "/smartcar_sim/"
         "smartcar_sim/launch/sim.launch.py"
+        # These Python tools are started by the simulation launch but live in
+        # smartcar_tools, so the generic /smartcar_sim/ pattern does not find
+        # them after an interrupted run.  Leaving them behind creates duplicate
+        # marker publishers and consumes enough CPU to make Gazebo/RViz appear
+        # to lag behind the scan and odometry graph.
+        "/smartcar_tools/lib/smartcar_tools/waypoint_viz"
+        "/smartcar_tools/lib/smartcar_tools/field_reference_node"
         # The keepout stack uses nav2_map_server executables, which are not
         # covered by the core Nav2 process names above. Match their dedicated
         # simulation node names instead of killing unrelated map servers.
@@ -75,7 +82,27 @@ if [ "$kill_processes" = true ]; then
     if [ -n "$filtered_pids" ]; then
         echo "[cleanup] Killing stale simulation PIDs:${filtered_pids}"
         kill -9 $filtered_pids 2>/dev/null || true
-        sleep 1
+        # Do not relaunch Ogre2 while the previous Gazebo process is still
+        # releasing its rendering context. A new server can otherwise expose
+        # /scan with only minimum-range samples and no Ackermann odometry.
+        # Wait for the exact stale PID set rather than a blind one-second
+        # pause, then leave a short scheduler handoff for their descendants.
+        remaining_pids="$filtered_pids"
+        for _ in $(seq 1 50); do
+            next_remaining=""
+            for target_pid in $remaining_pids; do
+                if kill -0 "$target_pid" 2>/dev/null; then
+                    next_remaining="${next_remaining} ${target_pid}"
+                fi
+            done
+            remaining_pids="$next_remaining"
+            [ -z "${remaining_pids// /}" ] && break
+            sleep 0.1
+        done
+        if [ -n "${remaining_pids// /}" ]; then
+            echo "[cleanup] Warning: stale PIDs survived kill:${remaining_pids}" >&2
+        fi
+        sleep 0.5
     else
         echo "[cleanup] No stale simulation processes found"
     fi

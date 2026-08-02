@@ -9,6 +9,7 @@
 
   <buildtool_depend>ament_cmake</buildtool_depend>
 
+  <depend>action_msgs</depend>
   <depend>behaviortree_cpp_v3</depend>
   <depend>geometry_msgs</depend>
   <depend>nav_msgs</depend>
@@ -16,12 +17,14 @@
   <depend>nav2_core</depend>
   <depend>nav2_costmap_2d</depend>
   <depend>nav2_mppi_controller</depend>
+  <depend>nav2_regulated_pure_pursuit_controller</depend>
   <depend>nav2_msgs</depend>
   <depend>nav2_util</depend>
   <depend>pluginlib</depend>
   <depend>rclcpp</depend>
   <depend>rclcpp_action</depend>
   <depend>rclcpp_lifecycle</depend>
+  <depend>sensor_msgs</depend>
   <depend>tf2</depend>
   <depend>tf2_geometry_msgs</depend>
   <depend>tf2_ros</depend>
@@ -33,7 +36,6 @@
   <exec_depend>nav2_controller</exec_depend>
   <exec_depend>nav2_lifecycle_manager</exec_depend>
   <exec_depend>nav2_planner</exec_depend>
-  <exec_depend>nav2_regulated_pure_pursuit_controller</exec_depend>
   <exec_depend>nav2_smac_planner</exec_depend>
   <exec_depend>nav2_velocity_smoother</exec_depend>
   <exec_depend>nav2_waypoint_follower</exec_depend>
@@ -49,7 +51,6 @@
   <test_depend>lifecycle_msgs</test_depend>
   <test_depend>python3-yaml</test_depend>
   <test_depend>rclpy</test_depend>
-  <test_depend>sensor_msgs</test_depend>
   <test_depend>smartcar_safety</test_depend>
 
   <export>

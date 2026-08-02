@@ -17,15 +17,18 @@
 namespace smartcar_nav2
 {
 
-// Check the complete padded rectangular vehicle against lethal cells, rather
-// than only sampling the global path centreline. The BT supplies the padded
-// half extents so the check follows the active Nav2 footprint configuration.
+// Check the complete padded rectangular vehicle against physical collision
+// cells, rather than only sampling the global path centreline. The BT supplies
+// the padded half extents so the check follows the active Nav2 footprint
+// configuration.  Nav2's SE2 footprint checker treats 253 as an inflated
+// clearance cost, not a physical collision; use 254 here by default so this
+// independent continuous check has the same hard-collision semantics.
 struct CostmapFootprintSweepOptions
 {
   double half_length_m{0.30};
   double half_width_m{0.16};
   double sample_spacing_m{0.025};
-  std::uint8_t lethal_cost_threshold{253U};
+  std::uint8_t lethal_cost_threshold{254U};
 };
 
 enum class CostmapFootprintSweepResult
@@ -34,6 +37,34 @@ enum class CostmapFootprintSweepResult
   kInvalidInput,
   kOutOfBounds,
   kLethalOverlap,
+};
+
+// Captures the first fail-closed sample from a continuous body sweep.  Nav2's
+// planner action exposes a Path but no collision provenance, so this record
+// keeps the exact interpolation pose and master-costmap cell that caused a
+// later candidate rejection observable in the BT log.
+struct CostmapFootprintSweepDiagnostic
+{
+  CostmapFootprintSweepResult result{CostmapFootprintSweepResult::kInvalidInput};
+  bool has_sample_pose{false};
+  geometry_msgs::msg::PoseStamped sample_pose;
+  std::size_t segment_start_pose_index{0U};
+  std::size_t segment_end_pose_index{0U};
+  std::size_t segment_sample_index{0U};
+  std::size_t segment_sample_count{0U};
+  double segment_fraction{0.0};
+  // Set for an out-of-bounds rejection when the padded body corner which
+  // crossed the map boundary is known.
+  bool has_boundary_point{false};
+  double boundary_world_x{0.0};
+  double boundary_world_y{0.0};
+  // Set for a lethal or unknown cell overlapped by the padded body.
+  bool has_blocking_cell{false};
+  std::size_t blocking_cell_x{0U};
+  std::size_t blocking_cell_y{0U};
+  std::uint8_t blocking_cell_cost{0U};
+  double blocking_cell_world_x{0.0};
+  double blocking_cell_world_y{0.0};
 };
 
 inline const char * costmapFootprintSweepResultName(CostmapFootprintSweepResult result)
@@ -49,6 +80,26 @@ inline const char * costmapFootprintSweepResultName(CostmapFootprintSweepResult 
       return "lethal footprint overlap";
   }
   return "unknown result";
+}
+
+// Values follow nav2_costmap_2d's standard master-grid semantics.  This is a
+// value classification only: a nav2_msgs/Costmap is the merged master grid and
+// does not retain the individual layer which wrote a cell.
+inline const char * costmapFootprintSweepCellCostName(std::uint8_t cost)
+{
+  if (cost == 255U) {
+    return "no_information";
+  }
+  if (cost == 254U) {
+    return "lethal_obstacle";
+  }
+  if (cost == 253U) {
+    return "inscribed_inflated_obstacle";
+  }
+  if (cost == 0U) {
+    return "free_space";
+  }
+  return "inflation_or_traversal_cost";
 }
 
 namespace detail
@@ -78,6 +129,25 @@ inline bool validOptions(const CostmapFootprintSweepOptions & options)
   return finite(options.half_length_m) && finite(options.half_width_m) &&
          finite(options.sample_spacing_m) && options.half_length_m > 0.0 &&
          options.half_width_m > 0.0 && options.sample_spacing_m > 0.0;
+}
+
+inline void setDiagnosticResult(
+  CostmapFootprintSweepDiagnostic * diagnostic,
+  CostmapFootprintSweepResult result)
+{
+  if (diagnostic != nullptr) {
+    diagnostic->result = result;
+  }
+}
+
+inline void setDiagnosticSamplePose(
+  CostmapFootprintSweepDiagnostic * diagnostic,
+  const geometry_msgs::msg::PoseStamped & pose)
+{
+  if (diagnostic != nullptr) {
+    diagnostic->has_sample_pose = true;
+    diagnostic->sample_pose = pose;
+  }
 }
 
 inline bool worldToMap(
@@ -119,10 +189,12 @@ enum class FootprintBoundsResult
 inline FootprintBoundsResult footprintInsideCostmap(
   const geometry_msgs::msg::PoseStamped & pose,
   const nav2_msgs::msg::Costmap & costmap,
-  const CostmapFootprintSweepOptions & options)
+  const CostmapFootprintSweepOptions & options,
+  CostmapFootprintSweepDiagnostic * diagnostic = nullptr)
 {
   const double yaw = tf2::getYaw(pose.pose.orientation);
   if (!finite(yaw) || !finite(pose.pose.position.x) || !finite(pose.pose.position.y)) {
+    setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
     return FootprintBoundsResult::kInvalidInput;
   }
   const double cosine = std::cos(yaw);
@@ -143,9 +215,16 @@ inline FootprintBoundsResult footprintInsideCostmap(
     double local_x = 0.0;
     double local_y = 0.0;
     if (!worldToMap(costmap, corner.first, corner.second, local_x, local_y)) {
+      setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
       return FootprintBoundsResult::kInvalidInput;
     }
     if (local_x < 0.0 || local_y < 0.0 || local_x >= map_width || local_y >= map_height) {
+      if (diagnostic != nullptr) {
+        diagnostic->has_boundary_point = true;
+        diagnostic->boundary_world_x = corner.first;
+        diagnostic->boundary_world_y = corner.second;
+      }
+      setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kOutOfBounds);
       return FootprintBoundsResult::kOutOfBounds;
     }
   }
@@ -155,13 +234,17 @@ inline FootprintBoundsResult footprintInsideCostmap(
 inline CostmapFootprintSweepResult footprintPoseIsClear(
   const geometry_msgs::msg::PoseStamped & pose,
   const nav2_msgs::msg::Costmap & costmap,
-  const CostmapFootprintSweepOptions & options)
+  const CostmapFootprintSweepOptions & options,
+  CostmapFootprintSweepDiagnostic * diagnostic = nullptr)
 {
-  const auto bounds_result = footprintInsideCostmap(pose, costmap, options);
+  setDiagnosticSamplePose(diagnostic, pose);
+  const auto bounds_result = footprintInsideCostmap(pose, costmap, options, diagnostic);
   if (bounds_result == FootprintBoundsResult::kInvalidInput) {
+    setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
     return CostmapFootprintSweepResult::kInvalidInput;
   }
   if (bounds_result == FootprintBoundsResult::kOutOfBounds) {
+    setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kOutOfBounds);
     return CostmapFootprintSweepResult::kOutOfBounds;
   }
 
@@ -191,6 +274,7 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
     double local_x = 0.0;
     double local_y = 0.0;
     if (!worldToMap(costmap, corner.first, corner.second, local_x, local_y)) {
+      setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
       return CostmapFootprintSweepResult::kInvalidInput;
     }
     min_x = std::min(min_x, local_x);
@@ -207,6 +291,7 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
   const auto last_y = static_cast<std::size_t>(std::min(
     static_cast<double>(costmap.metadata.size_y - 1U), std::floor(max_y / resolution)));
   if (first_x > last_x || first_y > last_y) {
+    setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
     return CostmapFootprintSweepResult::kInvalidInput;
   }
 
@@ -227,10 +312,20 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
       if (std::abs(vehicle_x) <= options.half_length_m + cell_radius &&
         std::abs(vehicle_y) <= options.half_width_m + cell_radius)
       {
+        if (diagnostic != nullptr) {
+          diagnostic->has_blocking_cell = true;
+          diagnostic->blocking_cell_x = map_x;
+          diagnostic->blocking_cell_y = map_y;
+          diagnostic->blocking_cell_cost = costmap.data[index];
+          diagnostic->blocking_cell_world_x = world_x;
+          diagnostic->blocking_cell_world_y = world_y;
+        }
+        setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kLethalOverlap);
         return CostmapFootprintSweepResult::kLethalOverlap;
       }
     }
   }
+  setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kClear);
   return CostmapFootprintSweepResult::kClear;
 }
 
@@ -239,12 +334,22 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
 inline CostmapFootprintSweepResult costmapFootprintPathSweep(
   const nav_msgs::msg::Path & path,
   const nav2_msgs::msg::Costmap & costmap,
-  const CostmapFootprintSweepOptions & options)
+  const CostmapFootprintSweepOptions & options,
+  CostmapFootprintSweepDiagnostic * diagnostic = nullptr)
 {
+  if (diagnostic != nullptr) {
+    *diagnostic = CostmapFootprintSweepDiagnostic();
+  }
   if (path.poses.empty() || !detail::validCostmap(costmap) || !detail::validOptions(options)) {
+    detail::setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
     return CostmapFootprintSweepResult::kInvalidInput;
   }
-  const auto first_result = detail::footprintPoseIsClear(path.poses.front(), costmap, options);
+  if (diagnostic != nullptr) {
+    diagnostic->segment_start_pose_index = 0U;
+    diagnostic->segment_end_pose_index = 0U;
+  }
+  const auto first_result = detail::footprintPoseIsClear(
+    path.poses.front(), costmap, options, diagnostic);
   if (first_result != CostmapFootprintSweepResult::kClear) {
     return first_result;
   }
@@ -258,6 +363,7 @@ inline CostmapFootprintSweepResult costmapFootprintPathSweep(
     const double delta_y = current.pose.position.y - previous.pose.position.y;
     const double length = std::hypot(delta_x, delta_y);
     if (!detail::finite(length) || !detail::finite(spacing) || spacing <= 0.0) {
+      detail::setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
       return CostmapFootprintSweepResult::kInvalidInput;
     }
     const std::size_t samples = std::max<std::size_t>(
@@ -267,6 +373,7 @@ inline CostmapFootprintSweepResult costmapFootprintPathSweep(
       tf2::getYaw(current.pose.orientation) - first_yaw,
       detail::kCostmapFootprintSweepTwoPi);
     if (!detail::finite(first_yaw) || !detail::finite(yaw_delta)) {
+      detail::setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
       return CostmapFootprintSweepResult::kInvalidInput;
     }
     for (std::size_t sample = 1U; sample <= samples; ++sample) {
@@ -279,7 +386,15 @@ inline CostmapFootprintSweepResult costmapFootprintPathSweep(
       interpolated.pose.orientation.y = 0.0;
       interpolated.pose.orientation.z = std::sin(yaw * 0.5);
       interpolated.pose.orientation.w = std::cos(yaw * 0.5);
-      const auto result = detail::footprintPoseIsClear(interpolated, costmap, options);
+      if (diagnostic != nullptr) {
+        diagnostic->segment_start_pose_index = index - 1U;
+        diagnostic->segment_end_pose_index = index;
+        diagnostic->segment_sample_index = sample;
+        diagnostic->segment_sample_count = samples;
+        diagnostic->segment_fraction = fraction;
+      }
+      const auto result = detail::footprintPoseIsClear(
+        interpolated, costmap, options, diagnostic);
       if (result != CostmapFootprintSweepResult::kClear) {
         return result;
       }

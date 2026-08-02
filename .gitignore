@@ -22,3 +22,6 @@ __pycache__/
 *.bak
 *.orig
 .temp/
+tune_logs/
+/frames_*.gv
+/frames_*.pdf

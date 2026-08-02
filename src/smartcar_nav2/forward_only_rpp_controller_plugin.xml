@@ -1,0 +1,8 @@
+<library path="smartcar_forward_only_rpp_controller">
+  <class
+    name="smartcar_nav2::ForwardOnlyRPPController"
+    type="smartcar_nav2::ForwardOnlyRPPController"
+    base_class_type="nav2_core::Controller">
+    <description>Forward-only regulated pure pursuit with a final Ackermann command guard.</description>
+  </class>
+</library>

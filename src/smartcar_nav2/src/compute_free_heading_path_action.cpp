@@ -1,7 +1,11 @@
 #include "smartcar_nav2/compute_free_heading_path_action.hpp"
+#include "smartcar_nav2/footprint_sweep_collision_source.hpp"
+#include "smartcar_nav2/forward_path_geometry_validation.hpp"
 #include "smartcar_nav2/free_transit_goal_samples.hpp"
+#include "smartcar_nav2/planner_path_start_contract.hpp"
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <iterator>
 #include <limits>
@@ -70,6 +74,8 @@ namespace
 {
 
 constexpr double kPi = 3.14159265358979323846;
+constexpr char kFreeHeadingMinimumTurningRadiusParameter[] =
+  "free_heading_minimum_turning_radius";
 constexpr double kQuaternionNormTolerance = 1.0e-3;
 constexpr double kPositionEpsilon = 1.0e-6;
 constexpr double kJoinPositionTolerance = 1.0e-3;
@@ -79,6 +85,20 @@ constexpr std::size_t kMaximumThroughCandidateQueries = 64U;
 bool finite(double value)
 {
   return std::isfinite(value);
+}
+
+ForwardPathGeometryValidationOptions forwardPathGeometryOptions(
+  const ReversePathValidationOptions & validation_options)
+{
+  return ForwardPathGeometryValidationOptions{
+    validation_options.minimum_turning_radius,
+    validation_options.curvature_tolerance,
+    validation_options.maximum_direction_error,
+    std::min(
+      validation_options.maximum_direction_error,
+      validation_options.goal_yaw_tolerance),
+    validation_options.minimum_segment_length,
+  };
 }
 
 }  // namespace
@@ -98,6 +118,10 @@ ComputeFreeHeadingPathAction::ComputeFreeHeadingPathAction(
   node_->get_parameter("global_frame", global_frame_);
   node_->get_parameter("robot_base_frame", robot_base_frame_);
   node_->get_parameter("transform_tolerance", transform_tolerance_);
+  if (!node_->has_parameter(kFreeHeadingMinimumTurningRadiusParameter)) {
+    node_->declare_parameter<double>(
+      kFreeHeadingMinimumTurningRadiusParameter, 0.55);
+  }
 
   callback_group_ = node_->create_callback_group(
     rclcpp::CallbackGroupType::MutuallyExclusive, false);
@@ -116,6 +140,19 @@ ComputeFreeHeadingPathAction::ComputeFreeHeadingPathAction(
     [this](nav2_msgs::msg::Costmap::SharedPtr costmap) {
       updateGlobalCostmap(std::move(costmap));
     }, costmap_options);
+  local_costmap_subscription_ = node_->create_subscription<nav2_msgs::msg::Costmap>(
+    "/local_costmap/costmap_raw", rclcpp::QoS(1).reliable().transient_local(),
+    [this](nav2_msgs::msg::Costmap::SharedPtr costmap) {
+      updateLocalCostmap(std::move(costmap));
+    }, costmap_options);
+  // Retain the raw local map above for reverse-recovery scan barriers. The
+  // forward tracking envelope must instead see Nav2's filtered master grid,
+  // because this is the grid used by the controller's collision projection.
+  local_filtered_costmap_subscription_ = node_->create_subscription<nav_msgs::msg::OccupancyGrid>(
+    "/local_costmap/costmap", rclcpp::QoS(1).reliable().transient_local(),
+    [this](nav_msgs::msg::OccupancyGrid::SharedPtr costmap) {
+      updateLocalFilteredCostmap(std::move(costmap));
+    }, costmap_options);
 }
 
 BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
@@ -126,6 +163,15 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
     BT::OutputPort<bool>(
       "recovery_eligible",
       "True only when the bounded candidate search exhausts every feasible path"),
+    BT::OutputPort<std::int64_t>(
+      "costmap_stamp_ns",
+      "Source timestamp used as the post-clear recovery barrier"),
+    BT::OutputPort<std::int64_t>(
+      "local_costmap_stamp_ns",
+      "Local raw-costmap timestamp used as the post-clear recovery barrier"),
+    BT::OutputPort<std::uint64_t>(
+      "costmap_sequence",
+      "Monotonic raw costmap sequence used for recovery diagnostics"),
     BT::InputPort<geometry_msgs::msg::PoseStamped>(
       "goal", "Single real-frame destination"),
     BT::InputPort<std::vector<geometry_msgs::msg::PoseStamped>>(
@@ -159,6 +205,9 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
       "max_initial_path_length_ratio", 1.60,
       "Expand fallback headings when the live geometric candidate is this much longer than direct"),
     BT::InputPort<double>(
+      "max_edge_path_length_ratio", 1.60,
+      "Reject one planner edge when it exceeds this multiple of its direct distance"),
+    BT::InputPort<double>(
       "max_start_drift_m", 0.10,
       "Reject a plan whose captured robot start has become stale"),
     BT::InputPort<int>(
@@ -180,10 +229,65 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
       "footprint_sweep_step_m", 0.025,
       "Maximum pose spacing for global-costmap footprint sweep"),
     BT::InputPort<int>(
-      "footprint_lethal_cost", 253,
+      "footprint_lethal_cost", 254,
       "Costmap value at or above which the footprint sweep rejects a path"),
     BT::InputPort<double>(
-      "minimum_turning_radius", 0.55, "Minimum feasible turning radius"),
+      "local_tracking_cross_track_error_m", 0.0,
+      "Maximum admitted forward-controller cross-track error added to the local footprint"),
+    BT::InputPort<double>(
+      "local_tracking_horizon_m", 0.0,
+      "Visible forward path horizon swept in the filtered local costmap"),
+    BT::InputPort<int>(
+      "local_tracking_lethal_cost", 254,
+      "Filtered local cost at or above which the tracking envelope rejects a path"),
+    BT::InputPort<std::string>(
+      "local_tracking_lateral_profile", kForwardPathLateralProfileSymmetric,
+      "Forward tracking-tube profile; the P departure profile is Gazebo-only"),
+    BT::InputPort<double>(
+      "local_tracking_profile_start_position_tolerance_m", 0.001,
+      "Strict P-start tolerance required before activating a P lateral profile"),
+    BT::InputPort<double>(
+      "local_tracking_profile_start_yaw_tolerance_rad", 0.001,
+      "Strict P-start yaw tolerance required before activating a P lateral profile"),
+    BT::InputPort<bool>(
+      "departure_connector_enabled", false,
+      "Enable P-only internal safe departure connectors before the first planner query"),
+    BT::InputPort<double>(
+      "departure_connector_radius_margin_m", 0.08,
+      "Positive margin added to the active kinematic radius for a P departure arc"),
+    BT::InputPort<double>(
+      "departure_connector_maximum_active_radius_m", 0.0,
+      "Maximum active kinematic radius; larger real-vehicle radii skip the P connector"),
+    BT::InputPort<double>(
+      "departure_connector_terminal_radius_m", 0.0,
+      "P-only RSL terminal radius, constrained to the active simulator connector envelope"),
+    BT::InputPort<double>(
+      "departure_connector_high_right_turn_radius_m", 0.0,
+      "P-only high right-turn radius, constrained to the active simulator connector envelope"),
+    BT::InputPort<double>(
+      "departure_connector_start_x_m", 0.0,
+      "Configured P-start x coordinate required before injecting a connector"),
+    BT::InputPort<double>(
+      "departure_connector_start_y_m", 0.0,
+      "Configured P-start y coordinate required before injecting a connector"),
+    BT::InputPort<double>(
+      "departure_connector_start_yaw_rad", 0.0,
+      "Configured P-start yaw required before injecting a connector"),
+    BT::InputPort<double>(
+      "departure_connector_start_position_tolerance_m", 0.10,
+      "Maximum P-start position error allowed to inject a connector"),
+    BT::InputPort<double>(
+      "departure_connector_start_yaw_tolerance_rad", 0.15,
+      "Maximum P-start yaw error allowed to inject a connector"),
+    BT::InputPort<int>(
+      "departure_connector_heading_bins", 0,
+      "Smac heading-bin count required for an exact P-connector lattice handoff"),
+    BT::InputPort<std::string>(
+      "static_keepout_mask_topic", "/keepout_filter_mask",
+      "Optional static KeepoutFilter mask swept as a hard body and field-boundary constraint"),
+    BT::InputPort<double>(
+      "minimum_turning_radius", 0.0,
+      "Optional per-tree minimum radius; zero follows the navigator kinematic radius"),
     BT::InputPort<double>(
       "curvature_tolerance", 0.20, "Discrete curvature allowance"),
     BT::InputPort<double>(
@@ -227,6 +331,8 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onStart()
   best_trial_path_.reset();
   best_continuation_.reset();
   pending_candidate_.reset();
+  departure_connectors_.clear();
+  departure_connector_index_ = 0U;
   through_search_frames_.clear();
   through_candidate_query_count_ = 0U;
   best_through_path_.reset();
@@ -235,9 +341,13 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onStart()
   target_index_ = 0;
   candidate_index_ = 0;
   lookahead_candidate_index_ = 0;
+  planner_query_failed_ = false;
+  search_budget_exhausted_ = false;
   failure_after_cancellation_ = false;
-  commit_best_after_cancellation_ = false;
   waiting_for_costmap_ = false;
+  setOutput("costmap_stamp_ns", static_cast<std::int64_t>(0));
+  setOutput("local_costmap_stamp_ns", static_cast<std::int64_t>(0));
+  setOutput("costmap_sequence", static_cast<std::uint64_t>(0U));
 
   if (!loadInputs()) {
     return BT::NodeStatus::FAILURE;
@@ -261,14 +371,16 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onStart()
   } else {
     virtual_start_ = real_start_;
   }
+  planning_virtual_start_ = virtual_start_;
   costmap_wait_deadline_ =
     std::chrono::steady_clock::now() + costmap_wait_timeout_;
-  if (!hasFreshGlobalCostmap()) {
+  if (!hasFreshPlanningCostmaps()) {
     waiting_for_costmap_ = true;
     RCLCPP_DEBUG(
-      node_->get_logger(), "Waiting for a fresh global costmap before free-heading planning");
+      node_->get_logger(), "Waiting for fresh planning costmaps before free-heading planning");
     return BT::NodeStatus::RUNNING;
   }
+  publishCostmapBarrier();
   if (!beginCandidateSearch()) {
     return BT::NodeStatus::FAILURE;
   }
@@ -280,26 +392,19 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
   callback_group_executor_.spin_some();
   if (cancellationInProgress()) {
     const BT::NodeStatus cancellation_status = waitForCancellation();
-    if (cancellation_status != BT::NodeStatus::SUCCESS) {
-      commit_best_after_cancellation_ = false;
-      return cancellation_status;
-    }
-    if (!commit_best_after_cancellation_) {
-      return cancellation_status;
-    }
-    commit_best_after_cancellation_ = false;
-    return commitBestCandidate();
+    return cancellation_status;
   }
   if (waiting_for_costmap_) {
-    if (!hasFreshGlobalCostmap()) {
+    if (!hasFreshPlanningCostmaps()) {
       if (std::chrono::steady_clock::now() >= costmap_wait_deadline_) {
         RCLCPP_ERROR(
-          node_->get_logger(), "Free-heading planner timed out waiting for global costmap");
+          node_->get_logger(), "Free-heading planner timed out waiting for required costmaps");
         return BT::NodeStatus::FAILURE;
       }
       return BT::NodeStatus::RUNNING;
     }
     waiting_for_costmap_ = false;
+    publishCostmapBarrier();
     if (!beginCandidateSearch()) {
       return BT::NodeStatus::FAILURE;
     }
@@ -310,6 +415,8 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
       node_->get_logger(),
       "Free-heading goals changed while planning; cancelling the stale query");
     cancelActiveQuery(true);
+    planner_query_failed_ = true;
+    setRecoveryEligible(false);
     clearPathOutput();
     return waitForCancellation();
   }
@@ -318,30 +425,21 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
     return BT::NodeStatus::FAILURE;
   }
   if (std::chrono::steady_clock::now() > query_deadline_) {
-    const bool retain_best = !through_poses_ && best_candidate_.has_value() &&
-      best_trial_path_.has_value();
+    // A query timeout is an infrastructure/planner failure.  It is never
+    // evidence that the geometry is unreachable. Do not publish a previously
+    // cached candidate after this timeout: it may no longer be fresh enough
+    // for the costmap contract, and it must not arm retreat.
+    planner_query_failed_ = true;
     RCLCPP_WARN(
       node_->get_logger(),
-      "Free-heading planner candidate %zu for goal %zu timed out%s",
-      candidate_index_ + 1, target_index_ + 1,
-      retain_best ? "; retaining the best validated candidate" : "");
-    commit_best_after_cancellation_ = retain_best;
-    cancelActiveQuery(!retain_best);
+      "Free-heading planner candidate %zu for goal %zu timed out; cancelling and failing closed",
+      candidate_index_ + 1, target_index_ + 1);
+    cancelActiveQuery(true);
     if (!cancellationInProgress()) {
-      commit_best_after_cancellation_ = false;
       clearPathOutput();
       return BT::NodeStatus::FAILURE;
     }
     const BT::NodeStatus cancellation_status = waitForCancellation();
-    if (cancellation_status != BT::NodeStatus::SUCCESS) {
-      commit_best_after_cancellation_ = false;
-      clearPathOutput();
-      return cancellation_status;
-    }
-    if (retain_best) {
-      commit_best_after_cancellation_ = false;
-      return commitBestCandidate();
-    }
     clearPathOutput();
     return cancellation_status;
   }
@@ -363,12 +461,12 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
       RCLCPP_ERROR(
         node_->get_logger(), "Free-heading planner goal request failed: %s", error.what());
       clearCompletedQuery();
-      return lookahead_query ? completeLookahead(nullptr) : completeCandidate(nullptr);
+      return failPlannerQuery("planner goal transport error", lookahead_query);
     }
     goal_handle_future_ = std::shared_future<PlannerGoalHandle::SharedPtr>();
     if (!active_goal_handle_) {
-      query_state_ = QueryState::IDLE;
-      return lookahead_query ? completeLookahead(nullptr) : completeCandidate(nullptr);
+      clearCompletedQuery();
+      return failPlannerQuery("planner goal was rejected", lookahead_query);
     }
     try {
       result_future_ = planner_client_->async_get_result(active_goal_handle_);
@@ -376,7 +474,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
       RCLCPP_ERROR(
         node_->get_logger(), "Free-heading planner result request failed: %s", error.what());
       clearCompletedQuery();
-      return lookahead_query ? completeLookahead(nullptr) : completeCandidate(nullptr);
+      return failPlannerQuery("planner result transport error", lookahead_query);
     }
     query_state_ = lookahead_query ?
       QueryState::WAITING_FOR_LOOKAHEAD_RESULT : QueryState::WAITING_FOR_RESULT;
@@ -397,14 +495,42 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
     RCLCPP_ERROR(
       node_->get_logger(), "Free-heading planner result failed: %s", error.what());
     clearCompletedQuery();
-    return lookahead_query ? completeLookahead(nullptr) : completeCandidate(nullptr);
+    return failPlannerQuery("planner result transport error", lookahead_query);
   }
   clearCompletedQuery();
-  if (
-    result.code != rclcpp_action::ResultCode::SUCCEEDED ||
-    !result.result || result.result->path.poses.empty())
-  {
-    return lookahead_query ? completeLookahead(nullptr) : completeCandidate(nullptr);
+  if (result.code == rclcpp_action::ResultCode::ABORTED) {
+    // Humble ComputePathToPose exposes no planner error code in its action
+    // result. PlannerServer uses ABORTED for NoValidPathCouldBeFound, so an
+    // accepted query that terminates on time may only reject this heading
+    // candidate. It does not arm retreat on its own: complete*() advances the
+    // bounded candidate search and recovery remains gated on full exhaustion.
+    // CANCELED, UNKNOWN, transport failures, goal rejection, and timeouts are
+    // still handled below as fail-closed infrastructure failures.
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "Free-heading planner aborted candidate %zu for goal %zu; Humble action has no typed "
+      "planner failure reason, continuing bounded candidate search",
+      candidate_index_ + 1, target_index_ + 1);
+    return lookahead_query ?
+      completeLookahead(nullptr, true) : completeCandidate(nullptr, true);
+  }
+  if (result.code != rclcpp_action::ResultCode::SUCCEEDED) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Free-heading planner returned canceled or unknown action result code %d; "
+      "refusing recovery eligibility",
+      static_cast<int>(result.code));
+    return failPlannerQuery("planner action canceled or returned an unknown result", lookahead_query);
+  }
+  if (!result.result) {
+    return failPlannerQuery("planner returned a null result", lookahead_query);
+  }
+  if (result.result->path.poses.empty()) {
+    // Some planners report an empty successful result for a rejected terminal
+    // heading. Treat it like the Humble ABORTED no-path representation above:
+    // only this candidate is rejected and recovery still needs full exhaustion.
+    return lookahead_query ?
+      completeLookahead(nullptr, true) : completeCandidate(nullptr, true);
   }
   return lookahead_query ?
     completeLookahead(&result.result->path) : completeCandidate(&result.result->path);
@@ -412,7 +538,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onRunning()
 
 void ComputeFreeHeadingPathAction::onHalted()
 {
-  commit_best_after_cancellation_ = false;
   cancelActiveQuery(false);
   while (cancellationInProgress() &&
     std::chrono::steady_clock::now() <= cancellation_deadline_)
@@ -431,6 +556,8 @@ void ComputeFreeHeadingPathAction::onHalted()
   candidate_goals_.clear();
   lookahead_candidates_.clear();
   pending_candidate_.reset();
+  departure_connectors_.clear();
+  departure_connector_index_ = 0U;
   best_trial_path_.reset();
   best_continuation_.reset();
   through_search_frames_.clear();
@@ -519,6 +646,14 @@ bool ComputeFreeHeadingPathAction::loadInputs()
     RCLCPP_ERROR(node_->get_logger(), "max_initial_path_length_ratio must be at least 1.0");
     return false;
   }
+  if (!getInput("max_edge_path_length_ratio", max_edge_path_length_ratio_) ||
+    !finite(max_edge_path_length_ratio_) || max_edge_path_length_ratio_ < 1.0 ||
+    max_edge_path_length_ratio_ > 5.0)
+  {
+    RCLCPP_ERROR(
+      node_->get_logger(), "max_edge_path_length_ratio must lie in [1.0, 5.0]");
+    return false;
+  }
   if (!getInput("max_start_drift_m", max_start_drift_m_) ||
     !finite(max_start_drift_m_) || max_start_drift_m_ <= 0.0)
   {
@@ -555,6 +690,17 @@ bool ComputeFreeHeadingPathAction::loadInputs()
     RCLCPP_ERROR(node_->get_logger(), "Free-heading footprint sweep ports are invalid");
     return false;
   }
+  if (!readLocalTrackingEnvelopeOptions()) {
+    RCLCPP_ERROR(node_->get_logger(), "Free-heading local tracking envelope ports are invalid");
+    return false;
+  }
+  std::string static_keepout_mask_topic;
+  if (!getInput("static_keepout_mask_topic", static_keepout_mask_topic) ||
+    !configureKeepoutMaskSubscription(static_keepout_mask_topic))
+  {
+    RCLCPP_ERROR(node_->get_logger(), "Free-heading keepout-mask diagnostic port is invalid");
+    return false;
+  }
   if (!getInput("goal_position_tolerance", goal_position_tolerance_) ||
     !finite(goal_position_tolerance_) || goal_position_tolerance_ < 0.0)
   {
@@ -563,6 +709,10 @@ bool ComputeFreeHeadingPathAction::loadInputs()
   }
   if (!readValidationOptions()) {
     RCLCPP_ERROR(node_->get_logger(), "Free-heading planner validation ports are invalid");
+    return false;
+  }
+  if (!readDepartureConnectorOptions()) {
+    RCLCPP_ERROR(node_->get_logger(), "Free-heading departure connector ports are invalid");
     return false;
   }
 
@@ -604,19 +754,35 @@ bool ComputeFreeHeadingPathAction::beginCandidateSearch()
     through_search_deadline_ =
       std::chrono::steady_clock::now() + through_search_budget_;
   }
-  return prepareTargetCandidates() && startCandidateQuery();
+  return prepareDepartureConnectors() && prepareTargetCandidates() && startCandidateQuery();
 }
 
 bool ComputeFreeHeadingPathAction::readValidationOptions()
 {
-  return getInput("minimum_turning_radius", validation_options_.minimum_turning_radius) &&
-         getInput("curvature_tolerance", validation_options_.curvature_tolerance) &&
-         getInput("maximum_direction_error", validation_options_.maximum_direction_error) &&
-         getInput("start_position_tolerance", validation_options_.start_position_tolerance) &&
-         getInput("start_yaw_tolerance", validation_options_.start_yaw_tolerance) &&
-         getInput("goal_position_tolerance", validation_options_.goal_position_tolerance) &&
-         getInput("goal_yaw_tolerance", validation_options_.goal_yaw_tolerance) &&
-         getInput("minimum_segment_length", validation_options_.minimum_segment_length);
+  double minimum_turning_radius = 0.0;
+  if (!getInput("minimum_turning_radius", minimum_turning_radius) ||
+    !getInput("curvature_tolerance", validation_options_.curvature_tolerance) ||
+    !getInput("maximum_direction_error", validation_options_.maximum_direction_error) ||
+    !getInput("start_position_tolerance", validation_options_.start_position_tolerance) ||
+    !getInput("start_yaw_tolerance", validation_options_.start_yaw_tolerance) ||
+    !getInput("goal_position_tolerance", validation_options_.goal_position_tolerance) ||
+    !getInput("goal_yaw_tolerance", validation_options_.goal_yaw_tolerance) ||
+    !getInput("minimum_segment_length", validation_options_.minimum_segment_length))
+  {
+    return false;
+  }
+  if (minimum_turning_radius <= 0.0) {
+    if (!node_->get_parameter(
+        kFreeHeadingMinimumTurningRadiusParameter, minimum_turning_radius))
+    {
+      return false;
+    }
+  }
+  if (!finite(minimum_turning_radius) || minimum_turning_radius <= 0.0) {
+    return false;
+  }
+  validation_options_.minimum_turning_radius = minimum_turning_radius;
+  return true;
 }
 
 bool ComputeFreeHeadingPathAction::readFootprintSweepOptions()
@@ -632,13 +798,130 @@ bool ComputeFreeHeadingPathAction::readFootprintSweepOptions()
     footprint_sweep_options_.half_length_m <= 0.0 ||
     footprint_sweep_options_.half_width_m <= 0.0 ||
     footprint_sweep_options_.sample_spacing_m <= 0.0 ||
-    lethal_cost < 1 || lethal_cost > 253)
+    lethal_cost < 1 || lethal_cost > 254)
   {
     return false;
   }
   footprint_sweep_options_.lethal_cost_threshold =
     static_cast<std::uint8_t>(lethal_cost);
   return true;
+}
+
+bool ComputeFreeHeadingPathAction::readLocalTrackingEnvelopeOptions()
+{
+  int lethal_cost = 0;
+  if (!getInput(
+      "local_tracking_cross_track_error_m", local_tracking_cross_track_error_m_) ||
+    !getInput("local_tracking_horizon_m", local_tracking_horizon_m_) ||
+    !getInput("local_tracking_lethal_cost", lethal_cost) ||
+    !getInput("local_tracking_lateral_profile", local_tracking_lateral_profile_) ||
+    !finite(local_tracking_cross_track_error_m_) ||
+    !finite(local_tracking_horizon_m_) ||
+    local_tracking_cross_track_error_m_ < 0.0 ||
+    local_tracking_horizon_m_ < 0.0 || lethal_cost < 1 || lethal_cost > 254 ||
+    !forwardPathLateralProfileKnown(local_tracking_lateral_profile_))
+  {
+    return false;
+  }
+  local_tracking_lethal_cost_ = static_cast<std::uint8_t>(lethal_cost);
+  local_tracking_envelope_enabled_ = !reverse_ && local_tracking_cross_track_error_m_ > 0.0;
+  return !local_tracking_envelope_enabled_ || local_tracking_horizon_m_ > 0.0;
+}
+
+bool ComputeFreeHeadingPathAction::readDepartureConnectorOptions()
+{
+  double radius_margin_m = 0.0;
+  if (!getInput("departure_connector_enabled", departure_connector_enabled_) ||
+    !getInput("departure_connector_radius_margin_m", radius_margin_m) ||
+    !getInput(
+      "departure_connector_maximum_active_radius_m",
+      departure_connector_maximum_active_radius_m_) ||
+    !getInput("departure_connector_start_x_m", departure_connector_start_x_m_) ||
+    !getInput("departure_connector_start_y_m", departure_connector_start_y_m_) ||
+    !getInput("departure_connector_start_yaw_rad", departure_connector_start_yaw_rad_) ||
+    !getInput(
+      "departure_connector_start_position_tolerance_m",
+      departure_connector_start_position_tolerance_m_) ||
+    !getInput(
+      "departure_connector_start_yaw_tolerance_rad",
+      departure_connector_start_yaw_tolerance_rad_) ||
+    !getInput(
+      "local_tracking_profile_start_position_tolerance_m",
+      local_tracking_lateral_profile_start_.position_tolerance_m) ||
+    !getInput(
+      "local_tracking_profile_start_yaw_tolerance_rad",
+      local_tracking_lateral_profile_start_.yaw_tolerance_rad) ||
+    !getInput(
+      "departure_connector_terminal_radius_m",
+      departure_connector_terminal_radius_m_) ||
+    !getInput(
+      "departure_connector_high_right_turn_radius_m",
+      departure_connector_high_right_turn_radius_m_) ||
+    !getInput("departure_connector_heading_bins", departure_connector_heading_bins_))
+  {
+    return false;
+  }
+  local_tracking_lateral_profile_start_.frame_id = global_frame_;
+  local_tracking_lateral_profile_start_.x_m = departure_connector_start_x_m_;
+  local_tracking_lateral_profile_start_.y_m = departure_connector_start_y_m_;
+  local_tracking_lateral_profile_start_.yaw_rad = departure_connector_start_yaw_rad_;
+  if (!departure_connector_enabled_) {
+    return local_tracking_lateral_profile_ == kForwardPathLateralProfileSymmetric;
+  }
+  if (reverse_ || through_poses_ || !finite(departure_connector_start_x_m_) ||
+    !finite(departure_connector_start_y_m_) ||
+    !finite(departure_connector_start_yaw_rad_) ||
+    !finite(departure_connector_start_position_tolerance_m_) ||
+    !finite(departure_connector_start_yaw_tolerance_rad_) ||
+    !finite(departure_connector_maximum_active_radius_m_) ||
+    !finite(departure_connector_terminal_radius_m_) ||
+    !finite(departure_connector_high_right_turn_radius_m_) ||
+    departure_connector_start_position_tolerance_m_ <= 0.0 ||
+    departure_connector_start_yaw_tolerance_rad_ <= 0.0 ||
+    departure_connector_maximum_active_radius_m_ <= 0.0 ||
+    departure_connector_heading_bins_ < 4 || departure_connector_heading_bins_ > 720 ||
+    !forwardPathLateralProfileStartValid(
+      local_tracking_lateral_profile_, local_tracking_lateral_profile_start_) ||
+    !forwardPathLateralProfileConfigurationValid(
+      local_tracking_lateral_profile_, local_tracking_cross_track_error_m_,
+      validation_options_.minimum_turning_radius) ||
+    (local_tracking_lateral_profile_ == kForwardPathLateralProfilePDepartureSouthV1 &&
+    static_keepout_mask_topic_.empty()))
+  {
+    return false;
+  }
+  departure_connector_options_.minimum_turning_radius_m =
+    validation_options_.minimum_turning_radius;
+  departure_connector_options_.radius_margin_m = radius_margin_m;
+  departure_connector_options_.sample_spacing_m = footprint_sweep_options_.sample_spacing_m;
+  departure_connector_options_.curvature_tolerance = validation_options_.curvature_tolerance;
+  departure_connector_options_.maximum_direction_error =
+    validation_options_.maximum_direction_error;
+  departure_connector_options_.minimum_segment_length =
+    validation_options_.minimum_segment_length;
+  if (!departureConnectorOptionsValid(departure_connector_options_)) {
+    return false;
+  }
+
+  // This tree is shared with the real vehicle, but the P connector is only
+  // admitted inside its explicit simulator envelope. Check that gate before
+  // validating the simulation-only terminal radius: a real-car run must
+  // continue with normal Smac planning rather than rejecting a 0.22 m
+  // connector it will never inject.
+  if (!departureConnectorRadiusWithinMaximum(
+      departure_connector_options_, departure_connector_maximum_active_radius_m_))
+  {
+    return true;
+  }
+  if (!departureConnectorHighRightTurnRadiusWithinEnvelope(
+      departure_connector_options_, departure_connector_high_right_turn_radius_m_,
+      departure_connector_maximum_active_radius_m_))
+  {
+    return false;
+  }
+  return departureConnectorTerminalRadiusWithinEnvelope(
+    departure_connector_options_, departure_connector_terminal_radius_m_,
+    departure_connector_maximum_active_radius_m_);
 }
 
 bool ComputeFreeHeadingPathAction::goalsChanged()
@@ -659,7 +942,7 @@ bool ComputeFreeHeadingPathAction::goalsChanged()
   return !isGoalSequenceSuffix(real_goals_, latest_goals, target_index_);
 }
 
-bool ComputeFreeHeadingPathAction::prepareTargetCandidates()
+bool ComputeFreeHeadingPathAction::prepareTargetCandidates(bool reset_search)
 {
   if (target_index_ >= real_goals_.size()) {
     return false;
@@ -668,12 +951,195 @@ bool ComputeFreeHeadingPathAction::prepareTargetCandidates()
   lookahead_candidates_.clear();
   candidate_index_ = 0;
   lookahead_candidate_index_ = 0;
-  best_candidate_.reset();
-  best_trial_path_.reset();
-  best_continuation_.reset();
-  search_deadline_ = std::chrono::steady_clock::now() + search_budget_;
+  if (reset_search) {
+    best_candidate_.reset();
+    best_trial_path_.reset();
+    best_continuation_.reset();
+    search_deadline_ = std::chrono::steady_clock::now() + search_budget_;
+  }
   candidate_goals_ = goalCandidatesForTarget(target_index_, virtual_start_);
   return !candidate_goals_.empty();
+}
+
+bool ComputeFreeHeadingPathAction::prepareDepartureConnectors()
+{
+  departure_connectors_.clear();
+  departure_connector_index_ = 0U;
+  if (!departure_connector_enabled_) {
+    return true;
+  }
+  if (reverse_ || through_poses_ || target_index_ != 0U || !virtual_path_.poses.empty()) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "P departure connectors are only valid for the first forward NavigateToPose edge");
+    planner_query_failed_ = true;
+    return false;
+  }
+  if (!departureConnectorRadiusWithinMaximum(
+      departure_connector_options_, departure_connector_maximum_active_radius_m_))
+  {
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "Skipping P departure connector because active radius %.3f exceeds its %.3f m gate",
+      departure_connector_options_.minimum_turning_radius_m +
+      departure_connector_options_.radius_margin_m,
+      departure_connector_maximum_active_radius_m_);
+    return true;
+  }
+  const double start_distance = std::hypot(
+    virtual_start_.pose.position.x - departure_connector_start_x_m_,
+    virtual_start_.pose.position.y - departure_connector_start_y_m_);
+  const double start_yaw_error = angularDistance(
+    quaternionYaw(virtual_start_.pose.orientation), departure_connector_start_yaw_rad_);
+  if (start_distance > departure_connector_start_position_tolerance_m_ ||
+    start_yaw_error > departure_connector_start_yaw_tolerance_rad_)
+  {
+    // A recovery replan after the vehicle has left P must use its actual pose;
+    // do not replay a P-specific connector from a stale coordinate.
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "Skipping P departure connector for non-P start distance=%.3f yaw_error=%.3f",
+      start_distance, start_yaw_error);
+    return true;
+  }
+  if (!hasFreshPlanningCostmaps()) {
+    planner_query_failed_ = true;
+    return false;
+  }
+
+  nav2_msgs::msg::Costmap::SharedPtr costmap;
+  {
+    std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+    costmap = global_costmap_;
+  }
+  if (!costmap || costmap->header.frame_id != global_frame_ ||
+    costmap->metadata.resolution <= 0.0F || costmap->metadata.size_x == 0U ||
+    costmap->metadata.size_y == 0U ||
+    !isUnitQuaternion(costmap->metadata.origin.orientation) ||
+    angularDistance(quaternionYaw(costmap->metadata.origin.orientation), 0.0) >
+    kJoinYawTolerance)
+  {
+    // The lattice helper deliberately has no hidden field coordinate. It
+    // needs an axis-aligned, live raw-costmap grid, and rejects ambiguity
+    // rather than manufacturing a P departure in a rotated frame.
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "P departure lattice connector requires a fresh axis-aligned global raw costmap");
+    planner_query_failed_ = true;
+    return false;
+  }
+
+  const auto generated = buildPDepartureEscapeLatticeConnectors(
+    virtual_start_, costmap->metadata.origin.position.x,
+    costmap->metadata.origin.position.y,
+    static_cast<double>(costmap->metadata.resolution),
+    static_cast<std::size_t>(departure_connector_heading_bins_),
+    departure_connector_high_right_turn_radius_m_,
+    departure_connector_options_);
+  for (const auto & connector : generated) {
+    if (!connector.lattice_aligned) {
+      RCLCPP_ERROR(
+        node_->get_logger(), "Refusing a P departure connector without an exact lattice endpoint");
+      continue;
+    }
+    const auto kinematic = validateForwardConnectorPath(
+      connector.path, virtual_start_, departure_connector_options_);
+    if (!kinematic.valid) {
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "Rejected internally generated P departure connector: %s", kinematic.reason.c_str());
+      continue;
+    }
+    const PathQuality quality = pathQuality(connector.path);
+    if (staticKeepoutSweepIsInfrastructureFailure(quality)) {
+      logStaticKeepoutSweepFailure(quality, "departure_connector", 0U, 1U);
+      planner_query_failed_ = true;
+      return false;
+    }
+    if (localTrackingSweepIsInfrastructureFailure(quality)) {
+      logLocalTrackingSweepFailure(quality, "departure_connector", 0U, 1U);
+      planner_query_failed_ = true;
+      return false;
+    }
+    if (!hasAcceptableCostmapSample(quality)) {
+      logFootprintSweepFailure(quality, "departure_connector", 0U, 1U);
+      logStaticKeepoutSweepFailure(quality, "departure_connector", 0U, 1U);
+      logLocalTrackingSweepFailure(quality, "departure_connector", 0U, 1U);
+      continue;
+    }
+    RCLCPP_INFO(
+      node_->get_logger(),
+      "Accepted lattice-aligned P departure connector radius=%.3f high_right_radius=%.3f "
+      "arc_deg=%.1f "
+      "straight_m=%.3f end=(%.4f,%.4f,%.4f) length=%.3f max_curvature=%.3f",
+      connector.radius_m, connector.high_right_turn_radius_m,
+      connector.arc_angle_rad * 180.0 / kPi,
+      connector.straight_length_m,
+      connector.path.poses.back().pose.position.x,
+      connector.path.poses.back().pose.position.y,
+      quaternionYaw(connector.path.poses.back().pose.orientation),
+      kinematic.length_m, kinematic.maximum_curvature);
+    departure_connectors_.push_back(connector);
+  }
+  if (departure_connectors_.empty()) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "No P departure connector satisfies the fresh raw-costmap and full-footprint contract");
+    return false;
+  }
+  return true;
+}
+
+const geometry_msgs::msg::PoseStamped &
+ComputeFreeHeadingPathAction::plannerStartForCandidate() const
+{
+  if (departure_connector_index_ < departure_connectors_.size() &&
+    !departure_connectors_[departure_connector_index_].path.poses.empty())
+  {
+    return departure_connectors_[departure_connector_index_].path.poses.back();
+  }
+  return virtual_start_;
+}
+
+bool ComputeFreeHeadingPathAction::buildCandidateSegment(
+  const nav_msgs::msg::Path & planner_segment,
+  nav_msgs::msg::Path & candidate_segment,
+  std::string & reason) const
+{
+  candidate_segment = nav_msgs::msg::Path();
+  if (departure_connector_index_ < departure_connectors_.size()) {
+    const auto & departure = departure_connectors_[departure_connector_index_].path;
+    if (!appendSegmentChecked(candidate_segment, departure, reason)) {
+      return false;
+    }
+    if (target_index_ >= real_goals_.size() || departure.poses.empty() ||
+      isZeroQuaternion(real_goals_[target_index_].pose.orientation) ||
+      planarDistance(active_virtual_goal_, real_goals_[target_index_]) > kPositionEpsilon ||
+      angularDistance(
+        quaternionYaw(active_virtual_goal_.pose.orientation),
+        quaternionYaw(real_goals_[target_index_].pose.orientation)) > kPositionEpsilon)
+    {
+      reason = "p_terminal_goal_not_exact_locked_task_pose";
+      return false;
+    }
+
+    // Smac's heading lattice can return a pose quaternion that falls within
+    // the task tolerance while its final XY tangent still points elsewhere.
+    // The P escape prefix is already swept and tangent-continuous; finish it
+    // with a deterministic RSL curve to the authored task pose instead of
+    // publishing that quantized final segment to the controller.
+    nav_msgs::msg::Path terminal_connector;
+    if (!buildPDepartureRslTerminalConnector(
+        departure.poses.back(), real_goals_[target_index_],
+        departure_connector_terminal_radius_m_,
+        departure_connector_options_, terminal_connector))
+    {
+      reason = "p_terminal_rsl_unavailable";
+      return false;
+    }
+    return appendSegmentChecked(candidate_segment, terminal_connector, reason);
+  }
+  return appendSegmentChecked(candidate_segment, planner_segment, reason);
 }
 
 bool ComputeFreeHeadingPathAction::prepareLookaheadCandidates()
@@ -703,11 +1169,33 @@ ComputeFreeHeadingPathAction::goalCandidatesForTarget(
 
   const auto & real_goal = real_goals_[target_index];
   if (!isZeroQuaternion(real_goal.pose.orientation)) {
-    GoalCandidate candidate;
-    candidate.pose = real_goal;
-    candidate.pose.pose.orientation = quaternionFromYaw(
-      referenceYawForGoal(candidate.pose, target_index, start));
-    candidates.push_back(std::move(candidate));
+    const double authored_virtual_yaw = referenceYawForGoal(
+      real_goal, target_index, start);
+    if (!reverse_ && !through_poses_ && target_index == 0U &&
+      departure_connector_index_ < departure_connectors_.size())
+    {
+      // The P-specific RSL terminal connector is exact by construction. Do
+      // not let a tolerated heading sample cause an XY/tangent mismatch at
+      // the locked semantic task pose.
+      GoalCandidate candidate;
+      candidate.pose = real_goal;
+      candidate.pose.pose.orientation = quaternionFromYaw(authored_virtual_yaw);
+      candidates.push_back(std::move(candidate));
+      return candidates;
+    }
+    // Keep the task position and semantic yaw fixed.  Only the planner's
+    // terminal heading bin is varied inside the existing authored tolerance;
+    // endpointMatchesCandidateAndRealGoal() below rejects any result that
+    // actually leaves that tolerance after quantization.
+    const auto headings = lockedGoalHeadingHints(
+      authored_virtual_yaw, validation_options_.goal_yaw_tolerance);
+    candidates.reserve(headings.size());
+    for (const double heading : headings) {
+      GoalCandidate candidate;
+      candidate.pose = real_goal;
+      candidate.pose.pose.orientation = quaternionFromYaw(heading);
+      candidates.push_back(std::move(candidate));
+    }
     return candidates;
   }
 
@@ -804,8 +1292,43 @@ bool ComputeFreeHeadingPathAction::endpointMatchesCandidateAndRealGoal(
   const geometry_msgs::msg::PoseStamped & candidate,
   const geometry_msgs::msg::PoseStamped & real_goal) const
 {
-  return planarDistance(endpoint, candidate) <= goal_position_tolerance_ &&
-         planarDistance(endpoint, real_goal) <= goal_position_tolerance_;
+  if (planarDistance(endpoint, candidate) > goal_position_tolerance_ ||
+    planarDistance(endpoint, real_goal) > goal_position_tolerance_)
+  {
+    return false;
+  }
+  if (isZeroQuaternion(real_goal.pose.orientation)) {
+    return true;
+  }
+  if (!isUnitQuaternion(endpoint.pose.orientation)) {
+    return false;
+  }
+  // Planner queries run in the virtual frame for reverse motion, so compare
+  // against the authored task yaw after applying the same half-turn used by
+  // the reverse path transform.  This closes the semantic yaw contract for
+  // intermediate locked goals as well as the terminal goal.
+  const double authored_virtual_yaw = quaternionYaw(real_goal.pose.orientation) +
+    (reverse_ ? kPi : 0.0);
+  return angularDistance(
+    quaternionYaw(endpoint.pose.orientation), authored_virtual_yaw) <=
+         validation_options_.goal_yaw_tolerance;
+}
+
+bool ComputeFreeHeadingPathAction::edgePathWithinLengthRatio(
+  double edge_length,
+  const geometry_msgs::msg::PoseStamped & start,
+  const geometry_msgs::msg::PoseStamped & goal) const
+{
+  const double direct_distance = planarDistance(start, goal);
+  if (!finite(edge_length) || !finite(direct_distance)) {
+    return false;
+  }
+  if (direct_distance <= kPositionEpsilon) {
+    // A position-only transit at the current position must not manufacture a
+    // loop solely to satisfy a sampled heading.
+    return edge_length <= goal_position_tolerance_;
+  }
+  return edge_length <= direct_distance * max_edge_path_length_ratio_ + kPositionEpsilon;
 }
 
 bool ComputeFreeHeadingPathAction::startCandidateQuery()
@@ -815,6 +1338,7 @@ bool ComputeFreeHeadingPathAction::startCandidateQuery()
     result_future_.valid() || cancel_future_.valid())
   {
     RCLCPP_ERROR(node_->get_logger(), "Free-heading attempted to overlap planner queries");
+    planner_query_failed_ = true;
     return false;
   }
   const auto now = std::chrono::steady_clock::now();
@@ -822,6 +1346,7 @@ bool ComputeFreeHeadingPathAction::startCandidateQuery()
     (through_poses_ && now >= through_search_deadline_))
   {
     RCLCPP_WARN(node_->get_logger(), "Free-heading candidate search budget exhausted");
+    search_budget_exhausted_ = true;
     return false;
   }
   if (through_poses_ &&
@@ -831,13 +1356,14 @@ bool ComputeFreeHeadingPathAction::startCandidateQuery()
       node_->get_logger(),
       "Free-heading through-poses search reached its %zu-query limit",
       kMaximumThroughCandidateQueries);
+    search_budget_exhausted_ = true;
     return false;
   }
   active_virtual_goal_ = candidate_goals_[candidate_index_].pose;
   ComputePathToPose::Goal request;
   request.planner_id = planner_id_;
   request.use_start = true;
-  request.start = virtual_start_;
+  request.start = plannerStartForCandidate();
   request.goal = active_virtual_goal_;
   goal_handle_future_ = planner_client_->async_send_goal(request);
   if (through_poses_) {
@@ -864,6 +1390,7 @@ bool ComputeFreeHeadingPathAction::startLookaheadQuery()
       goal_handle_future_.valid() || result_future_.valid() || cancel_future_.valid())
     {
       RCLCPP_ERROR(node_->get_logger(), "Free-heading attempted to overlap planner queries");
+      planner_query_failed_ = true;
     }
     return false;
   }
@@ -873,6 +1400,7 @@ bool ComputeFreeHeadingPathAction::startLookaheadQuery()
     (through_poses_ && now >= through_search_deadline_))
   {
     RCLCPP_WARN(node_->get_logger(), "Free-heading candidate search budget exhausted");
+    search_budget_exhausted_ = true;
     return false;
   }
   const auto & continuation_start = pending_candidate_->path.poses.back();
@@ -894,13 +1422,91 @@ bool ComputeFreeHeadingPathAction::startLookaheadQuery()
 }
 
 BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
-  const nav_msgs::msg::Path * candidate_path)
+  const nav_msgs::msg::Path * candidate_path,
+  bool explicit_no_valid_path)
 {
   if (candidate_path == nullptr || candidate_path->poses.empty()) {
+    if (!explicit_no_valid_path) {
+      return failPlannerQuery("candidate result was not an explicit no-valid-path result", false);
+    }
     return advanceCandidate();
   }
 
-  const auto & endpoint = candidate_path->poses.back();
+  const bool has_departure_connector =
+    departure_connector_index_ < departure_connectors_.size();
+  // A generated P connector is only physically continuous when Smac starts
+  // at its exact lattice endpoint.  Unlike an ordinary explicit start, its
+  // permissible grid quantization cannot be charged as a virtual join: doing
+  // so would require editing the first planner sample and can change a legal
+  // tangent into an infeasible turn.
+  const auto start_continuity = validatePlannerPathStartContinuity(
+    *candidate_path, plannerStartForCandidate(),
+    has_departure_connector ? kJoinPositionTolerance : kPlannerPathStartPositionToleranceM,
+    has_departure_connector ? kJoinYawTolerance : kPlannerPathStartYawToleranceRad);
+  if (!start_continuity.valid) {
+    if (has_departure_connector) {
+      const auto & requested_start = plannerStartForCandidate();
+      const auto & returned_start = candidate_path->poses.front();
+      RCLCPP_WARN(
+        node_->get_logger(),
+        "Rejected P connector lattice handoff for candidate %zu goal %zu: %s "
+        "requested_start=(%.4f,%.4f,%.4f) returned_start=(%.4f,%.4f,%.4f)",
+        candidate_index_ + 1, target_index_ + 1, start_continuity.reason.c_str(),
+        requested_start.pose.position.x, requested_start.pose.position.y,
+        quaternionYaw(requested_start.pose.orientation),
+        returned_start.pose.position.x, returned_start.pose.position.y,
+        quaternionYaw(returned_start.pose.orientation));
+      return advanceCandidate();
+    }
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Free-heading planner candidate %zu for goal %zu violates the requested start contract: %s",
+      candidate_index_ + 1, target_index_ + 1, start_continuity.reason.c_str());
+    return failPlannerQuery("planner path start continuity contract violation", false);
+  }
+  const double planner_length = plannerPathLengthIncludingStartJoin(
+    *candidate_path, start_continuity);
+  if (!finite(planner_length)) {
+    return failPlannerQuery("planner path has an invalid start-joined length", false);
+  }
+
+  nav_msgs::msg::Path candidate_segment;
+  std::string connector_reason;
+  if (!buildCandidateSegment(*candidate_path, candidate_segment, connector_reason)) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Rejected free-heading candidate %zu for goal %zu at P connector handoff: %s",
+      candidate_index_ + 1, target_index_ + 1, connector_reason.c_str());
+    return advanceCandidate();
+  }
+  double length = planner_length;
+  if (departure_connector_index_ < departure_connectors_.size()) {
+    const auto kinematic = validateForwardConnectorPath(
+      candidate_segment, virtual_start_, departure_connector_options_);
+    if (!kinematic.valid) {
+      const auto & connector_end = plannerStartForCandidate();
+      const auto & raw_planner_start = candidate_path->poses.front();
+      const auto & raw_planner_next = candidate_path->poses.size() > 1U ?
+        candidate_path->poses[1U] : raw_planner_start;
+      RCLCPP_WARN(
+        node_->get_logger(),
+        "Rejected free-heading candidate %zu for goal %zu after P connector: %s "
+        "connector_end=(%.4f,%.4f,%.4f) raw_start=(%.4f,%.4f,%.4f) "
+        "raw_next=(%.4f,%.4f,%.4f) quantization_gap=(%.4f,%.4f)",
+        candidate_index_ + 1, target_index_ + 1, kinematic.reason.c_str(),
+        connector_end.pose.position.x, connector_end.pose.position.y,
+        quaternionYaw(connector_end.pose.orientation),
+        raw_planner_start.pose.position.x, raw_planner_start.pose.position.y,
+        quaternionYaw(raw_planner_start.pose.orientation),
+        raw_planner_next.pose.position.x, raw_planner_next.pose.position.y,
+        quaternionYaw(raw_planner_next.pose.orientation),
+        start_continuity.join_gap_m, start_continuity.yaw_error_rad);
+      return advanceCandidate();
+    }
+    length = kinematic.length_m;
+  }
+
+  const auto & endpoint = candidate_segment.poses.back();
   const bool heading_matches = isUnitQuaternion(endpoint.pose.orientation) &&
     angularDistance(
     quaternionYaw(endpoint.pose.orientation),
@@ -913,27 +1519,95 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
     return advanceCandidate();
   }
 
-  const PathQuality candidate_quality = pathQuality(*candidate_path);
+  // P departure paths are built and checked by their dedicated connector
+  // contract. Every ordinary forward replan must prove the same controller
+  // envelope before it can reach FollowPath, including its sampled yaw
+  // deltas. This keeps a discretized terminal heading from failing later in
+  // ForwardOnlyRPP after the vehicle has already committed to the route.
+  if (!reverse_ && !has_departure_connector) {
+    const auto forward_geometry = validateForwardPathGeometry(
+      candidate_segment, forwardPathGeometryOptions(validation_options_),
+      !isZeroQuaternion(real_goals_[target_index_].pose.orientation));
+    if (!forward_geometry.valid) {
+      RCLCPP_WARN(
+        node_->get_logger(),
+        "Rejected generic forward candidate %zu for goal %zu before FollowPath: %s "
+        "at segment %zu (observed=%.6f, limit=%.6f)",
+        candidate_index_ + 1, target_index_ + 1,
+        forward_geometry.reason.c_str(), forward_geometry.segment_index,
+        forward_geometry.observed_value, forward_geometry.limit);
+      return advanceCandidate();
+    }
+  }
+
+  if (!hasFreshPlanningCostmaps()) {
+    return failPlannerQuery("required costmap became stale during candidate search", false);
+  }
+  const PathQuality candidate_quality = pathQuality(candidate_segment);
+  if (staticKeepoutSweepIsInfrastructureFailure(candidate_quality)) {
+    logStaticKeepoutSweepFailure(
+      candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
+    return failPlannerQuery("static keepout mask is unavailable or malformed", false);
+  }
+  if (localTrackingSweepIsInfrastructureFailure(candidate_quality)) {
+    logLocalTrackingSweepFailure(
+      candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
+    return failPlannerQuery("filtered local tracking envelope is unavailable or malformed", false);
+  }
   if (!hasAcceptableCostmapSample(candidate_quality)) {
-    RCLCPP_DEBUG(
-      node_->get_logger(),
-      "Rejected free-heading candidate %zu for goal %zu: footprint_clear=%s, "
-      "max_cost=%u, limit=%u",
-      candidate_index_ + 1, target_index_ + 1,
-      candidate_quality.footprint_sweep_checked && candidate_quality.footprint_sweep_clear ?
-      "true" : "false",
-      static_cast<unsigned int>(candidate_quality.maximum_cost),
-      static_cast<unsigned int>(maximum_path_cost_));
+    // This check is deliberately independent of Smac's internal collision
+    // checker.  Keep failures visible at the default simulator log level: a
+    // silent disagreement would otherwise look like an unreachable goal and
+    // can hide a footprint or observation-frame regression.
+    if (candidate_quality.footprint_sweep_checked && !candidate_quality.footprint_sweep_clear) {
+      logFootprintSweepFailure(
+        candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
+    }
+    if (candidate_quality.static_keepout_sweep_checked &&
+      !candidate_quality.static_keepout_sweep_clear)
+    {
+      logStaticKeepoutSweepFailure(
+        candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
+    }
+    if (candidate_quality.local_tracking_sweep_checked &&
+      !candidate_quality.local_tracking_sweep_clear)
+    {
+      logLocalTrackingSweepFailure(
+        candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
+    }
+    if ((!
+        candidate_quality.footprint_sweep_checked || candidate_quality.footprint_sweep_clear) &&
+      (!candidate_quality.static_keepout_sweep_checked ||
+      candidate_quality.static_keepout_sweep_clear) &&
+      (!local_tracking_envelope_enabled_ ||
+      (candidate_quality.local_tracking_sweep_checked &&
+      candidate_quality.local_tracking_sweep_clear)))
+    {
+      RCLCPP_WARN(
+        node_->get_logger(),
+        "Rejected free-heading candidate %zu for goal %zu by raw-costmap guard: "
+        "sample=%s footprint_checked=%s footprint_clear=%s max_cost=%u limit=%u",
+        candidate_index_ + 1, target_index_ + 1,
+        candidate_quality.has_costmap_sample ? "true" : "false",
+        candidate_quality.footprint_sweep_checked ? "true" : "false",
+        candidate_quality.footprint_sweep_checked && candidate_quality.footprint_sweep_clear ?
+        "true" : "false",
+        static_cast<unsigned int>(candidate_quality.maximum_cost),
+        static_cast<unsigned int>(maximum_path_cost_));
+    }
     return advanceCandidate();
   }
 
-  const double length = pathLength(*candidate_path);
-  if (!finite(length)) {
+  if (!edgePathWithinLengthRatio(length, virtual_start_, active_virtual_goal_)) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Rejected free-heading candidate %zu for goal %zu: edge detour exceeds %.2f x",
+      candidate_index_ + 1, target_index_ + 1, max_edge_path_length_ratio_);
     return advanceCandidate();
   }
 
   if (through_poses_) {
-    return completeThroughCandidate(*candidate_path);
+    return completeThroughCandidate(candidate_segment, length);
   }
 
   // A locally shortest free-heading arrival can leave the next corridor
@@ -942,7 +1616,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
   if (isZeroQuaternion(real_goals_[target_index_].pose.orientation) &&
     target_index_ + 1 < real_goals_.size())
   {
-    pending_candidate_ = CandidatePlan{length, *candidate_path};
+    pending_candidate_ = CandidatePlan{length, candidate_segment};
     if (!prepareLookaheadCandidates() || !startLookaheadQuery()) {
       pending_candidate_.reset();
       return BT::NodeStatus::FAILURE;
@@ -952,8 +1626,8 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
 
   nav_msgs::msg::Path trial;
   std::string reason;
-  if (!buildAndValidateTrial(*candidate_path, nullptr, trial, reason)) {
-    RCLCPP_DEBUG(
+  if (!buildAndValidateTrial(candidate_segment, nullptr, trial, reason)) {
+    RCLCPP_WARN(
       node_->get_logger(), "Rejected free-heading candidate %zu for goal %zu: %s",
       candidate_index_ + 1, target_index_ + 1, reason.c_str());
     return advanceCandidate();
@@ -961,7 +1635,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
   if (!best_candidate_.has_value() ||
     length < best_candidate_->length_m - kPositionEpsilon)
   {
-    best_candidate_ = CandidatePlan{length, *candidate_path};
+    best_candidate_ = CandidatePlan{length, candidate_segment};
     best_trial_path_ = std::move(trial);
     best_continuation_.reset();
   }
@@ -969,16 +1643,38 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
 }
 
 BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
-  const nav_msgs::msg::Path * candidate_path)
+  const nav_msgs::msg::Path * candidate_path,
+  bool explicit_no_valid_path)
 {
   if (!pending_candidate_.has_value()) {
     RCLCPP_ERROR(node_->get_logger(), "Free-heading lookahead lost its candidate");
     return BT::NodeStatus::FAILURE;
   }
 
+  if (candidate_path == nullptr && !explicit_no_valid_path) {
+    return failPlannerQuery("lookahead result was not an explicit no-valid-path result", true);
+  }
   bool continuation_is_valid = false;
   double continuation_length = 0.0;
   if (candidate_path != nullptr && !candidate_path->poses.empty()) {
+    if (!hasFreshPlanningCostmaps()) {
+      return failPlannerQuery("required costmap became stale during lookahead search", true);
+    }
+    const auto start_continuity = validatePlannerPathStartContinuity(
+      *candidate_path, pending_candidate_->path.poses.back());
+    if (!start_continuity.valid) {
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "Free-heading lookahead candidate %zu for goal %zu violates the requested start contract: %s",
+        lookahead_candidate_index_ + 1, target_index_ + 2,
+        start_continuity.reason.c_str());
+      return failPlannerQuery("planner path start continuity contract violation", true);
+    }
+    continuation_length = plannerPathLengthIncludingStartJoin(
+      *candidate_path, start_continuity);
+    if (!finite(continuation_length)) {
+      return failPlannerQuery("planner lookahead path has an invalid start-joined length", true);
+    }
     const auto & endpoint = candidate_path->poses.back();
     continuation_is_valid = isUnitQuaternion(endpoint.pose.orientation) &&
       angularDistance(
@@ -987,10 +1683,62 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
       validation_options_.goal_yaw_tolerance &&
       endpointMatchesCandidateAndRealGoal(
       endpoint, active_lookahead_goal_, real_goals_[target_index_ + 1]);
-    continuation_length = pathLength(*candidate_path);
-    continuation_is_valid = continuation_is_valid && finite(continuation_length);
+    continuation_is_valid = continuation_is_valid && edgePathWithinLengthRatio(
+      continuation_length, pending_candidate_->path.poses.back(), active_lookahead_goal_);
+    if (continuation_is_valid && !reverse_ && departure_connectors_.empty()) {
+      const auto forward_geometry = validateForwardPathGeometry(
+        *candidate_path, forwardPathGeometryOptions(validation_options_),
+        !isZeroQuaternion(real_goals_[target_index_ + 1U].pose.orientation));
+      if (!forward_geometry.valid) {
+        RCLCPP_DEBUG(
+          node_->get_logger(),
+          "Rejected generic forward lookahead candidate %zu for goal %zu before FollowPath: %s "
+          "at segment %zu (observed=%.6f, limit=%.6f)",
+          lookahead_candidate_index_ + 1U, target_index_ + 2U,
+          forward_geometry.reason.c_str(), forward_geometry.segment_index,
+          forward_geometry.observed_value, forward_geometry.limit);
+        return advanceLookaheadCandidate();
+      }
+    }
+    const PathQuality continuation_quality = pathQuality(*candidate_path);
+    if (staticKeepoutSweepIsInfrastructureFailure(continuation_quality)) {
+      logStaticKeepoutSweepFailure(
+        continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
+        target_index_ + 2);
+      return failPlannerQuery("static keepout mask is unavailable or malformed", true);
+    }
+    if (localTrackingSweepIsInfrastructureFailure(continuation_quality)) {
+      logLocalTrackingSweepFailure(
+        continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
+        target_index_ + 2);
+      return failPlannerQuery(
+        "filtered local tracking envelope is unavailable or malformed", true);
+    }
+    if (!hasAcceptableCostmapSample(continuation_quality) &&
+      continuation_quality.footprint_sweep_checked &&
+      !continuation_quality.footprint_sweep_clear)
+    {
+      logFootprintSweepFailure(
+        continuation_quality, "lookahead", lookahead_candidate_index_ + 1, target_index_ + 2);
+    }
+    if (!hasAcceptableCostmapSample(continuation_quality) &&
+      continuation_quality.static_keepout_sweep_checked &&
+      !continuation_quality.static_keepout_sweep_clear)
+    {
+      logStaticKeepoutSweepFailure(
+        continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
+        target_index_ + 2);
+    }
+    if (!hasAcceptableCostmapSample(continuation_quality) &&
+      continuation_quality.local_tracking_sweep_checked &&
+      !continuation_quality.local_tracking_sweep_clear)
+    {
+      logLocalTrackingSweepFailure(
+        continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
+        target_index_ + 2);
+    }
     continuation_is_valid = continuation_is_valid &&
-      hasAcceptableCostmapSample(pathQuality(*candidate_path));
+      hasAcceptableCostmapSample(continuation_quality);
   }
 
   nav_msgs::msg::Path trial;
@@ -1017,7 +1765,8 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
 }
 
 BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughCandidate(
-  const nav_msgs::msg::Path & candidate_path)
+  const nav_msgs::msg::Path & candidate_path,
+  double edge_length_m)
 {
   nav_msgs::msg::Path trial;
   std::string reason;
@@ -1035,6 +1784,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughCandidate(
   frame.path_before = virtual_path_;
   frame.start_before = virtual_start_;
   frame.edge_quality = pathQuality(candidate_path);
+  frame.edge_quality.length_m = edge_length_m;
   through_search_frames_.push_back(std::move(frame));
 
   virtual_path_ = std::move(trial);
@@ -1048,6 +1798,9 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughCandidate(
     if (best_through_path_.has_value()) {
       return publishBestThroughPath();
     }
+    if (!search_budget_exhausted_) {
+      planner_query_failed_ = true;
+    }
     setRecoveryEligible(true);
     return BT::NodeStatus::FAILURE;
   }
@@ -1056,12 +1809,52 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughCandidate(
 
 BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughPath()
 {
-  const PathQuality quality = pathQuality(virtual_path_);
+  if (!hasFreshPlanningCostmaps()) {
+    return failPlannerQuery("required costmap became stale during through-poses search", false);
+  }
+  const auto start_continuity = validatePlannerPathStartContinuity(
+    virtual_path_, planning_virtual_start_);
+  if (!start_continuity.valid) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Free-heading through-poses chain violates the requested start contract: %s",
+      start_continuity.reason.c_str());
+    return failPlannerQuery("planner path start continuity contract violation", false);
+  }
+  const double chain_length = plannerPathLengthIncludingStartJoin(
+    virtual_path_, start_continuity);
+  if (!finite(chain_length)) {
+    return failPlannerQuery("planner through-poses path has an invalid start-joined length", false);
+  }
+  PathQuality quality = pathQuality(virtual_path_);
+  quality.length_m = chain_length;
+  if (staticKeepoutSweepIsInfrastructureFailure(quality)) {
+    logStaticKeepoutSweepFailure(
+      quality, "through_chain", through_complete_path_count_ + 1, real_goals_.size());
+    return failPlannerQuery("static keepout mask is unavailable or malformed", false);
+  }
+  if (localTrackingSweepIsInfrastructureFailure(quality)) {
+    logLocalTrackingSweepFailure(
+      quality, "through_chain", through_complete_path_count_ + 1, real_goals_.size());
+    return failPlannerQuery("filtered local tracking envelope is unavailable or malformed", false);
+  }
   ++through_complete_path_count_;
   std::string validation_reason;
   const bool chain_is_valid = hasAcceptableCostmapSample(quality) &&
     validateReverseTrial(virtual_path_, validation_reason);
   if (!chain_is_valid) {
+    if (quality.footprint_sweep_checked && !quality.footprint_sweep_clear) {
+      logFootprintSweepFailure(
+        quality, "through_chain", through_complete_path_count_, real_goals_.size());
+    }
+    if (quality.static_keepout_sweep_checked && !quality.static_keepout_sweep_clear) {
+      logStaticKeepoutSweepFailure(
+        quality, "through_chain", through_complete_path_count_, real_goals_.size());
+    }
+    if (quality.local_tracking_sweep_checked && !quality.local_tracking_sweep_clear) {
+      logLocalTrackingSweepFailure(
+        quality, "through_chain", through_complete_path_count_, real_goals_.size());
+    }
     RCLCPP_DEBUG(
       node_->get_logger(),
       "Rejected free-heading through-poses chain %zu after full validation: %s",
@@ -1070,7 +1863,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughPath()
   }
   double direct_constraint_length = 0.0;
   if (!virtual_path_.poses.empty()) {
-    geometry_msgs::msg::PoseStamped previous = virtual_path_.poses.front();
+    geometry_msgs::msg::PoseStamped previous = planning_virtual_start_;
     for (const auto & goal : real_goals_) {
       direct_constraint_length += planarDistance(previous, goal);
       previous = goal;
@@ -1104,6 +1897,15 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughPath()
   const bool search_budget_exhausted =
     std::chrono::steady_clock::now() >= through_search_deadline_ ||
     through_candidate_query_count_ >= kMaximumThroughCandidateQueries;
+  if (search_budget_exhausted) {
+    search_budget_exhausted_ = true;
+  }
+  if (solution_limit_reached) {
+    // A bounded solution sample is not proof that every heading chain is
+    // unreachable.  It may publish a validated best path, but may not arm a
+    // physical retreat when no valid chain was sampled.
+    search_budget_exhausted_ = true;
+  }
   if (solution_limit_reached || search_budget_exhausted) {
     return publishBestThroughPath();
   }
@@ -1159,7 +1961,28 @@ BT::NodeStatus ComputeFreeHeadingPathAction::advanceCandidate()
     }
     return BT::NodeStatus::RUNNING;
   }
+  if (!through_poses_ &&
+    departure_connector_index_ + 1U < departure_connectors_.size())
+  {
+    return advanceDepartureConnector();
+  }
   return commitBestCandidate();
+}
+
+BT::NodeStatus ComputeFreeHeadingPathAction::advanceDepartureConnector()
+{
+  if (departure_connector_index_ + 1U >= departure_connectors_.size()) {
+    return commitBestCandidate();
+  }
+  ++departure_connector_index_;
+  if (!prepareTargetCandidates(false) || !startCandidateQuery()) {
+    if (std::chrono::steady_clock::now() >= search_deadline_) {
+      return commitBestCandidate();
+    }
+    planner_query_failed_ = true;
+    return BT::NodeStatus::FAILURE;
+  }
+  return BT::NodeStatus::RUNNING;
 }
 
 BT::NodeStatus ComputeFreeHeadingPathAction::advanceThroughCandidate()
@@ -1170,6 +1993,9 @@ BT::NodeStatus ComputeFreeHeadingPathAction::advanceThroughCandidate()
       clearPathOutput();
       if (best_through_path_.has_value()) {
         return publishBestThroughPath();
+      }
+      if (!search_budget_exhausted_) {
+        planner_query_failed_ = true;
       }
       setRecoveryEligible(true);
       return BT::NodeStatus::FAILURE;
@@ -1293,28 +2119,123 @@ ComputeFreeHeadingPathAction::pathQuality(const nav_msgs::msg::Path & path) cons
   }
 
   nav2_msgs::msg::Costmap::SharedPtr costmap;
-  bool costmap_is_fresh = false;
+  nav2_msgs::msg::Costmap::SharedPtr local_tracking_costmap;
+  nav_msgs::msg::OccupancyGrid::SharedPtr keepout_mask;
+  CostmapSampleFreshness freshness = CostmapSampleFreshness::kMissing;
+  CostmapSampleFreshness local_tracking_freshness = CostmapSampleFreshness::kMissing;
   {
     std::lock_guard<std::mutex> lock(global_costmap_mutex_);
     costmap = global_costmap_;
-    costmap_is_fresh = global_costmap_received_at_ !=
-      std::chrono::steady_clock::time_point() &&
-      std::chrono::steady_clock::now() - global_costmap_received_at_ <= costmap_max_age_;
+    local_tracking_costmap = local_filtered_costmap_;
+    keepout_mask = static_keepout_mask_;
+    const CostmapSample sample{
+      global_costmap_, global_costmap_received_at_, global_costmap_sequence_,
+      global_costmap_stamp_ns_};
+    quality.costmap_stamp_ns = global_costmap_stamp_ns_;
+    quality.costmap_sequence = global_costmap_sequence_;
+    freshness = costmapSampleFreshness(
+      sample, global_frame_, costmap_max_age_, node_->get_clock()->now(),
+      std::chrono::steady_clock::now());
+    const CostmapSample local_tracking_sample{
+      local_filtered_costmap_, local_filtered_costmap_received_at_,
+      local_filtered_costmap_sequence_, local_filtered_costmap_stamp_ns_};
+    quality.local_tracking_costmap_stamp_ns = local_filtered_costmap_stamp_ns_;
+    quality.local_tracking_costmap_sequence = local_filtered_costmap_sequence_;
+    local_tracking_freshness = costmapSampleFreshness(
+      local_tracking_sample, global_frame_, costmap_max_age_, node_->get_clock()->now(),
+      std::chrono::steady_clock::now());
   }
-  if (!costmap_is_fresh || !costmap || costmap->header.frame_id != global_frame_ ||
-    costmap->metadata.resolution <= 0.0f || costmap->metadata.size_x == 0U ||
-    costmap->metadata.size_y == 0U)
+  if (freshness != CostmapSampleFreshness::kFresh || !costmap)
   {
     return quality;
+  }
+  quality.costmap_resolution_m = static_cast<double>(costmap->metadata.resolution);
+  quality.costmap_frame = costmap->header.frame_id;
+  quality.local_tracking_costmap_fresh =
+    local_tracking_freshness == CostmapSampleFreshness::kFresh &&
+    local_tracking_costmap != nullptr;
+  if (quality.local_tracking_costmap_fresh) {
+    quality.local_tracking_costmap_resolution_m =
+      static_cast<double>(local_tracking_costmap->metadata.resolution);
+    quality.local_tracking_costmap_frame = local_tracking_costmap->header.frame_id;
   }
 
   // A path centreline can clear a lethal cell while the Ackermann body clips
   // it during a minimum-radius arc. The virtual reverse frame is a pi yaw
   // shift, so the configured pi-symmetric rectangular footprint is unchanged.
   quality.footprint_sweep_checked = true;
+  quality.footprint_sweep_result = costmapFootprintPathSweep(
+    path, *costmap, footprint_sweep_options_, &quality.footprint_sweep_diagnostic);
   quality.footprint_sweep_clear =
-    costmapFootprintPathSweep(path, *costmap, footprint_sweep_options_) ==
-    CostmapFootprintSweepResult::kClear;
+    quality.footprint_sweep_result == CostmapFootprintSweepResult::kClear;
+  if (!quality.footprint_sweep_clear &&
+    quality.footprint_sweep_diagnostic.has_blocking_cell)
+  {
+    quality.footprint_collision_source = keepoutCollisionSourceName(
+      keepoutMaskCellStateAt(
+        keepout_mask.get(), global_frame_,
+        quality.footprint_sweep_diagnostic.blocking_cell_world_x,
+        quality.footprint_sweep_diagnostic.blocking_cell_world_y));
+  } else if (!quality.footprint_sweep_clear) {
+    quality.footprint_collision_source = "not_a_lethal_costmap_cell";
+  }
+
+  // The raw costmap is deliberately captured before Nav2's filter pipeline
+  // so it can remain a fresh sensor-fusion witness for retreat.  That means
+  // an occupied KeepoutFilter cell cannot be inferred from it.  Apply the
+  // same continuous padded-body sweep to the static mask independently; the
+  // finite mask bounds also forbid planner shortcuts outside the field.
+  quality.static_keepout_sweep_result = staticKeepoutMaskFootprintPathSweep(
+    keepout_mask.get(), global_frame_, path, footprint_sweep_options_,
+    &quality.static_keepout_sweep_diagnostic);
+  quality.static_keepout_sweep_checked =
+    quality.static_keepout_sweep_result != StaticKeepoutMaskSweepResult::kNoMask;
+  quality.static_keepout_sweep_clear =
+    quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kNoMask ||
+    quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kClear;
+
+  if (local_tracking_envelope_enabled_) {
+    if (!quality.local_tracking_costmap_fresh) {
+      return quality;
+    }
+    std::string active_lateral_profile = kForwardPathLateralProfileSymmetric;
+    if (local_tracking_lateral_profile_ ==
+      kForwardPathLateralProfilePDepartureSouthV1 && departure_connector_enabled_)
+    {
+      // prepareDepartureConnectors() validates a generated connector before
+      // adding it to departure_connectors_. The strict path matcher below is
+      // the authority for this P-only profile; requiring a stored connector
+      // here would incorrectly force that first validation back to symmetric.
+      const auto match = forwardPathLateralProfileMatchesPlan(
+        local_tracking_lateral_profile_, path, local_tracking_lateral_profile_start_);
+      if (match == ForwardPathLateralProfilePathMatch::kInvalid) {
+        quality.local_tracking_lateral_profile = local_tracking_lateral_profile_;
+        quality.local_tracking_lateral_profile_active = true;
+        quality.local_tracking_sweep_checked = true;
+        quality.local_tracking_sweep_result = CostmapFootprintSweepResult::kInvalidInput;
+        return quality;
+      }
+      if (match == ForwardPathLateralProfilePathMatch::kMatches) {
+        active_lateral_profile = local_tracking_lateral_profile_;
+        quality.local_tracking_lateral_profile_active = true;
+      }
+    }
+    quality.local_tracking_lateral_profile = active_lateral_profile;
+    CostmapFootprintSweepOptions local_options = footprint_sweep_options_;
+    local_options.lethal_cost_threshold = local_tracking_lethal_cost_;
+    const double local_horizon = std::min(
+      local_tracking_horizon_m_, std::max(0.0, quality.length_m));
+    const auto local_result = localCostmapTrackingEnvelopeSweep(
+      path, *local_tracking_costmap, local_options, local_horizon,
+      active_lateral_profile, local_tracking_cross_track_error_m_);
+    quality.local_tracking_sweep_checked = true;
+    quality.local_tracking_sweep_result = local_result.sweep_result;
+    quality.local_tracking_sweep_diagnostic = local_result.diagnostic;
+    quality.local_tracking_requested_horizon_m = local_result.requested_horizon_m;
+    quality.local_tracking_covered_horizon_m = local_result.covered_horizon_m;
+    quality.local_tracking_sweep_clear = local_result.horizon_covered &&
+      local_result.sweep_result == CostmapFootprintSweepResult::kClear;
+  }
 
   std::uint64_t accumulated_cost = 0U;
   std::size_t sampled_cells = 0U;
@@ -1421,30 +2342,171 @@ std::optional<std::uint8_t> ComputeFreeHeadingPathAction::costAt(
   return costmap.data[map_y * static_cast<std::size_t>(costmap.metadata.size_x) + map_x];
 }
 
+bool ComputeFreeHeadingPathAction::configureKeepoutMaskSubscription(const std::string & topic)
+{
+  if (topic == static_keepout_mask_topic_) {
+    return true;
+  }
+  static_keepout_mask_subscription_.reset();
+  {
+    std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+    static_keepout_mask_.reset();
+  }
+  static_keepout_mask_topic_ = topic;
+  if (topic.empty()) {
+    return true;
+  }
+
+  rclcpp::SubscriptionOptions options;
+  options.callback_group = callback_group_;
+  try {
+    static_keepout_mask_subscription_ = node_->create_subscription<nav_msgs::msg::OccupancyGrid>(
+      topic, rclcpp::QoS(1).reliable().transient_local(),
+      [this](nav_msgs::msg::OccupancyGrid::SharedPtr mask) {
+        updateStaticKeepoutMask(std::move(mask));
+      }, options);
+  } catch (const std::exception & error) {
+    RCLCPP_ERROR(
+      node_->get_logger(), "Free-heading sweep cannot subscribe to keepout mask '%s': %s",
+      topic.c_str(), error.what());
+    return false;
+  }
+  return true;
+}
+
 void ComputeFreeHeadingPathAction::updateGlobalCostmap(
   nav2_msgs::msg::Costmap::SharedPtr costmap)
 {
+  if (!costmap) {
+    return;
+  }
+  const auto stamp_ns = costmapSourceStampNanoseconds(*costmap);
+  if (!stamp_ns.has_value()) {
+    RCLCPP_WARN(node_->get_logger(), "Ignoring global raw costmap with an invalid source stamp");
+    return;
+  }
   std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  if (*stamp_ns <= global_costmap_stamp_ns_) {
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "Ignoring non-monotonic global raw costmap stamp %lld (last=%lld)",
+      static_cast<long long>(*stamp_ns), static_cast<long long>(global_costmap_stamp_ns_));
+    return;
+  }
   global_costmap_ = std::move(costmap);
   global_costmap_received_at_ = std::chrono::steady_clock::now();
+  global_costmap_stamp_ns_ = *stamp_ns;
+  ++global_costmap_sequence_;
+}
+
+void ComputeFreeHeadingPathAction::updateLocalCostmap(
+  nav2_msgs::msg::Costmap::SharedPtr costmap)
+{
+  if (!costmap) {
+    return;
+  }
+  const auto stamp_ns = costmapSourceStampNanoseconds(*costmap);
+  if (!stamp_ns.has_value()) {
+    RCLCPP_WARN(node_->get_logger(), "Ignoring local raw costmap with an invalid source stamp");
+    return;
+  }
+  std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  if (*stamp_ns <= local_costmap_stamp_ns_) {
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "Ignoring non-monotonic local raw costmap stamp %lld (last=%lld)",
+      static_cast<long long>(*stamp_ns), static_cast<long long>(local_costmap_stamp_ns_));
+    return;
+  }
+  local_costmap_ = std::move(costmap);
+  local_costmap_received_at_ = std::chrono::steady_clock::now();
+  local_costmap_stamp_ns_ = *stamp_ns;
+  ++local_costmap_sequence_;
+}
+
+void ComputeFreeHeadingPathAction::updateLocalFilteredCostmap(
+  nav_msgs::msg::OccupancyGrid::SharedPtr costmap)
+{
+  if (!costmap) {
+    return;
+  }
+  auto converted_costmap = localCostmapTrackingOccupancyGridToCostmap(*costmap);
+  if (!converted_costmap.has_value()) {
+    RCLCPP_WARN(
+      node_->get_logger(), "Ignoring malformed filtered local OccupancyGrid");
+    return;
+  }
+  const auto stamp_ns = costmapSourceStampNanoseconds(*converted_costmap);
+  if (!stamp_ns.has_value()) {
+    RCLCPP_WARN(
+      node_->get_logger(), "Ignoring filtered local costmap with an invalid source stamp");
+    return;
+  }
+  std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  if (*stamp_ns <= local_filtered_costmap_stamp_ns_) {
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "Ignoring non-monotonic filtered local costmap stamp %lld (last=%lld)",
+      static_cast<long long>(*stamp_ns),
+      static_cast<long long>(local_filtered_costmap_stamp_ns_));
+    return;
+  }
+  local_filtered_costmap_ = std::make_shared<nav2_msgs::msg::Costmap>(
+    std::move(*converted_costmap));
+  local_filtered_costmap_received_at_ = std::chrono::steady_clock::now();
+  local_filtered_costmap_stamp_ns_ = *stamp_ns;
+  ++local_filtered_costmap_sequence_;
+}
+
+void ComputeFreeHeadingPathAction::updateStaticKeepoutMask(
+  nav_msgs::msg::OccupancyGrid::SharedPtr mask)
+{
+  if (!mask) {
+    return;
+  }
+  std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  static_keepout_mask_ = std::move(mask);
 }
 
 bool ComputeFreeHeadingPathAction::hasFreshGlobalCostmap() const
 {
   std::lock_guard<std::mutex> lock(global_costmap_mutex_);
-  if (!global_costmap_ || global_costmap_->header.frame_id != global_frame_ ||
-    global_costmap_->metadata.resolution <= 0.0f ||
-    global_costmap_->metadata.size_x == 0U || global_costmap_->metadata.size_y == 0U ||
-    global_costmap_received_at_ == std::chrono::steady_clock::time_point())
-  {
-    return false;
-  }
-  const std::size_t expected_size =
-    static_cast<std::size_t>(global_costmap_->metadata.size_x) *
-    static_cast<std::size_t>(global_costmap_->metadata.size_y);
-  return global_costmap_->data.size() >= expected_size &&
-         std::chrono::steady_clock::now() - global_costmap_received_at_ <=
-         costmap_max_age_;
+  const CostmapSample sample{
+    global_costmap_, global_costmap_received_at_, global_costmap_sequence_,
+    global_costmap_stamp_ns_};
+  return costmapSampleFreshness(
+    sample, global_frame_, costmap_max_age_, node_->get_clock()->now(),
+    std::chrono::steady_clock::now()) == CostmapSampleFreshness::kFresh;
+}
+
+bool ComputeFreeHeadingPathAction::hasFreshLocalFilteredCostmap() const
+{
+  std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  const CostmapSample sample{
+    local_filtered_costmap_, local_filtered_costmap_received_at_,
+    local_filtered_costmap_sequence_, local_filtered_costmap_stamp_ns_};
+  return costmapSampleFreshness(
+    sample, global_frame_, costmap_max_age_, node_->get_clock()->now(),
+    std::chrono::steady_clock::now()) == CostmapSampleFreshness::kFresh;
+}
+
+bool ComputeFreeHeadingPathAction::hasStaticKeepoutMask() const
+{
+  std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  return static_keepout_mask_ != nullptr;
+}
+
+bool ComputeFreeHeadingPathAction::pDepartureStaticKeepoutMaskRequired() const
+{
+  return departure_connector_enabled_ &&
+         local_tracking_lateral_profile_ == kForwardPathLateralProfilePDepartureSouthV1;
+}
+
+bool ComputeFreeHeadingPathAction::hasFreshPlanningCostmaps() const
+{
+  return hasFreshGlobalCostmap() &&
+         (!local_tracking_envelope_enabled_ || hasFreshLocalFilteredCostmap()) &&
+         (!pDepartureStaticKeepoutMaskRequired() || hasStaticKeepoutMask());
 }
 
 bool ComputeFreeHeadingPathAction::hasAcceptableCostmapSample(
@@ -1452,7 +2514,278 @@ bool ComputeFreeHeadingPathAction::hasAcceptableCostmapSample(
 {
   return quality.has_costmap_sample && quality.footprint_sweep_checked &&
          quality.footprint_sweep_clear &&
+         quality.static_keepout_sweep_clear &&
+         (!pDepartureStaticKeepoutMaskRequired() || quality.static_keepout_sweep_checked) &&
+         (!local_tracking_envelope_enabled_ ||
+         (quality.local_tracking_costmap_fresh && quality.local_tracking_sweep_checked &&
+         quality.local_tracking_sweep_clear)) &&
          quality.maximum_cost <= maximum_path_cost_;
+}
+
+bool ComputeFreeHeadingPathAction::staticKeepoutSweepIsInfrastructureFailure(
+  const PathQuality & quality) const
+{
+  return quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kWrongFrame ||
+         quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kMalformed ||
+         (pDepartureStaticKeepoutMaskRequired() &&
+         quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kNoMask);
+}
+
+bool ComputeFreeHeadingPathAction::localTrackingSweepIsInfrastructureFailure(
+  const PathQuality & quality) const
+{
+  return local_tracking_envelope_enabled_ &&
+         (!quality.local_tracking_costmap_fresh ||
+         (quality.local_tracking_sweep_checked &&
+         quality.local_tracking_sweep_result == CostmapFootprintSweepResult::kInvalidInput));
+}
+
+void ComputeFreeHeadingPathAction::logFootprintSweepFailure(
+  const PathQuality & quality,
+  const char * scope,
+  std::size_t identifier,
+  std::size_t goal_index) const
+{
+  if (!quality.footprint_sweep_checked || quality.footprint_sweep_clear) {
+    return;
+  }
+  const auto & diagnostic = quality.footprint_sweep_diagnostic;
+  const double pose_x = diagnostic.has_sample_pose ? diagnostic.sample_pose.pose.position.x : 0.0;
+  const double pose_y = diagnostic.has_sample_pose ? diagnostic.sample_pose.pose.position.y : 0.0;
+  const double pose_yaw = diagnostic.has_sample_pose ?
+    tf2::getYaw(diagnostic.sample_pose.pose.orientation) : 0.0;
+  if (diagnostic.has_blocking_cell) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Free-heading raw-costmap footprint rejection scope=%s id=%zu goal=%zu result=%s "
+      "planner_path_provenance=unavailable_from_ComputePathToPose "
+      "costmap_topic=/global_costmap/costmap_raw frame=%s stamp_ns=%lld sequence=%llu "
+      "resolution_m=%.4f sample_pose=(%.4f,%.4f,%.4f) path_segment=%zu->%zu "
+      "interpolation=%zu/%zu fraction=%.6f blocking_cell=(%zu,%zu) "
+      "blocking_cell_world=(%.4f,%.4f) cost=%u cost_semantic=%s obstacle_source=%s "
+      "per_layer_attribution=unavailable_from_nav2_msgs_Costmap max_centerline_cost=%u "
+      "centerline_limit=%u",
+      scope, identifier, goal_index,
+      costmapFootprintSweepResultName(diagnostic.result),
+      quality.costmap_frame.c_str(), static_cast<long long>(quality.costmap_stamp_ns),
+      static_cast<unsigned long long>(quality.costmap_sequence), quality.costmap_resolution_m,
+      pose_x, pose_y, pose_yaw,
+      diagnostic.segment_start_pose_index, diagnostic.segment_end_pose_index,
+      diagnostic.segment_sample_index, diagnostic.segment_sample_count,
+      diagnostic.segment_fraction,
+      diagnostic.blocking_cell_x, diagnostic.blocking_cell_y,
+      diagnostic.blocking_cell_world_x, diagnostic.blocking_cell_world_y,
+      static_cast<unsigned int>(diagnostic.blocking_cell_cost),
+      costmapFootprintSweepCellCostName(diagnostic.blocking_cell_cost),
+      quality.footprint_collision_source.c_str(),
+      static_cast<unsigned int>(quality.maximum_cost),
+      static_cast<unsigned int>(maximum_path_cost_));
+    return;
+  }
+  if (diagnostic.has_boundary_point) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Free-heading raw-costmap footprint rejection scope=%s id=%zu goal=%zu result=%s "
+      "planner_path_provenance=unavailable_from_ComputePathToPose "
+      "costmap_topic=/global_costmap/costmap_raw frame=%s stamp_ns=%lld sequence=%llu "
+      "resolution_m=%.4f sample_pose=(%.4f,%.4f,%.4f) path_segment=%zu->%zu "
+      "interpolation=%zu/%zu fraction=%.6f boundary_world=(%.4f,%.4f) "
+      "obstacle_source=%s",
+      scope, identifier, goal_index,
+      costmapFootprintSweepResultName(diagnostic.result),
+      quality.costmap_frame.c_str(), static_cast<long long>(quality.costmap_stamp_ns),
+      static_cast<unsigned long long>(quality.costmap_sequence), quality.costmap_resolution_m,
+      pose_x, pose_y, pose_yaw,
+      diagnostic.segment_start_pose_index, diagnostic.segment_end_pose_index,
+      diagnostic.segment_sample_index, diagnostic.segment_sample_count,
+      diagnostic.segment_fraction,
+      diagnostic.boundary_world_x, diagnostic.boundary_world_y,
+      quality.footprint_collision_source.c_str());
+    return;
+  }
+  RCLCPP_WARN(
+    node_->get_logger(),
+    "Free-heading raw-costmap footprint rejection scope=%s id=%zu goal=%zu result=%s "
+    "planner_path_provenance=unavailable_from_ComputePathToPose "
+    "costmap_topic=/global_costmap/costmap_raw frame=%s stamp_ns=%lld sequence=%llu "
+    "resolution_m=%.4f sample_pose=(%.4f,%.4f,%.4f) path_segment=%zu->%zu "
+    "interpolation=%zu/%zu fraction=%.6f obstacle_source=%s",
+    scope, identifier, goal_index,
+    costmapFootprintSweepResultName(diagnostic.result),
+    quality.costmap_frame.c_str(), static_cast<long long>(quality.costmap_stamp_ns),
+    static_cast<unsigned long long>(quality.costmap_sequence), quality.costmap_resolution_m,
+    pose_x, pose_y, pose_yaw,
+    diagnostic.segment_start_pose_index, diagnostic.segment_end_pose_index,
+    diagnostic.segment_sample_index, diagnostic.segment_sample_count,
+    diagnostic.segment_fraction, quality.footprint_collision_source.c_str());
+}
+
+void ComputeFreeHeadingPathAction::logStaticKeepoutSweepFailure(
+  const PathQuality & quality,
+  const char * scope,
+  std::size_t identifier,
+  std::size_t goal_index) const
+{
+  if (quality.static_keepout_sweep_clear) {
+    return;
+  }
+  const auto & diagnostic = quality.static_keepout_sweep_diagnostic;
+  const double pose_x = diagnostic.has_sample_pose ? diagnostic.sample_pose.pose.position.x : 0.0;
+  const double pose_y = diagnostic.has_sample_pose ? diagnostic.sample_pose.pose.position.y : 0.0;
+  const double pose_yaw = diagnostic.has_sample_pose ?
+    tf2::getYaw(diagnostic.sample_pose.pose.orientation) : 0.0;
+  if (diagnostic.has_blocking_cell) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Free-heading static-keepout footprint rejection scope=%s id=%zu goal=%zu "
+      "result=%s mask_topic=%s sample_pose=(%.4f,%.4f,%.4f) "
+      "path_segment=%zu->%zu interpolation=%zu/%zu fraction=%.6f "
+      "blocking_cell=(%zu,%zu) blocking_cell_world=(%.4f,%.4f) occupancy=%u",
+      scope, identifier, goal_index,
+      staticKeepoutMaskSweepResultName(quality.static_keepout_sweep_result),
+      static_keepout_mask_topic_.c_str(), pose_x, pose_y, pose_yaw,
+      diagnostic.segment_start_pose_index, diagnostic.segment_end_pose_index,
+      diagnostic.segment_sample_index, diagnostic.segment_sample_count,
+      diagnostic.segment_fraction, diagnostic.blocking_cell_x, diagnostic.blocking_cell_y,
+      diagnostic.blocking_cell_world_x, diagnostic.blocking_cell_world_y,
+      static_cast<unsigned int>(diagnostic.blocking_cell_cost));
+    return;
+  }
+  if (diagnostic.has_boundary_point) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Free-heading static-keepout footprint rejection scope=%s id=%zu goal=%zu "
+      "result=%s mask_topic=%s sample_pose=(%.4f,%.4f,%.4f) "
+      "path_segment=%zu->%zu interpolation=%zu/%zu fraction=%.6f "
+      "boundary_world=(%.4f,%.4f)",
+      scope, identifier, goal_index,
+      staticKeepoutMaskSweepResultName(quality.static_keepout_sweep_result),
+      static_keepout_mask_topic_.c_str(), pose_x, pose_y, pose_yaw,
+      diagnostic.segment_start_pose_index, diagnostic.segment_end_pose_index,
+      diagnostic.segment_sample_index, diagnostic.segment_sample_count,
+      diagnostic.segment_fraction, diagnostic.boundary_world_x, diagnostic.boundary_world_y);
+    return;
+  }
+  RCLCPP_ERROR(
+    node_->get_logger(),
+    "Free-heading static-keepout sweep is unusable scope=%s id=%zu goal=%zu result=%s "
+    "mask_topic=%s",
+    scope, identifier, goal_index,
+    staticKeepoutMaskSweepResultName(quality.static_keepout_sweep_result),
+    static_keepout_mask_topic_.c_str());
+}
+
+void ComputeFreeHeadingPathAction::logLocalTrackingSweepFailure(
+  const PathQuality & quality,
+  const char * scope,
+  std::size_t identifier,
+  std::size_t goal_index) const
+{
+  if (!local_tracking_envelope_enabled_) {
+    return;
+  }
+  if (!quality.local_tracking_costmap_fresh) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Free-heading filtered-local tracking envelope unavailable scope=%s id=%zu goal=%zu "
+      "costmap_topic=/local_costmap/costmap",
+      scope, identifier, goal_index);
+    return;
+  }
+  if (!quality.local_tracking_sweep_checked || quality.local_tracking_sweep_clear) {
+    return;
+  }
+  const auto & diagnostic = quality.local_tracking_sweep_diagnostic;
+  const double pose_x = diagnostic.has_sample_pose ? diagnostic.sample_pose.pose.position.x : 0.0;
+  const double pose_y = diagnostic.has_sample_pose ? diagnostic.sample_pose.pose.position.y : 0.0;
+  const double pose_yaw = diagnostic.has_sample_pose ?
+    tf2::getYaw(diagnostic.sample_pose.pose.orientation) : 0.0;
+  if (diagnostic.has_blocking_cell) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "Free-heading filtered-local tracking envelope rejection scope=%s id=%zu goal=%zu "
+      "result=%s lateral_profile=%s lateral_profile_active=%s "
+      "costmap_topic=/local_costmap/costmap frame=%s stamp_ns=%lld sequence=%llu "
+      "resolution_m=%.4f cross_track_envelope_m=%.3f horizon_m=%.3f covered_m=%.3f "
+      "sample_pose=(%.4f,%.4f,%.4f) path_segment=%zu->%zu interpolation=%zu/%zu "
+      "fraction=%.6f blocking_cell=(%zu,%zu) blocking_cell_world=(%.4f,%.4f) cost=%u",
+      scope, identifier, goal_index,
+      costmapFootprintSweepResultName(quality.local_tracking_sweep_result),
+      quality.local_tracking_lateral_profile.c_str(),
+      quality.local_tracking_lateral_profile_active ? "true" : "false",
+      quality.local_tracking_costmap_frame.c_str(),
+      static_cast<long long>(quality.local_tracking_costmap_stamp_ns),
+      static_cast<unsigned long long>(quality.local_tracking_costmap_sequence),
+      quality.local_tracking_costmap_resolution_m, local_tracking_cross_track_error_m_,
+      quality.local_tracking_requested_horizon_m, quality.local_tracking_covered_horizon_m,
+      pose_x, pose_y, pose_yaw,
+      diagnostic.segment_start_pose_index, diagnostic.segment_end_pose_index,
+      diagnostic.segment_sample_index, diagnostic.segment_sample_count,
+      diagnostic.segment_fraction,
+      diagnostic.blocking_cell_x, diagnostic.blocking_cell_y,
+      diagnostic.blocking_cell_world_x, diagnostic.blocking_cell_world_y,
+      static_cast<unsigned int>(diagnostic.blocking_cell_cost));
+    return;
+  }
+  RCLCPP_WARN(
+    node_->get_logger(),
+    "Free-heading filtered-local tracking envelope rejection scope=%s id=%zu goal=%zu "
+    "result=%s lateral_profile=%s lateral_profile_active=%s "
+    "costmap_topic=/local_costmap/costmap frame=%s stamp_ns=%lld sequence=%llu "
+    "resolution_m=%.4f cross_track_envelope_m=%.3f horizon_m=%.3f covered_m=%.3f "
+    "sample_pose=(%.4f,%.4f,%.4f)",
+    scope, identifier, goal_index,
+    costmapFootprintSweepResultName(quality.local_tracking_sweep_result),
+    quality.local_tracking_lateral_profile.c_str(),
+    quality.local_tracking_lateral_profile_active ? "true" : "false",
+    quality.local_tracking_costmap_frame.c_str(),
+    static_cast<long long>(quality.local_tracking_costmap_stamp_ns),
+    static_cast<unsigned long long>(quality.local_tracking_costmap_sequence),
+    quality.local_tracking_costmap_resolution_m, local_tracking_cross_track_error_m_,
+    quality.local_tracking_requested_horizon_m, quality.local_tracking_covered_horizon_m,
+    pose_x, pose_y, pose_yaw);
+}
+
+bool ComputeFreeHeadingPathAction::publishCostmapBarrier()
+{
+  std::lock_guard<std::mutex> lock(global_costmap_mutex_);
+  const CostmapSample global_sample{
+    global_costmap_, global_costmap_received_at_, global_costmap_sequence_,
+    global_costmap_stamp_ns_};
+  const CostmapSample local_sample{
+    local_costmap_, local_costmap_received_at_, local_costmap_sequence_,
+    local_costmap_stamp_ns_};
+  const auto global_freshness = costmapSampleFreshness(
+    global_sample, global_frame_, costmap_max_age_, node_->get_clock()->now(),
+    std::chrono::steady_clock::now());
+  const auto local_freshness = costmapSampleFreshness(
+    local_sample, global_frame_, costmap_max_age_, node_->get_clock()->now(),
+    std::chrono::steady_clock::now());
+  if (global_freshness != CostmapSampleFreshness::kFresh ||
+    local_freshness != CostmapSampleFreshness::kFresh)
+  {
+    setOutput("costmap_stamp_ns", static_cast<std::int64_t>(0));
+    setOutput("local_costmap_stamp_ns", static_cast<std::int64_t>(0));
+    setOutput("costmap_sequence", static_cast<std::uint64_t>(0U));
+    return false;
+  }
+  setOutput("costmap_stamp_ns", global_costmap_stamp_ns_);
+  setOutput("local_costmap_stamp_ns", local_costmap_stamp_ns_);
+  setOutput("costmap_sequence", global_costmap_sequence_);
+  return true;
+}
+
+BT::NodeStatus ComputeFreeHeadingPathAction::failPlannerQuery(
+  const char * reason, bool lookahead_query)
+{
+  planner_query_failed_ = true;
+  setRecoveryEligible(false);
+  clearPathOutput();
+  RCLCPP_ERROR(
+    node_->get_logger(),
+    "Free-heading %s query failed closed: %s",
+    lookahead_query ? "lookahead planner" : "planner", reason);
+  return BT::NodeStatus::FAILURE;
 }
 
 BT::NodeStatus ComputeFreeHeadingPathAction::advanceLookaheadCandidate()
@@ -1669,6 +3002,21 @@ BT::NodeStatus ComputeFreeHeadingPathAction::finishPath()
     clearPathOutput();
     return BT::NodeStatus::FAILURE;
   }
+  if (!reverse_ && departure_connectors_.empty()) {
+    const auto forward_geometry = validateForwardPathGeometry(
+      output, forwardPathGeometryOptions(validation_options_),
+      !isZeroQuaternion(semantic_goal.pose.orientation));
+    if (!forward_geometry.valid) {
+      RCLCPP_ERROR(
+        node_->get_logger(),
+        "Rejected generic forward free-heading path before FollowPath: %s at segment %zu "
+        "(observed=%.6f, limit=%.6f)",
+        forward_geometry.reason.c_str(), forward_geometry.segment_index,
+        forward_geometry.observed_value, forward_geometry.limit);
+      clearPathOutput();
+      return BT::NodeStatus::FAILURE;
+    }
+  }
   setOutput("path", output);
   return BT::NodeStatus::SUCCESS;
 }
@@ -1717,7 +3065,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::waitForCancellation()
   if (std::chrono::steady_clock::now() > cancellation_deadline_) {
     RCLCPP_ERROR(
       node_->get_logger(), "Free-heading planner cancellation did not reach a terminal state");
-    const bool fail = failure_after_cancellation_ || commit_best_after_cancellation_;
+    const bool fail = failure_after_cancellation_;
     clearQueryState();
     clearPathOutput();
     return fail ? BT::NodeStatus::FAILURE : BT::NodeStatus::SUCCESS;
@@ -1727,7 +3075,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::waitForCancellation()
     if (!goal_handle_future_.valid()) {
       RCLCPP_ERROR(
         node_->get_logger(), "Free-heading cancellation lost its goal-handle future");
-      const bool fail = failure_after_cancellation_ || commit_best_after_cancellation_;
+      const bool fail = failure_after_cancellation_;
       clearQueryState();
       return fail ? BT::NodeStatus::FAILURE : BT::NodeStatus::SUCCESS;
     }
@@ -1742,13 +3090,13 @@ BT::NodeStatus ComputeFreeHeadingPathAction::waitForCancellation()
     } catch (const std::exception & error) {
       RCLCPP_ERROR(
         node_->get_logger(), "Free-heading cancellation goal request failed: %s", error.what());
-      const bool fail = failure_after_cancellation_ || commit_best_after_cancellation_;
+      const bool fail = failure_after_cancellation_;
       clearQueryState();
       return fail ? BT::NodeStatus::FAILURE : BT::NodeStatus::SUCCESS;
     }
     goal_handle_future_ = std::shared_future<PlannerGoalHandle::SharedPtr>();
     if (!active_goal_handle_) {
-      const bool fail = failure_after_cancellation_ || commit_best_after_cancellation_;
+      const bool fail = failure_after_cancellation_;
       clearQueryState();
       return fail ? BT::NodeStatus::FAILURE : BT::NodeStatus::SUCCESS;
     }
@@ -1763,7 +3111,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::waitForCancellation()
 
   if (query_state_ != QueryState::WAITING_FOR_CANCELLATION_TERMINAL) {
     RCLCPP_ERROR(node_->get_logger(), "Free-heading cancellation has an invalid state");
-    const bool fail = failure_after_cancellation_ || commit_best_after_cancellation_;
+    const bool fail = failure_after_cancellation_;
     clearQueryState();
     return fail ? BT::NodeStatus::FAILURE : BT::NodeStatus::SUCCESS;
   }
@@ -1859,7 +3207,16 @@ void ComputeFreeHeadingPathAction::clearPathOutput()
 
 void ComputeFreeHeadingPathAction::setRecoveryEligible(bool eligible)
 {
-  setOutput("recovery_eligible", eligible);
+  bool recovery_is_eligible =
+    eligible && !planner_query_failed_ && !search_budget_exhausted_;
+  // Capture the final planning snapshot immediately before the BT clears
+  // costmaps. AckermannReverseRetreat requires both raw maps to advance beyond
+  // this stamp, creating a real post-clear sample barrier instead of merely
+  // accepting the map that happened to arrive when planning started.
+  if (recovery_is_eligible && !publishCostmapBarrier()) {
+    recovery_is_eligible = false;
+  }
+  setOutput("recovery_eligible", recovery_is_eligible);
 }
 
 bool ComputeFreeHeadingPathAction::isZeroQuaternion(

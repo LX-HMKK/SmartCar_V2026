@@ -5,33 +5,16 @@ planning_segments:
   start_id: p_start
   end_id: a_task_observe
   through_ids: []
-- id: reverse_corridor
+- id: qr_to_vlm
   direction: reverse
   start_id: a_task_observe
-  end_id: b_corridor_enter
-  through_ids:
-  - b_corridor_gate
-- id: reverse_c_entry
-  direction: reverse
-  start_id: b_corridor_enter
-  end_id: c_corner_3
-  through_ids:
-  - c_entry_west
-  - c_corner_1
-  - c_corner_2
-- id: c_exit
-  direction: reverse
-  start_id: c_corner_3
-  end_id: b_corridor_return_enter
-  through_ids:
-  - c_corner_4
+  end_id: c_corner_1
+  through_ids: []
 - id: return_to_p
-  direction: reverse
-  start_id: b_corridor_return_enter
+  direction: forward
+  start_id: c_corner_1
   end_id: p_finish
-  through_ids:
-  - b_corridor_return_drop
-  - b_corridor_return
+  through_ids: []
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -60,121 +43,28 @@ waypoints:
       y: 0.0
       z: 0.15076091589065388
       w: 0.9885702535681575
+  # Simulator-only substitute for the protected QR pose.
   task: nav
-  # Preserve the physical QR arrival pose while this simulator-only route
-  # skips the QR reader.
   heading_mode: locked
   direction: forward
   goal_profile: precise
-- id: b_corridor_gate
-  # Free guide above the B opening. It keeps the reversing Ackermann arc
-  # clear of the west-wall upper corner before the C-entry leg begins.
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 1.80
-      y: 2.85
-      z: 0.0
-  task: corridor
-  direction: reverse
-  goal_profile: standard
-- id: b_corridor_enter
-  frame_id: odom_combined
-  pose:
-    position:
-      # Free guide west of the B-wall corner. The next segment owns the
-      # C-entry turn; this point deliberately has no yaw requirement.
-      x: 1.10
-      y: 2.85
-      z: 0.0
-  task: corridor
-  direction: reverse
-  goal_profile: standard
-- id: c_entry_west
-  frame_id: odom_combined
-  pose:
-    position:
-      # This exact quarter-turn entry leaves C1 tangent to the top lane,
-      # avoiding a diagonal sweep into the rasterized central keepout.
-      x: 0.447950
-      y: 3.245847
-      z: 0.0
-  task: via
-  direction: reverse
-  goal_profile: standard
 - id: c_corner_1
   frame_id: odom_combined
   pose:
     position:
-      x: 0.9979495131729672
-      y: 3.7958472007445607
+      x: 0.3867094808286349
+      y: 2.65
       z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.4999999999999998
+      w: 0.8660254037844388
+  # Simulator-only substitute for the protected VLM handoff pose.
   task: nav
+  heading_mode: locked
   direction: reverse
-  goal_profile: standard
-- id: c_corner_2
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 2.122642689412535
-      y: 3.805338282400591
-      z: 0.0
-  task: loop
-  direction: reverse
-  goal_profile: standard
-- id: c_corner_3
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 3.2188626206840123
-      y: 3.7483917924644095
-      z: 0.0
-  task: loop
-  direction: reverse
-  goal_profile: standard
-- id: c_corner_4
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 3.313773437244314
-      y: 2.737591596097203
-      z: 0.0
-  task: loop
-  direction: reverse
-  goal_profile: standard
-- id: b_corridor_return_enter
-  frame_id: odom_combined
-  pose:
-    position:
-      # Free guide: begin the descent clear of the east B-wall.
-      x: 2.20
-      y: 2.35
-      z: 0.0
-  task: corridor
-  direction: reverse
-  goal_profile: standard
-- id: b_corridor_return_drop
-  frame_id: odom_combined
-  pose:
-    position:
-      # Keep the reverse turn clear of the B-wall lower corner.
-      x: 1.60
-      y: 1.30
-      z: 0.0
-  task: via
-  direction: reverse
-  goal_profile: standard
-- id: b_corridor_return
-  frame_id: odom_combined
-  pose:
-    position:
-      # Complete the reverse return before the locked P finish pose.
-      x: 1.40
-      y: 0.40
-      z: 0.0
-  task: corridor
-  direction: reverse
-  goal_profile: standard
+  goal_profile: reverse_handoff
 - id: p_finish
   frame_id: odom_combined
   pose:
@@ -185,8 +75,8 @@ waypoints:
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.3826834323650898
-      w: 0.9238795325112867
+      z: -0.9238795325112867
+      w: 0.38268343236508984
   task: return
-  direction: reverse
+  direction: forward
   goal_profile: standard

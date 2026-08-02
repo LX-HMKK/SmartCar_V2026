@@ -195,12 +195,13 @@ class TestNav2Contracts(unittest.TestCase):
                 self.assertNotIn("Spin", tags)
                 # Stock behaviors require behavior_server and do not preserve
                 # the task direction lease. The project recovery remains a
-                # FollowPath action through controller_server instead.
+                # RecordFollowPath still dispatches through controller_server.
                 self.assertIn("ClearEntireCostmap", tags)
                 self.assertNotIn("BackUp", tags)
                 self.assertNotIn("DriveOnHeading", tags)
                 self.assertNotIn("Wait", tags)
-                for follow_path in root.iter("FollowPath"):
+                self.assertNotIn("FollowPath", tags)
+                for follow_path in root.iter("RecordFollowPath"):
                     self.assertNotIn("allow_reversing", follow_path.attrib)
 
         through_tags = [
@@ -231,6 +232,74 @@ class TestNav2Contracts(unittest.TestCase):
                 remove_passed_goals[0].attrib.get("robot_base_frame"),
                 "base_footprint",
             )
+
+    def test_record_follow_path_publishes_only_acknowledged_goals(self):
+        source = (
+            PACKAGE_ROOT / "src" / "record_follow_path_action.cpp"
+        ).read_text(encoding="utf-8")
+        header = (
+            PACKAGE_ROOT / "include" / "smartcar_nav2"
+            / "record_follow_path_action.hpp"
+        ).read_text(encoding="utf-8")
+        cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
+
+        self.assertIn("RecordFollowPathAction", header)
+        self.assertIn('"/smartcar/accepted_global_plan"', source)
+        self.assertIn("rclcpp::QoS(1).reliable().transient_local()", source)
+        self.assertIn("send_goal_options.goal_response_callback", source)
+        self.assertIn("handleGoalResponse(generation, accepted_path", source)
+        self.assertIn("cancelled_dispatch_generation_ >= generation", source)
+        self.assertIn("async_cancel_goal(goal_handle)", source)
+        self.assertIn("void RecordFollowPathAction::halt()", source)
+        self.assertIn("cancelOutstandingDispatch();", source)
+        self.assertIn("goalAcknowledgementTimeout", source)
+        self.assertIn("kMinimumGoalAcknowledgementTimeout{500}", source)
+        self.assertIn("startLateGoalAcknowledgementGuard();", source)
+        self.assertIn("late_goal_acknowledgement_pending_", source)
+        self.assertIn("callback_group_executor_.spin_until_future_complete", source)
+        self.assertNotIn(
+            "action_client_ = rclcpp_action::create_client<nav2_msgs::action::FollowPath>",
+            source,
+        )
+        self.assertIn("publishAcceptedPath(path);", source)
+        self.assertIn('"RecordFollowPath"', source)
+        self.assertIn(
+            "smartcar_record_follow_path_action_bt_node", cmake)
+
+        active_trees = (
+            BT_FILE,
+            BT_PRECISE_FILE,
+            BT_THROUGH_POSES_FILE,
+            BT_REVERSE_FILE,
+            BT_REVERSE_HANDOFF_FILE,
+            BT_REVERSE_THROUGH_POSES_FILE,
+            BT_REVERSE_LOCKED_FILE,
+        )
+        for behavior_tree in active_trees:
+            with self.subTest(behavior_tree=behavior_tree.name):
+                tags = [
+                    element.tag
+                    for element in ElementTree.parse(behavior_tree).getroot().iter()
+                ]
+                self.assertEqual(tags.count("RecordFollowPath"), 1)
+                self.assertNotIn("FollowPath", tags)
+
+        for navigator in (
+            "bt_navigator",
+            "bt_navigator_navigate_through_poses_rclcpp_node",
+        ):
+            with self.subTest(navigator=navigator):
+                self.assertIn(
+                    "smartcar_record_follow_path_action_bt_node",
+                    ros_parameters(self.params, navigator)["plugin_lib_names"],
+                )
+
+        retreat_source = (
+            PACKAGE_ROOT / "src" / "ackermann_reverse_retreat_action.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn('"/smartcar/accepted_global_plan"', retreat_source)
+        self.assertIn("[this, generation, accepted_path]", retreat_source)
+        self.assertIn("accepted_path_publisher_->publish(accepted_path);", retreat_source)
 
     def test_bt_navigator_only_overrides_matching_tree(self):
         bt_navigator = ros_parameters(self.params, "bt_navigator")
@@ -268,8 +337,9 @@ class TestNav2Contracts(unittest.TestCase):
             5 * primary["bt_loop_duration"],
         )
 
-    def test_controller_uses_rpp_and_reverse_mppi_contracts(self):
+    def test_controller_uses_forward_rpp_and_mppi_handoff_contracts(self):
         controller = ros_parameters(self.params, "controller_server")
+        self.assertEqual(controller["odom_topic"], "/odom_combined")
         self.assertEqual(
             controller["goal_checker_plugins"],
             [
@@ -309,7 +379,13 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("goal_checker_plugin", controller)
         self.assertEqual(
             controller["controller_plugins"],
-            ["FollowPath", "ReverseHandoff", "ReverseRecovery"],
+            [
+                "FollowPath",
+                "ForwardAvoidance",
+                "ForwardHandoff",
+                "ReverseHandoff",
+                "ReverseRecovery",
+            ],
         )
 
         rpp = controller["FollowPath"]
@@ -322,16 +398,54 @@ class TestNav2Contracts(unittest.TestCase):
         for key in UNSUPPORTED_HUMBLE_RPP_KEYS:
             self.assertNotIn(key, rpp)
 
+        forward = controller["ForwardAvoidance"]
+        self.assertEqual(
+            forward["plugin"], "smartcar_nav2::ForwardOnlyRPPController"
+        )
+        self.assertAlmostEqual(forward["desired_linear_vel"], 0.15)
+        self.assertGreater(forward["forward_max_angular_velocity"], 0.0)
+        self.assertIs(forward["allow_reversing"], False)
+        self.assertIs(forward["use_rotate_to_heading"], False)
+        self.assertIs(forward["use_collision_detection"], True)
+
+        planner_radius = ros_parameters(self.params, "planner_server")[
+            "GridBased"
+        ]["minimum_turning_radius"]
+        forward_handoff = controller["ForwardHandoff"]
+        self.assertEqual(
+            forward_handoff["plugin"], "smartcar_nav2::ForwardOnlyMPPIController"
+        )
+        self.assertEqual(forward_handoff["motion_model"], "Ackermann")
+        self.assertAlmostEqual(forward_handoff["vx_min"], 0.02)
+        self.assertAlmostEqual(forward_handoff["vx_max"], 0.15)
+        self.assertGreater(forward_handoff["vx_min"], 0.0)
+        self.assertLess(forward_handoff["vx_min"], forward_handoff["vx_max"])
+        self.assertAlmostEqual(
+            forward_handoff["AckermannConstraints"]["min_turning_r"],
+            planner_radius,
+        )
+        self.assertGreaterEqual(
+            forward_handoff["wz_max"],
+            forward_handoff["vx_max"] / planner_radius,
+        )
+        self.assertIs(forward_handoff["CostCritic"]["consider_footprint"], True)
+        self.assertIn("GoalAngleCritic", forward_handoff["critics"])
+        self.assertIn("PathAngleCritic", forward_handoff["critics"])
+
         handoff = controller["ReverseHandoff"]
         self.assertEqual(
             handoff["plugin"], "smartcar_nav2::ReverseOnlyMPPIController"
         )
         self.assertEqual(handoff["motion_model"], "Ackermann")
-        planner_radius = ros_parameters(self.params, "planner_server")[
-            "GridBased"
-        ]["minimum_turning_radius"]
         self.assertAlmostEqual(
             handoff["AckermannConstraints"]["min_turning_r"], planner_radius
+        )
+        self.assertAlmostEqual(
+            forward["forward_min_turning_radius"], planner_radius
+        )
+        self.assertLessEqual(
+            forward["desired_linear_vel"] /
+            forward["forward_max_angular_velocity"], planner_radius + 0.01
         )
         self.assertAlmostEqual(handoff["vx_min"], 0.02)
         self.assertAlmostEqual(handoff["vx_max"], 0.09)
@@ -411,19 +525,21 @@ class TestNav2Contracts(unittest.TestCase):
         regular = ElementTree.parse(BT_REVERSE_FILE).getroot()
         handoff = ElementTree.parse(BT_REVERSE_HANDOFF_FILE).getroot()
         regular_compute = regular.find(".//ComputeReverseFreeHeadingPathToPose")
-        handoff_compute = handoff.find(".//ComputeReversePathToPose")
+        handoff_compute = handoff.find(
+            ".//ComputeReverseFreeHeadingPathToPose"
+        )
         self.assertIsNotNone(regular_compute)
         self.assertIsNotNone(handoff_compute)
         # Ordinary reverse waypoints carry a zero quaternion and resolve their
         # terminal heading in the live costmap. The VLM handoff is heading
-        # locked, so it preserves the direct reverse planner node.
+        # locked, so the shared reverse node retains its single authored-yaw
+        # candidate while also providing the same safe retreat barrier.
         self.assertIn("heading_samples", regular_compute.attrib)
-        self.assertNotIn("heading_samples", handoff_compute.attrib)
+        self.assertIn("heading_samples", handoff_compute.attrib)
         for field in (
             "goal",
             "path",
             "planner_id",
-            "minimum_turning_radius",
             "curvature_tolerance",
             "maximum_direction_error",
             "start_position_tolerance",
@@ -435,8 +551,10 @@ class TestNav2Contracts(unittest.TestCase):
             self.assertEqual(
                 handoff_compute.attrib[field], regular_compute.attrib[field]
             )
+        self.assertNotIn("minimum_turning_radius", regular_compute.attrib)
+        self.assertNotIn("minimum_turning_radius", handoff_compute.attrib)
 
-        follow = handoff.find(".//FollowPath")
+        follow = handoff.find(".//RecordFollowPath")
         self.assertIsNotNone(follow)
         self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
         self.assertEqual(
@@ -470,6 +588,15 @@ class TestNav2Contracts(unittest.TestCase):
                 )
                 self.assertEqual(retreat.attrib["retreat_used"], "{reverse_retreat_used}")
                 self.assertAlmostEqual(float(retreat.attrib["retreat_distance_m"]), 0.15)
+                self.assertEqual(retreat.attrib["follow_path_result_timeout_ms"], "12000")
+                self.assertEqual(retreat.attrib["scan_min_obstacle_range_m"], "0.25")
+                self.assertEqual(retreat.attrib["scan_max_obstacle_range_m"], "2.50")
+                self.assertEqual(retreat.attrib["scan_costmap_match_radius_m"], "0.12")
+                self.assertEqual(retreat.attrib["retreat_odom_max_age_ms"], "500")
+                self.assertEqual(retreat.attrib["retreat_odom_max_step_m"], "0.05")
+                self.assertEqual(retreat.attrib["retreat_odom_max_travel_m"], "0.19")
+                self.assertEqual(retreat.attrib["retreat_odom_max_displacement_m"], "0.19")
+                self.assertNotIn("static_keepout_mask_topic", retreat.attrib)
                 self.assertEqual(len(list(root.iter("SetBlackboard"))), 1)
                 self.assertNotIn("BackUp", {element.tag for element in root.iter()})
                 self.assertNotIn("DriveOnHeading", {element.tag for element in root.iter()})
@@ -499,7 +626,7 @@ class TestNav2Contracts(unittest.TestCase):
         # approach paths that the Ackermann chassis cannot track.
         self.assertLessEqual(planner["tolerance"], 0.05)
         minimum_turning_radius = planner["minimum_turning_radius"]
-        self.assertAlmostEqual(minimum_turning_radius, 0.55)
+        self.assertAlmostEqual(minimum_turning_radius, 0.22)
         # The Humble Smac smoother does not preserve the Hybrid-A* curvature
         # constraint. A reverse path must retain the DUBIN lattice geometry.
         self.assertIs(planner["smooth_path"], False)
@@ -507,10 +634,16 @@ class TestNav2Contracts(unittest.TestCase):
         calibration = self.bringup_coord["calibration"]
         wheelbase = float(calibration["wheelbase"])
         max_steering_angle = float(calibration["max_steering_angle"])
-        required_steering_angle = math.atan(
-            wheelbase / minimum_turning_radius
+        # 0.70 rad is the direct-pass-through command proven on the vehicle.
+        # The planner keeps a 2 cm radius margin above the measured 0.20 m
+        # ground circle. The ideal bicycle estimate is only a sanity check:
+        # its small residual exceeds the measured command limit by < 0.01 rad.
+        required_steering_angle = math.atan(wheelbase / minimum_turning_radius)
+        self.assertAlmostEqual(max_steering_angle, 0.70)
+        self.assertLessEqual(
+            required_steering_angle,
+            max_steering_angle + 0.01,
         )
-        self.assertLessEqual(required_steering_angle, max_steering_angle)
 
     def test_costmaps_use_real_and_virtual_yaw_safe_footprints(self):
         local = self.params["local_costmap"]["local_costmap"]["ros__parameters"]
@@ -539,29 +672,46 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertIn("pluginlib_export_plugin_description_file(", cmake)
         self.assertIn("reverse_only_mppi_controller_plugin.xml", cmake)
         self.assertIn("test_reverse_command_filter", cmake)
+        self.assertIn("forward_only_mppi_controller_plugin.xml", cmake)
+        self.assertIn("forward_only_rpp_controller_plugin.xml", cmake)
+        self.assertIn("test_forward_command_filter", cmake)
+        self.assertIn("test_forward_path_tracking_guard", cmake)
+        self.assertIn("add_library(smartcar_forward_only_mppi_controller", cmake)
+        self.assertIn("add_library(smartcar_forward_only_rpp_controller", cmake)
         self.assertIn("configure_file(", cmake)
         self.assertIn("@ONLY", cmake)
         self.assertIn("smartcar_nav2::ReverseOnlyMPPIController", plugin_xml)
         self.assertIn("@SMARTCAR_NAV2_SHARE_DIR@", params_source)
         self.assertNotIn("/root/ros2_ws", params_source)
 
-    def test_rpp_inflation_model_matches_both_costmaps(self):
-        rpp = ros_parameters(self.params, "controller_server")["FollowPath"]
-        cost_scaling_factors = []
+    def test_forward_controllers_keep_costmap_collision_contracts(self):
+        forward = ros_parameters(self.params, "controller_server")[
+            "ForwardAvoidance"
+        ]
+        forward_handoff = ros_parameters(self.params, "controller_server")[
+            "ForwardHandoff"
+        ]
         inflation_radii = []
         for costmap_name in ("local_costmap", "global_costmap"):
             costmap = self.params[costmap_name][costmap_name]["ros__parameters"]
             inflation = costmap["inflation_layer"]
-            cost_scaling_factors.append(inflation["cost_scaling_factor"])
             inflation_radii.append(inflation["inflation_radius"])
 
-        self.assertTrue(
-            all(
-                factor == rpp["inflation_cost_scaling_factor"]
-                for factor in cost_scaling_factors
-            )
-        )
-        self.assertLessEqual(rpp["cost_scaling_dist"], min(inflation_radii))
+        self.assertTrue(all(radius > 0.0 for radius in inflation_radii))
+        self.assertTrue(forward["use_collision_detection"])
+        self.assertGreater(
+            forward["max_allowed_time_to_collision_up_to_carrot"], 0.0)
+        self.assertTrue(forward["use_cost_regulated_linear_velocity_scaling"])
+        self.assertTrue(forward_handoff["CostCritic"]["consider_footprint"])
+        rpp_source = (PACKAGE_ROOT / "src" / "forward_only_rpp_controller.cpp").read_text(
+            encoding="utf-8")
+        self.assertIn("void ForwardOnlyRPPController::setPlan", rpp_source)
+        self.assertIn("projectForwardPathTrackingPose", rpp_source)
+        self.assertIn("forward_path_max_cross_track_error", rpp_source)
+        self.assertIn("forwardPathTrackingTerminalLookaheadActive", rpp_source)
+        self.assertIn("forward_terminal_lookahead_m", rpp_source)
+        self.assertIn("inCollision(", rpp_source)
+        self.assertIn("nav2_core::PlannerException", rpp_source)
 
     def test_velocity_smoother_respects_safety_and_curvature_limits(self):
         smoother = ros_parameters(self.params, "velocity_smoother")
@@ -727,6 +877,9 @@ class TestNav2Contracts(unittest.TestCase):
     def test_simulation_route_preserves_protected_semantic_targets(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
+        semantic_ids = (
+            "p_start", "a_task_observe", "c_corner_1", "p_finish",
+        )
         default_by_id = {
             waypoint["id"]: waypoint for waypoint in default["waypoints"]
         }
@@ -734,10 +887,26 @@ class TestNav2Contracts(unittest.TestCase):
             waypoint["id"]: waypoint for waypoint in nav_only["waypoints"]
         }
 
-        # P and QR positions are fixed competition references. C-zone guide points and
-        # the return corridor are intentionally simulation-tunable, so their
-        # coordinates must not be compared against the compact real route.
-        for waypoint_id in ("p_start", "a_task_observe"):
+        self.assertEqual(
+            [waypoint["id"] for waypoint in default["waypoints"]],
+            list(semantic_ids),
+        )
+        self.assertEqual(
+            [waypoint["id"] for waypoint in nav_only["waypoints"]],
+            list(semantic_ids),
+        )
+        self.assertEqual(
+            [waypoint["task"] for waypoint in default["waypoints"]],
+            ["start", "qr", "vlm", "return"],
+        )
+        self.assertEqual(
+            [waypoint["task"] for waypoint in nav_only["waypoints"]],
+            ["start", "nav", "nav", "return"],
+        )
+
+        # nav_only suppresses media requests, but it must use the exact
+        # protected physical targets and locked headings of the full mission.
+        for waypoint_id in semantic_ids:
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
                     default_by_id[waypoint_id]["pose"]["position"],
@@ -751,59 +920,43 @@ class TestNav2Contracts(unittest.TestCase):
                     default_by_id[waypoint_id].get("goal_profile", "standard"),
                     nav_by_id[waypoint_id].get("goal_profile", "standard"),
                 )
+                self.assertEqual(
+                    default_by_id[waypoint_id]["pose"]["orientation"],
+                    nav_by_id[waypoint_id]["pose"]["orientation"],
+                )
+                self.assertEqual(
+                    effective_heading_mode(default_by_id[waypoint_id]), "locked"
+                )
+                self.assertEqual(
+                    effective_heading_mode(nav_by_id[waypoint_id]), "locked"
+                )
+                quaternion_norm = math.sqrt(sum(
+                    value * value
+                    for value in nav_by_id[waypoint_id]["pose"]["orientation"].values()
+                ))
+                self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
 
         self.assertEqual(nav_by_id["a_task_observe"]["task"], "nav")
+        self.assertEqual(nav_by_id["c_corner_1"]["task"], "nav")
+        self.assertEqual(nav_by_id["c_corner_1"]["direction"], "reverse")
         self.assertEqual(
-            effective_heading_mode(nav_by_id["a_task_observe"]), "locked"
+            nav_by_id["c_corner_1"].get("goal_profile", "standard"),
+            "reverse_handoff",
         )
-        self.assertEqual(
-            nav_by_id["a_task_observe"]["pose"]["orientation"],
-            default_by_id["a_task_observe"]["pose"]["orientation"],
+        self.assertEqual(nav_by_id["p_finish"]["direction"], "forward")
+        self.assertFalse(
+            {"via", "corridor", "loop"}
+            & {waypoint["task"] for waypoint in default["waypoints"]}
         )
-
-        # The finish position is fixed, while its simulation heading is flipped
-        # by 180 degrees for the all-reverse route.
-        self.assertEqual(
-            default_by_id["p_finish"]["pose"]["position"],
-            nav_by_id["p_finish"]["pose"]["position"],
+        self.assertFalse(
+            {
+                "b_corridor_gate", "b_corridor_enter", "c_entry_west",
+                "c_corner_2", "c_corner_3", "c_corner_4",
+                "b_corridor_return_enter", "b_corridor_return_drop",
+                "b_corridor_return",
+            }
+            & set(nav_by_id)
         )
-        finish_yaw_delta = math.remainder(
-            planar_yaw(nav_by_id["p_finish"]["pose"]["orientation"])
-            - planar_yaw(default_by_id["p_finish"]["pose"]["orientation"]),
-            2.0 * math.pi,
-        )
-        self.assertAlmostEqual(abs(finish_yaw_delta), math.pi)
-        self.assertEqual(
-            default_by_id["p_finish"].get("goal_profile", "standard"),
-            nav_by_id["p_finish"].get("goal_profile", "standard"),
-        )
-
-        # C-zone simulation points are user-tunable. Preserve their semantic
-        # role and continuous reverse ThroughPoses contract, but do not pin a
-        # saved yaw to the compact real-route reference value.
-        nav_c_corner_1 = waypoint_by_id(nav_only, "c_corner_1")
-        self.assertEqual(nav_c_corner_1["task"], "nav")
-        self.assertEqual(nav_c_corner_1["direction"], "reverse")
-        self.assertEqual(
-            nav_c_corner_1.get("goal_profile", "standard"),
-            "standard",
-        )
-
-        corridor_enter = waypoint_by_id(nav_only, "b_corridor_enter")
-        self.assertEqual(corridor_enter["direction"], "reverse")
-        self.assertEqual(corridor_enter["task"], "corridor")
-        self.assertNotIn("b_corridor_out", nav_by_id)
-
-        c_corner_2 = waypoint_by_id(nav_only, "c_corner_2")
-        self.assertEqual(c_corner_2["task"], "loop")
-        self.assertEqual(c_corner_2["direction"], "reverse")
-
-        c_corner_4 = waypoint_by_id(nav_only, "c_corner_4")
-        self.assertEqual(c_corner_4["task"], "loop")
-        self.assertEqual(c_corner_4["direction"], "reverse")
-        return_enter = waypoint_by_id(nav_only, "b_corridor_return_enter")
-        self.assertEqual(return_enter["task"], "corridor")
-        self.assertEqual(return_enter["direction"], "reverse")
 
         precise_ids = [
             waypoint["id"]
@@ -839,17 +992,6 @@ class TestNav2Contracts(unittest.TestCase):
             delta=1.0e-6,
         )
 
-        # Transit waypoints omit YAML orientation. The task route materializer
-        # turns that omission into an all-zero free-heading sentinel, which the
-        # custom BT resolves against the live costmap before calling Smac.
-        intermediate_ids = [
-            "c_corner_3",
-            "b_corridor_return",
-        ]
-        for inter_id in intermediate_ids:
-            inter = waypoint_by_id(default, inter_id)
-            self.assertNotIn("orientation", inter["pose"])
-
     def test_package_declares_direct_runtime_and_test_dependencies(self):
         root = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()
         exec_dependencies = {element.text for element in root.findall("exec_depend")}
@@ -863,7 +1005,6 @@ class TestNav2Contracts(unittest.TestCase):
                 "nav2_lifecycle_manager",
                 "nav2_planner",
                 "nav2_smac_planner",
-                "nav2_regulated_pure_pursuit_controller",
             }.issubset(exec_dependencies)
         )
         self.assertTrue(
@@ -871,6 +1012,7 @@ class TestNav2Contracts(unittest.TestCase):
                 "nav2_core",
                 "nav2_costmap_2d",
                 "nav2_mppi_controller",
+                "nav2_regulated_pure_pursuit_controller",
                 "pluginlib",
                 "rclcpp_lifecycle",
             }.issubset(direct_dependencies)

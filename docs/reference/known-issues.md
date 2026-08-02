@@ -1,7 +1,7 @@
 # 已知问题与避坑指南
 
 > 源文件：`CLAUDE.md` → 本文件（低频查阅，为 CLAUDE.md 减负）
-> 最后更新：2026-07-31
+> 最后更新：2026-08-02
 
 ## Ubuntu 本机 Gazebo 仿真
 
@@ -12,18 +12,28 @@
 - **仿真残留进程**：日常使用 `sim_start.sh` 自动清理；手动恢复使用
   `sim_cleanup.sh --kill-processes`。完整说明见
   [`../deployment/local-simulation.md`](../deployment/local-simulation.md)。
+- **Gazebo 与 RViz 感知不同步（2026-08-02 已加门禁）**：仿真现在以 Gazebo ground-truth
+  `/odom` 为唯一 TF/里程计源，并在发车前检查 scan 时间戳可查询 TF、odom/TF 对齐、A 区
+  锥桶回波以及 local/global raw costmap。检查结果发布到
+  `/smartcar/sim_perception_ready` 并写进路线结果 JSON；未 ready 时不会发送目标。它证明
+  仿真感知链已连通，不替代实体传感器验收。
 
 ## 硬件与传感器
 
 - **LiDAR 物理朝向**：2D LiDAR 物理安装转了 90°（Y 朝后/X 朝左），`laser_yaw=1.5708` 已修复。若更换/重新安装 LiDAR 必须重新确认朝向。
 - **`cmd_vel_to_ackermann_drive` 竞争**：直接往 `/ackermann_cmd` pub 时，必须先 kill 该节点，否则 safety_node 20Hz 零值覆盖你的指令（车不动或抖动）。
 - **2D LiDAR 无法区分高度**：锥桶上窄下宽——雷达看到的是上半窄截面，车体下半蹭宽底。通过非对称 footprint（后轴原点）+ `obstacle_min_range=0.25` 滤车身 + 膨胀半径补偿，不能根本解决。物理上需 3D 感知或更谨慎的锥桶摆放。
+- **转向 0.7 rad 命令被固件折算 (2026-08-02)**：`/ackermann_cmd` 发 `steering_angle=0.7` 时，下位机 `Move_Z` 显示 `0.322`（`MINI_AKM_MIN_TURN_RADIUS=0.35`）或 `0.453`（调低该常量后）——不是 ROS 丢值，而是 STM32 固件把协议帧 `tx[7:8]` 当角速度 ω、经 `Vz_to_Akm_Angle` 自行车模型反算前轮转角并被最小转弯半径钳制。修复：将固件 `Vz_to_Akm_Angle`（`HARDWARE/usartx.c`，用户本地 Keil 工程）改为直接透传 `return Vz;`，全固件 4 条接收路径（USART1/3/5 + CAN）同时生效；实车确认 `Move_Z=0.700`。0.7 rad 最大转向画圆卷尺实测 **R_min ≈ 0.2 m**（理论 0.09 m，工程偏差正常）。ROS 侧无改动。完整推导见 `docs/review/steering-command-chain-fix-2026-08-02.md`。
 
 ## 导航与运动
 
 - **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.50` 已修复。
+- **P→A 紧右弯跟踪尚未通过（2026-08-02）**：稀疏 `nav_only.yaml` 已删除中间经过点，P→A
+  的全局路径 `4.270 m / 3.276 m = 1.303`，不是大绕圈；但 RPP 在高位紧右弯从路径左侧
+  收敛后越过中心并触及右侧 `50 mm` 保护包络，故障安全停车。不得放宽右侧保护或重新增加
+  密集点位；待实施该弯道的非对称横向反馈后再做完整 Gazebo 复验。
 - **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版"IntegrationClock 导致 EKF pose/速度冲突"的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
-- **倒车导航实现 (2026-07-26)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），QR yaw 对齐 P→QR 直达切线 `17.342°`，避免为追逐原 `30°` 航向绕圈；Smac 近似终点 `tolerance=0.0`。reverse goal 使用 `navigate_to_pose_reverse_w_replanning_and_recovery.xml`（`ComputeReversePathToPose` 自定义 BT：yaw 加 π → 唯一 DUBIN planner → yaw 恢复 π → 严格验证）。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；`minimum_turning_radius=0.55, curvature_tolerance=0.20` 已恢复。完整路线仿真仍需复测后段航向。
+- **倒车导航实现 (2026-08-01)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），QR yaw 对齐 P→QR 直达切线 `17.342°`，避免为追逐原 `30°` 航向绕圈；Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。每条规划边都受 `1.60` 直接距离倍率约束，拒绝明显绕行；该阈值仍须以完整仿真可行证据复验。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线仿真和实体倒车仍需复测。
 - **方向门倒车转向翻转 (2026-07-24)**：用户在实体车上观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
 
 ## Nav2 配置与行为树

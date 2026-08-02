@@ -18,9 +18,9 @@ struct SensorCalibration
     yaw_velocity_scale(1.0),
     gyro_z_scale(1.0),
     gyro_z_bias(0.0),
-    steering_command_scale(0.5),
+    steering_command_scale(1.0),
     steering_command_offset_rad(0.0),
-    max_calibrated_steering_command_rad(0.225)
+    max_calibrated_steering_command_rad(0.70)
   {
   }
 

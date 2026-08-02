@@ -3,12 +3,14 @@
 
 ``route_planning.yaml`` is deliberately the human-edited source of truth for
 the small set of constraints that the editor and simulation can share.  This
-script writes only the corresponding simulation values:
+script writes only the corresponding simulation-overlay values:
 
-* Smac Hybrid and reverse-MPPI minimum turning radii;
+* Smac Hybrid, forward/reverse controller, and free-heading minimum turning
+  radii;
 * the padded Nav2 footprint and simulation-only cost inflation radius.
 
-It never changes the real vehicle's obstacle-layer inflation parameters.
+It never changes the real vehicle's Nav2 parameter file or obstacle-layer
+inflation parameters.
 """
 
 from __future__ import annotations
@@ -29,7 +31,6 @@ SOURCE_ROOT = Path(os.environ.get("SMARTCAR_SRC", str(SCRIPT.parents[2])))
 DEFAULT_ROUTE_PLANNING = (
     SOURCE_ROOT / "smartcar_tools" / "config" / "routes" / "route_planning.yaml"
 )
-DEFAULT_NAV2_PARAMS = SOURCE_ROOT / "smartcar_nav2" / "config" / "nav2_params.yaml"
 DEFAULT_KEEPOUT_OVERLAY = SOURCE_ROOT / "smartcar_sim" / "config" / "nav2_keepout_filter.yaml"
 
 
@@ -121,14 +122,13 @@ def _write_atomic(path: Path, content: str) -> None:
 
 def synchronize(
     route_planning_file: Path,
-    nav2_params_file: Path,
     keepout_overlay_file: Path,
     *,
     check: bool = False,
 ) -> bool:
     """Synchronize all simulation consumers; return whether any file changed."""
     config = _load_route_planning(route_planning_file)
-    radius = config.minimum_turning_radius_m
+    radius = config.simulation_minimum_turning_radius_m
     footprint = config.runtime_footprint
     footprint_text = "[[{0}, {1}], [{0}, -{1}], [-{0}, -{1}], [-{0}, {1}]]".format(
         _format_scalar(footprint.half_length_m),
@@ -136,20 +136,23 @@ def synchronize(
     )
     targets = (
         (
-            nav2_params_file,
-            {
-                "planner_server.ros__parameters.GridBased.minimum_turning_radius": radius,
-                "controller_server.ros__parameters.ReverseHandoff.AckermannConstraints.min_turning_r": radius,
-                "local_costmap.local_costmap.ros__parameters.footprint": footprint_text,
-                "local_costmap.local_costmap.ros__parameters.footprint_padding": footprint.padding_m,
-                "global_costmap.global_costmap.ros__parameters.footprint": footprint_text,
-                "global_costmap.global_costmap.ros__parameters.footprint_padding": footprint.padding_m,
-            },
-        ),
-        (
             keepout_overlay_file,
             {
+                "bt_navigator.ros__parameters.free_heading_minimum_turning_radius": radius,
+                "bt_navigator_navigate_through_poses_rclcpp_node.ros__parameters.free_heading_minimum_turning_radius": radius,
+                "bt_navigator_navigate_to_pose_rclcpp_node.ros__parameters.free_heading_minimum_turning_radius": radius,
+                "controller_server.ros__parameters.ForwardAvoidance.regulated_linear_scaling_min_radius": radius,
+                "controller_server.ros__parameters.ForwardAvoidance.forward_min_turning_radius": radius,
+                "controller_server.ros__parameters.ForwardHandoff.regulated_linear_scaling_min_radius": radius,
+                "controller_server.ros__parameters.ForwardHandoff.forward_min_turning_radius": radius,
+                "controller_server.ros__parameters.ReverseHandoff.AckermannConstraints.min_turning_r": radius,
+                "controller_server.ros__parameters.ReverseRecovery.AckermannConstraints.min_turning_r": radius,
+                "planner_server.ros__parameters.GridBased.minimum_turning_radius": radius,
+                "local_costmap.local_costmap.ros__parameters.footprint": footprint_text,
+                "local_costmap.local_costmap.ros__parameters.footprint_padding": footprint.padding_m,
                 "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_keepout.costmap_inflation_radius_m,
+                "global_costmap.global_costmap.ros__parameters.footprint": footprint_text,
+                "global_costmap.global_costmap.ros__parameters.footprint_padding": footprint.padding_m,
                 "global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_keepout.costmap_inflation_radius_m,
             },
         ),
@@ -170,7 +173,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--route-planning-config", type=Path, default=DEFAULT_ROUTE_PLANNING
     )
-    parser.add_argument("--nav2-params", type=Path, default=DEFAULT_NAV2_PARAMS)
     parser.add_argument(
         "--keepout-overlay", type=Path, default=DEFAULT_KEEPOUT_OVERLAY
     )
@@ -187,7 +189,6 @@ def main() -> int:
     try:
         changed = synchronize(
             args.route_planning_config,
-            args.nav2_params,
             args.keepout_overlay,
             check=args.check,
         )
