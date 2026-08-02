@@ -107,7 +107,7 @@ def generate_test_description():
     package_dir = get_package_share_directory("smartcar_nav2")
     safety_package_dir = get_package_share_directory("smartcar_safety")
     launch_file = os.path.join(
-        package_dir, "launch", "smartcar_nav2.launch.py"
+        package_dir, "launch", "navigation_launch.py"
     )
 
     fixture_process = ExecuteProcess(
@@ -134,7 +134,6 @@ def generate_test_description():
                 PythonLaunchDescriptionSource(launch_file),
                 launch_arguments={
                     "use_sim_time": "false",
-                    "use_waypoint_follower": "false",
                 }.items(),
             )
         ],

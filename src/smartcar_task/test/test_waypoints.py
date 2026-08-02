@@ -59,7 +59,7 @@ def valid_document():
                 "direction": "reverse",
             },
             {
-                "id": "c_corner_3",
+                "id": "transit_1",
                 "frame_id": "odom_combined",
                 "pose": {
                     "position": {"x": 3.175, "y": 3.90, "z": 0.0},
@@ -68,7 +68,7 @@ def valid_document():
                 "task": "loop",
             },
             {
-                "id": "b_corridor_return",
+                "id": "transit_2",
                 "frame_id": "odom_combined",
                 "pose": {
                     "position": {"x": 2.0, "y": 2.40, "z": 0.0},

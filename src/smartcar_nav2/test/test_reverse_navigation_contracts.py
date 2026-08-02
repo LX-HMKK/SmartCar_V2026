@@ -121,7 +121,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
             element.tag for element in ElementTree.parse(FORWARD_BT_FILE).iter()
         }
         self.assertIn("ComputeFreeHeadingPathToPose", forward_tags)
-        self.assertNotIn("ComputeReversePathToPose", forward_tags)
 
         source = (
             PACKAGE_ROOT / "src" / "compute_free_heading_path_action.cpp"
@@ -385,7 +384,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
         handoff_root = ElementTree.parse(REVERSE_HANDOFF_BT_FILE).getroot()
         handoff_tags = [element.tag for element in handoff_root.iter()]
         self.assertIn("ComputeReverseFreeHeadingPathToPose", handoff_tags)
-        self.assertNotIn("ComputeReversePathToPose", handoff_tags)
         self.assertIn("IsPathValid", handoff_tags)
         self.assertNotIn("ComputePathToPose", handoff_tags)
         for forbidden in (
@@ -551,7 +549,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn("ComputeFreeHeadingPathToPose", tags)
         self.assertIn("RecordFollowPath", tags)
         self.assertNotIn("FollowPath", tags)
-        self.assertNotIn("ComputeReversePathToPose", tags)
         for forbidden in ("Spin", "BackUp", "Wait"):
             self.assertNotIn(forbidden, tags)
 
@@ -779,9 +776,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
             ]
         )
         self.assertIn(
-            "smartcar_compute_reverse_path_to_pose_action_bt_node", plugins
-        )
-        self.assertIn(
             "smartcar_compute_free_heading_path_action_bt_node", plugins
         )
         self.assertIn(
@@ -816,15 +810,21 @@ class TestReverseNavigationContracts(unittest.TestCase):
             }.issubset(plugins)
         )
 
-    def test_cancelled_reverse_plan_fails_closed(self):
+    def test_free_heading_cancellation_fails_closed_when_requested(self):
         source = (
-            PACKAGE_ROOT / "src" / "compute_reverse_path_to_pose_action.cpp"
+            PACKAGE_ROOT / "src" / "compute_free_heading_path_action.cpp"
         ).read_text(encoding="utf-8")
-        cancelled_body = source.split(
-            "ComputeReversePathToPoseAction::on_cancelled()", 1
-        )[1].split("}", 1)[0]
-        self.assertIn("clearPathOutput()", cancelled_body)
-        self.assertIn("BT::NodeStatus::FAILURE", cancelled_body)
+        cancellation = source.split(
+            "BT::NodeStatus ComputeFreeHeadingPathAction::waitForCancellation()", 1
+        )[1].split(
+            "bool ComputeFreeHeadingPathAction::requestCancellationForActiveGoal()", 1
+        )[0]
+        self.assertIn("const bool fail = failure_after_cancellation_", cancellation)
+        self.assertIn("clearPathOutput()", cancellation)
+        self.assertIn(
+            "return fail ? BT::NodeStatus::FAILURE : BT::NodeStatus::SUCCESS;",
+            cancellation,
+        )
 
     def test_reverse_retreat_latches_before_dispatch_and_never_publishes_twist(self):
         source = (
@@ -1234,17 +1234,8 @@ class TestReverseNavigationContracts(unittest.TestCase):
             for x, y in vertices:
                 self.assertIn((-x, -y), vertices)
 
-    def test_build_installs_reverse_bt_library_and_tests(self):
+    def test_build_installs_active_bt_libraries_and_tests(self):
         cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-        self.assertIn(
-            "add_library(smartcar_compute_reverse_path_to_pose_action_bt_node",
-            cmake,
-        )
-        self.assertIn(
-            "target_compile_definitions("
-            "smartcar_compute_reverse_path_to_pose_action_bt_node PRIVATE",
-            cmake,
-        )
         self.assertIn("BT_PLUGIN_EXPORT", cmake)
         self.assertIn(
             "add_library(smartcar_compute_free_heading_path_action_bt_node",

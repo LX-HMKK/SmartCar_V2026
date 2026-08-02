@@ -153,7 +153,7 @@ def generate_launch_description():
     return LaunchDescription([
         DeclareLaunchArgument(
             "camera_driver",
-            default_value="aurora",
+            default_value="usb",
             description="Camera driver: aurora, usb, mipi, or none",
         ),
         DeclareLaunchArgument(

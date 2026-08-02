@@ -185,15 +185,6 @@ def generate_launch_description():
         output="screen",
     )
 
-    # ── Odom NaN 过滤中继：/odom → /odom_clean ──
-    # Gazebo AckermannSteering 初始发布 NaN 四元数，本节点过滤后转发
-    odom_relay = Node(
-        package="smartcar_sim",
-        executable="odom_relay.py",
-        name="odom_relay",
-        parameters=[{"use_sim_time": True}],
-    )
-
     # ── Ground-truth odometry: Gazebo model pose → /odom_combined + TF ──
     # Do not use the Ackermann plugin's integrated /odom as Nav2's TF owner:
     # it can diverge from the DART world pose carrying the lidar sensor. The
@@ -211,7 +202,8 @@ def generate_launch_description():
 
     # Do not configure Nav2 against an empty or stale sensor graph.  In
     # particular, an interrupted headless Ogre2 instance can still advertise
-    # /scan while every range is the lidar minimum and /odom never appears.
+    # /scan while every range is the lidar minimum and /odom_combined never
+    # appears.
     # This short-lived process only observes /clock, /odom_combined and /scan;
     # its successful exit is the launch-level prerequisite for the keepout
     # stack and Nav2 below.
@@ -443,14 +435,12 @@ def generate_launch_description():
         return IncludeLaunchDescription(
             PythonLaunchDescriptionSource(
                 PathJoinSubstitution([
-                    pkg_nav2, "launch", "smartcar_nav2.launch.py"])
+                    pkg_nav2, "launch", "navigation_launch.py"])
             ),
             launch_arguments={
                 "use_sim_time": "true",
                 "params_file": str(params_path),
                 "params_overlay_file": "",
-                "bt_xml_file": bt_forward,
-                "bt_through_poses_xml_file": bt_forward,
                 # Let the verified helper below issue STARTUP only after the
                 # lifecycle manager has created and warmed its Fast DDS
                 # response readers. Autostart can race controller plugin
@@ -682,7 +672,6 @@ def generate_launch_description():
         gz_server,
         gz_server_headless,
         gz_bridge,
-        odom_relay,
         ground_truth_odom_relay,
         sensor_preflight_exit,
         sensor_tf_preflight_exit,

@@ -17,6 +17,12 @@ CAMERA_FRAMES = {
     "usb": "default_usb_cam",
     "mipi": "default_cam",
 }
+CAMERA_TOPICS = {
+    "aurora": "/aurora/rgb/image_raw",
+    "usb": "/image",
+    "mipi": "/image_raw",
+}
+EXTERNAL_IMAGE_TOPIC = "/smartcar/vision/image"
 VALID_CAMERA_DRIVERS = tuple(CAMERA_FRAMES)
 MOTION_GATES = (
     "waypoints_calibrated",
@@ -36,28 +42,26 @@ def _as_bool(context, name):
     raise RuntimeError(f"{name} must be true or false")
 
 
+def _resolve_camera_source(context):
+    use_camera = _as_bool(context, "use_camera")
+    configured_topic = LaunchConfiguration("image_topic").perform(context).strip()
+    if not use_camera:
+        return "none", configured_topic or EXTERNAL_IMAGE_TOPIC
+
+    camera_driver = LaunchConfiguration(
+        "camera_driver").perform(context).strip().lower()
+    if camera_driver not in VALID_CAMERA_DRIVERS:
+        raise RuntimeError("camera_driver must be aurora, usb, or mipi")
+    return camera_driver, configured_topic or CAMERA_TOPICS[camera_driver]
+
+
 def _vision_and_camera_actions(context):
     use_camera = _as_bool(context, "use_camera")
     use_vision = _as_bool(context, "use_vision")
     if not use_camera and not use_vision:
         return []
 
-    camera_driver = LaunchConfiguration(
-        "camera_driver").perform(context).strip().lower()
-    if camera_driver not in VALID_CAMERA_DRIVERS:
-        raise RuntimeError("camera_driver must be aurora, usb, or mipi")
-    configured_topic = LaunchConfiguration(
-        "image_topic").perform(context).strip()
-    selected_driver = camera_driver if use_camera else "none"
-    selected_topic = (
-        configured_topic
-        if configured_topic
-        else (
-            ""
-            if use_camera
-            else "/smartcar/vision/image"
-        )
-    )
+    selected_driver, selected_topic = _resolve_camera_source(context)
 
     actions = [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -85,7 +89,7 @@ def _vision_and_camera_actions(context):
     if use_camera:
         frame_override = LaunchConfiguration(
             "camera_frame").perform(context).strip()
-        camera_frame = frame_override or CAMERA_FRAMES[camera_driver]
+        camera_frame = frame_override or CAMERA_FRAMES[selected_driver]
         actions.append(Node(
             package="tf2_ros",
             executable="static_transform_publisher",
@@ -102,6 +106,33 @@ def _vision_and_camera_actions(context):
             ],
         ))
     return actions
+
+
+def _task_actions(context):
+    if not _as_bool(context, "use_task"):
+        return []
+
+    _, image_topic = _resolve_camera_source(context)
+    return [IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_task"),
+            "launch",
+            "smartcar_task.launch.py",
+        ])),
+        launch_arguments={
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
+            "waypoints_file": LaunchConfiguration("waypoints_file"),
+            "autostart_mission": LaunchConfiguration("autostart_mission"),
+            "use_laser_odometry": LaunchConfiguration("use_laser_odometry"),
+            "laser_odometry_calibrated": LaunchConfiguration(
+                "laser_odometry_calibrated"),
+            "barcode_reader_image_topic": image_topic,
+            **{
+                name: LaunchConfiguration(name)
+                for name in MOTION_GATES
+            },
+        }.items(),
+    )]
 
 
 def _validate_configuration(context):
@@ -152,11 +183,9 @@ def generate_launch_description():
     use_robot_description = LaunchConfiguration("use_robot_description")
     use_safety = LaunchConfiguration("use_safety")
     use_nav = LaunchConfiguration("use_nav")
-    use_task = LaunchConfiguration("use_task")
     use_speech = LaunchConfiguration("use_speech")
     use_sim_time = LaunchConfiguration("use_sim_time")
     nav_autostart = LaunchConfiguration("nav_autostart")
-    autostart_mission = LaunchConfiguration("autostart_mission")
     waypoints_file = LaunchConfiguration("waypoints_file")
 
     extrinsic_names = (
@@ -244,35 +273,13 @@ def generate_launch_description():
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("smartcar_nav2"),
             "launch",
-            "smartcar_nav2.launch.py",
+            "navigation_launch.py",
         ])),
         launch_arguments={
             "use_sim_time": use_sim_time,
             "autostart": nav_autostart,
-            "use_waypoint_follower": use_task,
-            "waypoints_file": waypoints_file,
         }.items(),
         condition=IfCondition(use_nav),
-    )
-    task = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("smartcar_task"),
-            "launch",
-            "smartcar_task.launch.py",
-        ])),
-        launch_arguments={
-            "use_sim_time": use_sim_time,
-            "waypoints_file": waypoints_file,
-            "autostart_mission": autostart_mission,
-            "use_laser_odometry": use_laser_odometry,
-            "laser_odometry_calibrated": LaunchConfiguration(
-                "laser_odometry_calibrated"),
-            **{
-                name: LaunchConfiguration(name)
-                for name in MOTION_GATES
-            },
-        }.items(),
-        condition=IfCondition(use_task),
     )
     speech = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -340,7 +347,7 @@ def generate_launch_description():
                 "safety.yaml",
             ]),
         ),
-        DeclareLaunchArgument("camera_driver", default_value="aurora"),
+        DeclareLaunchArgument("camera_driver", default_value="usb"),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument(
             "vision_config_file",
@@ -412,5 +419,5 @@ def generate_launch_description():
         waypoint_markers,
         OpaqueFunction(function=_vision_and_camera_actions),
         speech,
-        task,
+        OpaqueFunction(function=_task_actions),
     ])

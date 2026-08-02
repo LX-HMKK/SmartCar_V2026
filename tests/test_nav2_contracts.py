@@ -62,7 +62,6 @@ BRINGUP_COORD_FILE = (
     ROOT / "src" / "smartcar_bringup" / "config" / "bringup_coord.yaml"
 )
 NAVIGATION_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "navigation_launch.py"
-NAV2_BRINGUP_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "nav2_bringup.launch.py"
 SAFE_OUTPUT_ZERO_DEADLINE_SEC = 0.40
 
 EXPECTED_LOCAL_FOOTPRINT = [
@@ -768,10 +767,6 @@ class TestNav2Contracts(unittest.TestCase):
             )
         )
 
-        wrapper_source = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
-        self.assertNotIn("nav2_bringup_dir", wrapper_source)
-        self.assertIn("'navigation_launch.py'", wrapper_source)
-
     def test_navigation_launch_omits_unused_path_smoother(self):
         source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
         calls = launch_calls_by_package(source)
@@ -782,31 +777,25 @@ class TestNav2Contracts(unittest.TestCase):
 
     def test_navigation_launch_uses_the_requested_resolved_parameter_files(self):
         source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
-        wrapper = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
 
         self.assertIn("params_file.perform(context)", source)
         self.assertIn("params_overlay_file.perform(context)", source)
         self.assertIn("nav2_params_fixed.yaml", source)
-        self.assertIn("params_overlay_file", wrapper)
-        self.assertIn("'params_overlay_file': params_overlay_file", wrapper)
 
-    def test_lifecycle_manager_startup_delay_defaults_to_zero_and_is_forwarded(self):
+    def test_navigation_launch_is_the_single_public_entrypoint(self):
+        self.assertFalse(
+            (PACKAGE_ROOT / "launch" / "smartcar_nav2.launch.py").exists()
+        )
+        self.assertFalse(
+            (PACKAGE_ROOT / "launch" / "nav2_bringup.launch.py").exists()
+        )
+
+    def test_lifecycle_manager_startup_delay_defaults_to_zero(self):
         navigation = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
-        bringup = NAV2_BRINGUP_LAUNCH_FILE.read_text(encoding="utf-8")
-        wrapper = (PACKAGE_ROOT / "launch" / "smartcar_nav2.launch.py").read_text(
-            encoding="utf-8"
-        )
 
-        for source in (navigation, bringup, wrapper):
-            self.assertIn("lifecycle_manager_delay_sec", source)
-            self.assertIn("default_value='0.0'", source)
+        self.assertIn("lifecycle_manager_delay_sec", navigation)
+        self.assertIn("default_value='0.0'", navigation)
         self.assertIn("TimerAction(period=delay_sec", navigation)
-        self.assertIn(
-            "'lifecycle_manager_delay_sec': lifecycle_manager_delay_sec", bringup
-        )
-        self.assertIn(
-            "'lifecycle_manager_delay_sec': lifecycle_manager_delay_sec", wrapper
-        )
 
     def test_waypoints_are_valid_and_fit_the_rolling_global_costmap(self):
         global_costmap = self.params["global_costmap"]["global_costmap"][
@@ -999,13 +988,20 @@ class TestNav2Contracts(unittest.TestCase):
         test_dependencies = {element.text for element in root.findall("test_depend")}
         self.assertTrue(
             {
-                "nav2_behaviors",
                 "nav2_bt_navigator",
                 "nav2_controller",
                 "nav2_lifecycle_manager",
                 "nav2_planner",
                 "nav2_smac_planner",
             }.issubset(exec_dependencies)
+        )
+        self.assertTrue(
+            {
+                "nav2_bringup",
+                "nav2_behaviors",
+                "nav2_common",
+                "nav2_waypoint_follower",
+            }.isdisjoint(exec_dependencies)
         )
         self.assertTrue(
             {

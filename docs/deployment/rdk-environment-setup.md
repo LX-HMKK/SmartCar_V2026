@@ -127,14 +127,14 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 | `use_nav` | `true` | Nav2 |
 | `nav_autostart` | `true` | 自动激活 Nav2 lifecycle |
 | `use_camera` | `true` | 实体相机驱动 |
-| `use_vision` | `true` | QR/VLM 服务与 zbar |
+| `use_vision` | `true` | QR/VLM 服务；zbar 由任务在 QR 点按需启动 |
 | `use_task` | `true` | 任务状态机 |
 | `use_speech` | `false` | 可选火山 TTS 与本地播放器 |
 | `autostart_mission` | `false` | 不自动开始任务 |
 
 `smartcar_system.launch.py` 禁止 `use_base=true,use_safety=false`。`use_laser_odometry=true` 时必须同时启用底盘和 LiDAR；任务自动启动还会要求 `laser_odometry_calibrated=true`。默认精简配置不启动无消费者的 obstacle extractor、Madgwick、URDF 车型发布、Nav2 path smoother、`behavior_server` 或 `waypoint_follower`。底层 `smartcar_bringup.launch.py` 的 `use_safety=false` 只保留给受控调试，不得用于竞赛运行。
 
-当前 Nav2 启动封装仍声明并转发 `use_waypoint_follower`，但该参数不再控制任何运行时节点；`params_file`、BT XML 和 `waypoints_file` 等旧入口也有部分被 `nav2_params_fixed.yaml` 固定链路旁路。部署时以构建生成的固定参数文件、当前 BT 和任务节点加载的航点为准，不得通过这些遗留参数推断实际配置已经生效。
+`navigation_launch.py` 是唯一 Nav2 节点启动入口。它接收已解析的 `params_file` 和可选 `params_overlay_file`，并由构建生成的 `nav2_params_fixed.yaml` 固定默认 BT 路径；航点始终由任务节点加载。`use_waypoint_follower`、BT XML 覆盖和 Nav2 航点文件入口均已删除，不得依赖这些旧接口。
 
 ## 5. 校准数据与运动门禁
 
@@ -204,7 +204,7 @@ bash /root/nav_test.sh
 
 脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。必须先确认物理急停、车辆周围、RViz、P 点朝向和车轮离地条件，再人工 reset、解除急停、start。运行配置的 `minimum_turning_radius` 已按实测使用保守的 `0.22 m`，但 QR→VLM 实际倒车和完整赛道仍未验证，任何全路线测试均不得无人看守。
 
-只允许把仓库根目录的 `scripts/nav_test.sh` 部署为 `/root/nav_test.sh`。`scripts/deploy/nav_test.sh` 是仍会解除急停并自动 start 的历史副本，在清理前不得复制或执行。当前 `scripts/monitor_mission.py` 也不能作为安全判据：其消息类型和格式化逻辑尚未与当前话题合同同步；安全确认必须直接观察下述 ROS 话题和物理状态。
+只允许把仓库根目录的 `scripts/nav_test.sh` 部署为 `/root/nav_test.sh`。任何旧 RDK 副本中会自动解除急停或调用 start 的脚本都不得恢复或执行。历史的 `scripts/safe_start.sh`、`scripts/deploy/safe_start.sh`、`scripts/deploy/ros_cleanup.sh`、`scripts/verify_autostart.sh` 和 `scripts/monitor_mission.py` 已移除，不得从旧 RDK 副本恢复使用。安全确认必须直接观察下述 ROS 话题和物理状态。
 
 `smartcar_tools` 提供以下隔离入口：
 
@@ -264,7 +264,9 @@ ros2 service call /smartcar/safety/emergency_stop \
 
 ## 9. 视觉、火山 VLM 与语音合成
 
-相机选择：`camera_driver:=usb|aurora|mipi`。当前默认 USB；Aurora 和 MIPI 仅作备选。
+相机选择：`camera_driver:=usb|aurora|mipi`。当前默认 USB，默认话题为 `/image`；Aurora
+和 MIPI 仅作备选。顶层启动会解析 `image_topic` 并将同一话题交给 vision 服务和任务按需
+启动的 zbar，切换驱动或显式覆盖话题时不需要维护第二份二维码 remap。
 
 `vision.yaml` 默认 `vlm_backend_mode: disabled`，因此未选择后端时 DescribeScene 返回兜底文案。`vision_volcengine.yaml` 是显式启用的火山 Ark 配置：它使用 Python 3 标准库调用 OpenAI-compatible HTTPS 接口，不需要安装 Ark SDK，且仍由外层无 shell 命令后端强制终止。整个请求包含图像等待、JPEG 编码和后端推理，共享硬上限 8 秒；公网响应过慢时按既有合同返回“检测到人物立牌”。
 

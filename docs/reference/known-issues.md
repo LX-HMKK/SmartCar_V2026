@@ -39,7 +39,7 @@
 ## Nav2 配置与行为树
 
 - **Nav2 参数链路 (2026-07-23 修复)**：Nav2 1.1.20 (TROS Humble) 的 `RewrittenYaml` chain 存在 bug——`ParameterFile` 输出被 YDLIDAR 驱动参数覆盖，导致 `controller_server` 加载默认 DWB 而非 RPP。修复方案：`CMakeLists.txt` 自动生成 `nav2_params_fixed.yaml`（BT 路径硬编码），`navigation_launch.py` 直接使用该文件。任何对 `nav2_params.yaml` 的修改会在 `colcon build` 时自动同步到 fixed 文件。不可手动创建/编辑 `nav2_params_fixed.yaml`。
-- **Nav2 启动封装遗留接口**：`smartcar_nav2.launch.py` 仍暴露并转发 `use_waypoint_follower`，上层也仍传入该参数，但当前运行时不会启动 `waypoint_follower`。同一封装中的 `params_file`、BT XML 和 `waypoints_file` 参数部分已被固定参数链路旁路；不得把这些旧参数当作有效运行时配置。后续应连同 `nav2_waypoint_follower` 包依赖和未使用的 `FollowWaypoints` 结果分类器一起清理并更新合同测试。
+- **Nav2 启动入口收敛**：`navigation_launch.py` 直接启动 Nav2 节点，默认使用构建生成的 `nav2_params_fixed.yaml`。航点由任务节点加载；旧的 `use_waypoint_follower`、BT XML 覆盖和 Nav2 航点文件入口均不存在。需要仿真覆盖时仅传入已解析的 `params_overlay_file`。
 - **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 
 ## ROS2 生命周期与运维

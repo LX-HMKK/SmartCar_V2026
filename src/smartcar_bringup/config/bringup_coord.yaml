@@ -16,7 +16,7 @@ topics:
   cmd_vel: /cmd_vel
   cmd_vel_safe: /cmd_vel_safe
   ackermann_cmd: /ackermann_cmd
-  image: /aurora/rgb/image_raw
+  image: /image
 
 toggles:
   use_base: true
@@ -80,4 +80,4 @@ motion_gates:
 hardware:
   chassis_serial: /dev/ttyACM0
   lidar_serial: /dev/ttyUSB0
-  camera_driver: aurora
+  camera_driver: usb

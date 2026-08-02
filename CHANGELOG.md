@@ -1,5 +1,38 @@
 # 变更日志
 
+## 2026-08-02 - 运行入口、仿真遗留产物与视觉图像源收敛
+
+### 清理
+
+- `navigation_launch.py` 现在是唯一的 Nav2 节点启动入口。删除未生效的
+  `smartcar_nav2.launch.py` / `nav2_bringup.launch.py` 兼容壳、
+  `use_waypoint_follower` 接口及对应 `nav2_waypoint_follower`、`nav2_bringup`、
+  `nav2_behaviors`、`nav2_common` 直接依赖。
+- 删除只服务已废弃密集 B/C 经过点的两份试验路线、反向路径 BT 插件、候选扫描/写入器、
+  候选 JSON 和旧仿真 runner。现役仿真路线仍为 P→A 前进、A→C1 倒车、C1→P 前进；
+  `sim_tune.sh`、共享路线参数和编辑器预检保持可用。
+- 删除重复且语义冲突的 RDK 启动/清理/监控脚本，唯一支持的 RDK 导航入口为
+  `scripts/nav_test.sh` 部署后的 `/root/nav_test.sh`；它继续保持急停锁存且不自动发车。
+- `smartcar_tools` 直接导入 `smartcar_task.planning_segments`，删除 re-export shim；
+  通用测试夹具不再使用旧 B/C 航点名。
+
+### 配置与文档
+
+- 系统、vision、独立 QR/VLM 测试入口统一默认 USB `/image`。顶层解析的图像话题同时传给
+  vision 服务和任务按需启动的 zbar，删除硬编码 Aurora 的 `barcode_reader_cmd`。
+- 补齐 `smartcar_task -> zbar_ros` 与 `smartcar_bringup -> smartcar_tools` 的直接运行依赖。
+- 更新 README、部署手册、AGENTS/CLAUDE 和 RViz 合同：仿真显示规划候选、已接受全局路径与
+  控制跟踪窗口，不再误将不存在的 `/local_plan` 作为仿真路径。
+
+### 验证与边界
+
+- 根合同 `python3 -m unittest discover -s tests -v`：209 项通过；`smartcar_task` 包测试
+  63 项通过（3 项因本机缺少 ROS Python 模块跳过）；`smartcar_tools` 包测试 56 项通过。
+- `colcon build --symlink-install --packages-select smartcar_task smartcar_vision smartcar_tools`
+  通过。`smartcar_bringup` 的本机构建仍受未安装的 `obstacle_detector`、
+  `rf2o_laser_odometry`、`ydlidar_ros2_driver` 阻塞，不是本次源码编译错误。
+- 本轮未启动 ROS、Gazebo、实体相机或运动链；P→A 紧右弯跟踪问题和实体倒车/全路线验收仍未完成。
+
 ## 2026-08-01 - 阿克曼反向不可达短退恢复与自由过渡点规划
 
 ### 实现

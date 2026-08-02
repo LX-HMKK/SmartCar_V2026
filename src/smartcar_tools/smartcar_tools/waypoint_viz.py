@@ -20,7 +20,7 @@ from smartcar_task.waypoints import (
     is_zero_quaternion,
     load_waypoint_document,
 )
-from smartcar_tools.planning_segments import load_planning_segments, materialize_route
+from smartcar_task.planning_segments import load_planning_segments, materialize_route
 from visualization_msgs.msg import Marker, MarkerArray
 
 

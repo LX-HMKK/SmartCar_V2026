@@ -23,8 +23,6 @@ SIM_ENV = SIM / "scripts" / "sim_env.sh"
 SIM_START = SIM / "scripts" / "sim_start.sh"
 SIM_CLEANUP = SIM / "scripts" / "sim_cleanup.sh"
 AUTO_TRAIN = SIM / "scripts" / "auto_train.py"
-ODOM_RELAY = SIM / "scripts" / "odom_relay.py"
-ODOM_COMBINED_RELAY = SIM / "scripts" / "odom_combined_relay.py"
 GAZEBO_GROUND_TRUTH_ODOM_RELAY = (
     SIM / "scripts" / "gazebo_ground_truth_odom_relay.py"
 )
@@ -945,19 +943,18 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn('name="sim_rviz"', launch)
         self.assertNotIn("wait_for_wslg.sh", launch)
 
-    def test_active_odom_relays_handle_launch_shutdown_idempotently(self) -> None:
-        for relay in (ODOM_RELAY, GAZEBO_GROUND_TRUTH_ODOM_RELAY):
-            with self.subTest(relay=relay.name):
-                source = relay.read_text(encoding="utf-8")
-                self.assertIn(
-                    "from rclpy.executors import ExternalShutdownException",
-                    source,
-                )
-                self.assertIn(
-                    "except (KeyboardInterrupt, ExternalShutdownException):",
-                    source,
-                )
-                self.assertIn("if rclpy.ok():", source)
+    def test_ground_truth_odom_relay_handles_launch_shutdown_idempotently(self) -> None:
+        source = GAZEBO_GROUND_TRUTH_ODOM_RELAY.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "from rclpy.executors import ExternalShutdownException",
+            source,
+        )
+        self.assertIn(
+            "except (KeyboardInterrupt, ExternalShutdownException):",
+            source,
+        )
+        self.assertIn("if rclpy.ok():", source)
 
     def test_ground_truth_odom_is_the_only_simulation_tf_owner(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
@@ -993,8 +990,10 @@ class SimulationContractTests(unittest.TestCase):
         self.assertNotIn("create_timer(", relay)
         self.assertIn("transform.header.stamp = odom.header.stamp", relay)
         self.assertIn("self._tf_broadcaster.sendTransform", relay)
-        self.assertIn('"/odom_clean"', ODOM_COMBINED_RELAY.read_text(
-            encoding="utf-8"))
+        self.assertNotIn('executable="odom_relay.py"', launch)
+        bridge_source = (SIM / "config" / "gz_bridge.yaml").read_text(
+            encoding="utf-8")
+        self.assertNotIn('ros_topic_name: "/odom"', bridge_source)
         self.assertIn("<depend>tf2_msgs</depend>", package)
 
         physical_pose = next(
@@ -1029,7 +1028,31 @@ class SimulationContractTests(unittest.TestCase):
             "nav2_map_server",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", package)
-        self.assertIn("scripts/generate_competition_field.py", cmake)
+        for stale_dependency in (
+            "ament_cmake_python",
+            "robot_localization",
+            "robot_state_publisher",
+            "smartcar_safety",
+        ):
+            with self.subTest(dependency=stale_dependency):
+                self.assertNotIn(stale_dependency, package)
+        self.assertIn("scripts/sim_env.sh", cmake)
+        self.assertNotIn("\n    scripts\n", cmake)
+        for runtime_script in (
+            "scripts/sim_cleanup.sh",
+            "scripts/sim_env.sh",
+            "scripts/sim_start.sh",
+        ):
+            with self.subTest(runtime_script=runtime_script):
+                self.assertIn(runtime_script, cmake)
+        for source_only_tool in (
+            "scripts/generate_competition_field.py",
+            "scripts/generate_field_map.py",
+            "scripts/sim_tune.sh",
+            "scripts/validate_sim_results.py",
+        ):
+            with self.subTest(source_only_tool=source_only_tool):
+                self.assertNotIn(source_only_tool, cmake)
 
     def test_keepout_mask_is_current_and_uses_authoritative_geometry(self) -> None:
         completed = subprocess.run(

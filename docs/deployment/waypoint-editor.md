@@ -176,7 +176,7 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 | 字段 | 影响范围 |
 |---|---|
 | `minimum_turning_radius_m` | 编辑器和实车路线预检使用的保守物理半径，当前为 `0.22 m`（实测极限约 `0.20 m`）；仿真调参不会改写实车 `nav2_params.yaml`。 |
-| `simulation_minimum_turning_radius_m` | 仅 Gazebo：离线几何扫描和仿真 overlay 中的 Smac、正/倒车 controller、free-heading 校验，当前授权为 `0.22 m`。 |
+| `simulation_minimum_turning_radius_m` | 仅 Gazebo：仿真 overlay 中的 Smac、正/倒车 controller 与 free-heading 校验，当前授权为 `0.22 m`。 |
 | `runtime_footprint` | 编辑器预检和仿真 costmap 的共享车辆足迹；同步只写 Gazebo overlay，不改变实车 obstacle layer。 |
 | `c_zone_keepout` | C 区中央禁区的水平/竖直内缩，保留外圈绕行车道。 |
 | `preflight` | 本地预检的网格、采样、终点容差和搜索预算。 |

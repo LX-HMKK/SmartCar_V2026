@@ -1,6 +1,6 @@
 vision_node:
   ros__parameters:
-    image_topic: /aurora/rgb/image_raw
+    image_topic: /image
     barcode_topic: /barcode
     vlm_backend_mode: disabled
     vlm_command_argv: [""]

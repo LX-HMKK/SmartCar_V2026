@@ -43,7 +43,6 @@ RDK 上一键启动：
 
 ```bash
 setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
-# 监控任务状态: python3 /root/monitor_mission.py
 # 日志: tail -f /tmp/bringup.log
 ```
 

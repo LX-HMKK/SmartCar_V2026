@@ -53,6 +53,7 @@ class MediaLaunchContractTests(unittest.TestCase):
     def test_qr_entry_supports_camera_and_file_without_motion_stack(self):
         source = QR.read_text(encoding="utf-8")
         self.assertEqual(launch_default(QR, "input_source"), "camera")
+        self.assertEqual(launch_default(QR, "camera_driver"), "usb")
         self.assertIn('input_source not in ("camera", "file")', source)
         self.assertIn('executable="image_replay_node"', source)
         self.assertIn('FindPackageShare("smartcar_vision")', source)
@@ -68,6 +69,7 @@ class MediaLaunchContractTests(unittest.TestCase):
     def test_vlm_entry_uses_hdmi_text_and_never_starts_speech(self):
         source = VLM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(VLM, "display"), ":0")
+        self.assertEqual(launch_default(VLM, "camera_driver"), "usb")
         self.assertEqual(
             launch_default(VLM, "xauthority"),
             "/var/run/lightdm/root/:0",

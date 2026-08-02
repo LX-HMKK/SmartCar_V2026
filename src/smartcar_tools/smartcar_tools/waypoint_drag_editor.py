@@ -48,7 +48,7 @@ from smartcar_tools.field_reference import (
     load_field_reference,
 )
 from smartcar_tools.field_keepouts import central_c_keepout, keepout_bounds
-from smartcar_tools.planning_segments import (
+from smartcar_task.planning_segments import (
     PlanningSegment,
     PlanningSegmentError,
     load_planning_segments,

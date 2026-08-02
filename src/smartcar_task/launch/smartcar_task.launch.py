@@ -72,6 +72,11 @@ def generate_launch_description():
             default_value="false",
             description="Use the ROS simulation clock",
         ),
+        DeclareLaunchArgument(
+            "barcode_reader_image_topic",
+            default_value="/image",
+            description="Image topic remapped into the on-demand zbar reader",
+        ),
         Node(
             package="smartcar_task",
             executable="task_node",
@@ -97,6 +102,8 @@ def generate_launch_description():
                         "laser_odometry_calibrated"),
                     "autostart_mission": LaunchConfiguration(
                         "autostart_mission"),
+                    "barcode_reader_image_topic": LaunchConfiguration(
+                        "barcode_reader_image_topic"),
                     "use_sim_time": LaunchConfiguration("use_sim_time"),
                 },
             ],

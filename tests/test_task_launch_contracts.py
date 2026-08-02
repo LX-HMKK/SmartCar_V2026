@@ -17,7 +17,6 @@ class TaskLaunchContractTests(unittest.TestCase):
     def test_package_declares_direct_runtime_dependencies(self):
         source = PACKAGE_XML.read_text(encoding="utf-8")
         for dependency in (
-            "action_msgs",
             "geometry_msgs",
             "nav_msgs",
             "nav2_msgs",
@@ -25,13 +24,16 @@ class TaskLaunchContractTests(unittest.TestCase):
             "robot_localization",
             "smartcar_interfaces",
             "smartcar_nav2",
-            "smartcar_safety",
             "std_msgs",
             "std_srvs",
             "unique_identifier_msgs",
             "python3-yaml",
+            "zbar_ros",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
+        self.assertNotIn("<exec_depend>action_msgs</exec_depend>", source)
+        self.assertNotIn("<exec_depend>smartcar_safety</exec_depend>", source)
+        self.assertIn("<test_depend>action_msgs</test_depend>", source)
 
     def test_launch_defaults_to_no_autostart_and_existing_waypoints(self):
         source = LAUNCH.read_text(encoding="utf-8")
@@ -140,6 +142,17 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertNotIn("float(timeout_sec) + 1.0", source)
         self.assertGreaterEqual(
             source.count("future, max(0.0, float(timeout_sec))"), 2)
+
+    def test_on_demand_zbar_uses_the_launch_resolved_image_topic(self):
+        launch_source = LAUNCH.read_text(encoding="utf-8")
+        node_source = NODE.read_text(encoding="utf-8")
+        self.assertIn('"barcode_reader_image_topic"', launch_source)
+        self.assertIn(
+            'self.declare_parameter("barcode_reader_image_topic", "/image")',
+            node_source,
+        )
+        self.assertIn('f"image:={image_topic}"', node_source)
+        self.assertNotIn("barcode_reader_cmd", node_source)
 
 
 if __name__ == "__main__":

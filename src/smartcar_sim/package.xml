@@ -8,7 +8,6 @@
   <license>Apache-2.0</license>
 
   <buildtool_depend>ament_cmake</buildtool_depend>
-  <buildtool_depend>ament_cmake_python</buildtool_depend>
 
   <depend>rclpy</depend>
   <depend>geometry_msgs</depend>
@@ -20,8 +19,6 @@
   <depend>std_msgs</depend>
   <depend>tf2_msgs</depend>
   <depend>tf2_ros</depend>
-  <depend>robot_localization</depend>
-  <depend>robot_state_publisher</depend>
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
 
@@ -33,7 +30,6 @@
   <exec_depend>rviz2</exec_depend>
   <exec_depend>smartcar_nav2</exec_depend>
   <exec_depend>smartcar_task</exec_depend>
-  <exec_depend>smartcar_safety</exec_depend>
   <exec_depend>smartcar_tools</exec_depend>
 
   <test_depend>ament_copyright</test_depend>

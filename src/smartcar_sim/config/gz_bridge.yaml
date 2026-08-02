@@ -8,13 +8,6 @@
   gz_type_name: "gz.msgs.Clock"
   direction: GZ_TO_ROS
 
-# Odometry: Gazebo → ROS2 (AckermannSteering publishes to short /odom)
-- ros_topic_name: "/odom"
-  gz_topic_name: "/odom"
-  ros_type_name: "nav_msgs/msg/Odometry"
-  gz_type_name: "gz.msgs.Odometry"
-  direction: GZ_TO_ROS
-
 # Physical model world pose: Gazebo -> ROS2. This is the model-local
 # PosePublisher stream, not SceneBroadcaster's event-only dynamic_pose topic.
 # It continues at 30 Hz while the vehicle is stationary, so a late ROS DDS
@@ -22,7 +15,8 @@
 # PosePublisher writes sim time into each inner Pose header, and Fortress'
 # TFMessage conversion preserves that header on every TransformStamped. The
 # relay consumes that exact source timestamp so scans, odometry, and TF remain
-# in one time domain. The Ackermann plugin's /odom remains diagnostics-only.
+# in one time domain. The Ackermann plugin's integrated /odom stays inside
+# Gazebo; it is not a ROS source for this simulator.
 - ros_topic_name: "/model/origincar/pose"
   gz_topic_name: "/model/origincar/pose"
   ros_type_name: "tf2_msgs/msg/TFMessage"

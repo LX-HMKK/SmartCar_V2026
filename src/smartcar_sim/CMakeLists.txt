@@ -6,9 +6,10 @@ if(CMAKE_COMPILER_IS_GNUCXX OR CMAKE_CXX_COMPILER_ID MATCHES "Clang")
 endif()
 
 find_package(ament_cmake REQUIRED)
-find_package(ament_cmake_python REQUIRED)
 
-# Install directories
+# Install only assets consumed by the runtime launch. Development and
+# verification tools remain source-tree utilities so an installed simulator
+# does not expose one-off runners as supported entry points.
 install(
   DIRECTORY
     launch
@@ -16,36 +17,31 @@ install(
     models
     worlds
     rviz
-    scripts
     maps
   DESTINATION share/${PROJECT_NAME}
-  PATTERN "geo_candidates*" EXCLUDE
-  PATTERN "email_body.txt" EXCLUDE
-  PATTERN "apply_candidate.py" EXCLUDE
-  PATTERN "geometry_scan.py" EXCLUDE
-  PATTERN "short_test.sh" EXCLUDE
+  PATTERN "__pycache__" EXCLUDE
+  PATTERN "*.pyc" EXCLUDE
 )
 
-# Install Python executables (ros2 run smartcar_sim odom_relay.py)
+# Runtime nodes launched by sim.launch.py. auto_train is intentionally kept
+# because run_route:=true is an explicit supported verification mode.
 install(
   PROGRAMS
-    scripts/odom_relay.py
-    scripts/odom_combined_relay.py
     scripts/gazebo_ground_truth_odom_relay.py
     scripts/ackermann_arc_probe.py
     scripts/sim_sensor_preflight.py
     scripts/sim_perception_monitor.py
     scripts/nav2_lifecycle_startup.py
     scripts/auto_train.py
-    scripts/test_through_poses.py
-    scripts/wall_publisher.py
   DESTINATION lib/${PROJECT_NAME}
 )
 
+# The local entry point loads these from the installed package. All other
+# scripts are source-tree development tools and are intentionally not installed.
 install(
   PROGRAMS
-    scripts/generate_competition_field.py
     scripts/sim_cleanup.sh
+    scripts/sim_env.sh
     scripts/sim_start.sh
   DESTINATION share/${PROJECT_NAME}/scripts
 )

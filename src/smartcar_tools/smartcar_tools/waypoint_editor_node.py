@@ -37,7 +37,7 @@ from smartcar_task.waypoints import (
     validate_waypoints,
     write_waypoints_atomic,
 )
-from smartcar_tools.planning_segments import (
+from smartcar_task.planning_segments import (
     PlanningSegmentError,
     load_planning_segments,
     materialize_route,

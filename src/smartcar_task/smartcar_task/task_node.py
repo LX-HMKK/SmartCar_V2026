@@ -1,6 +1,5 @@
 """ROS 2 adapters and services for semantic waypoint missions."""
 import math
-import shlex
 import subprocess
 import threading
 import time
@@ -1022,9 +1021,17 @@ class RosVision:
                 pass  # should not happen — poll() already confirmed exit
             except Exception:
                 pass
-        cmd_str = str(self._node.get_parameter("barcode_reader_cmd").value)
+        image_topic = str(self._node.get_parameter(
+            "barcode_reader_image_topic").value).strip()
+        if not image_topic:
+            raise ValueError("barcode_reader_image_topic must be nonempty")
         self._node.get_logger().info("Starting barcode_reader on demand")
-        cmd = shlex.split(cmd_str)
+        cmd = [
+            "ros2", "run", "zbar_ros", "barcode_reader", "--ros-args",
+            "-r", f"image:={image_topic}",
+            "-r", "barcode:=/barcode",
+            "-p", "throttle_repeated_barcodes:=0.0",
+        ]
         self._reader_process = subprocess.Popen(cmd)
         time.sleep(self._reader_startup_sec)
 
@@ -1292,13 +1299,7 @@ class TaskNode(Node):
         self.declare_parameter("origin_position_tolerance", 0.20)
         self.declare_parameter("origin_yaw_tolerance", 0.20)
         self.declare_parameter("qr_reader_startup_sec", 2.0)
-        self.declare_parameter(
-            "barcode_reader_cmd",
-            "ros2 run zbar_ros barcode_reader --ros-args "
-            "-r image:=/aurora/rgb/image_raw "
-            "-r barcode:=/barcode "
-            "-p throttle_repeated_barcodes:=0.0",
-        )
+        self.declare_parameter("barcode_reader_image_topic", "/image")
 
         waypoints_file = str(
             self.get_parameter("waypoints_file").value).strip()

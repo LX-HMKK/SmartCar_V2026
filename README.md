@@ -4,7 +4,7 @@
 
 ## 软件里程碑
 
-当前软件基线包含可选 RF2O、一份 11 点语义任务路线、官方规则图参考层、RViz 可拖拽航点编辑器，以及语音/二维码/图生文三个独立媒体入口。QR→VLM 段已实现确定性倒车：任务逐点发送 `NavigateToPose`，专用 BT 用虚拟航向调用唯一的 DUBIN planner，后置方向门将动作 UUID 与速度方向租约绑定。2026-07-24 已部署提交 `8103b37`；本地根合同 `134/134`，RDK 四个核心包 `108 tests, 0 errors, 0 failures, 0 skipped`。这些结果不包含实体倒车、真实相机、云端 API、音频或完整赛道运动验收。
+当前软件基线包含可选 RF2O、一条三阶段语义路线、官方规则图参考层、RViz 可拖拽航点编辑器，以及语音/二维码/图生文三个独立媒体入口。当前路线仅为 P→A 前进、A→C1 倒车、C1→P 前进，没有中间经过点。QR→VLM 段已实现确定性倒车：任务逐点发送 `NavigateToPose`，专用 BT 用虚拟航向调用唯一的 DUBIN planner，后置方向门将动作 UUID 与速度方向租约绑定。2026-07-24 的 RDK 核心包验证为 `108 tests, 0 errors, 0 failures, 0 skipped`；当前本机根合同已通过。它们不包含实体倒车、真实相机、云端 API、音频或完整赛道运动验收。
 
 ## 当前边界
 
@@ -12,11 +12,11 @@
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
-- 唯一的 11 点语义路线来自官方规则图推算且保持 `calibrated: false`，必须现场实测后才能授权运动。
+- 默认路线为 P→A 前进、A→C1 倒车、C1→P 前进，且保持 `calibrated: false`；必须现场实测后才能授权运动。
 - `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参已测量并接入；更换或重装传感器后必须重新确认。
-- 轮速和陀螺仪标定已完成；转向比例与偏置仍未完成。
-- QR→VLM 倒车仅完成软件与无底盘验证，`minimum_turning_radius: 0.55` 仍是未标定假设。
-- 当前正向 DUBIN 路线在 `c_corner_1 -> c_corner_2` 和 `c_corner_4 -> b_corridor_return_enter` 存在明显兜圈风险；候选航向尚未写入路线，首次测试不得无人看守跑完整圈。
+- 轮速、陀螺仪和转向命令比例/偏置已完成标定；运行链仍须通过车轮离地、低速地面和完整赛道复验。
+- QR→VLM 倒车仅完成软件与无底盘验证；规划与安全链采用保守 `0.22 m` 最小转弯半径，不能视为实体倒车验收。
+- P→A 的全局路径已消除大绕圈，但最新 Gazebo 执行仍在高位紧右弯横向过冲至右侧保护包络后停止；不得通过增加经过点或放宽保护包络掩盖该问题。
 - RF2O 无地图连续扫描匹配已作为可选激光里程计接入，默认关闭，且已通过 RDK Humble/aarch64 构建；真实雷达时间同步、外参、协方差、漂移、异常观测拒绝和轮速/IMU 退化回退仍未实测。
 - 火山 Ark VLM 与火山 TTS 已提供可选适配器，但凭据、现场网络、模型可用性和扬声器尚未验收；默认均禁用。
 - 使用火山云端后端前必须确认比赛规则允许公网且赛场网络稳定；否则需准备并实测端侧 VLM 备用方案。
@@ -30,7 +30,7 @@
 
 - RDK X5 8G，TROS ROS 2 Humble，环境入口由 `~/source_env.sh` 统一提供。
 - OriginCar 阿克曼底盘，`/odom`、`/imu/data_raw` 和可选 `/odom_laser` 经 EKF 输出 `/odom_combined`。
-- YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；没有静态地图、`map_server`、AMCL 或 SLAM。
+- YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；实体运行不使用静态地图、AMCL 或 SLAM。仿真专用 keepout PGM 由独立 `map_server` 提供给 KeepoutFilter。
 - 导航固定使用单一 Smac Hybrid `DUBIN` planner；倒车 BT 只接受全程严格反向、无 cusp、曲率和端点均合规的路径。
 - 速度链为 `/cmd_vel_nav -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，错误方向或过期租约只能得到完整零输出。
 - `obstacle_detector_2`、Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
@@ -151,9 +151,11 @@ ssh root@192.168.128.10
 bash /root/nav_test.sh
 ```
 
-首次测试必须车轮离地并由现场人员持续观察；确认 RViz 后才可人工 reset、解除急停并 start。当前只验证到 VLM 后立即急停，不得在两处正向航向风险修正前运行无人看守的完整路线。
+首次测试必须车轮离地并由现场人员持续观察；确认 RViz 后才可人工 reset、解除急停并 start。当前仅允许在 P→A 紧右弯控制问题修正并复验后，继续进行完整路线测试。
 
-真实相机默认使用 USB 驱动；Aurora 和 MIPI 保留为备选。关闭相机但保留服务时需要提供合成或外部图像话题：
+真实相机默认使用 USB 驱动和 `/image`；Aurora 和 MIPI 保留为备选。系统会把解析后的
+`image_topic` 同时交给 vision 服务和任务按需启动的 zbar，因此切换驱动或显式覆盖话题时
+无需另配二维码读取器。关闭相机但保留服务时需要提供合成或外部图像话题：
 
 ```bash
 ros2 launch smartcar_bringup smartcar_system.launch.py \

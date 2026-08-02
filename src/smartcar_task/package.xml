@@ -9,7 +9,6 @@
 
   <buildtool_depend>ament_python</buildtool_depend>
 
-  <exec_depend>action_msgs</exec_depend>
   <exec_depend>builtin_interfaces</exec_depend>
   <exec_depend>geometry_msgs</exec_depend>
   <exec_depend>launch</exec_depend>
@@ -20,13 +19,14 @@
   <exec_depend>robot_localization</exec_depend>
   <exec_depend>smartcar_interfaces</exec_depend>
   <exec_depend>smartcar_nav2</exec_depend>
-  <exec_depend>smartcar_safety</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
   <exec_depend>unique_identifier_msgs</exec_depend>
   <exec_depend>python3-yaml</exec_depend>
+  <exec_depend>zbar_ros</exec_depend>
 
   <test_depend>python3-pytest</test_depend>
+  <test_depend>action_msgs</test_depend>
 
   <export>
     <build_type>ament_python</build_type>

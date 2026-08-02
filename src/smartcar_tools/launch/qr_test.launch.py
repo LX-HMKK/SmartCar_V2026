@@ -104,7 +104,7 @@ def generate_launch_description():
             default_value="camera",
             description="Image source: camera or file",
         ),
-        DeclareLaunchArgument("camera_driver", default_value="aurora"),
+        DeclareLaunchArgument("camera_driver", default_value="usb"),
         DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument("image_file", default_value=""),

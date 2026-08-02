@@ -21,7 +21,7 @@ from smartcar_task.waypoints import (  # noqa: E402
     validate_waypoints,
 )
 from smartcar_tools.field_reference import load_field_reference  # noqa: E402
-from smartcar_tools.planning_segments import (  # noqa: E402
+from smartcar_task.planning_segments import (  # noqa: E402
     PlanningSegment,
     PlanningSegmentError,
     derive_planning_segments,

@@ -9,10 +9,9 @@ name: shared_route_planning_constraints
 # measurement limit directly.
 minimum_turning_radius_m: 0.22
 
-# Gazebo has a separately constrained Ackermann model. This value is used by
-# the simulation geometry scan and synchronized only into the simulation Nav2
-# overlay; it remains independently synchronized from the real-vehicle
-# preflight radius above.
+# Gazebo has a separately constrained Ackermann model. This value is
+# synchronized only into the simulation Nav2 overlay; it remains independently
+# synchronized from the real-vehicle preflight radius above.
 simulation_minimum_turning_radius_m: 0.22
 
 # Nav2 costmaps use this rectangle plus padding. The preflight checker uses

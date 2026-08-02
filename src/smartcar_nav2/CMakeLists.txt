@@ -43,60 +43,6 @@ ament_target_dependencies(reverse_path_utils
   tf2_geometry_msgs
 )
 
-add_library(smartcar_compute_reverse_path_to_pose_action_bt_node SHARED
-  src/compute_reverse_path_to_pose_action.cpp
-)
-target_compile_definitions(smartcar_compute_reverse_path_to_pose_action_bt_node PRIVATE
-  BT_PLUGIN_EXPORT
-)
-target_include_directories(smartcar_compute_reverse_path_to_pose_action_bt_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(smartcar_compute_reverse_path_to_pose_action_bt_node
-  reverse_path_utils
-)
-ament_target_dependencies(smartcar_compute_reverse_path_to_pose_action_bt_node
-  behaviortree_cpp_v3
-  geometry_msgs
-  nav2_behavior_tree
-  nav2_msgs
-  nav2_util
-  nav_msgs
-  rclcpp
-  rclcpp_action
-  tf2
-  tf2_geometry_msgs
-  tf2_ros
-)
-
-add_library(smartcar_compute_reverse_path_through_poses_action_bt_node SHARED
-  src/compute_reverse_path_through_poses_action.cpp
-)
-target_compile_definitions(smartcar_compute_reverse_path_through_poses_action_bt_node PRIVATE
-  BT_PLUGIN_EXPORT
-)
-target_include_directories(smartcar_compute_reverse_path_through_poses_action_bt_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-target_link_libraries(smartcar_compute_reverse_path_through_poses_action_bt_node
-  reverse_path_utils
-)
-ament_target_dependencies(smartcar_compute_reverse_path_through_poses_action_bt_node
-  behaviortree_cpp_v3
-  geometry_msgs
-  nav2_behavior_tree
-  nav2_msgs
-  nav2_util
-  nav_msgs
-  rclcpp
-  rclcpp_action
-  tf2
-  tf2_geometry_msgs
-  tf2_ros
-)
-
 add_library(smartcar_compute_free_heading_path_action_bt_node SHARED
   src/compute_free_heading_path_action.cpp
 )
@@ -302,8 +248,6 @@ install(DIRECTORY include/
 
 install(TARGETS
   reverse_path_utils
-  smartcar_compute_reverse_path_to_pose_action_bt_node
-  smartcar_compute_reverse_path_through_poses_action_bt_node
   smartcar_compute_free_heading_path_action_bt_node
   smartcar_ackermann_reverse_retreat_action_bt_node
   smartcar_odom_distance_budget_action_bt_node

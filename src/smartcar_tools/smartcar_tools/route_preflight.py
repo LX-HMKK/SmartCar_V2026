@@ -20,7 +20,7 @@ from smartcar_task.waypoints import is_heading_locked
 
 from smartcar_tools.field_keepouts import keepout_mask_bounds
 from smartcar_tools.field_reference import Bounds2D, FieldReference, Point2D
-from smartcar_tools.planning_segments import (
+from smartcar_task.planning_segments import (
     PlanningSegment,
     materialize_navigation_segments,
     materialize_route,

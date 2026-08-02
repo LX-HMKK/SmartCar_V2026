@@ -18,6 +18,9 @@ FIELD_REFERENCE = PACKAGE_ROOT / "smartcar_tools" / "field_reference_node.py"
 
 GLOBAL_PATH_NAME = "Actual Nav2 Global Path (/plan)"
 LOCAL_PATH_NAME = "Actual Nav2 Local Path (/local_plan)"
+SIM_CANDIDATE_PATH_NAME = "Planner Candidate Path (/plan)"
+SIM_ACCEPTED_PATH_NAME = "Accepted Global Path (/smartcar/accepted_global_plan)"
+SIM_TRACKING_PATH_NAME = "Controller Tracking Window (/transformed_global_plan)"
 REFERENCE_NAME = "Waypoint Reference Constraints (not a Nav2 path)"
 
 
@@ -28,18 +31,35 @@ def display_by_topic(document, topic):
 
 class RouteVisualizationContracts(unittest.TestCase):
     def test_navigation_rviz_distinguishes_nav2_paths_from_waypoint_constraints(self):
-        for path in (SIM_RVIZ, NAVIGATION_RVIZ):
-            document = yaml.safe_load(path.read_text(encoding="utf-8"))
-            global_path = display_by_topic(document, "/plan")
-            local_path = display_by_topic(document, "/local_plan")
-            reference = display_by_topic(document, "/smartcar/waypoints/markers")
+        navigation = yaml.safe_load(NAVIGATION_RVIZ.read_text(encoding="utf-8"))
+        global_path = display_by_topic(navigation, "/plan")
+        local_path = display_by_topic(navigation, "/local_plan")
+        reference = display_by_topic(navigation, "/smartcar/waypoints/markers")
 
-            self.assertEqual(global_path["Class"], "rviz_default_plugins/Path")
-            self.assertEqual(global_path["Name"], GLOBAL_PATH_NAME)
-            self.assertEqual(local_path["Class"], "rviz_default_plugins/Path")
-            self.assertEqual(local_path["Name"], LOCAL_PATH_NAME)
-            self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
-            self.assertEqual(reference["Name"], REFERENCE_NAME)
+        self.assertEqual(global_path["Class"], "rviz_default_plugins/Path")
+        self.assertEqual(global_path["Name"], GLOBAL_PATH_NAME)
+        self.assertEqual(local_path["Class"], "rviz_default_plugins/Path")
+        self.assertEqual(local_path["Name"], LOCAL_PATH_NAME)
+        self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
+        self.assertEqual(reference["Name"], REFERENCE_NAME)
+
+        simulation = yaml.safe_load(SIM_RVIZ.read_text(encoding="utf-8"))
+        candidate = display_by_topic(simulation, "/plan")
+        accepted = display_by_topic(
+            simulation, "/smartcar/accepted_global_plan")
+        tracking = display_by_topic(simulation, "/transformed_global_plan")
+        reference = display_by_topic(
+            simulation, "/smartcar/waypoints/markers")
+
+        self.assertEqual(candidate["Class"], "rviz_default_plugins/Path")
+        self.assertEqual(candidate["Name"], SIM_CANDIDATE_PATH_NAME)
+        self.assertFalse(candidate["Enabled"])
+        self.assertEqual(accepted["Class"], "rviz_default_plugins/Path")
+        self.assertEqual(accepted["Name"], SIM_ACCEPTED_PATH_NAME)
+        self.assertEqual(tracking["Class"], "rviz_default_plugins/Path")
+        self.assertEqual(tracking["Name"], SIM_TRACKING_PATH_NAME)
+        self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
+        self.assertEqual(reference["Name"], REFERENCE_NAME)
 
     def test_editor_reference_display_is_not_named_as_a_nav2_path(self):
         document = yaml.safe_load(EDITOR_RVIZ.read_text(encoding="utf-8"))

@@ -12,7 +12,7 @@ BRINGUP = ROOT / "src" / "smartcar_bringup" / "launch" / "smartcar_bringup.launc
 PACKAGE_XML = ROOT / "src" / "smartcar_bringup" / "package.xml"
 COORD = ROOT / "src" / "smartcar_bringup" / "config" / "bringup_coord.yaml"
 VENDOR = ROOT / "src" / "origincar" / "origincar_base" / "launch" / "origincar_bringup.launch.py"
-NAV = ROOT / "src" / "smartcar_nav2" / "launch" / "smartcar_nav2.launch.py"
+NAV = ROOT / "src" / "smartcar_nav2" / "launch" / "navigation_launch.py"
 VISION = ROOT / "src" / "smartcar_vision" / "launch" / "smartcar_vision.launch.py"
 TASK_NODE = ROOT / "src" / "smartcar_task" / "smartcar_task" / "task_node.py"
 
@@ -76,18 +76,34 @@ class SystemContractTests(unittest.TestCase):
         source = SYSTEM.read_text(encoding="utf-8")
         for package, launch_file in (
             ("smartcar_bringup", "smartcar_bringup.launch.py"),
-            ("smartcar_nav2", "smartcar_nav2.launch.py"),
+            ("smartcar_nav2", "navigation_launch.py"),
             ("smartcar_vision", "smartcar_vision.launch.py"),
             ("smartcar_task", "smartcar_task.launch.py"),
             ("smartcar_speech", "smartcar_speech.launch.py"),
         ):
             self.assertIn(f'FindPackageShare("{package}")', source)
             self.assertIn(f'"{launch_file}"', source)
-        self.assertGreaterEqual(source.count('"waypoints_file": waypoints_file'), 2)
+        self.assertIn('"waypoints_file": waypoints_file', source)
+        self.assertIn(
+            '"waypoints_file": LaunchConfiguration("waypoints_file")',
+            source,
+        )
         self.assertIn('"autostart": nav_autostart', source)
-        self.assertIn('"use_waypoint_follower": use_task', source)
-        self.assertIn('"autostart_mission": autostart_mission', source)
+        self.assertNotIn('"use_waypoint_follower"', source)
+        self.assertIn(
+            '"autostart_mission": LaunchConfiguration("autostart_mission")',
+            source,
+        )
         self.assertIn('"use_base": use_base', source)
+
+    def test_camera_topic_is_resolved_once_for_vision_and_task(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        topics = assigned_literal(SYSTEM, "CAMERA_TOPICS")
+        self.assertEqual(launch_default(SYSTEM, "camera_driver"), "usb")
+        self.assertEqual(topics, assigned_literal(VISION, "DRIVER_TOPICS"))
+        self.assertIn("def _resolve_camera_source(context):", source)
+        self.assertIn('"barcode_reader_image_topic": image_topic', source)
+        self.assertIn("OpaqueFunction(function=_task_actions)", source)
 
     def test_base_switch_only_gates_vendor_chassis_include(self):
         source = BRINGUP.read_text(encoding="utf-8")
@@ -313,6 +329,7 @@ class SystemContractTests(unittest.TestCase):
             "smartcar_task",
             "smartcar_vision",
             "smartcar_speech",
+            "smartcar_tools",
             "rf2o_laser_odometry",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)

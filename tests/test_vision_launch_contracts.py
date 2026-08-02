@@ -40,9 +40,9 @@ def launch_default(source, name):
 
 
 class VisionLaunchContractTests(unittest.TestCase):
-    def test_aurora_is_default_rgb_only_camera(self):
+    def test_usb_is_default_and_aurora_remains_rgb_only_option(self):
         source = LAUNCH_FILE.read_text(encoding="utf-8")
-        self.assertEqual(launch_default(source, "camera_driver"), "aurora")
+        self.assertEqual(launch_default(source, "camera_driver"), "usb")
         self.assertIn("deptrum-ros-driver-aurora930", source)
         self.assertIn("aurora930_launch.py", source)
         for setting in (
@@ -65,6 +65,15 @@ class VisionLaunchContractTests(unittest.TestCase):
         self.assertIn('"mipi": "/image_raw"', source)
         self.assertIn("hobot_usb_cam.launch.py", source)
         self.assertIn("mipi_cam_640x480_bgr8.launch.py", source)
+
+        for config_file in (DEFAULT_CONFIG, VOLCENGINE_CONFIG):
+            parameters = yaml.safe_load(
+                config_file.read_text(encoding="utf-8")
+            )["vision_node"]["ros__parameters"]
+            self.assertEqual(parameters["image_topic"], "/image")
+
+        node_source = NODE_FILE.read_text(encoding="utf-8")
+        self.assertIn('self.declare_parameter("image_topic", "/image")', node_source)
 
     def test_zbar_remaps_directly_to_selected_image_source(self):
         source = LAUNCH_FILE.read_text(encoding="utf-8")

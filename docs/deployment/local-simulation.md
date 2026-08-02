@@ -21,6 +21,11 @@ Nav2 规划、行为树、costmap、控制器以及 Gazebo 物理仍主要使用
 `run_route:=true` 时才会启动 `auto_train.py` 并向 Gazebo 模型发送非零速度。该参数
 绝不能用于实车启动。
 
+安装后的 `smartcar_sim` 只包含启动必需的 launch、模型、配置、地图与
+`sim_start.sh`/`sim_env.sh`/`sim_cleanup.sh`。地图生成、调参和结果校验保持为
+源码工具，请按本手册后续命令从 `src/smartcar_sim/scripts/` 调用，不作为已安装
+运行时入口。
+
 ## 2. 首次初始化
 
 在仓库根目录运行：

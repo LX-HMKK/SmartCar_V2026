@@ -153,15 +153,14 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - ✅ **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.50` 已修复。
 - 🔴 **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版”IntegrationClock 导致 EKF pose/速度冲突”的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
 - ✅ **Nav2 参数链路 (2026-07-23 修复)**：TROS Humble 的 `RewrittenYaml` chain 会导致 `controller_server` 加载默认 DWB 而非 RPP。修复：`CMakeLists.txt` 自动生成 `nav2_params_fixed.yaml`（BT 路径硬编码），`navigation_launch.py` 直接使用。任何对 `nav2_params.yaml` 的修改会在 `colcon build` 时自动同步。不可手动创建/编辑 `nav2_params_fixed.yaml`。
-- 🔴 **Nav2 启动封装遗留接口**：`smartcar_nav2.launch.py` 仍暴露并转发 `use_waypoint_follower`，但当前运行时不会启动 `waypoint_follower`。同一封装中的 `params_file`、BT XML 和 `waypoints_file` 参数部分已被固定参数链路旁路；不得把这些旧参数当作有效运行时配置。后续应连同 `nav2_waypoint_follower` 包依赖和未使用的 `FollowWaypoints` 结果分类器一起清理并更新合同测试。
+- ✅ **Nav2 启动入口收敛 (2026-08-02)**：`navigation_launch.py` 是唯一 Nav2 节点启动入口；旧的 `smartcar_nav2.launch.py`、`nav2_bringup.launch.py`、`use_waypoint_follower` 和 `nav2_waypoint_follower` 依赖已删除。运行时接口由该 launch 显式声明：已解析的 `params_file`、可选 `params_overlay_file`、时钟、生命周期、respawn、namespace 和日志参数；航点由任务节点加载，BT 路径由构建生成的 `nav2_params_fixed.yaml` 固定。
 - 🔴 **重启必须彻底杀旧进程**：多次 kill/restart 循环会残留旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等），占用 `/dev/ttyUSB0` 串口并消耗 CPU。**推荐使用 `bash scripts/ros_cleanup.sh` 一键清理**；手动方式：`pkill -9` 全部 ROS 节点可执行文件 → `ros2 daemon stop` → `sleep 1` → `ros2 daemon start` → `ros2 launch`。仅靠 `ctrl-c` 或部分 pkill 不可靠。
 - ✅ **任务起点航点 (2026-07-23 修复)**：`mission.py` 在构建导航段时跳过 `task=start` 的航点，避免 planner 对零长度路径 (0,0)→(0,0) 规划失败。发车前必须将车辆手动置于 P 点原点，车头朝 +X。
 - ✅ **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - ℹ️ **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
-- 🔴 **一键导航测试脚本 (2026-07-24 修订)**：只使用仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。`scripts/deploy/nav_test.sh` 是会自动解除急停并 start 的历史副本，不得复制或执行；当前 `scripts/monitor_mission.py` 也不能作为零速或安全判据。
+- 🔴 **一键导航测试脚本 (2026-08-02 收敛)**：唯一受支持的 RDK 启动入口是仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。任何旧 RDK 副本中会自动解除急停或调用 start 的脚本都不得恢复或执行；已删除的 `scripts/safe_start.sh`、`scripts/deploy/safe_start.sh`、`scripts/deploy/ros_cleanup.sh`、`scripts/verify_autostart.sh` 和 `scripts/monitor_mission.py` 也不得充当安全判据。
 - 🔴 **稀疏仿真路线与倒车 (2026-08-02)**：路线仅为 P→A forward、A→C1 reverse、C1→P forward，不含经过点。非任务点由 free-heading 搜索处理，不使用 `REEDS_SHEPP`、`reverse_penalty` 或航点朝向翻转。若反向候选搜索在清图后仍穷尽，反向树最多安全短退一次再重规划。该恢复已在 Gazebo 触发，但 P→A 紧右弯的控制跟踪尚未通过右侧保护包络，因此全路线未通过。
-- ℹ️ **航点调参约束 (2026-08-01)**：P、QR、VLM 是保护任务点，坐标和朝向不得修改；其余航点可按几何预检调整位置，且不应添加强制到达朝向。调参流程：`geometry_scan.py` 枚举候选 → `apply_candidate.py` 写入 YAML → `sim_tune.sh --loop 1` 验证。
-- ℹ️ **仿真航点几何扫描 (2026-08-01)**：`src/smartcar_sim/scripts/geometry_scan.py` 对任意航点段做 Dubins 路径扫描（仿真半径由 `simulation_minimum_turning_radius_m` 管理，当前为 `0.22 m`），采样起姿包络、检查 B/C 区 keepout、墙碰撞和 corridor 可达性。输出 JSON 候选集供 `apply_candidate.py` 消费；写入后必须以完整结果 JSON 验收。
+- ℹ️ **仿真调参约束 (2026-08-02)**：当前稀疏路线的 P 起点、A、C1 和 P 终点都是固定任务端点，没有可写入的中间航点；只服务旧密集 B/C 路线的离线候选扫描和写入工具已删除。P→A 问题只可修改该弯道的非对称横向反馈，并以完整结果 JSON 复验；不得新增经过点或放宽右侧保护包络。
 - ℹ️ **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
 - 🔴 **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
 
@@ -205,7 +204,6 @@ RDK 上一键启动：
 
 ```bash
 setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
-# 监控: python3 /root/monitor_mission.py
 # 日志: tail -f /tmp/bringup.log
 ```
 
