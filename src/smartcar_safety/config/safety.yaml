@@ -14,4 +14,8 @@ safety_node:
     # 0.70 rad command. This is intentionally below no untested command range.
     wheelbase: 0.189
     max_steering_angle: 0.70
+    # Disabled by default. When explicitly armed, the bounded service lets the
+    # safety node itself hold a zero-speed steering angle for wheel measurement.
+    allow_steering_calibration: false
+    steering_calibration_max_hold_sec: 15.0
     emergency_stop_on_start: false

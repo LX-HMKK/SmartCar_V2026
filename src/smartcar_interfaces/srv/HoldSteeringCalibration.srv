@@ -1,0 +1,7 @@
+# Request a bounded zero-speed steering hold owned by smartcar_safety.
+# A duration of exactly zero cancels an active hold and recentres immediately.
+float64 steering_angle
+float64 duration_sec
+---
+bool success
+string status

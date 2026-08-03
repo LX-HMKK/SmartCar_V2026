@@ -1,4 +1,4 @@
-"""Contract tests for shared SmartCar vision service definitions."""
+"""Contract tests for shared SmartCar service definitions."""
 
 from pathlib import Path
 import unittest
@@ -14,7 +14,8 @@ def service_fields(service_name: str) -> tuple[list[str], list[str]]:
     response_fields: list[str] = []
     current_fields = request_fields
 
-    for line in (SERVICE_DIRECTORY / service_name).read_text(encoding="utf-8").splitlines():
+    source = (SERVICE_DIRECTORY / service_name).read_text(encoding="utf-8")
+    for line in source.splitlines():
         field = line.split("#", maxsplit=1)[0].strip()
         if not field:
             continue
@@ -61,7 +62,8 @@ class VisionServiceInterfaceContractTests(unittest.TestCase):
             ),
         )
 
-    def test_prepare_motion_binds_direction_generation_and_action(self) -> None:
+    def test_prepare_motion_binds_direction_generation_and_action(
+            self) -> None:
         self.assertEqual(
             service_fields("PrepareMotion.srv"),
             (
@@ -81,7 +83,7 @@ class VisionServiceInterfaceContractTests(unittest.TestCase):
             ),
         )
 
-    def test_motion_lease_operations_require_the_complete_identity(self) -> None:
+    def test_motion_lease_operations_require_complete_identity(self) -> None:
         identity = [
             "uint64 boot_epoch",
             "uint64 lease_id",
@@ -99,6 +101,22 @@ class VisionServiceInterfaceContractTests(unittest.TestCase):
                     service_fields(service_name),
                     (identity, response),
                 )
+
+    def test_static_steering_hold_has_no_speed_field(
+            self) -> None:
+        self.assertEqual(
+            service_fields("HoldSteeringCalibration.srv"),
+            (
+                [
+                    "float64 steering_angle",
+                    "float64 duration_sec",
+                ],
+                [
+                    "bool success",
+                    "string status",
+                ],
+            ),
+        )
 
 
 if __name__ == "__main__":

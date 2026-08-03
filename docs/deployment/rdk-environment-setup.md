@@ -223,6 +223,12 @@ bash /root/nav_test.sh
 
 参考层只发布 `odom_combined` 下的 Marker，不发布 `/map`、TF，也不加入 Nav2 costmap。分段编辑、途经点、无朝向、HDMI 环境变量、预检和保存见 [`waypoint-editor.md`](waypoint-editor.md)。入口隔离和合同测试只证明软件结构，不证明相机、云端 API、音响、RF2O、路线或实车运动已经通过现场验收。
 
+转向标定命令不属于隔离 launch：`steering_circle_drive` 需要完整的
+`velocity_smoother -> direction_guard -> smartcar_safety` 运动链和前进方向租约；
+`steering_hold` 只请求安全节点默认关闭的、零速度且限时的静态量角服务。两者都要求
+人工确认，且不修改任何运动门禁。命令、上限和现场前置条件见
+[`../reference/field-tools.md`](../reference/field-tools.md)。
+
 ## 7. 任务、停止和复位
 
 ```bash

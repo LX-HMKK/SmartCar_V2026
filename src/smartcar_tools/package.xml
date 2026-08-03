@@ -31,6 +31,7 @@
   <exec_depend>smartcar_vision</exec_depend>
   <exec_depend>std_msgs</exec_depend>
   <exec_depend>std_srvs</exec_depend>
+  <exec_depend>unique_identifier_msgs</exec_depend>
   <exec_depend>visualization_msgs</exec_depend>
 
   <test_depend>python3-pytest</test_depend>

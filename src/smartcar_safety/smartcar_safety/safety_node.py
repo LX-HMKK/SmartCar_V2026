@@ -17,6 +17,7 @@ from sensor_msgs.msg import LaserScan
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
 
+from smartcar_interfaces.srv import HoldSteeringCalibration
 from smartcar_safety.guard import SafetyGuard, validate_publish_frequency
 from smartcar_safety.velocity import (
     ZERO_TWIST_COMPONENTS,
@@ -51,6 +52,10 @@ def twist_from_components(components):
     return result
 
 
+def components_are_quiescent(components):
+    return all(abs(float(component)) <= 1.0e-6 for component in components)
+
+
 class SafetyNode(Node):
     """Gate /cmd_vel to /cmd_vel_safe and continuously publish a safe command."""
 
@@ -69,6 +74,8 @@ class SafetyNode(Node):
         self.declare_parameter("wheelbase", 0.189)
         self.declare_parameter("max_steering_angle", 0.70)
         self.declare_parameter("ackermann_frame_id", "odom_combined")
+        self.declare_parameter("allow_steering_calibration", False)
+        self.declare_parameter("steering_calibration_max_hold_sec", 15.0)
         self.declare_parameter("emergency_stop_on_start", False)
 
         self.guard = SafetyGuard(
@@ -92,6 +99,7 @@ class SafetyNode(Node):
         self._last_status_reason = None
         self._last_odom_processed_at = None
         self._last_raw_odom_processed_at = None
+        self._steering_calibration = None
         self._odom_throttle_interval = max(
             0.0, float(self.get_parameter("odom_throttle_interval_sec").value))
 
@@ -119,6 +127,11 @@ class SafetyNode(Node):
             Float32, "/PowerVoltage", self._on_voltage, LATEST_RELIABLE_QOS)
         self.create_service(
             SetBool, "/smartcar/safety/emergency_stop", self._on_emergency_stop)
+        self.create_service(
+            HoldSteeringCalibration,
+            "/smartcar/safety/steering_calibration_hold",
+            self._on_steering_calibration_hold,
+        )
         self.create_timer(1.0 / frequency_hz, self._on_timer)
 
         now_sec = self._now_sec()
@@ -138,10 +151,14 @@ class SafetyNode(Node):
             message.angular.z,
         ))
         if valid:
+            if (self._steering_calibration is not None
+                    and not components_are_quiescent(components)):
+                self._steering_calibration = None
             self._last_command_components = components
             self._last_command_message = twist_from_components(components)
             self.guard.mark_command(now_sec)
         else:
+            self._steering_calibration = None
             self._last_command_components = None
             self._last_command_message = None
             self.guard.mark_command_invalid()
@@ -176,6 +193,8 @@ class SafetyNode(Node):
         self._publish_status_if_changed(self.guard.evaluate(now_sec))
 
     def _on_emergency_stop(self, request, response):
+        if request.data:
+            self._steering_calibration = None
         self.guard.set_emergency_stop(request.data)
         now_sec = self._now_sec()
         result = self.guard.evaluate(now_sec)
@@ -185,14 +204,66 @@ class SafetyNode(Node):
             "emergency stop latched" if request.data else "emergency stop cleared")
         return response
 
+    def _on_steering_calibration_hold(self, request, response):
+        now_sec = self._now_sec()
+        angle = float(request.steering_angle)
+        duration = float(request.duration_sec)
+
+        if duration == 0.0:
+            self._steering_calibration = None
+            response.success = True
+            response.status = "steering_calibration_cancelled"
+            return response
+
+        if not bool(self.get_parameter("allow_steering_calibration").value):
+            response.success = False
+            response.status = "steering_calibration_disabled"
+            return response
+
+        max_hold = float(
+            self.get_parameter("steering_calibration_max_hold_sec").value)
+        if (
+            not math.isfinite(angle)
+            or not math.isfinite(duration)
+            or not math.isfinite(max_hold)
+            or max_hold <= 0.0
+            or duration < 0.0
+            or duration > max_hold
+            or abs(angle) > self._max_steering_angle
+        ):
+            response.success = False
+            response.status = "steering_calibration_request_invalid"
+            return response
+
+        verdict = self.guard.evaluate(now_sec)
+        if not verdict["allowed"]:
+            response.success = False
+            response.status = (
+                "steering_calibration_safety_blocked:" + verdict["reason"])
+            return response
+        if (
+            self._last_command_components is None
+            or not components_are_quiescent(self._last_command_components)
+        ):
+            response.success = False
+            response.status = "steering_calibration_command_not_quiescent"
+            return response
+
+        self._steering_calibration = (angle, now_sec + duration)
+        response.success = True
+        response.status = "steering_calibration_active"
+        return response
+
     def _publish_zero_command(self):
         self._safe_publisher.publish(self._zero_command)
 
-    def _publish_ackermann(self, twist):
+    def _publish_ackermann(self, twist, steering_override=None):
         """Convert Twist to AckermannDriveStamped and publish to /ackermann_cmd."""
         speed = float(twist.linear.x)
         angular = float(twist.angular.z)
-        if abs(speed) < 0.001:
+        if steering_override is not None:
+            steering = float(steering_override)
+        elif abs(speed) < 0.001:
             steering = 0.0
         else:
             steering = math.atan(
@@ -213,8 +284,20 @@ class SafetyNode(Node):
             command = self._last_command_message
         else:
             command = self._zero_command
+        steering_override = None
+        if self._steering_calibration is not None:
+            angle, expires_at = self._steering_calibration
+            command_quiescent = (
+                self._last_command_components is not None
+                and components_are_quiescent(self._last_command_components)
+            )
+            if (not result["allowed"] or not command_quiescent
+                    or now_sec >= expires_at):
+                self._steering_calibration = None
+            else:
+                steering_override = angle
         self._safe_publisher.publish(command)
-        self._publish_ackermann(command)
+        self._publish_ackermann(command, steering_override)
         self._publish_status_if_changed(result)
 
     def _publish_status_if_changed(self, result):

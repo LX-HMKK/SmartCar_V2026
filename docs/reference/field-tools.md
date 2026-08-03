@@ -1,7 +1,7 @@
 # 场地工具与纯导航测试
 
 > 源文件：`CLAUDE.md` → 本文件（低频查阅，为 CLAUDE.md 减负）
-> 最后更新：2026-07-29
+> 最后更新：2026-08-03
 
 ## 路径分段航点编辑器
 
@@ -36,6 +36,40 @@ ros2 run smartcar_tools voltage_monitor
 # 实时查看: tail -f /tmp/voltage_history.log
 # 当前值:   ros2 topic echo /PowerVoltage --once
 ```
+
+## 转向标定
+
+这三项工具不会修改 `steering_calibrated` 或任何运动门禁。静态量角和地面圆周测试均为
+实体执行器操作，必须由现场操作员完成急停、场地和车轮状态确认；运行期间不得同时执行任务
+或导航动作。
+
+静态量角只允许前轮离地。安全节点默认拒绝该接口，操作员需在确认车辆已停止、传感器健康且
+软件急停已解除后，临时显式启用：
+
+```bash
+ros2 param set /safety_node allow_steering_calibration true
+ros2 run smartcar_tools steering_hold --angle 0.30 --hold 12 --yes
+ros2 param set /safety_node allow_steering_calibration false
+```
+
+`steering_hold` 不直接发布 `/ackermann_cmd`；它请求安全节点自身以零速度保持不超过
+`0.70 rad` 的舵角。服务最长保持 15 秒，到期、急停、传感器门禁失败或收到非零运动指令时
+都会回正。
+
+圆周测试只在净空不小于 3 m 的地面区域进行，操作员全程手持物理急停。它申请前进方向
+租约，并通过 `/cmd_vel_nav -> velocity_smoother -> direction_guard -> smartcar_safety`
+发送命令，不会解除急停或绕过安全链：
+
+```bash
+ros2 run smartcar_tools steering_circle_drive \
+  --angle 0.30 --speed 0.15 --duration 20 \
+  --out /tmp/steering_circle_030.csv --yes
+ros2 run smartcar_tools steering_circle_analyze \
+  --csv /tmp/steering_circle_030.csv --wheelbase 0.189
+```
+
+圆周速度上限为 `0.15 m/s`，持续时间上限为 60 秒。中断、租约续期失败或服务不可用时，
+工具先发布零速度并停止方向租约；离线分析器不依赖 ROS 或实体硬件。
 
 ## 纯导航全路线测试（无视觉）
 

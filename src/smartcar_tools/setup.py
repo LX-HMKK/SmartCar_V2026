@@ -48,6 +48,9 @@ setup(
             "odom_diag = smartcar_tools.odom_diag:main",
             "waypoint_drag_editor = smartcar_tools.waypoint_drag_editor:main",
             "voltage_monitor = smartcar_tools.voltage_monitor:main",
+            "steering_circle_analyze = smartcar_tools.steering_circle_analyze:main",
+            "steering_circle_drive = smartcar_tools.steering_circle_drive:main",
+            "steering_hold = smartcar_tools.steering_hold:main",
         ],
     },
 )

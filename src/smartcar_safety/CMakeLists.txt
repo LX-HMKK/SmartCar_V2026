@@ -26,7 +26,8 @@ include_directories(include)
 add_executable(safety_node_cpp src/safety_node.cpp src/guard.cpp)
 target_include_directories(safety_node_cpp PRIVATE include)
 ament_target_dependencies(safety_node_cpp
-  rclcpp geometry_msgs ackermann_msgs nav_msgs sensor_msgs std_msgs std_srvs)
+  rclcpp geometry_msgs ackermann_msgs nav_msgs sensor_msgs smartcar_interfaces
+  std_msgs std_srvs)
 
 add_library(direction_guard_core src/direction_guard.cpp)
 target_include_directories(direction_guard_core PUBLIC
@@ -59,6 +60,8 @@ if(BUILD_TESTING)
   find_package(ament_cmake_pytest REQUIRED)
   ament_add_pytest_test(test_direction_guard_contract_py
     test/test_direction_guard_contract.py)
+  ament_add_pytest_test(test_steering_calibration_contract_py
+    test/test_steering_calibration_contract.py)
 endif()
 
 ament_package()

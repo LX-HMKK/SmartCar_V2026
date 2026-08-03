@@ -5,6 +5,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
+#include <smartcar_interfaces/srv/hold_steering_calibration.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/string.hpp>
 #include <std_srvs/srv/set_bool.hpp>
@@ -13,12 +14,14 @@
 #include <chrono>
 #include <cmath>
 #include <mutex>
+#include <optional>
 #include <string>
 
 using geometry_msgs::msg::Twist;
 using ackermann_msgs::msg::AckermannDriveStamped;
 using sensor_msgs::msg::LaserScan;
 using nav_msgs::msg::Odometry;
+using smartcar_interfaces::srv::HoldSteeringCalibration;
 using std_msgs::msg::Float32;
 using std_msgs::msg::String;
 using std_srvs::srv::SetBool;
@@ -51,6 +54,16 @@ Twist twist_from_components(const std::array<double, 6> &components) {
   return result;
 }
 
+bool components_are_quiescent(const std::array<double, 6> &components) {
+  constexpr double zero_epsilon = 1.0e-6;
+  for (const double component : components) {
+    if (std::abs(component) > zero_epsilon) {
+      return false;
+    }
+  }
+  return true;
+}
+
 }  // namespace
 
 class SafetyNode : public rclcpp::Node {
@@ -70,6 +83,8 @@ public:
     declare_parameter("wheelbase", 0.189);
     declare_parameter("max_steering_angle", 0.70);
     declare_parameter("ackermann_frame_id", "odom_combined");
+    declare_parameter("allow_steering_calibration", false);
+    declare_parameter("steering_calibration_max_hold_sec", 15.0);
     declare_parameter("emergency_stop_on_start", false);
 
     // Construct the guard.
@@ -147,6 +162,12 @@ public:
                SetBool::Response::SharedPtr response) {
           on_emergency_stop(request, response);
         });
+    steering_calibration_srv_ = create_service<HoldSteeringCalibration>(
+        "/smartcar/safety/steering_calibration_hold",
+        [this](const HoldSteeringCalibration::Request::SharedPtr request,
+               HoldSteeringCalibration::Response::SharedPtr response) {
+          on_steering_calibration_hold(request, response);
+        });
 
     // Timer.
     auto period = std::chrono::duration<double>(1.0 / frequency_hz);
@@ -174,10 +195,15 @@ private:
     double now = now_sec();
     std::array<double, 6> components;
     if (sanitize_twist(*msg, components)) {
+      if (steering_calibration_.has_value() &&
+          !components_are_quiescent(components)) {
+        steering_calibration_.reset();
+      }
       last_command_components_ = components;
       last_command_message_ = twist_from_components(components);
       guard_.mark_command(now);
     } else {
+      steering_calibration_.reset();
       last_command_components_.reset();
       last_command_message_.reset();
       guard_.mark_command_invalid();
@@ -226,6 +252,9 @@ private:
   void on_emergency_stop(const SetBool::Request::SharedPtr request,
                          SetBool::Response::SharedPtr response) {
     std::lock_guard<std::mutex> lock(mutex_);
+    if (request->data) {
+      steering_calibration_.reset();
+    }
     guard_.set_emergency_stop(request->data);
     double now = now_sec();
     auto result = guard_.evaluate(now);
@@ -235,9 +264,62 @@ private:
                                        : "emergency stop cleared";
   }
 
+  void on_steering_calibration_hold(
+      const HoldSteeringCalibration::Request::SharedPtr request,
+      HoldSteeringCalibration::Response::SharedPtr response) {
+    std::lock_guard<std::mutex> lock(mutex_);
+    const double now = now_sec();
+    const double requested_angle = request->steering_angle;
+    const double requested_duration = request->duration_sec;
+
+    if (requested_duration == 0.0) {
+      steering_calibration_.reset();
+      response->success = true;
+      response->status = "steering_calibration_cancelled";
+      return;
+    }
+
+    if (!get_parameter("allow_steering_calibration").as_bool()) {
+      response->success = false;
+      response->status = "steering_calibration_disabled";
+      return;
+    }
+
+    const double max_hold =
+        get_parameter("steering_calibration_max_hold_sec").as_double();
+    if (!std::isfinite(requested_angle) || !std::isfinite(requested_duration) ||
+        !std::isfinite(max_hold) || max_hold <= 0.0 ||
+        requested_duration < 0.0 || requested_duration > max_hold ||
+        std::abs(requested_angle) > max_steering_angle_) {
+      response->success = false;
+      response->status = "steering_calibration_request_invalid";
+      return;
+    }
+
+    const auto verdict = guard_.evaluate(now);
+    if (!verdict.allowed) {
+      response->success = false;
+      response->status = "steering_calibration_safety_blocked:" +
+                         verdict.reason;
+      return;
+    }
+    if (!last_command_components_.has_value() ||
+        !components_are_quiescent(last_command_components_.value())) {
+      response->success = false;
+      response->status = "steering_calibration_command_not_quiescent";
+      return;
+    }
+
+    steering_calibration_ = SteeringCalibration{
+        requested_angle, now + requested_duration};
+    response->success = true;
+    response->status = "steering_calibration_active";
+  }
+
   void on_timer() {
     Twist command;
     smartcar_safety::SafetyVerdict result;
+    std::optional<double> steering_override;
     {
       std::lock_guard<std::mutex> lock(mutex_);
       double now = now_sec();
@@ -247,20 +329,34 @@ private:
       } else {
         command = zero_command_;
       }
+      if (steering_calibration_.has_value()) {
+        const bool command_quiescent = last_command_components_.has_value() &&
+            components_are_quiescent(last_command_components_.value());
+        if (!result.allowed || !command_quiescent ||
+            now >= steering_calibration_->expires_at) {
+          steering_calibration_.reset();
+        } else {
+          steering_override = steering_calibration_->angle;
+        }
+      }
     }
     // Publish outside the lock — ROS 2 publish may block on DDS transport.
     safe_pub_->publish(command);
-    publish_ackermann(command);
+    publish_ackermann(command, steering_override);
     publish_status_if_changed(result);
   }
 
   void publish_zero_command() { safe_pub_->publish(zero_command_); }
 
-  void publish_ackermann(const Twist &twist) {
+  void publish_ackermann(const Twist &twist,
+                         const std::optional<double> steering_override =
+                             std::nullopt) {
     double speed = twist.linear.x;
     double angular = twist.angular.z;
     double steering;
-    if (std::abs(speed) < 0.001) {
+    if (steering_override.has_value()) {
+      steering = steering_override.value();
+    } else if (std::abs(speed) < 0.001) {
       steering = 0.0;
     } else {
       steering = std::atan(wheelbase_ * angular / speed);
@@ -277,6 +373,11 @@ private:
     msg.drive.speed = speed;
     ackermann_pub_->publish(msg);
   }
+
+  struct SteeringCalibration {
+    double angle;
+    double expires_at;
+  };
 
   void publish_status_if_changed(const smartcar_safety::SafetyVerdict &result) {
     const std::string &reason = result.reason;
@@ -307,6 +408,7 @@ private:
   rclcpp::Subscription<Odometry>::SharedPtr raw_odom_sub_;
   rclcpp::Subscription<Float32>::SharedPtr voltage_sub_;
   rclcpp::Service<SetBool>::SharedPtr emergency_stop_srv_;
+  rclcpp::Service<HoldSteeringCalibration>::SharedPtr steering_calibration_srv_;
   rclcpp::TimerBase::SharedPtr timer_;
 
   std::mutex mutex_;
@@ -315,6 +417,7 @@ private:
   std::optional<std::string> last_status_reason_;
   std::optional<double> last_odom_processed_at_;
   std::optional<double> last_raw_odom_processed_at_;
+  std::optional<SteeringCalibration> steering_calibration_;
 };
 
 int main(int argc, char **argv) {

@@ -13,6 +13,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "srv/ActivateMotion.srv"
   "srv/RenewMotion.srv"
   "srv/StopMotion.srv"
+  "srv/HoldSteeringCalibration.srv"
   DEPENDENCIES builtin_interfaces unique_identifier_msgs
 )
 

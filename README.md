@@ -49,7 +49,7 @@ src/smartcar_vision/           zbar 与有界 VLM 服务
 src/smartcar_speech/           可选火山 TTS 与本地音频播放
 src/smartcar_task/             五子任务状态机
 src/smartcar_bringup/          分层与一键系统 launch
-src/smartcar_tools/            场地参考、航点编辑、诊断和三个媒体测试入口
+src/smartcar_tools/            场地参考、航点编辑、转向标定、诊断和媒体测试入口
 src/smartcar_sim/              Ubuntu Gazebo 阿克曼仿真、RViz 与自动导航验证
 ```
 
@@ -140,7 +140,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 ## 场地路线与独立测试入口
 
-`smartcar_tools` 提供官方规则图参考层、中文路径分段航点编辑器，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘；本机离线编辑默认不启动 safety，RDK 标定时必须显式传入 `start_safety:=true` 锁存软件急停。
+`smartcar_tools` 提供官方规则图参考层、中文路径分段航点编辑器、转向标定工具，以及互相隔离的语音、二维码和图生文入口。编辑器不启动 Nav2、LiDAR 或底盘；本机离线编辑默认不启动 safety，RDK 标定时必须显式传入 `start_safety:=true` 锁存软件急停。转向静态量角默认由 safety 拒绝，圆周标定必须走完整的方向租约和安全链；命令与前置条件见 [`docs/reference/field-tools.md`](docs/reference/field-tools.md)。
 
 规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整的分段、途经点、无朝向、预检、保存和仿真同步流程见 [`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md)。
 

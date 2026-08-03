@@ -61,7 +61,7 @@ src/smartcar_vision/                 QR 与 VLM 服务
 src/smartcar_speech/                 可选火山 TTS consumer
 src/smartcar_task/                   五子任务状态机
 src/smartcar_bringup/                分层和完整系统 launch
-src/smartcar_tools/                  场地参考、航点编辑、媒体入口与里程计诊断
+src/smartcar_tools/                  场地参考、航点编辑、转向标定、媒体入口与里程计诊断
 src/smartcar_sim/                    Ubuntu Gazebo 仿真、RViz 与自动导航验证
 scripts/                             RDK 同步与环境脚本
 tests/                               仓库级合同测试
