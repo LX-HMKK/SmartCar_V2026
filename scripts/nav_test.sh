@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SmartCar 纯导航安全测试（DUBIN 虚拟倒车 + 方向门）
-# 用法: bash /root/nav_test.sh [--autostart] [--no-rviz]
+# 用法: bash /root/nav_test.sh [--no-rviz]
 # ============================================================
 set -uo pipefail
 
@@ -19,15 +19,13 @@ set -u
 cd "$WORKSPACE"
 
 # ---- 参数解析 ----
-AUTOSTART=false
 NO_RVIZ=false
 for arg in "$@"; do
   case "$arg" in
-    --autostart) AUTOSTART=true ;;
     --no-rviz)   NO_RVIZ=true ;;
     *)
       echo "未知选项: $arg"
-      echo "用法: bash /root/nav_test.sh [--autostart] [--no-rviz]"
+      echo "用法: bash /root/nav_test.sh [--no-rviz]"
       exit 1
       ;;
   esac
@@ -40,7 +38,7 @@ banner() { echo ""; echo "=== $* ==="; }
 die()  { echo "✗ $*"; exit 1; }
 
 # ---- 1. 清理 ----
-banner "[1/7] 彻底清理"
+banner "[1/6] 彻底清理"
 if [ -x /usr/local/bin/ros_cleanup ]; then
   bash /usr/local/bin/ros_cleanup
 else
@@ -49,7 +47,7 @@ fi
 echo "  ✓ 清理完成"
 
 # ---- 2. 构建 ----
-banner "[2/7] 构建"
+banner "[2/6] 构建"
 colcon build --symlink-install \
   --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
@@ -58,7 +56,7 @@ colcon build --symlink-install \
 echo "  ✓ 构建完成"
 
 # ---- 3. 参数验证 ----
-banner "[3/7] 参数验证"
+banner "[3/6] 参数验证"
 FIXED_YAML="$WORKSPACE/install/smartcar_nav2/share/smartcar_nav2/config/nav2_params_fixed.yaml"
 if [ -f "$FIXED_YAML" ]; then
   echo "  motion_model: $(grep motion_model_for_search "$FIXED_YAML" | xargs)"
@@ -70,40 +68,28 @@ else
   echo "  ⚠ nav2_params_fixed.yaml 未找到，将使用默认参数"
 fi
 
-# ---- 4. 先验地图 + 航点 ----
-banner "[4/7] 可视化"
-ros2 run smartcar_tools field_reference_node --ros-args -r __ns:=/smartcar &>/tmp/field_ref.log &
-VIZ_PID1=$!
-ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:="$WP" &>/tmp/waypoint_viz.log &
-VIZ_PID2=$!
-sleep 2
-echo "  ✓ field_reference + waypoint_viz 已启动 (PIDs: $VIZ_PID1 $VIZ_PID2)"
-
-# ---- 5. 启动系统 ----
-if $AUTOSTART; then
-  BANNER_MSG="DUBIN + 强制倒车，自动发车"
-  EXTRA_ARGS="autostart_mission:=true safety_emergency_stop_on_start:=false"
+# ---- 4. 启动系统 ----
+BANNER_MSG="DUBIN + 强制倒车，急停锁存"
+EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
+if $NO_RVIZ; then
+  VISUALIZATION_ARG="use_visualization:=false"
 else
-  BANNER_MSG="DUBIN + 强制倒车，急停锁存"
-  EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
+  VISUALIZATION_ARG="use_visualization:=true"
 fi
-banner "[5/7] 启动系统 ($BANNER_MSG)"
+banner "[4/6] 启动系统 ($BANNER_MSG)"
 true > "$LOG"
 ros2 launch smartcar_bringup smartcar_system.launch.py \
-  use_base:=true use_lidar:=true use_obstacle:=false \
+  use_base:=true use_lidar:=true \
   use_laser_odometry:=false use_safety:=true use_nav:=true \
   nav_autostart:=true use_camera:=false use_vision:=false \
   use_task:=true camera_driver:=usb \
-  $EXTRA_ARGS \
-  waypoints_calibrated:=true extrinsics_calibrated:=true \
-  steering_calibrated:=true emergency_stop_ready:=true \
-  operator_approved:=true waypoints_file:="$WP" \
+  $EXTRA_ARGS $VISUALIZATION_ARG waypoints_file:="$WP" \
   >> "$LOG" 2>&1 &
 LAUNCH_PID=$!
 echo "  Launch PID: $LAUNCH_PID"
 
-# ---- 6. 等就绪 ----
-banner "[6/7] 等待就绪"
+# ---- 5. 等就绪 ----
+banner "[5/6] 等待就绪"
 READY=0
 for i in $(seq 1 60); do
   if grep -q "Managed nodes are active" "$LOG" 2>/dev/null; then
@@ -118,19 +104,15 @@ done
 sleep 5
 echo "  ✓ 全部 lifecycle active"
 
-# ---- 7. RViz ----
+# ---- 6. RViz ----
 if $NO_RVIZ; then
-  banner "[7/7] 跳过 RViz"
+  banner "[6/6] 跳过 RViz"
   echo "  - RViz 已禁用 (--no-rviz)"
 else
   OLD_RVIZ=$(ps -C rviz2 -o pid= --no-headers 2>/dev/null || true)
   [ -n "$OLD_RVIZ" ] && kill -9 $OLD_RVIZ 2>/dev/null || true
   sleep 1
-  if $AUTOSTART; then
-    banner "[7/7] RViz + 自动发车"
-  else
-    banner "[7/7] RViz + 等待人工发车"
-  fi
+  banner "[6/6] RViz + 等待人工发车"
   rviz2 -d "$WORKSPACE/src/smartcar_tools/rviz/navigation.rviz" &
   sleep 3
   echo "  ✓ RViz 已启动"
@@ -138,12 +120,8 @@ fi
 
 echo ""
 echo "╔══════════════════════════════════════════════╗"
-if $AUTOSTART; then
-  echo "║  系统已就绪，任务将自动开始                    ║"
-else
-  echo "║  系统已就绪，急停仍锁存，车辆不会自动发车    ║"
-  echo "║  确认后手动 reset、解除急停、start            ║"
-fi
+echo "║  系统已就绪，急停仍锁存，车辆不会自动发车    ║"
+echo "║  本脚本不授予运动门禁                          ║"
 echo "║  监控: ros2 topic echo /smartcar/task/state  ║"
 echo "║  日志: tail -f /tmp/bringup.log               ║"
 echo "║  急停: ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool '{data: true}' ║"

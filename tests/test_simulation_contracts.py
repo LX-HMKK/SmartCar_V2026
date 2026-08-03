@@ -243,15 +243,15 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(
             params["controller_server"]["ros__parameters"]["ForwardAvoidance"]
             ["desired_linear_vel"],
-            0.15,
+            0.30,
         )
         self.assertEqual(
             params["velocity_smoother"]["ros__parameters"]["max_velocity"][0],
-            0.15,
+            0.30,
         )
         self.assertEqual(
             params["velocity_smoother"]["ros__parameters"]["min_velocity"][0],
-            -0.15,
+            -0.30,
         )
         self.assertEqual(
             params["planner_server"]["ros__parameters"]["GridBased"]

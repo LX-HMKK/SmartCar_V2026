@@ -10,8 +10,8 @@ namespace smartcar_nav2
 /// Limits applied at the final output of the forward Ackermann controller.
 struct ForwardCommandLimits
 {
-  double vx_max{0.15};
-  double wz_max{0.70};
+  double vx_max{0.30};
+  double wz_max{1.3636363636363635};
   double min_turning_radius{0.22};
 };
 

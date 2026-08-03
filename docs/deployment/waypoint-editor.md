@@ -25,8 +25,8 @@ Matplotlib 图形界面，用于编辑语义航点、规划分段和途经约束
 
 | 文件 | 用途 |
 |---|---|
-| `src/smartcar_nav2/config/waypoints/default_waypoints.yaml` | 实车语义任务路线的源文件。 |
-| `src/smartcar_nav2/config/waypoints/nav_only.yaml` | Gazebo 纯导航仿真路线，不触发二维码或 VLM。 |
+| `src/smartcar_nav2/config/waypoints/default_waypoints.yaml` | 实车语义任务路线的源文件；A/C1 分别触发 QR/VLM。 |
+| `src/smartcar_nav2/config/waypoints/nav_only.yaml` | Gazebo 纯导航路线；与实车共享路线几何，A/C1 使用 `nav` 跳过媒体服务。 |
 | `src/smartcar_tools/config/routes/field_geometry.yaml` | 官方场地尺寸、区域和走廊参考。 |
 | `src/smartcar_tools/config/routes/route_planning.yaml` | 编辑器预检、C 区禁区和仿真 Nav2 的共享调参文件。 |
 
@@ -84,7 +84,6 @@ RDK 上编辑前先确认 YAML 的实际位置。日常从本机同步时，`pus
 | `waypoints_file` | `default_waypoints.yaml` | 要读取和保存的语义航点 YAML。 |
 | `geometry_file` | `field_geometry.yaml` | 场地参考与坐标边界。 |
 | `route_planning_file` | `route_planning.yaml` | 编辑器预检与禁区显示使用的共享配置。 |
-| `use_segment_ui` | `true` | 使用本文档描述的中文分段编辑界面；`false` 为旧 RViz Interactive Marker 编辑器。 |
 | `use_rviz` | `true` | 是否额外启动 RViz。专用本机入口默认传入 `false`。 |
 | `start_safety` | `false` | 是否启动锁存急停的 safety 节点。本机离线编辑保持 `false`；RDK 标定必须显式设为 `true`。 |
 | `use_sim_time` | `false` | 仅在已有仿真时钟的环境中设为 `true`。 |
@@ -135,7 +134,7 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 `via_N` 保存为 `task: via`，且不写 `pose.orientation`。它仍继承所属分段的前进或
 倒车方向；“无朝向”只表示该点不强制终点航向。预检会按前后路线切线推导它的朝向。
 
-当前 Gazebo `nav_only.yaml` 已在两段倒车中使用标准 `via` 约束。第二段允许
+当前实车 `default_waypoints.yaml` 与 Gazebo `nav_only.yaml` 都在两段倒车中使用标准 `via` 约束。第二段允许
 `reverse via ... -> c_corner_1` 组成一个连续动作：`c_corner_1` 的
 `reverse_handoff` 必须保持为最后一个、锁定航向的目标，运行时会使用 reverse-locked
 ThroughPoses 行为树。不能把 C1 作为中间点，不能把 `precise` 或其他特殊 profile 放在它前面，

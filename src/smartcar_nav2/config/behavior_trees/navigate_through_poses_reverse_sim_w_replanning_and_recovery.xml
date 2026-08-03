@@ -23,8 +23,6 @@
                 candidate_timeout_ms="1000"
                 search_budget_ms="2400"
                 through_search_budget_ms="12000"
-                fallback_candidate_limit="4"
-                lookahead_fallback_candidate_limit="0"
                 through_solution_limit="4"
                 max_start_drift_m="0.10"
                 footprint_half_length_m="0.2491"

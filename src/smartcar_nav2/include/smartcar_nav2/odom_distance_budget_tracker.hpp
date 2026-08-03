@@ -3,6 +3,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace smartcar_nav2
 {
@@ -57,6 +58,24 @@ public:
     max_odom_step_m_ = max_odom_step_m;
     initialized_ = true;
     return true;
+  }
+
+  // NavigateThroughPoses carries the complete ordered target list when its
+  // action begins. The terminal target defines one fixed action-wide budget;
+  // later RemovePassedGoals ticks must not reduce that budget mid-navigation.
+  bool initialize(
+    const OdomPlanarPose & start,
+    const std::vector<OdomPlanarPose> & goals,
+    double max_distance_ratio,
+    double distance_slack_m,
+    double max_odom_step_m)
+  {
+    if (goals.empty() || !std::all_of(goals.begin(), goals.end(), isFinite)) {
+      reset();
+      return false;
+    }
+    return initialize(
+      start, goals.back(), max_distance_ratio, distance_slack_m, max_odom_step_m);
   }
 
   OdomDistanceBudgetUpdate update(const OdomPlanarPose & sample)

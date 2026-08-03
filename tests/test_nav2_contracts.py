@@ -336,7 +336,7 @@ class TestNav2Contracts(unittest.TestCase):
             5 * primary["bt_loop_duration"],
         )
 
-    def test_controller_uses_forward_rpp_and_mppi_handoff_contracts(self):
+    def test_controller_uses_forward_rpp_and_reverse_mppi_handoff_contracts(self):
         controller = ros_parameters(self.params, "controller_server")
         self.assertEqual(controller["odom_topic"], "/odom_combined")
         self.assertEqual(
@@ -388,7 +388,6 @@ class TestNav2Contracts(unittest.TestCase):
             [
                 "FollowPath",
                 "ForwardAvoidance",
-                "ForwardHandoff",
                 "ReverseHandoff",
                 "ReverseRecovery",
             ],
@@ -408,7 +407,7 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertEqual(
             forward["plugin"], "smartcar_nav2::ForwardOnlyRPPController"
         )
-        self.assertAlmostEqual(forward["desired_linear_vel"], 0.15)
+        self.assertAlmostEqual(forward["desired_linear_vel"], 0.30)
         self.assertGreater(forward["forward_max_angular_velocity"], 0.0)
         self.assertIs(forward["allow_reversing"], False)
         self.assertIs(forward["use_rotate_to_heading"], False)
@@ -417,27 +416,6 @@ class TestNav2Contracts(unittest.TestCase):
         planner_radius = ros_parameters(self.params, "planner_server")[
             "GridBased"
         ]["minimum_turning_radius"]
-        forward_handoff = controller["ForwardHandoff"]
-        self.assertEqual(
-            forward_handoff["plugin"], "smartcar_nav2::ForwardOnlyMPPIController"
-        )
-        self.assertEqual(forward_handoff["motion_model"], "Ackermann")
-        self.assertAlmostEqual(forward_handoff["vx_min"], 0.02)
-        self.assertAlmostEqual(forward_handoff["vx_max"], 0.15)
-        self.assertGreater(forward_handoff["vx_min"], 0.0)
-        self.assertLess(forward_handoff["vx_min"], forward_handoff["vx_max"])
-        self.assertAlmostEqual(
-            forward_handoff["AckermannConstraints"]["min_turning_r"],
-            planner_radius,
-        )
-        self.assertGreaterEqual(
-            forward_handoff["wz_max"],
-            forward_handoff["vx_max"] / planner_radius,
-        )
-        self.assertIs(forward_handoff["CostCritic"]["consider_footprint"], True)
-        self.assertIn("GoalAngleCritic", forward_handoff["critics"])
-        self.assertIn("PathAngleCritic", forward_handoff["critics"])
-
         handoff = controller["ReverseHandoff"]
         self.assertEqual(
             handoff["plugin"], "smartcar_nav2::ReverseOnlyMPPIController"
@@ -454,7 +432,7 @@ class TestNav2Contracts(unittest.TestCase):
             forward["forward_max_angular_velocity"], planner_radius + 0.01
         )
         self.assertAlmostEqual(handoff["vx_min"], 0.02)
-        self.assertAlmostEqual(handoff["vx_max"], 0.09)
+        self.assertAlmostEqual(handoff["vx_max"], 0.30)
         self.assertGreater(handoff["vx_min"], 0.0)
         self.assertLess(handoff["vx_min"], handoff["vx_max"])
         self.assertAlmostEqual(
@@ -510,7 +488,7 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(recovery["motion_model"], "Ackermann")
         self.assertAlmostEqual(recovery["vx_min"], 0.015)
-        self.assertAlmostEqual(recovery["vx_max"], 0.05)
+        self.assertAlmostEqual(recovery["vx_max"], 0.30)
         self.assertAlmostEqual(recovery["wz_max"], 0.0)
         self.assertLess(recovery["vx_min"], recovery["vx_max"])
         self.assertEqual(
@@ -679,11 +657,9 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertIn("pluginlib_export_plugin_description_file(", cmake)
         self.assertIn("reverse_only_mppi_controller_plugin.xml", cmake)
         self.assertIn("test_reverse_command_filter", cmake)
-        self.assertIn("forward_only_mppi_controller_plugin.xml", cmake)
         self.assertIn("forward_only_rpp_controller_plugin.xml", cmake)
         self.assertIn("test_forward_command_filter", cmake)
         self.assertIn("test_forward_path_tracking_guard", cmake)
-        self.assertIn("add_library(smartcar_forward_only_mppi_controller", cmake)
         self.assertIn("add_library(smartcar_forward_only_rpp_controller", cmake)
         self.assertIn("configure_file(", cmake)
         self.assertIn("@ONLY", cmake)
@@ -694,9 +670,6 @@ class TestNav2Contracts(unittest.TestCase):
     def test_forward_controllers_keep_costmap_collision_contracts(self):
         forward = ros_parameters(self.params, "controller_server")[
             "ForwardAvoidance"
-        ]
-        forward_handoff = ros_parameters(self.params, "controller_server")[
-            "ForwardHandoff"
         ]
         inflation_radii = []
         for costmap_name in ("local_costmap", "global_costmap"):
@@ -709,7 +682,6 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertGreater(
             forward["max_allowed_time_to_collision_up_to_carrot"], 0.0)
         self.assertTrue(forward["use_cost_regulated_linear_velocity_scaling"])
-        self.assertTrue(forward_handoff["CostCritic"]["consider_footprint"])
         rpp_source = (PACKAGE_ROOT / "src" / "forward_only_rpp_controller.cpp").read_text(
             encoding="utf-8")
         self.assertIn("void ForwardOnlyRPPController::setPlan", rpp_source)
@@ -736,11 +708,9 @@ class TestNav2Contracts(unittest.TestCase):
             abs(smoother["max_velocity"][2]),
             abs(smoother["min_velocity"][2]),
         )
-        # DUBIN handles kinematic constraints in both real and virtual poses;
-        # velocity_smoother limits are platform-level caps, not derived from
-        # the planner's minimum turning radius.
+        self.assertAlmostEqual(max_linear, 0.30)
+        self.assertAlmostEqual(max_angular, max_linear / minimum_turning_radius)
         self.assertGreater(max_angular, 0.0)
-        self.assertLessEqual(max_angular, 1.0)
 
         longitudinal_deceleration = abs(smoother["max_decel"][0])
         self.assertGreater(longitudinal_deceleration, 0.0)
@@ -871,11 +841,12 @@ class TestNav2Contracts(unittest.TestCase):
         quaternion_norm = math.sqrt(sum(value * value for value in orientation.values()))
         self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
 
-    def test_simulation_route_keeps_p_and_a_targets_with_a_tuned_reverse_return(self):
+    def test_deployment_route_matches_simulation_geometry_and_restores_media_tasks(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
-        semantic_ids = (
-            "p_start", "a_task_observe", "c_corner_1", "p_finish",
+        route_ids = (
+            "p_start", "a_task_observe", "via_2", "c_corner_1",
+            "via_1", "via_3", "p_finish",
         )
         default_by_id = {
             waypoint["id"]: waypoint for waypoint in default["waypoints"]
@@ -886,7 +857,7 @@ class TestNav2Contracts(unittest.TestCase):
 
         self.assertEqual(
             [waypoint["id"] for waypoint in default["waypoints"]],
-            list(semantic_ids),
+            list(route_ids),
         )
         self.assertEqual(
             [waypoint["id"] for waypoint in nav_only["waypoints"]],
@@ -902,18 +873,16 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in default["waypoints"]],
-            ["start", "qr", "vlm", "return"],
+            ["start", "qr", "via", "vlm", "via", "via", "return"],
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in nav_only["waypoints"]],
             ["start", "nav", "via", "nav", "via", "via", "return"],
         )
 
-        # nav_only suppresses media requests and keeps the physical P/A
-        # targets. C1 and p_finish are simulation-route tuning inputs: C1 is
-        # edited in the route editor and p_finish is flipped for the final
-        # reverse action.
-        for waypoint_id in ("p_start", "a_task_observe"):
+        # nav_only only suppresses QR/VLM requests. Production keeps every
+        # completed simulation route constraint and restores the media tasks.
+        for waypoint_id in route_ids:
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
                     default_by_id[waypoint_id]["pose"]["position"],
@@ -927,22 +896,25 @@ class TestNav2Contracts(unittest.TestCase):
                     default_by_id[waypoint_id].get("goal_profile", "standard"),
                     nav_by_id[waypoint_id].get("goal_profile", "standard"),
                 )
-                self.assertEqual(
-                    default_by_id[waypoint_id]["pose"]["orientation"],
-                    nav_by_id[waypoint_id]["pose"]["orientation"],
-                )
-                self.assertEqual(
-                    effective_heading_mode(default_by_id[waypoint_id]), "locked"
-                )
-                self.assertEqual(
-                    effective_heading_mode(nav_by_id[waypoint_id]), "locked"
-                )
-                quaternion_norm = math.sqrt(sum(
-                    value * value
-                    for value in nav_by_id[waypoint_id]["pose"]["orientation"].values()
-                ))
-                self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
+                if effective_heading_mode(default_by_id[waypoint_id]) == "locked":
+                    self.assertEqual(
+                        default_by_id[waypoint_id]["pose"]["orientation"],
+                        nav_by_id[waypoint_id]["pose"]["orientation"],
+                    )
+                    self.assertEqual(
+                        effective_heading_mode(nav_by_id[waypoint_id]), "locked"
+                    )
+                    quaternion_norm = math.sqrt(sum(
+                        value * value
+                        for value in nav_by_id[waypoint_id]["pose"]["orientation"].values()
+                    ))
+                    self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
+                else:
+                    self.assertEqual(default_by_id[waypoint_id]["task"], "via")
+                    self.assertEqual(nav_by_id[waypoint_id]["task"], "via")
 
+        self.assertEqual(default_by_id["a_task_observe"]["task"], "qr")
+        self.assertEqual(default_by_id["c_corner_1"]["task"], "vlm")
         self.assertEqual(nav_by_id["a_task_observe"]["task"], "nav")
         self.assertEqual(nav_by_id["c_corner_1"]["task"], "nav")
         self.assertEqual(nav_by_id["c_corner_1"]["direction"], "reverse")
@@ -961,19 +933,12 @@ class TestNav2Contracts(unittest.TestCase):
             nav_by_id["p_finish"]["pose"]["position"],
             default_by_id["p_finish"]["pose"]["position"],
         )
-        self.assertAlmostEqual(
-            math.remainder(
-                planar_yaw(nav_by_id["p_finish"]["pose"]["orientation"])
-                - planar_yaw(default_by_id["p_finish"]["pose"]["orientation"]),
-                2.0 * math.pi,
-            ),
-            math.pi,
-            delta=1.0e-6,
+        self.assertEqual(
+            nav_by_id["p_finish"]["pose"]["orientation"],
+            default_by_id["p_finish"]["pose"]["orientation"],
         )
-        self.assertFalse(
-            {"via", "corridor", "loop"}
-            & {waypoint["task"] for waypoint in default["waypoints"]}
-        )
+        self.assertEqual(default_by_id["p_finish"]["direction"], "reverse")
+        self.assertEqual(default["planning_segments"], nav_only["planning_segments"])
         self.assertFalse(
             {
                 "b_corridor_gate", "b_corridor_enter", "c_entry_west",
@@ -1014,7 +979,7 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertAlmostEqual(qr_yaw, direct_arrival_yaw, delta=1.0e-6)
         self.assertAlmostEqual(
             planar_yaw(c_corner_1["pose"]["orientation"]),
-            math.radians(60.0),
+            math.pi,
             delta=1.0e-6,
         )
 

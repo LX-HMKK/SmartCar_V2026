@@ -146,48 +146,6 @@ def _parse_segment(raw: Any, index: int) -> PlanningSegment:
     )
 
 
-def derive_planning_segments(waypoints: Sequence[Any]) -> tuple[PlanningSegment, ...]:
-    """Create a useful editable baseline for legacy waypoint documents.
-
-    Direction changes and QR/VLM/return task boundaries start a new segment.
-    Users can then split, merge, or reorder pass-through constraints in the UI.
-    """
-    items = tuple(waypoints)
-    _waypoint_index(items)
-    if len(items) < 2:
-        return ()
-
-    segments: list[PlanningSegment] = []
-    start_index = 0
-    direction = getattr(items[1], "direction", "forward")
-    through: list[str] = []
-    for index in range(1, len(items)):
-        item = items[index]
-        next_direction = (
-            getattr(items[index + 1], "direction", None)
-            if index + 1 < len(items)
-            else None
-        )
-        endpoint = (
-            getattr(item, "task", "") in {*TERMINAL_TASKS, "return"}
-            or next_direction is not None and next_direction != direction
-        )
-        if endpoint:
-            segments.append(PlanningSegment(
-                id=f"segment_{len(segments) + 1}",
-                direction=direction,
-                start_id=items[start_index].id,
-                end_id=item.id,
-                through_ids=tuple(through),
-            ))
-            start_index = index
-            direction = next_direction or direction
-            through.clear()
-        else:
-            through.append(item.id)
-    return tuple(segments)
-
-
 def validate_planning_segments(
     segments: Sequence[PlanningSegment], waypoints: Sequence[Any]
 ) -> tuple[PlanningSegment, ...]:
@@ -264,11 +222,13 @@ def validate_planning_segments(
 def load_planning_segments(
     document: Mapping[str, Any], waypoints: Sequence[Any]
 ) -> tuple[PlanningSegment, ...]:
-    """Load explicit segments or derive an editable baseline for legacy YAML."""
+    """Load the route's required explicit navigation segments."""
     root = _mapping(document, "waypoint document")
-    raw = root.get(PLANNING_SEGMENTS_KEY)
-    if raw is None:
-        return derive_planning_segments(waypoints)
+    if PLANNING_SEGMENTS_KEY not in root:
+        raise PlanningSegmentError(
+            f"waypoint document must define {PLANNING_SEGMENTS_KEY}"
+        )
+    raw = root[PLANNING_SEGMENTS_KEY]
     if not isinstance(raw, list):
         raise PlanningSegmentError(f"{PLANNING_SEGMENTS_KEY} must be a list")
     return validate_planning_segments(

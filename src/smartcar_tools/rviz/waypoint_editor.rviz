@@ -30,14 +30,6 @@ Visualization Manager:
         Durability Policy: Transient Local
         Reliability Policy: Reliable
         Value: /smartcar/waypoint_editor/markers
-    - Class: rviz_default_plugins/InteractiveMarkers
-      Enable Transparency: true
-      Enabled: true
-      Name: Draggable Waypoints
-      Show Axes: false
-      Show Descriptions: true
-      Show Visual Aids: true
-      Update Topic: /smartcar/waypoint_editor/update
   Enabled: true
   Global Options:
     Background Color: 32; 34; 38
@@ -45,7 +37,6 @@ Visualization Manager:
     Frame Rate: 30
   Name: root
   Tools:
-    - Class: rviz_default_plugins/Interact
     - Class: rviz_default_plugins/MoveCamera
     - Class: rviz_default_plugins/Select
     - Class: rviz_default_plugins/FocusCamera

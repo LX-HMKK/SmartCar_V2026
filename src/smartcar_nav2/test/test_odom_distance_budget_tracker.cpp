@@ -21,6 +21,18 @@ TEST(OdomDistanceBudgetTracker, UsesConfiguredRatioOrAbsoluteSlack)
   EXPECT_DOUBLE_EQ(tracker.budget_m(), 0.9);
 }
 
+TEST(OdomDistanceBudgetTracker, UsesTheTerminalThroughPoseForTheActionBudget)
+{
+  OdomDistanceBudgetTracker tracker;
+  const std::vector<OdomPlanarPose> goals{
+    OdomPlanarPose{100.0, 0.0},
+    OdomPlanarPose{3.0, 4.0},
+  };
+  ASSERT_TRUE(tracker.initialize(
+      OdomPlanarPose{0.0, 0.0}, goals, 2.0, 0.80, 0.50));
+  EXPECT_DOUBLE_EQ(tracker.budget_m(), 10.0);
+}
+
 TEST(OdomDistanceBudgetTracker, AccumulatesAPathLoopInsteadOfNetDisplacement)
 {
   OdomDistanceBudgetTracker tracker;
@@ -48,6 +60,15 @@ TEST(OdomDistanceBudgetTracker, RejectsInvalidConfigurationAndSamples)
   EXPECT_FALSE(tracker.initialize(
       OdomPlanarPose{std::numeric_limits<double>::quiet_NaN(), 0.0},
       OdomPlanarPose{1.0, 0.0}, 2.0, 0.80, 0.50));
+  EXPECT_FALSE(tracker.initialize(
+      OdomPlanarPose{0.0, 0.0}, std::vector<OdomPlanarPose>{}, 2.0, 0.80, 0.50));
+  EXPECT_FALSE(tracker.initialize(
+      OdomPlanarPose{0.0, 0.0},
+      std::vector<OdomPlanarPose>{
+        OdomPlanarPose{1.0, 0.0},
+        OdomPlanarPose{std::numeric_limits<double>::quiet_NaN(), 0.0},
+      },
+      2.0, 0.80, 0.50));
 
   ASSERT_TRUE(tracker.initialize(
       OdomPlanarPose{0.0, 0.0}, OdomPlanarPose{1.0, 0.0}, 2.0, 0.80, 0.50));

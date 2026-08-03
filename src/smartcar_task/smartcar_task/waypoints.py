@@ -13,8 +13,6 @@ ALLOWED_TASKS = frozenset({
     "start",
     "qr",
     "vlm",
-    "corridor",
-    "loop",
     "return",
     "nav",       # pure navigation pass-through (no vision/media subtask)
     "via",       # editor-created route constraint (no vision/media subtask)
@@ -263,80 +261,46 @@ def validate_waypoints(waypoints):
         if tasks.count(task) != 1:
             raise ValueError(f"mission task {task} must occur exactly once")
 
-    # validate sequence with a simple state machine:
-    #   start → (qr|nav) → corridor* → (vlm|nav) →
-    #   (return | loop* → corridor* → return)
-    # ``via`` is a direction-preserving navigation constraint that may appear
-    # anywhere between semantic endpoints.  It never starts a media task.
-    # Loop corners are optional when C-zone ring walls constrain the path.
-    loop_count = tasks.count("loop")
-
+    # The production route keeps only semantic endpoints and ordinary ``via``
+    # constraints.  Its direction contract is fixed: P to QR forward, then
+    # both VLM-bound and return segments reverse.
     state = "start"
-    post_vlm_direction = None
     for i, task in enumerate(tasks):
         expected_direction = None
         if state == "start":
             if task != "start":
                 raise ValueError(f"waypoint {i}: expected start, got {task}")
             expected_direction = "forward"
-            state = "before_loop"
-        elif state == "before_loop":
+            state = "before_qr"
+        elif state == "before_qr":
             if task == "via":
                 expected_direction = "forward"
             elif task in ("qr", "nav"):
                 expected_direction = "forward"
-                state = "outbound_corridor"
+                state = "before_vlm"
             else:
                 raise ValueError(
                     f"waypoint {i}: expected qr or nav, got {task}"
                 )
-        elif state == "outbound_corridor":
+        elif state == "before_vlm":
             if task == "via":
-                expected_direction = "reverse"
-            elif task == "corridor":
                 expected_direction = "reverse"
             elif task in ("vlm", "nav"):
                 expected_direction = "reverse"
-                state = "loop_or_return"
+                state = "before_return"
             else:
                 raise ValueError(
-                    f"waypoint {i}: expected corridor or vlm/nav, got {task}"
+                    f"waypoint {i}: expected via or vlm/nav, got {task}"
                 )
-        elif state == "loop_or_return":
+        elif state == "before_return":
             if task == "return":
-                # A direct semantic return is valid when the live planner can
-                # trace the obstacle-constrained arc without authored guide
-                # points. Its direction remains an explicit operator decision:
-                # both forward and reverse return arcs are supported without
-                # an in-place turn action.
-                expected_direction = waypoints[i].direction
+                expected_direction = "reverse"
                 state = "done"
-            elif task in {"via", "loop", "corridor"}:
-                # Once the vehicle leaves the VLM handoff, retain one
-                # direction through the C-zone and return corridor.  This
-                # supports both the established forward route and an
-                # all-reverse simulation route.
-                if post_vlm_direction is None:
-                    post_vlm_direction = waypoints[i].direction
-                expected_direction = post_vlm_direction
-            if task == "corridor":
-                state = "return_corridor"
-            elif task not in {"via", "loop", "return"}:
-                raise ValueError(
-                    f"waypoint {i}: expected loop, corridor, or return, got {task}"
-                )
-        elif state == "return_corridor":
-            if task == "via":
-                expected_direction = post_vlm_direction
-            elif task == "corridor":
-                expected_direction = post_vlm_direction
-            elif task == "return":
-                expected_direction = post_vlm_direction
-                state = "done"
+            elif task == "via":
+                expected_direction = "reverse"
             else:
                 raise ValueError(
-                    f"waypoint {i}: out-of-sequence task {task} "
-                    f"(expected corridor or return in this segment)"
+                    f"waypoint {i}: expected via or return, got {task}"
                 )
         elif state == "done":
             raise ValueError(f"waypoint {i}: unexpected {task} after return")
@@ -347,8 +311,8 @@ def validate_waypoints(waypoints):
             )
     if state != "done":
         raise ValueError(
-            "mission order must be start, (qr|nav), corridor transit(s), "
-            "(vlm|nav), then either return or optional loop/corridor transit(s), return"
+            "mission order must be start, optional forward via, (qr|nav), "
+            "optional reverse via, (vlm|nav), optional reverse via, return"
         )
     for waypoint in waypoints:
         if (

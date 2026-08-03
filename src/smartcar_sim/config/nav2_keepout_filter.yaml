@@ -20,13 +20,11 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 
 controller_server:
   ros__parameters:
-    # The local route's P -> A tree uses stock FollowPath. Keep the real-car
-    # ForwardHandoff plugin out of this Gazebo controller server entirely.
+    # The local route's P -> A tree uses stock FollowPath.
     controller_plugins: ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"]
     ForwardAvoidance:
-      # Local Gazebo uses one 0.30 m/s operating point.  Keep angular speed
-      # coupled to the 0.22 m minimum radius rather than inheriting the
-      # real-vehicle 0.15 m/s settings.
+      # Local Gazebo and the production route use one 0.30 m/s operating
+      # point. Keep angular speed coupled to the 0.22 m minimum radius.
       desired_linear_vel: 0.30
       # Keep the carrot inside the current local arc so RPP converges before
       # beginning the next obstacle-clear turn.

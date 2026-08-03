@@ -25,7 +25,6 @@ from smartcar_tools.field_reference import load_field_reference  # noqa: E402
 from smartcar_task.planning_segments import (  # noqa: E402
     PlanningSegment,
     PlanningSegmentError,
-    derive_planning_segments,
     load_planning_segments,
     materialize_route,
     planning_segments_document,
@@ -75,11 +74,11 @@ def mission_waypoints():
     return (
         waypoint("p_start", "start", 0.0, 0.0),
         waypoint("qr", "qr", 1.0, 0.0),
-        waypoint("corridor", "corridor", 1.5, 1.0, "reverse"),
+        waypoint("via_to_vlm", "via", 1.5, 1.0, "reverse"),
         waypoint("vlm", "vlm", 2.0, 1.0, "reverse"),
-        waypoint("loop", "loop", 2.5, 3.9),
-        waypoint("return_corridor", "corridor", 1.5, 1.5),
-        waypoint("p_finish", "return", 0.0, 0.0),
+        waypoint("via_return_1", "via", 2.5, 3.9, "reverse"),
+        waypoint("via_return_2", "via", 1.5, 1.5, "reverse"),
+        waypoint("p_finish", "return", 0.0, 0.0, "reverse"),
     )
 
 
@@ -136,10 +135,11 @@ class PlanningSegmentTests(unittest.TestCase):
         segments = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
             PlanningSegment(
-                "reverse_to_vlm", "reverse", "qr", "vlm", ("corridor",)
+                "reverse_to_vlm", "reverse", "qr", "vlm", ("via_to_vlm",)
             ),
             PlanningSegment(
-                "return", "forward", "vlm", "p_finish", ("loop", "return_corridor")
+                "return", "reverse", "vlm", "p_finish",
+                ("via_return_1", "via_return_2"),
             ),
         )
 
@@ -149,15 +149,15 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(
             [item.id for item in route],
             [
-                "p_start", "qr", "corridor", "vlm", "loop",
-                "return_corridor", "p_finish",
+                "p_start", "qr", "via_to_vlm", "vlm", "via_return_1",
+                "via_return_2", "p_finish",
             ],
         )
         self.assertEqual(
             [item.direction for item in route],
             [
-                "forward", "forward", "reverse", "reverse", "forward",
-                "forward", "forward",
+                "forward", "forward", "reverse", "reverse", "reverse",
+                "reverse", "reverse",
             ],
         )
         self.assertEqual(validate_waypoints(route), route)
@@ -170,35 +170,51 @@ class PlanningSegmentTests(unittest.TestCase):
         incomplete = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
             PlanningSegment("to_vlm", "reverse", "qr", "vlm"),
-            PlanningSegment("return", "forward", "vlm", "p_finish"),
+            PlanningSegment("return", "reverse", "vlm", "p_finish"),
         )
         with self.assertRaisesRegex(PlanningSegmentError, "cover every waypoint"):
             validate_planning_segments(incomplete, source)
 
         discontinuous = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
-            PlanningSegment("bad", "reverse", "corridor", "vlm"),
+            PlanningSegment("bad", "reverse", "via_to_vlm", "vlm"),
             PlanningSegment(
-                "return", "forward", "vlm", "p_finish", ("loop", "return_corridor")
+                "return", "reverse", "vlm", "p_finish",
+                ("via_return_1", "via_return_2"),
             ),
         )
         with self.assertRaisesRegex(PlanningSegmentError, "previous segment end"):
             validate_planning_segments(discontinuous, source)
 
-    def test_legacy_waypoints_gain_editable_boundaries_without_losing_yaml_schema(self):
+    def test_route_requires_explicit_segments_and_round_trips_yaml_schema(self):
         source = mission_waypoints()
-        derived = derive_planning_segments(source)
+        with self.assertRaisesRegex(
+            PlanningSegmentError, "must define planning_segments"
+        ):
+            load_planning_segments({"calibrated": False}, source)
+
+        explicit = (
+            PlanningSegment("to_qr", "forward", "p_start", "qr"),
+            PlanningSegment("to_vlm", "reverse", "qr", "vlm", ("via_to_vlm",)),
+            PlanningSegment(
+                "return",
+                "reverse",
+                "vlm",
+                "p_finish",
+                ("via_return_1", "via_return_2"),
+            ),
+        )
         self.assertEqual(
-            [(item.start_id, item.end_id, item.direction) for item in derived],
+            [(item.start_id, item.end_id, item.direction) for item in explicit],
             [
                 ("p_start", "qr", "forward"),
                 ("qr", "vlm", "reverse"),
-                ("vlm", "p_finish", "forward"),
+                ("vlm", "p_finish", "reverse"),
             ],
         )
-        root = planning_segments_document({"calibrated": False}, derived)
+        root = planning_segments_document({"calibrated": False}, explicit)
         reloaded = load_planning_segments(root, source)
-        self.assertEqual(reloaded, derived)
+        self.assertEqual(reloaded, explicit)
         self.assertIn("planning_segments", root)
 
     def test_yaml_and_action_routes_keep_transit_headings_free(self):

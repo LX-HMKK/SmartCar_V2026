@@ -142,7 +142,6 @@ def generate_test_description():
                 launch_arguments={
                     "use_base": "false",
                     "use_lidar": "false",
-                    "use_obstacle": "false",
                     "use_safety": "true",
                     "safety_emergency_stop_on_start": "true",
                     "use_nav": "true",
@@ -150,6 +149,7 @@ def generate_test_description():
                     "use_camera": "false",
                     "use_vision": "true",
                     "use_task": "true",
+                    "use_visualization": "false",
                     "use_speech": "false",
                     "autostart_mission": "false",
                     "image_topic": "/smartcar/vision/image",

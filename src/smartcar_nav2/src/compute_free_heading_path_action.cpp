@@ -193,12 +193,6 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
       "cancellation_timeout_ms", 500,
       "Maximum duration spent waiting for a cancelled planner query in milliseconds"),
     BT::InputPort<int>(
-      "fallback_candidate_limit", 2,
-      "Legacy compatibility limit; free headings are initialized from heading_samples"),
-    BT::InputPort<int>(
-      "lookahead_fallback_candidate_limit", 0,
-      "Legacy compatibility limit; free lookaheads use the full heading list"),
-    BT::InputPort<int>(
       "through_solution_limit", 4,
       "Maximum complete through-poses heading chains compared before publication"),
     BT::InputPort<double>(
@@ -608,24 +602,6 @@ bool ComputeFreeHeadingPathAction::loadInputs()
     return false;
   }
   cancellation_timeout_ = std::chrono::milliseconds(cancellation_timeout_ms);
-  // Existing BT XML exposes these compatibility attributes. Validate their
-  // ranges, but candidate generation is now wholly bounded by heading_samples.
-  int fallback_candidate_limit = 0;
-  if (!getInput("fallback_candidate_limit", fallback_candidate_limit) ||
-    fallback_candidate_limit < 0 || fallback_candidate_limit > 4)
-  {
-    RCLCPP_ERROR(node_->get_logger(), "fallback_candidate_limit must lie in [0, 4]");
-    return false;
-  }
-  int lookahead_fallback_candidate_limit = 0;
-  if (!getInput(
-      "lookahead_fallback_candidate_limit", lookahead_fallback_candidate_limit) ||
-    lookahead_fallback_candidate_limit < 0 || lookahead_fallback_candidate_limit > 2)
-  {
-    RCLCPP_ERROR(
-      node_->get_logger(), "lookahead_fallback_candidate_limit must lie in [0, 2]");
-    return false;
-  }
   int through_solution_limit = 0;
   if (!getInput("through_solution_limit", through_solution_limit) ||
     through_solution_limit < 1 || through_solution_limit > 8)

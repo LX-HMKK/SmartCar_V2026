@@ -19,6 +19,8 @@ class SafetyGuardTests(unittest.TestCase):
             "odom_timeout_sec": 0.35,
             "raw_odom_timeout_sec": 0.25,
             "minimum_voltage": 0.0,
+            "voltage_timeout_sec": 1.0,
+            "max_linear_speed_mps": 0.30,
             "require_scan": True,
             "require_odom": True,
             "require_raw_odom": True,
@@ -27,7 +29,7 @@ class SafetyGuardTests(unittest.TestCase):
         return SafetyGuard(**options)
 
     def make_healthy(self, guard, now=10.0, voltage=12.0):
-        guard.mark_command(now)
+        self.assertTrue(guard.mark_command(now, 0.0))
         guard.mark_scan(now)
         guard.mark_odom(now)
         guard.mark_raw_odom(now)
@@ -53,7 +55,7 @@ class SafetyGuardTests(unittest.TestCase):
     def test_stale_scan_blocks_motion(self):
         guard = self.make_guard()
         self.make_healthy(guard)
-        guard.mark_command(10.20)
+        guard.mark_command(10.20, 0.0)
         guard.mark_odom(10.20)
         self.assertEqual(
             guard.evaluate(10.36),
@@ -63,7 +65,7 @@ class SafetyGuardTests(unittest.TestCase):
     def test_stale_odom_blocks_motion(self):
         guard = self.make_guard()
         self.make_healthy(guard)
-        guard.mark_command(10.20)
+        guard.mark_command(10.20, 0.0)
         guard.mark_scan(10.20)
         self.assertEqual(
             guard.evaluate(10.36),
@@ -72,7 +74,7 @@ class SafetyGuardTests(unittest.TestCase):
 
     def test_raw_odom_is_required_by_default(self):
         guard = SafetyGuard(require_scan=False, require_odom=False)
-        guard.mark_command(10.0)
+        guard.mark_command(10.0, 0.0)
 
         self.assertEqual(guard.raw_odom_timeout_sec, 0.25)
         self.assertEqual(
@@ -91,7 +93,7 @@ class SafetyGuardTests(unittest.TestCase):
         guard = self.make_guard(require_raw_odom=True)
         self.make_healthy(guard)
         guard.mark_raw_odom(10.0)
-        guard.mark_command(10.20)
+        guard.mark_command(10.20, 0.0)
         guard.mark_scan(10.20)
         guard.mark_odom(10.20)
 
@@ -117,7 +119,7 @@ class SafetyGuardTests(unittest.TestCase):
             require_odom=False,
             require_raw_odom=False,
         )
-        guard.mark_command(10.0)
+        guard.mark_command(10.0, 0.0)
         self.assertEqual(guard.evaluate(10.20), {"allowed": True, "reason": "ok"})
 
     def test_low_voltage_blocks_motion_when_threshold_enabled(self):
@@ -138,6 +140,52 @@ class SafetyGuardTests(unittest.TestCase):
                     {"allowed": False, "reason": "voltage_invalid"},
                 )
 
+    def test_stale_voltage_blocks_motion_when_threshold_enabled(self):
+        guard = self.make_guard(
+            command_timeout_sec=1.0,
+            scan_timeout_sec=1.0,
+            odom_timeout_sec=1.0,
+            raw_odom_timeout_sec=1.0,
+            minimum_voltage=11.0,
+            voltage_timeout_sec=0.50,
+        )
+        self.make_healthy(guard, now=10.0, voltage=12.0)
+        guard.mark_command(10.60, 0.0)
+        guard.mark_scan(10.60)
+        guard.mark_odom(10.60)
+        guard.mark_raw_odom(10.60)
+
+        self.assertEqual(
+            guard.evaluate(10.60),
+            {"allowed": False, "reason": "voltage_stale"},
+        )
+
+    def test_speed_limit_blocks_both_directions_until_explicitly_cleared(self):
+        guard = self.make_guard(
+            require_scan=False,
+            require_odom=False,
+            require_raw_odom=False,
+        )
+        for speed in (0.300001, -0.300001):
+            with self.subTest(speed=speed):
+                self.assertFalse(guard.mark_command(10.0, speed))
+                self.assertEqual(
+                    guard.evaluate(10.01),
+                    {
+                        "allowed": False,
+                        "reason": "command_speed_limit_exceeded",
+                    },
+                )
+                self.assertFalse(
+                    guard.mark_command(10.02, speed / abs(speed) * 0.30))
+                guard.clear_command_speed_limit_fault()
+                self.assertTrue(
+                    guard.mark_command(10.03, speed / abs(speed) * 0.30))
+                self.assertEqual(
+                    guard.evaluate(10.04),
+                    {"allowed": True, "reason": "ok"},
+                )
+
     def test_non_finite_minimum_voltage_is_rejected(self):
         for threshold in (math.nan, math.inf, -math.inf):
             with self.subTest(threshold=threshold):
@@ -150,6 +198,7 @@ class SafetyGuardTests(unittest.TestCase):
             "scan_timeout_sec",
             "odom_timeout_sec",
             "raw_odom_timeout_sec",
+            "voltage_timeout_sec",
         ):
             for timeout in (math.nan, math.inf, -math.inf):
                 with self.subTest(field=field, timeout=timeout):
@@ -162,6 +211,7 @@ class SafetyGuardTests(unittest.TestCase):
             "scan_timeout_sec",
             "odom_timeout_sec",
             "raw_odom_timeout_sec",
+            "voltage_timeout_sec",
         ):
             for timeout in (0.0, -0.01):
                 with self.subTest(field=field, timeout=timeout):
@@ -172,6 +222,12 @@ class SafetyGuardTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.make_guard(minimum_voltage=-0.01)
 
+    def test_non_positive_or_non_finite_speed_limit_is_rejected(self):
+        for limit in (0.0, -0.01, math.nan, math.inf, -math.inf):
+            with self.subTest(limit=limit):
+                with self.assertRaises(ValueError):
+                    self.make_guard(max_linear_speed_mps=limit)
+
     def test_zero_minimum_voltage_remains_disabled(self):
         guard = self.make_guard(
             minimum_voltage=0.0,
@@ -179,7 +235,7 @@ class SafetyGuardTests(unittest.TestCase):
             require_odom=False,
             require_raw_odom=False,
         )
-        guard.mark_command(10.0)
+        guard.mark_command(10.0, 0.0)
         self.assertEqual(guard.evaluate(10.1), {"allowed": True, "reason": "ok"})
 
     def test_invalid_command_blocks_without_refreshing_last_valid_timestamp(self):
@@ -193,7 +249,7 @@ class SafetyGuardTests(unittest.TestCase):
             {"allowed": False, "reason": "command_invalid"},
         )
 
-        guard.mark_command(10.2)
+        guard.mark_command(10.2, 0.0)
         self.assertEqual(guard.evaluate(10.21), {"allowed": True, "reason": "ok"})
 
 

@@ -80,8 +80,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.597243327229539
-      y: 3.3192295499280795
+      x: 3.4019935069572593
+      y: 3.5638138712833114
       z: 0.0
   task: via
   direction: reverse

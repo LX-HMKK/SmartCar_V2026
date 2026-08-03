@@ -5,7 +5,7 @@
   push         本机 src/ + config/ -> RDK /root/ros2_ws/{src,config}/（--delete 镜像）
   pull         RDK /root/ros2_ws/src/ -> 本机 src/（反向，慎用）
   pull-waypoints  仅回传 RDK 上现场微调后的语义航点 YAML
-  init-vendor  一次性回传官方 origincar 与第三方 obstacle_detector_2 到本机
+  init-vendor  一次性回传官方 origincar 到本机
   setup        scp source_env.sh 到 RDK ~/
 
 环境：
@@ -35,17 +35,11 @@ def resolve_rdk_host():
 HOST = resolve_rdk_host()
 REMOTE_WS = "/root/ros2_ws"
 REMOTE_VENDOR_ORIGINCAR = "/userdata/dev_ws/src/origincar"
-# obstacle_detector_2 在 RDK 仅 /root/ros2_ws/src/ 下有一份（无 /userdata 备份），
-# 首次 push --delete 后该原路径被删；故 init-vendor 为一次性操作，须在首次 push 前完成，
-# 之后本机 VCS 即为权威源，可经 push 恢复 RDK。
-REMOTE_VENDOR_OBSTACLE = "/root/ros2_ws/src/obstacle_detector_2"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 LOCAL_SRC = REPO_ROOT / "src"
 LOCAL_CONFIG = REPO_ROOT / "config"
 LOCAL_VENDOR_ORIGINCAR = LOCAL_SRC / "origincar"
-LOCAL_THIRD_PARTY = LOCAL_SRC / "third_party"
-LOCAL_OBSTACLE = LOCAL_THIRD_PARTY / "obstacle_detector_2"
 LOCAL_SOURCE_ENV = REPO_ROOT / "scripts" / "source_env.sh"
 WAYPOINTS_RELATIVE_PATH = Path(
     "src/smartcar_nav2/config/waypoints/default_waypoints.yaml")
@@ -115,11 +109,11 @@ def check_push_safety(path=None):
     """
     if path is not None:
         return path.is_dir() and any(path.iterdir())
-    required = [LOCAL_VENDOR_ORIGINCAR, LOCAL_OBSTACLE, LOCAL_CONFIG]
+    required = [LOCAL_VENDOR_ORIGINCAR, LOCAL_CONFIG]
     missing = [str(p) for p in required if not (p.is_dir() and any(p.iterdir()))]
     if missing:
         print(f"错误：关键子树缺失或为空：{missing}，拒绝 push --delete（防清空 RDK）。"
-              "请先运行 init-vendor。", file=sys.stderr)
+              "请确认本地工作区完整后重试。", file=sys.stderr)
         return False
     return True
 
@@ -153,10 +147,8 @@ def pull_targets():
 
 def init_vendor_targets():
     """init-vendor 的 (src, dst) 列表。"""
-    return [
-        (f"{HOST}:{REMOTE_VENDOR_ORIGINCAR}/", str(LOCAL_VENDOR_ORIGINCAR) + "/"),
-        (f"{HOST}:{REMOTE_VENDOR_OBSTACLE}/", str(LOCAL_OBSTACLE) + "/"),
-    ]
+    return [(f"{HOST}:{REMOTE_VENDOR_ORIGINCAR}/",
+             str(LOCAL_VENDOR_ORIGINCAR) + "/")]
 
 
 def build_parser():
@@ -180,7 +172,7 @@ def build_parser():
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func="pull_waypoints")
 
-    p = sub.add_parser("init-vendor", help="一次性回传官方包与第三方")
+    p = sub.add_parser("init-vendor", help="一次性回传官方 origincar")
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func="init_vendor")
 

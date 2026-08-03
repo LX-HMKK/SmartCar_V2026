@@ -105,8 +105,8 @@ TUNABLE_PARAMS = {
         "name": "reverse_handoff_vx_max",
         "path": "controller_server.ros__parameters.ReverseHandoff.vx_max",
         "desc": "倒车交接 MPPI 虚拟正向最大速度 (m/s)",
-        "default": 0.09,
-        "range": (0.04, 0.10),
+        "default": 0.30,
+        "range": (0.04, 0.30),
         "step": 0.01,
     },
     "9": {

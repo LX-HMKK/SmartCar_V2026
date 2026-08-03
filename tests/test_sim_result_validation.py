@@ -1071,9 +1071,14 @@ class SimResultValidationTests(unittest.TestCase):
 
     def test_handoff_mppi_speed_and_goal_angle_are_tunable(self):
         tuner = TUNE_PARAMS.read_text(encoding="utf-8")
+        tuner_spec = importlib.util.spec_from_file_location(
+            "tune_params_handoff", TUNE_PARAMS)
+        tuner_module = importlib.util.module_from_spec(tuner_spec)
+        tuner_spec.loader.exec_module(tuner_module)
         params = yaml.safe_load(NAV2_PARAMS.read_text(encoding="utf-8"))
         handoff = params["controller_server"]["ros__parameters"][
             "ReverseHandoff"]
+        handoff_tuning = tuner_module.TUNABLE_PARAMS["8"]
 
         self.assertIn('"reverse_handoff_vx_max"', tuner)
         self.assertIn('"reverse_handoff_goal_angle_weight"', tuner)
@@ -1083,8 +1088,11 @@ class SimResultValidationTests(unittest.TestCase):
             handoff["plugin"], "smartcar_nav2::ReverseOnlyMPPIController"
         )
         self.assertAlmostEqual(handoff["vx_min"], 0.02)
-        self.assertAlmostEqual(handoff["vx_max"], 0.09)
+        self.assertAlmostEqual(handoff["vx_max"], 0.30)
         self.assertLess(handoff["vx_min"], handoff["vx_max"])
+        self.assertEqual(handoff_tuning["default"], 0.30)
+        self.assertLessEqual(handoff_tuning["range"][0], 0.30)
+        self.assertGreaterEqual(handoff_tuning["range"][1], 0.30)
         self.assertIs(
             params["velocity_smoother"]["ros__parameters"]["scale_velocities"],
             True,

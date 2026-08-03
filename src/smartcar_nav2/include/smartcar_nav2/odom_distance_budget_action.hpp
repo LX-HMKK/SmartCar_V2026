@@ -6,9 +6,11 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <vector>
 
 #include "behaviortree_cpp_v3/decorator_node.h"
 #include "geometry_msgs/msg/pose_stamped.hpp"
+#include "nav2_behavior_tree/bt_conversions.hpp"
 #include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 
@@ -17,9 +19,11 @@
 namespace smartcar_nav2
 {
 
-// A per-NavigateToPose travel fuse. It has no command publisher: exceeding
-// the measured odometry budget halts the child tree, which cancels FollowPath,
-// then returns FAILURE to the navigator instead of entering recovery motion.
+// A per-navigation travel fuse. It supports NavigateToPose's single goal and
+// NavigateThroughPoses' ordered goals, using the initial terminal target for
+// one fixed measured-travel budget. It has no command publisher: exceeding
+// the budget halts the child tree, which cancels FollowPath, then returns
+// FAILURE to the navigator instead of entering recovery motion.
 class OdomDistanceBudgetAction : public BT::DecoratorNode
 {
 public:
@@ -50,6 +54,7 @@ private:
 
   ArmResult beginNavigation();
   bool readConfiguration();
+  bool readGoalPoses();
   bool hasAbortCondition(std::string & reason, double & travelled_m, double & budget_m);
   void stopMonitoring();
   void abortNavigation(const std::string & reason, double travelled_m, double budget_m);
@@ -67,7 +72,7 @@ private:
   std::mutex mutex_;
   std::optional<OdomSample> latest_odom_;
   OdomDistanceBudgetTracker tracker_;
-  OdomPlanarPose goal_pose_{};
+  std::vector<OdomPlanarPose> goal_poses_;
   bool awaiting_initial_odom_{false};
   std::chrono::steady_clock::time_point initial_odom_deadline_{};
   bool monitoring_{false};

@@ -53,7 +53,6 @@ class SystemContractTests(unittest.TestCase):
         expected_defaults = {
             "use_base": "true",
             "use_lidar": "true",
-            "use_obstacle": "false",
             "use_laser_odometry": "false",
             "use_imu_filter": "false",
             "use_robot_description": "false",
@@ -62,6 +61,7 @@ class SystemContractTests(unittest.TestCase):
             "use_camera": "true",
             "use_vision": "true",
             "use_task": "true",
+            "use_visualization": "false",
             "use_speech": "false",
             "autostart_mission": "false",
             "use_sim_time": "false",
@@ -95,6 +95,7 @@ class SystemContractTests(unittest.TestCase):
             source,
         )
         self.assertIn('"use_base": use_base', source)
+        self.assertIn('"use_safety_ackermann": "true"', source)
 
     def test_camera_topic_is_resolved_once_for_vision_and_task(self):
         source = SYSTEM.read_text(encoding="utf-8")
@@ -118,7 +119,7 @@ class SystemContractTests(unittest.TestCase):
     def test_unused_sensor_and_visualization_nodes_are_opt_in(self):
         system_source = SYSTEM.read_text(encoding="utf-8")
         vendor_source = VENDOR.read_text(encoding="utf-8")
-        self.assertEqual(launch_default(SYSTEM, "use_obstacle"), "false")
+        self.assertEqual(launch_default(SYSTEM, "use_visualization"), "false")
         self.assertEqual(launch_default(SYSTEM, "use_imu_filter"), "false")
         self.assertEqual(
             launch_default(SYSTEM, "use_robot_description"), "false"
@@ -127,6 +128,12 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn(
             '"use_robot_description": use_robot_description', system_source
         )
+        self.assertEqual(
+            system_source.count("condition=IfCondition(use_visualization)"),
+            2,
+        )
+        self.assertIn('executable="field_reference_node"', system_source)
+        self.assertIn('executable="waypoint_viz"', system_source)
         self.assertIn("condition=IfCondition(use_imu_filter)", vendor_source)
         self.assertGreaterEqual(
             vendor_source.count(
@@ -147,6 +154,15 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn(
             'raise RuntimeError("use_base requires use_safety")', source)
         self.assertIn('if _as_bool(context, "use_base")', source)
+
+    def test_lower_bringup_rejects_physical_safety_bypasses(self):
+        source = BRINGUP.read_text(encoding="utf-8")
+        self.assertIn("OpaqueFunction(function=_validate_configuration)", source)
+        self.assertIn("raise RuntimeError('use_base requires use_safety')", source)
+        self.assertIn(
+            "raise RuntimeError('use_base requires use_safety_ackermann')",
+            source,
+        )
 
     def test_startup_emergency_stop_is_explicit_and_defaults_false(self):
         source = SYSTEM.read_text(encoding="utf-8")
@@ -186,6 +202,8 @@ class SystemContractTests(unittest.TestCase):
         nav_source = NAV.read_text(encoding="utf-8")
         self.assertEqual(launch_default(NAV, "autostart"), "true")
         self.assertIn("'autostart': autostart", nav_source)
+        self.assertNotIn("LaunchConfiguration('namespace')", nav_source)
+        self.assertNotIn("DeclareLaunchArgument(\n        'namespace'", nav_source)
         for path in (BRINGUP, VISION):
             source = path.read_text(encoding="utf-8")
             self.assertIn("use_sim_time", source)

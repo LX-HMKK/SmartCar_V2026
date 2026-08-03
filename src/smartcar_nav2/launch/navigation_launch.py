@@ -168,7 +168,6 @@ def _navigation_node_actions(
 def generate_launch_description():
     pkg_dir = get_package_share_directory('smartcar_nav2')
 
-    namespace = LaunchConfiguration('namespace')
     use_sim_time = LaunchConfiguration('use_sim_time')
     autostart = LaunchConfiguration('autostart')
     lifecycle_manager_delay_sec = LaunchConfiguration(
@@ -182,9 +181,6 @@ def generate_launch_description():
         'RCUTILS_LOGGING_BUFFERED_STREAM', '1'
     )
 
-    declare_namespace_cmd = DeclareLaunchArgument(
-        'namespace', default_value='', description='Top-level namespace'
-    )
     declare_use_sim_time_cmd = DeclareLaunchArgument(
         'use_sim_time',
         default_value='false',
@@ -245,7 +241,6 @@ def generate_launch_description():
 
     launch_description = LaunchDescription()
     launch_description.add_action(stdout_linebuf_envvar)
-    launch_description.add_action(declare_namespace_cmd)
     launch_description.add_action(declare_use_sim_time_cmd)
     launch_description.add_action(declare_params_file_cmd)
     launch_description.add_action(declare_params_overlay_file_cmd)

@@ -16,7 +16,6 @@ def generate_launch_description():
     waypoints_file = LaunchConfiguration("waypoints_file")
     start_safety = LaunchConfiguration("start_safety")
     use_rviz = LaunchConfiguration("use_rviz")
-    use_segment_ui = LaunchConfiguration("use_segment_ui")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     editor = IncludeLaunchDescription(
@@ -31,7 +30,6 @@ def generate_launch_description():
             # safety stack just to edit its route.  This remains overrideable.
             "start_safety": start_safety,
             "use_rviz": use_rviz,
-            "use_segment_ui": use_segment_ui,
             "use_sim_time": use_sim_time,
         }.items(),
     )
@@ -48,7 +46,6 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("start_safety", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="false"),
-        DeclareLaunchArgument("use_segment_ui", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         editor,
     ])

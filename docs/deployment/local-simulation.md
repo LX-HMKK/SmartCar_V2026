@@ -134,7 +134,8 @@ recovery：清 local/global costmap、重新 `ComputePathToPose`，再发送新�
 local costmap 后重发旧 `{path}`。2026-08-03 的两次定向 P→A 运行均完成，位置误差均为
 `0.102 m`，航向误差为 `0.085 rad` 与 `0.073 rad`；其中一次实际记录了碰撞超时、双 costmap
 清理和新路径后的成功到达。前进段不执行短退，短退只属于反向规划候选穷尽后的受限恢复。
-这些结果不等同于三阶段完整路线通过，更不构成实体车辆验收。
+上述两次定向 P→A 结果本身不等同于三阶段完整路线通过；完整路线已由
+`validate_sim_results.py` 验证通过，但两类 Gazebo 证据均不构成实体车辆验收。
 
 运行路线会让 Gazebo 模型运动：
 

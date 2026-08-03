@@ -76,6 +76,8 @@ public:
     declare_parameter("raw_odom_timeout_sec", 0.25);
     declare_parameter("odom_throttle_interval_sec", 0.05);
     declare_parameter("minimum_voltage", 0.0);
+    declare_parameter("voltage_timeout_sec", 1.0);
+    declare_parameter("max_linear_speed_mps", 0.30);
     declare_parameter("publish_frequency_hz", 20.0);
     declare_parameter("require_scan", true);
     declare_parameter("require_odom", true);
@@ -94,6 +96,8 @@ public:
         get_parameter("odom_timeout_sec").as_double(),
         get_parameter("raw_odom_timeout_sec").as_double(),
         get_parameter("minimum_voltage").as_double(),
+        get_parameter("voltage_timeout_sec").as_double(),
+        get_parameter("max_linear_speed_mps").as_double(),
         get_parameter("require_scan").as_bool(),
         get_parameter("require_odom").as_bool(),
         get_parameter("require_raw_odom").as_bool());
@@ -194,20 +198,24 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     double now = now_sec();
     std::array<double, 6> components;
-    if (sanitize_twist(*msg, components)) {
+    if (!sanitize_twist(*msg, components)) {
+      steering_calibration_.reset();
+      last_command_components_.reset();
+      last_command_message_.reset();
+      guard_.mark_command_invalid();
+      publish_zero_command();
+    } else if (!guard_.mark_command(now, components[0])) {
+      steering_calibration_.reset();
+      last_command_components_.reset();
+      last_command_message_.reset();
+      publish_zero_command();
+    } else {
       if (steering_calibration_.has_value() &&
           !components_are_quiescent(components)) {
         steering_calibration_.reset();
       }
       last_command_components_ = components;
       last_command_message_ = twist_from_components(components);
-      guard_.mark_command(now);
-    } else {
-      steering_calibration_.reset();
-      last_command_components_.reset();
-      last_command_message_.reset();
-      guard_.mark_command_invalid();
-      publish_zero_command();
     }
     auto result = guard_.evaluate(now);
     publish_status_if_changed(result);
@@ -254,14 +262,17 @@ private:
     std::lock_guard<std::mutex> lock(mutex_);
     if (request->data) {
       steering_calibration_.reset();
+    } else {
+      guard_.clear_command_speed_limit_fault();
     }
     guard_.set_emergency_stop(request->data);
     double now = now_sec();
     auto result = guard_.evaluate(now);
     publish_status_if_changed(result);
     response->success = true;
-    response->message = request->data ? "emergency stop latched"
-                                       : "emergency stop cleared";
+    response->message = request->data
+                            ? "emergency stop latched"
+                            : "emergency stop and speed-limit latch cleared";
   }
 
   void on_steering_calibration_hold(
@@ -346,7 +357,10 @@ private:
     publish_status_if_changed(result);
   }
 
-  void publish_zero_command() { safe_pub_->publish(zero_command_); }
+  void publish_zero_command() {
+    safe_pub_->publish(zero_command_);
+    publish_ackermann(zero_command_);
+  }
 
   void publish_ackermann(const Twist &twist,
                          const std::optional<double> steering_override =
@@ -391,8 +405,8 @@ private:
     last_status_reason_ = reason;
   }
 
-  smartcar_safety::SafetyGuard guard_{0.30, 0.35, 0.35, 0.25, 0.0,
-                                       true, true, true};
+  smartcar_safety::SafetyGuard guard_{0.30, 0.35, 0.35, 0.25, 0.0, 1.0,
+                                       0.30, true, true, true};
   double wheelbase_;
   double max_steering_angle_;
   std::string ackermann_frame_id_;

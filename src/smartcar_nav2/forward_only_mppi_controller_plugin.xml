@@ -1,8 +1,0 @@
-<library path="smartcar_forward_only_mppi_controller">
-  <class
-    name="smartcar_nav2::ForwardOnlyMPPIController"
-    type="smartcar_nav2::ForwardOnlyMPPIController"
-    base_class_type="nav2_core::Controller">
-    <description>Forward-only MPPI controller with a final Ackermann command guard.</description>
-  </class>
-</library>

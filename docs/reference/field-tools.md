@@ -80,6 +80,6 @@ setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
 # 日志: tail -f /tmp/bringup.log
 ```
 
-脚本自动完成：全杀旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 开 RViz。它保持软件急停锁存且任务不自动开始；检查 RViz、物理急停和车轮离地条件后，才可人工 reset、解除急停并 start。首次测试只验证到 VLM 并立即停车，不得在两处正向航向风险修正前无人看守跑完整圈。
+脚本自动完成：清理旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 开 RViz。它保持软件急停锁存且任务不自动开始，也不会授予五项运动门禁；当前 YAML 为 `calibrated: false`，因此 `start` 会被拒绝。完成对应实测、现场标定并显式满足门禁后，才可 reset、解除急停并 start。任务运行上限与 Gazebo 同步为 `0.30 m/s`；实体首次复验仍须由现场人员分段监护 P→QR、QR→`via_2`→VLM、VLM→`via_1`→`via_3`→P。上文的 `0.15 m/s` 仅适用于转向圆周标定工具。
 
-紧急停车：优先调用急停服务，CLI 异常时使用 `pkill -9 -f "ros2 launch"`。
+紧急时先使用物理急停；随后运行 `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh`。CLI 可用时再调用软件急停服务。

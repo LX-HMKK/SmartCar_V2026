@@ -3,7 +3,7 @@
 <package format="3">
   <name>smartcar_bringup</name>
   <version>0.1.0</version>
-  <description>smartcar 顶层 launch 组合器：IncludeLaunchDescription 复用 origincar_base + ydlidar + obstacle_detector，统一 odom_combined 命名与 TF</description>
+  <description>smartcar 顶层 launch 组合器：复用 origincar_base、YDLIDAR 与安全链，统一 odom_combined 命名与 TF</description>
   <maintainer email="lx_hmkk@qq.com">LX-HMKK</maintainer>
   <license>MIT</license>
 
@@ -14,7 +14,6 @@
   <exec_depend>ament_index_python</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>ydlidar_ros2_driver</exec_depend>
-  <exec_depend>obstacle_detector</exec_depend>
   <exec_depend>rf2o_laser_odometry</exec_depend>
   <exec_depend>robot_state_publisher</exec_depend>
   <exec_depend>joint_state_publisher</exec_depend>

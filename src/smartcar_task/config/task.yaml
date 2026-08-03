@@ -1,6 +1,6 @@
 task_node:
   ros__parameters:
-    autostart_mission: true
+    autostart_mission: false
     waypoints_calibrated: false
     extrinsics_calibrated: false
     steering_calibrated: false
@@ -11,13 +11,6 @@ task_node:
     goal_response_timeout_sec: 2.0
     cancel_timeout_sec: 3.0
     stop_timeout_sec: 5.0
-    reverse_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml"
-    reverse_handoff_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"
-    precise_forward_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_to_pose_precise_w_replanning_and_recovery.xml"
-    through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
-    reverse_through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_w_replanning_and_recovery.xml"
-    reverse_locked_through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml"
-    reverse_return_through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_return_w_replanning_and_recovery.xml"
     direction_service_timeout_sec: 0.15
     direction_lease_timeout_sec: 0.50
     direction_prepare_timeout_sec: 1.0

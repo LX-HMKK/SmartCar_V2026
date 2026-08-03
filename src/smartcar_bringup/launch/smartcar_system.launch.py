@@ -177,12 +177,12 @@ def _validate_configuration(context):
 def generate_launch_description():
     use_base = LaunchConfiguration("use_base")
     use_lidar = LaunchConfiguration("use_lidar")
-    use_obstacle = LaunchConfiguration("use_obstacle")
     use_laser_odometry = LaunchConfiguration("use_laser_odometry")
     use_imu_filter = LaunchConfiguration("use_imu_filter")
     use_robot_description = LaunchConfiguration("use_robot_description")
     use_safety = LaunchConfiguration("use_safety")
     use_nav = LaunchConfiguration("use_nav")
+    use_visualization = LaunchConfiguration("use_visualization")
     use_speech = LaunchConfiguration("use_speech")
     use_sim_time = LaunchConfiguration("use_sim_time")
     nav_autostart = LaunchConfiguration("nav_autostart")
@@ -225,7 +225,6 @@ def generate_launch_description():
         launch_arguments={
             "use_base": use_base,
             "use_lidar": use_lidar,
-            "use_obstacle": use_obstacle,
             "use_laser_odometry": use_laser_odometry,
             "use_imu_filter": use_imu_filter,
             "use_robot_description": use_robot_description,
@@ -234,6 +233,7 @@ def generate_launch_description():
             "safety_config_file": LaunchConfiguration(
                 "safety_config_file"),
             "use_safety": use_safety,
+            "use_safety_ackermann": "true",
             "use_sim_time": use_sim_time,
             "safety_require_scan": LaunchConfiguration(
                 "safety_require_scan"),
@@ -261,6 +261,7 @@ def generate_launch_description():
         name="field_reference",
         namespace="/smartcar",
         output="screen",
+        condition=IfCondition(use_visualization),
     )
     waypoint_markers = Node(
         package="smartcar_tools",
@@ -268,6 +269,7 @@ def generate_launch_description():
         name="waypoint_viz",
         parameters=[{"waypoints_file": waypoints_file}],
         output="screen",
+        condition=IfCondition(use_visualization),
     )
     navigation = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -297,7 +299,6 @@ def generate_launch_description():
     declarations = [
         DeclareLaunchArgument("use_base", default_value="true"),
         DeclareLaunchArgument("use_lidar", default_value="true"),
-        DeclareLaunchArgument("use_obstacle", default_value="false"),
         DeclareLaunchArgument(
             "use_laser_odometry", default_value="false"),
         DeclareLaunchArgument("use_safety", default_value="true"),
@@ -309,6 +310,7 @@ def generate_launch_description():
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_vision", default_value="true"),
         DeclareLaunchArgument("use_task", default_value="true"),
+        DeclareLaunchArgument("use_visualization", default_value="false"),
         DeclareLaunchArgument("use_speech", default_value="false"),
         DeclareLaunchArgument("autostart_mission", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),

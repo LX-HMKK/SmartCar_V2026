@@ -13,8 +13,8 @@ using smartcar_nav2::ForwardCommand;
 using smartcar_nav2::ForwardCommandFilterStatus;
 using smartcar_nav2::ForwardCommandLimits;
 
-constexpr double kVxMax = 0.15;
-constexpr double kWzMax = 0.70;
+constexpr double kVxMax = 0.30;
+constexpr double kWzMax = 1.3636363636363635;
 constexpr double kTurningRadius = 0.22;
 
 ForwardCommandLimits limits()
@@ -60,14 +60,14 @@ TEST(ForwardCommandFilter, RejectsReverseVelocityAsAllZero)
 TEST(ForwardCommandFilter, ClampsAngularSpeedToCurvatureAndStaticLimit)
 {
   const auto result = smartcar_nav2::enforceForwardCommandLimits(
-    ForwardCommand{kVxMax, 0.0, 0.0, 0.0, 0.0, 0.90}, limits());
+    ForwardCommand{kVxMax, 0.0, 0.0, 0.0, 0.0, 2.0}, limits());
   ASSERT_EQ(result.status, ForwardCommandFilterStatus::kAccepted);
   EXPECT_NEAR(result.command.angular_z, kVxMax / kTurningRadius, 1.0e-12);
 
   auto static_limits = limits();
-  static_limits.vx_max = 0.30;
+  static_limits.vx_max = 0.40;
   const auto static_limit = smartcar_nav2::enforceForwardCommandLimits(
-    ForwardCommand{0.30, 0.0, 0.0, 0.0, 0.0, -0.90}, static_limits);
+    ForwardCommand{0.40, 0.0, 0.0, 0.0, 0.0, -2.0}, static_limits);
   ASSERT_EQ(static_limit.status, ForwardCommandFilterStatus::kAccepted);
   EXPECT_DOUBLE_EQ(static_limit.command.angular_z, -kWzMax);
 }
@@ -101,7 +101,7 @@ TEST(ForwardCommandFilter, TranslatesSpeedLimitsWithoutLiftingStaticGuard)
   EXPECT_DOUBLE_EQ(percentage.guard_scale, 0.5);
 
   const auto absolute = smartcar_nav2::translateForwardSpeedLimit(
-    0.075, false, kVxMax);
+    0.15, false, kVxMax);
   ASSERT_TRUE(absolute.valid);
   EXPECT_NEAR(absolute.guard_scale, 0.5, 1.0e-12);
 

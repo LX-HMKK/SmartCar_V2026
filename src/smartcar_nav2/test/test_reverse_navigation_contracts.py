@@ -284,11 +284,9 @@ class TestReverseNavigationContracts(unittest.TestCase):
                 self.assertEqual(
                     int(compute.attrib["through_search_budget_ms"]), 12000
                 )
-                self.assertLessEqual(
-                    int(compute.attrib["fallback_candidate_limit"]), 4
-                )
-                self.assertEqual(
-                    int(compute.attrib["lookahead_fallback_candidate_limit"]), 0
+                self.assertNotIn("fallback_candidate_limit", compute.attrib)
+                self.assertNotIn(
+                    "lookahead_fallback_candidate_limit", compute.attrib
                 )
                 self.assertEqual(
                     int(compute.attrib["through_solution_limit"]), 4
@@ -299,11 +297,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
                 expected_controller = (
                     "ReverseHandoff"
                     if behavior_tree == REVERSE_THROUGH_POSES_BT_FILE
-                    else (
-                        "ForwardHandoff"
-                        if behavior_tree == PRECISE_FORWARD_BT_FILE
-                        else "ForwardAvoidance"
-                    )
+                    else "ForwardAvoidance"
                 )
                 self.assertEqual(follow.attrib["controller_id"], expected_controller)
                 self.assertEqual(
@@ -476,7 +470,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
             [
                 "FollowPath",
                 "ForwardAvoidance",
-                "ForwardHandoff",
                 "ReverseHandoff",
                 "ReverseRecovery",
             ],
@@ -495,7 +488,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
             forward_avoidance["plugin"],
             "smartcar_nav2::ForwardOnlyRPPController",
         )
-        self.assertAlmostEqual(forward_avoidance["desired_linear_vel"], 0.15)
+        self.assertAlmostEqual(forward_avoidance["desired_linear_vel"], 0.30)
         self.assertIs(forward_avoidance["allow_reversing"], False)
         self.assertIs(forward_avoidance["use_rotate_to_heading"], False)
         self.assertIs(forward_avoidance["use_collision_detection"], True)
@@ -507,7 +500,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
             handoff["AckermannConstraints"]["min_turning_r"], planner_radius
         )
         self.assertAlmostEqual(handoff["vx_min"], 0.02)
-        self.assertAlmostEqual(handoff["vx_max"], 0.09)
+        self.assertAlmostEqual(handoff["vx_max"], 0.30)
         self.assertGreater(handoff["vx_min"], 0.0)
         self.assertLess(handoff["vx_min"], handoff["vx_max"])
         self.assertAlmostEqual(
@@ -523,10 +516,10 @@ class TestReverseNavigationContracts(unittest.TestCase):
         )
         self.assertEqual(recovery["motion_model"], "Ackermann")
         self.assertAlmostEqual(recovery["vx_min"], 0.015)
-        self.assertAlmostEqual(recovery["vx_max"], 0.05)
+        self.assertAlmostEqual(recovery["vx_max"], 0.30)
         self.assertAlmostEqual(recovery["wz_max"], 0.0)
         self.assertLess(recovery["vx_min"], recovery["vx_max"])
-        self.assertLess(recovery["vx_max"], handoff["vx_max"])
+        self.assertAlmostEqual(recovery["vx_max"], handoff["vx_max"])
         self.assertEqual(
             recovery["AckermannConstraints"]["min_turning_r"], planner_radius
         )
@@ -595,7 +588,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
 
         follow = root.find(".//RecordFollowPath")
         self.assertIsNotNone(follow)
-        self.assertEqual(follow.attrib["controller_id"], "ForwardHandoff")
+        self.assertEqual(follow.attrib["controller_id"], "ForwardAvoidance")
         checker_id = follow.attrib["goal_checker_id"]
         self.assertEqual(checker_id, "precise_goal_checker")
 
@@ -702,37 +695,28 @@ class TestReverseNavigationContracts(unittest.TestCase):
     def test_forward_trees_use_positive_ackermann_tracking(self):
         controller = self.params["controller_server"]["ros__parameters"]
         forward = controller["ForwardAvoidance"]
-        handoff = controller["ForwardHandoff"]
         planner_radius = self.params["planner_server"]["ros__parameters"][
             "GridBased"
         ]["minimum_turning_radius"]
         self.assertEqual(
             forward["plugin"], "smartcar_nav2::ForwardOnlyRPPController")
-        self.assertAlmostEqual(forward["desired_linear_vel"], 0.15)
+        self.assertAlmostEqual(forward["desired_linear_vel"], 0.30)
         self.assertIs(forward["allow_reversing"], False)
         self.assertIs(forward["use_rotate_to_heading"], False)
         self.assertAlmostEqual(
             forward["forward_min_turning_radius"], planner_radius
+        )
+        self.assertAlmostEqual(
+            forward["forward_path_max_cross_track_error"], 0.12
         )
         self.assertGreaterEqual(
             forward["forward_max_angular_velocity"],
             forward["desired_linear_vel"] / planner_radius,
         )
         self.assertIs(forward["use_collision_detection"], True)
-        self.assertEqual(
-            handoff["plugin"], "smartcar_nav2::ForwardOnlyMPPIController")
-        self.assertEqual(handoff["motion_model"], "Ackermann")
-        self.assertGreater(handoff["vx_min"], 0.0)
-        self.assertLess(handoff["vx_min"], handoff["vx_max"])
-        self.assertGreaterEqual(
-            handoff["wz_max"], handoff["vx_max"] / planner_radius)
-        self.assertAlmostEqual(
-            handoff["AckermannConstraints"]["min_turning_r"], planner_radius)
-        self.assertIs(handoff["CostCritic"]["consider_footprint"], True)
-
         expected_controllers = {
             FORWARD_BT_FILE: "ForwardAvoidance",
-            PRECISE_FORWARD_BT_FILE: "ForwardHandoff",
+            PRECISE_FORWARD_BT_FILE: "ForwardAvoidance",
             THROUGH_POSES_BT_FILE: "ForwardAvoidance",
         }
         for behavior_tree, expected_controller in expected_controllers.items():

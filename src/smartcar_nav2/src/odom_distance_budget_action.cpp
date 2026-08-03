@@ -41,6 +41,8 @@ BT::PortsList OdomDistanceBudgetAction::providedPorts()
   return {
     BT::InputPort<geometry_msgs::msg::PoseStamped>(
       "goal", "NavigateToPose target used to derive the per-action budget"),
+    BT::InputPort<std::vector<geometry_msgs::msg::PoseStamped>>(
+      "goals", "NavigateThroughPoses targets; the terminal target sets the per-action budget"),
     BT::InputPort<std::string>(
       "odom_topic", "/odom_combined", "Measured odometry topic"),
     BT::InputPort<std::string>(
@@ -117,30 +119,14 @@ void OdomDistanceBudgetAction::halt()
 OdomDistanceBudgetAction::ArmResult OdomDistanceBudgetAction::beginNavigation()
 {
   if (!awaiting_initial_odom_) {
-    geometry_msgs::msg::PoseStamped goal;
-    if (!getInput("goal", goal) ||
-      !std::isfinite(goal.pose.position.x) ||
-      !std::isfinite(goal.pose.position.y))
-    {
-      RCLCPP_ERROR(node_->get_logger(), "OdomDistanceBudget has no finite goal pose");
-      return ArmResult::kFailure;
-    }
     if (!readConfiguration()) {
       RCLCPP_ERROR(node_->get_logger(), "OdomDistanceBudget ports are invalid");
       return ArmResult::kFailure;
     }
-    if (goal.header.frame_id != odom_frame_) {
-      RCLCPP_ERROR(
-        node_->get_logger(),
-        "OdomDistanceBudget goal frame '%s' does not match odom frame '%s'",
-        goal.header.frame_id.c_str(), odom_frame_.c_str());
+    if (!readGoalPoses()) {
       return ArmResult::kFailure;
     }
 
-    goal_pose_ = OdomPlanarPose{
-      goal.pose.position.x,
-      goal.pose.position.y,
-    };
     {
       std::lock_guard<std::mutex> lock(mutex_);
       monitoring_ = false;
@@ -171,7 +157,7 @@ OdomDistanceBudgetAction::ArmResult OdomDistanceBudgetAction::beginNavigation()
     return ArmResult::kFailure;
   }
   if (!tracker_.initialize(
-      latest_odom_->pose, goal_pose_, max_distance_ratio_, distance_slack_m_,
+      latest_odom_->pose, goal_poses_, max_distance_ratio_, distance_slack_m_,
       max_odom_step_m_))
   {
     awaiting_initial_odom_ = false;
@@ -212,6 +198,62 @@ bool OdomDistanceBudgetAction::readConfiguration()
     std::chrono::duration_cast<std::chrono::milliseconds>(
     std::chrono::duration<double>(initial_odom_wait_sec));
   return odom_timeout_.count() > 0 && initial_odom_wait_timeout_.count() > 0;
+}
+
+bool OdomDistanceBudgetAction::readGoalPoses()
+{
+  geometry_msgs::msg::PoseStamped goal;
+  std::vector<geometry_msgs::msg::PoseStamped> goals;
+  const bool has_goal = static_cast<bool>(getInput("goal", goal));
+  const bool has_goals = static_cast<bool>(getInput("goals", goals));
+  if (has_goal == has_goals) {
+    RCLCPP_ERROR(
+      node_->get_logger(), "OdomDistanceBudget requires exactly one of goal or goals");
+    return false;
+  }
+  if (has_goals && goals.empty()) {
+    RCLCPP_ERROR(node_->get_logger(), "OdomDistanceBudget received an empty goals list");
+    return false;
+  }
+
+  const auto append_goal = [this](
+    const geometry_msgs::msg::PoseStamped & candidate,
+    std::vector<OdomPlanarPose> & poses) {
+      if (candidate.header.frame_id != odom_frame_) {
+        RCLCPP_ERROR(
+          node_->get_logger(),
+          "OdomDistanceBudget goal frame '%s' does not match odom frame '%s'",
+          candidate.header.frame_id.c_str(), odom_frame_.c_str());
+        return false;
+      }
+      if (!std::isfinite(candidate.pose.position.x) ||
+        !std::isfinite(candidate.pose.position.y))
+      {
+        RCLCPP_ERROR(node_->get_logger(), "OdomDistanceBudget has a non-finite goal pose");
+        return false;
+      }
+      poses.push_back(OdomPlanarPose{
+        candidate.pose.position.x,
+        candidate.pose.position.y,
+      });
+      return true;
+    };
+
+  std::vector<OdomPlanarPose> selected_goals;
+  if (has_goal) {
+    if (!append_goal(goal, selected_goals)) {
+      return false;
+    }
+  } else {
+    selected_goals.reserve(goals.size());
+    for (const auto & candidate : goals) {
+      if (!append_goal(candidate, selected_goals)) {
+        return false;
+      }
+    }
+  }
+  goal_poses_ = std::move(selected_goals);
+  return true;
 }
 
 bool OdomDistanceBudgetAction::hasAbortCondition(

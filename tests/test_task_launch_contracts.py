@@ -11,6 +11,7 @@ NODE = PACKAGE / "smartcar_task" / "task_node.py"
 LAUNCH = PACKAGE / "launch" / "smartcar_task.launch.py"
 PACKAGE_XML = PACKAGE / "package.xml"
 TASK_CONFIG = PACKAGE / "config" / "task.yaml"
+NAV_TEST = ROOT / "scripts" / "nav_test.sh"
 
 
 class TaskLaunchContractTests(unittest.TestCase):
@@ -76,43 +77,27 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("motion_direction(reverse_direction)", source)
         self.assertNotIn("FollowWaypoints", source)
 
-    def test_precise_forward_behavior_tree_is_wired_from_config(self):
+    def test_behavior_tree_paths_are_resolved_from_the_installed_nav2_package(self):
         parameters = yaml.safe_load(
             TASK_CONFIG.read_text(encoding="utf-8")
         )["task_node"]["ros__parameters"]
-        precise_tree = parameters["precise_forward_behavior_tree"]
-        self.assertTrue(
-            precise_tree.endswith(
-                "navigate_to_pose_precise_w_replanning_and_recovery.xml"
-            )
-        )
-
         source = NODE.read_text(encoding="utf-8")
-        self.assertIn('"precise_forward_behavior_tree"', source)
-        self.assertIn("goal_profile=waypoint.goal_profile", source)
-        self.assertIn(
-            "self.get_parameter(\"precise_forward_behavior_tree\").value",
-            source,
+        self.assertFalse(
+            any(name.endswith("_behavior_tree") for name in parameters)
         )
-
-    def test_reverse_handoff_behavior_tree_is_wired_from_config(self):
-        parameters = yaml.safe_load(
-            TASK_CONFIG.read_text(encoding="utf-8")
-        )["task_node"]["ros__parameters"]
-        handoff_tree = parameters["reverse_handoff_behavior_tree"]
-        self.assertTrue(
-            handoff_tree.endswith(
-                "navigate_to_pose_reverse_handoff_"
-                "w_replanning_and_recovery.xml"
-            )
-        )
-
-        source = NODE.read_text(encoding="utf-8")
-        self.assertIn('"reverse_handoff_behavior_tree"', source)
-        self.assertIn(
-            "self.get_parameter(\"reverse_handoff_behavior_tree\").value",
-            source,
-        )
+        self.assertIn("get_package_share_directory", source)
+        self.assertIn("def _nav2_behavior_tree_path(filename):", source)
+        self.assertNotIn("/root/ros2_ws", source)
+        for filename in (
+            "navigate_to_pose_reverse_w_replanning_and_recovery.xml",
+            "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
+            "navigate_to_pose_precise_w_replanning_and_recovery.xml",
+            "navigate_through_poses_w_replanning_and_recovery.xml",
+            "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
+            "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+            "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
+        ):
+            self.assertIn(filename, source)
 
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = NODE.read_text(encoding="utf-8")
@@ -135,7 +120,26 @@ class TaskLaunchContractTests(unittest.TestCase):
         source = NODE.read_text(encoding="utf-8")
         self.assertIn(
             'self.declare_parameter("waypoints_calibrated", False)', source)
+        self.assertIn(
+            'waypoint_document.get("calibrated") is True', source)
+        self.assertIn(
+            'self._motion_gates["waypoints_calibrated"] = False', source)
         self.assertIn('"motion gates not satisfied: "', source)
+
+    def test_navigation_test_script_stays_latched_at_startup(self):
+        source = NAV_TEST.read_text(encoding="utf-8")
+        self.assertNotIn("--autostart", source)
+        self.assertIn("autostart_mission:=false", source)
+        self.assertIn("safety_emergency_stop_on_start:=true", source)
+        self.assertNotIn("safety_emergency_stop_on_start:=false", source)
+        for gate in (
+            "waypoints_calibrated",
+            "extrinsics_calibrated",
+            "steering_calibrated",
+            "emergency_stop_ready",
+            "operator_approved",
+        ):
+            self.assertNotIn(f"{gate}:=true", source)
 
     def test_vision_transport_wait_uses_the_request_deadline(self):
         source = NODE.read_text(encoding="utf-8")

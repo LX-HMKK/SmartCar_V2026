@@ -43,7 +43,6 @@ setup(
             "image_replay_node = smartcar_tools.image_replay_node:main",
             "vlm_display = smartcar_tools.vlm_display:main",
             "waypoint_viz = smartcar_tools.waypoint_viz:main",
-            "waypoint_editor_node = smartcar_tools.waypoint_editor_node:main",
             "field_reference_node = smartcar_tools.field_reference_node:main",
             "odom_diag = smartcar_tools.odom_diag:main",
             "waypoint_drag_editor = smartcar_tools.waypoint_drag_editor:main",

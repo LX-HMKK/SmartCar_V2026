@@ -54,15 +54,12 @@
               </RecoveryNode>
             </RateController>
           </LatchSuccess>
-          <RecoveryNode number_of_retries="1" name="FollowPrecisePath">
-            <!-- The P-to-A connector has tight, changing curvature and a
-                 locked terminal heading.  Use the forward-only Ackermann
-                 MPPI wrapper here; it preserves footprint cost checks while
-                 tracking the body-swept connector without RPP's early-carrot
-                 steering bias. -->
-            <RecordFollowPath path="{path}" controller_id="ForwardHandoff" goal_checker_id="precise_goal_checker"/>
-            <ClearEntireCostmap name="ClearLocalCostmap-PreciseContext" service_name="local_costmap/clear_entirely_local_costmap"/>
-          </RecoveryNode>
+          <!-- Keep the hardware-only odometry and full-footprint plan checks,
+               but follow P-to-A with the forward-only RPP controller used by
+               the completed Gazebo route. A tracking failure intentionally
+               reaches the outer recovery: clearing only the local costmap
+               and re-sending the stale path delayed a fresh global replan. -->
+          <RecordFollowPath path="{path}" controller_id="ForwardAvoidance" goal_checker_id="precise_goal_checker"/>
         </PipelineSequence>
         <Sequence name="ClearPreciseCostmapsRecovery">
           <ClearEntireCostmap name="ClearLocalCostmap-PreciseSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>

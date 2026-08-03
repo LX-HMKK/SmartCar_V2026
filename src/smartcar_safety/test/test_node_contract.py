@@ -9,6 +9,8 @@ NODE_SOURCE = (
     / "smartcar_safety"
     / "safety_node.py"
 )
+CPP_NODE_SOURCE = Path(__file__).resolve().parents[1] / "src" / "safety_node.cpp"
+CONFIG_SOURCE = Path(__file__).resolve().parents[1] / "config" / "safety.yaml"
 
 
 class SafetyNodeCommandContractTests(unittest.TestCase):
@@ -91,7 +93,32 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
         self.assertIn("self._last_command_message = None", source)
         self.assertIn("self.guard.mark_command_invalid()", source)
         self.assertIn("self._safe_publisher.publish(self._zero_command)", source)
+        self.assertIn("self._publish_ackermann(self._zero_command)", source)
         self.assertIn("command = self._zero_command", source)
+
+    def test_final_linear_speed_cap_is_present_in_both_implementations(self):
+        for node in (NODE_SOURCE, CPP_NODE_SOURCE):
+            with self.subTest(node=node.name):
+                source = node.read_text(encoding="utf-8")
+                self.assertIn("max_linear_speed_mps", source)
+                self.assertIn("mark_command", source)
+                self.assertIn("publish_zero_command", source)
+                self.assertIn("clear_command_speed_limit_fault", source)
+        config = CONFIG_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("max_linear_speed_mps: 0.30", config)
+
+        cpp_source = CPP_NODE_SOURCE.read_text(encoding="utf-8")
+        self.assertIn("publish_ackermann(zero_command_)", cpp_source)
+
+    def test_voltage_freshness_is_configured_in_both_implementations(self):
+        for node in (NODE_SOURCE, CPP_NODE_SOURCE):
+            with self.subTest(node=node.name):
+                self.assertIn(
+                    "voltage_timeout_sec", node.read_text(encoding="utf-8"))
+        self.assertIn(
+            "voltage_timeout_sec: 1.0",
+            CONFIG_SOURCE.read_text(encoding="utf-8"),
+        )
 
     def test_startup_emergency_stop_is_explicit_and_fail_closed(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")

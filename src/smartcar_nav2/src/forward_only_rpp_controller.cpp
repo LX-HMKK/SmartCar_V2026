@@ -333,7 +333,7 @@ ForwardOnlyRPPController::computeCurvatureTrackingCommand(
     forwardPathTrackingTightTurnAhead(
       confirmed_plan, projection, tight_turn_radius_m, tight_turn_preview_m))
   {
-    // At 0.15 m/s Fortress has not reached the required steering angle by a
+    // At the configured top speed Fortress may not reach the required steering angle by a
     // 0.22 m arc's first samples. Preserve the accepted curvature but leave
     // the simulated steering actuator time to attain it before body drift
     // reaches the independent cross-track guard.

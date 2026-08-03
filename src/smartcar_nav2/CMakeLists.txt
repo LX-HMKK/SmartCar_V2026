@@ -108,6 +108,7 @@ target_include_directories(smartcar_odom_distance_budget_action_bt_node PUBLIC
 ament_target_dependencies(smartcar_odom_distance_budget_action_bt_node
   behaviortree_cpp_v3
   geometry_msgs
+  nav2_behavior_tree
   nav_msgs
   rclcpp
 )
@@ -158,27 +159,6 @@ ament_target_dependencies(smartcar_reverse_only_mppi_controller
 )
 pluginlib_export_plugin_description_file(
   nav2_core reverse_only_mppi_controller_plugin.xml
-)
-
-add_library(smartcar_forward_only_mppi_controller SHARED
-  src/forward_only_mppi_controller.cpp
-)
-target_include_directories(smartcar_forward_only_mppi_controller PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-ament_target_dependencies(smartcar_forward_only_mppi_controller
-  geometry_msgs
-  nav2_core
-  nav2_costmap_2d
-  nav2_mppi_controller
-  pluginlib
-  rclcpp
-  rclcpp_lifecycle
-  tf2_ros
-)
-pluginlib_export_plugin_description_file(
-  nav2_core forward_only_mppi_controller_plugin.xml
 )
 
 add_library(smartcar_forward_only_rpp_controller SHARED
@@ -258,7 +238,6 @@ install(TARGETS
   smartcar_odom_distance_budget_action_bt_node
   smartcar_record_follow_path_action_bt_node
   smartcar_reverse_only_mppi_controller
-  smartcar_forward_only_mppi_controller
   smartcar_forward_only_rpp_controller
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib

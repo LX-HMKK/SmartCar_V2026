@@ -64,8 +64,6 @@ TASK_COLORS = {
     "start":    "#33D94D",
     "qr":       "#408CFF",
     "vlm":      "#F28C33",
-    "corridor": "#F2CC33",
-    "loop":     "#FF5933",
     "return":   "#B34DE6",
     "nav":      "#5AB8E6",
     "via":      "#AAB4BF",

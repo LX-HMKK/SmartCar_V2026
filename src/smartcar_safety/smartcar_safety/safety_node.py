@@ -65,6 +65,8 @@ class SafetyNode(Node):
         self.declare_parameter("scan_timeout_sec", 0.35)
         self.declare_parameter("odom_timeout_sec", 0.35)
         self.declare_parameter("minimum_voltage", 0.0)
+        self.declare_parameter("voltage_timeout_sec", 1.0)
+        self.declare_parameter("max_linear_speed_mps", 0.30)
         self.declare_parameter("publish_frequency_hz", 20.0)
         self.declare_parameter("require_scan", True)
         self.declare_parameter("require_odom", True)
@@ -84,6 +86,8 @@ class SafetyNode(Node):
             odom_timeout_sec=self.get_parameter("odom_timeout_sec").value,
             raw_odom_timeout_sec=self.get_parameter("raw_odom_timeout_sec").value,
             minimum_voltage=self.get_parameter("minimum_voltage").value,
+            voltage_timeout_sec=self.get_parameter("voltage_timeout_sec").value,
+            max_linear_speed_mps=self.get_parameter("max_linear_speed_mps").value,
             require_scan=self.get_parameter("require_scan").value,
             require_odom=self.get_parameter("require_odom").value,
             require_raw_odom=self.get_parameter("require_raw_odom").value,
@@ -150,19 +154,23 @@ class SafetyNode(Node):
             message.angular.y,
             message.angular.z,
         ))
-        if valid:
-            if (self._steering_calibration is not None
-                    and not components_are_quiescent(components)):
-                self._steering_calibration = None
-            self._last_command_components = components
-            self._last_command_message = twist_from_components(components)
-            self.guard.mark_command(now_sec)
-        else:
+        if not valid:
             self._steering_calibration = None
             self._last_command_components = None
             self._last_command_message = None
             self.guard.mark_command_invalid()
             self._publish_zero_command()
+        elif not self.guard.mark_command(now_sec, components[0]):
+            self._steering_calibration = None
+            self._last_command_components = None
+            self._last_command_message = None
+            self._publish_zero_command()
+        else:
+            if (self._steering_calibration is not None
+                    and not components_are_quiescent(components)):
+                self._steering_calibration = None
+            self._last_command_components = components
+            self._last_command_message = twist_from_components(components)
         self._publish_status_if_changed(self.guard.evaluate(now_sec))
 
     def _on_scan(self, _message):
@@ -171,7 +179,8 @@ class SafetyNode(Node):
 
     def _on_odom(self, _serialized_message):
         # Throttle: effective watchdog window = odom_timeout + throttle_interval + timer_period.
-        # At 0.15 m/s worst-case travel is ~68 mm; at 0.30 m/s ~135 mm — within safety margins.
+        # At the configured 0.30 m/s limit, worst-case watchdog travel is
+        # ~135 mm, within the configured safety margins.
         now = self._now_sec()
         if (self._last_odom_processed_at is not None
                 and now - self._last_odom_processed_at < self._odom_throttle_interval):
@@ -195,13 +204,18 @@ class SafetyNode(Node):
     def _on_emergency_stop(self, request, response):
         if request.data:
             self._steering_calibration = None
+        else:
+            self.guard.clear_command_speed_limit_fault()
         self.guard.set_emergency_stop(request.data)
         now_sec = self._now_sec()
         result = self.guard.evaluate(now_sec)
         self._publish_status_if_changed(result)
         response.success = True
         response.message = (
-            "emergency stop latched" if request.data else "emergency stop cleared")
+            "emergency stop latched"
+            if request.data
+            else "emergency stop and speed-limit latch cleared"
+        )
         return response
 
     def _on_steering_calibration_hold(self, request, response):
@@ -256,6 +270,7 @@ class SafetyNode(Node):
 
     def _publish_zero_command(self):
         self._safe_publisher.publish(self._zero_command)
+        self._publish_ackermann(self._zero_command)
 
     def _publish_ackermann(self, twist, steering_override=None):
         """Convert Twist to AckermannDriveStamped and publish to /ackermann_cmd."""

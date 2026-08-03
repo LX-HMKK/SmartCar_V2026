@@ -21,9 +21,9 @@
 ## 硬件与传感器
 
 - **LiDAR 物理朝向**：2D LiDAR 物理安装转了 90°（Y 朝后/X 朝左），`laser_yaw=1.5708` 已修复。若更换/重新安装 LiDAR 必须重新确认朝向。
-- **`cmd_vel_to_ackermann_drive` 竞争**：直接往 `/ackermann_cmd` pub 时，必须先 kill 该节点，否则 safety_node 20Hz 零值覆盖你的指令（车不动或抖动）。
+- **`/ackermann_cmd` 直发不受支持**：实车必须经 `smartcar_safety` 发布 Ackermann 指令。保持 `use_safety_ackermann:=true`，不要停止安全节点或绕过方向门。
 - **2D LiDAR 无法区分高度**：锥桶上窄下宽——雷达看到的是上半窄截面，车体下半蹭宽底。通过非对称 footprint（后轴原点）+ `obstacle_min_range=0.25` 滤车身 + 膨胀半径补偿，不能根本解决。物理上需 3D 感知或更谨慎的锥桶摆放。
-- **转向 0.7 rad 命令被固件折算 (2026-08-02)**：`/ackermann_cmd` 发 `steering_angle=0.7` 时，下位机 `Move_Z` 显示 `0.322`（`MINI_AKM_MIN_TURN_RADIUS=0.35`）或 `0.453`（调低该常量后）——不是 ROS 丢值，而是 STM32 固件把协议帧 `tx[7:8]` 当角速度 ω、经 `Vz_to_Akm_Angle` 自行车模型反算前轮转角并被最小转弯半径钳制。修复：将固件 `Vz_to_Akm_Angle`（`HARDWARE/usartx.c`，用户本地 Keil 工程）改为直接透传 `return Vz;`，全固件 4 条接收路径（USART1/3/5 + CAN）同时生效；实车确认 `Move_Z=0.700`。0.7 rad 最大转向画圆卷尺实测 **R_min ≈ 0.2 m**（理论 0.09 m，工程偏差正常）。ROS 侧无改动。完整推导见 `docs/review/steering-command-chain-fix-2026-08-02.md`。
+- **转向 0.7 rad 命令被固件折算 (2026-08-02)**：`/ackermann_cmd` 发 `steering_angle=0.7` 时，下位机 `Move_Z` 显示 `0.322`（`MINI_AKM_MIN_TURN_RADIUS=0.35`）或 `0.453`（调低该常量后）——不是 ROS 丢值，而是 STM32 固件把协议帧 `tx[7:8]` 当角速度 ω、经 `Vz_to_Akm_Angle` 自行车模型反算前轮转角并被最小转弯半径钳制。修复：将固件 `Vz_to_Akm_Angle`（`HARDWARE/usartx.c`，用户本地 Keil 工程）改为直接透传 `return Vz;`，全固件 4 条接收路径（USART1/3/5 + CAN）同时生效；实车确认 `Move_Z=0.700`。0.7 rad 最大转向画圆卷尺实测 **R_min ≈ 0.2 m**（理论 0.09 m，工程偏差正常）。ROS 运行链已同步 `steering_command_scale=1.0`、offset `0.0` 和 `0.70 rad` 上限。完整推导见 `docs/review/steering-command-chain-fix-2026-08-02.md`。
 
 ## 导航与运动
 
@@ -36,9 +36,9 @@
   超时会直接进入外层 recovery，依次清 local/global costmap、重新 `ComputePathToPose`，再
   重新跟随。两次定向 P→A Gazebo 运行均成功，末端位置误差均为 `0.102 m`，航向误差分别为
   `0.085 rad`、`0.073 rad`；第二次明确记录了碰撞超时、双 costmap 清理和新路径后成功到达。
-  前进段不执行短退。该证据只覆盖 P→A 定向运行，完整三阶段路线仍未复验，不得标记为全路线通过。
-- **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版"IntegrationClock 导致 EKF pose/速度冲突"的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
-- **倒车导航实现 (2026-08-03)**：QR→VLM 段必须倒车。QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。倒车多目标允许普通 `via` 后接一个作为末端、锁定航向的 `reverse_handoff`，并使用 reverse-locked ThroughPoses 树；不再使用旧的 `1.60` 人工 edge-detour 筛选，路径可行性由 Nav2 的代价地图和阿克曼约束决定。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线仿真和实体倒车仍需复测。
+  前进段不执行短退。后续完整三阶段 Gazebo 路线已完成；该证据仍不覆盖实体传感器、方向门或底盘运动。
+- **0.30 m/s 实体复验待完成**：运行配置已同步为 `0.30 m/s`，但尚无新的实体运行验收记录。原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版"IntegrationClock 导致 EKF pose/速度冲突"的推断已撤回，详见 `docs/review/odometry-speed-analysis.md`。
+- **倒车导航实现 (2026-08-03)**：QR→VLM 段必须倒车。QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。倒车多目标允许普通 `via` 后接一个作为末端、锁定航向的 `reverse_handoff`，并使用 reverse-locked ThroughPoses 树；不再使用旧的 `1.60` 人工 edge-detour 筛选，路径可行性由 Nav2 的代价地图和阿克曼约束决定。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线已完成 Gazebo 验证，实体倒车仍需分段复测。
 - **方向门倒车转向翻转 (2026-07-24)**：用户在实体车上观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
 
 ## Nav2 配置与行为树
@@ -51,9 +51,9 @@
 
 ## ROS2 生命周期与运维
 
-- **`velocity_smoother` 生命周期卡死**：激活后偶发 `get_state` 服务无响应。解决：`ros2 daemon stop` → `kill -9` 所有 ROS 进程 → `ros2 daemon start` → 重启 launch。
-- **重启必须彻底杀旧进程**：多次 kill/restart 循环会残留旧 launch 子进程（YDLIDAR、obstacle_extractor、task_node 等），占用 `/dev/ttyUSB0` 串口并消耗 CPU。**推荐使用 `bash scripts/ros_cleanup.sh` 一键清理**；手动方式：`pkill -9` 全部 ROS 节点可执行文件 → `ros2 daemon stop` → `sleep 1` → `ros2 daemon start` → `ros2 launch`。仅靠 `ctrl-c` 或部分 pkill 不可靠。
-- **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
+- **`velocity_smoother` 生命周期卡死**：激活后偶发 `get_state` 服务无响应。先执行物理急停，再使用 `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh` 清理后重启。
+- **重启必须彻底清理旧进程**：残留 launch 子进程会占用串口并消耗 CPU。清理脚本按 PID 终止 ROS 进程并保护 SSH 调用链，不能用 `pkill -f` 替代。
+- **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急时先使用物理急停；随后运行 `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh`。
 
 ## 运维检查清单
 
@@ -79,7 +79,7 @@ ros2 service list | grep -E "smartcar/(safety/emergency_stop|task/start)"
 
 ### SSH 远程操作
 
-- 有线 `192.168.128.10` 优先于无线 `172.16.24.193`
+- 使用现场 DHCP 地址 `root@<RDK_IP>`；`192.168.128.10` 仅为有线备用地址。
 - 所有 ROS2 CLI 前必须 `source /root/source_env.sh`
 - 后台启动用 `nohup` + 输出重定向，不依赖 SSH 会话保持
 - 日志追踪优先于 topic echo（`tail -f /tmp/bringup.log | grep ...` 比 `ros2 topic echo` 更可靠）
@@ -89,9 +89,9 @@ ros2 service list | grep -E "smartcar/(safety/emergency_stop|task/start)"
 
 | 优先级 | 操作 |
 |--------|------|
-| 1 | `ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool '{data: true}'` |
-| 2 | 若 CLI 卡死：`pkill -9 -f "ros2 launch"`（STM32 超时自动发停止） |
-| 3 | 物理急停按钮 |
+| 1 | 物理急停按钮 |
+| 2 | `ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool '{data: true}'`（CLI 可用时） |
+| 3 | `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh` |
 
 完全重建：`bash /usr/local/bin/ros_cleanup && rm -f /tmp/bringup.log && nohup bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &`
 
@@ -107,7 +107,7 @@ ros2 service list | grep -E "smartcar/(safety/emergency_stop|task/start)"
 
 ## 已修复项（保持警惕）
 
-- **TROS/ros_cleanup/Forward BT 三修复 (2026-07-24)**：① `set -euo pipefail` 脚本 source TROS setup.bash 前须包裹 `set +u`/`set -u`；② `ros_cleanup.sh` pkill 列表不得含 `nav_test`（会自杀）；③ 正向 BT `FollowPath` 须指定 `goal_checker_id="goal_checker"`。——均已修复并保持。
+- **TROS/ros_cleanup/Forward BT 三修复 (2026-07-24)**：① `set -euo pipefail` 脚本 source TROS setup.bash 前须包裹 `set +u`/`set -u`；② `ros_cleanup.sh` 的清理目标不得包含 `nav_test`（会自杀）；③ 标准前进树的 `FollowPath` 须指定 `goal_checker_id="goal_checker"`，P→A 精确树使用 `precise_goal_checker`。——均已修复并保持。
 - **direction_guard 时序过紧 (2026-07-24)**：`raw_odom_timeout_sec=0.25, stop_settle_sec=0.25` 在 prepare→activate 间隙中偶发 `raw_odom_not_stopped`。已调整为 `0.50/0.15`（`config/direction_guard.yaml`）。
 
 ## 任务与电源

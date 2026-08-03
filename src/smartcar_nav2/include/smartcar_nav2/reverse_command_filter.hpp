@@ -10,8 +10,8 @@ namespace smartcar_nav2
 /// Limits applied to the command emitted by a reverse-only Ackermann controller.
 struct ReverseCommandLimits
 {
-  double vx_min{-0.09};
-  double wz_max{0.42};
+  double vx_min{-0.30};
+  double wz_max{1.3636363636363635};
   double min_turning_radius{0.22};
 };
 

@@ -25,6 +25,14 @@ ACTIVE_ROUTE_TREES = (
     / "config"
     / "behavior_trees"
     / "navigate_to_pose_w_replanning_and_recovery.xml",
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
 )
 
 STRICT_PRECISE_TREE = (
@@ -33,6 +41,17 @@ STRICT_PRECISE_TREE = (
     / "behavior_trees"
     / "navigate_to_pose_precise_w_replanning_and_recovery.xml"
 )
+
+THROUGH_POSES_TREES = {
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
+}
 
 
 class TestOdomDistanceBudgetContracts(unittest.TestCase):
@@ -45,7 +64,12 @@ class TestOdomDistanceBudgetContracts(unittest.TestCase):
                 self.assertEqual(len(behavior_tree), 1)
                 budget = behavior_tree[0]
                 self.assertEqual(budget.tag, "OdomDistanceBudget")
-                self.assertEqual(budget.attrib["goal"], "{goal}")
+                if tree_file in THROUGH_POSES_TREES:
+                    self.assertEqual(budget.attrib["goals"], "{goals}")
+                    self.assertNotIn("goal", budget.attrib)
+                else:
+                    self.assertEqual(budget.attrib["goal"], "{goal}")
+                    self.assertNotIn("goals", budget.attrib)
                 self.assertEqual(budget.attrib["odom_topic"], "/odom_combined")
                 self.assertEqual(budget.attrib["odom_frame"], "odom_combined")
                 self.assertEqual(
@@ -85,6 +109,24 @@ class TestOdomDistanceBudgetContracts(unittest.TestCase):
         self.assertNotIn("create_publisher", source)
         self.assertNotIn(".publish(", source)
         self.assertNotIn("geometry_msgs/msg/twist", source)
+
+    def test_guard_accepts_exactly_one_single_or_through_poses_target_input(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        self.assertIn(
+            "BT::InputPort<std::vector<geometry_msgs::msg::PoseStamped>>(",
+            source,
+        )
+        self.assertIn('"goals", "NavigateThroughPoses targets', source)
+        self.assertIn(
+            'const bool has_goal = static_cast<bool>(getInput("goal", goal));',
+            source,
+        )
+        self.assertIn(
+            'const bool has_goals = static_cast<bool>(getInput("goals", goals));',
+            source,
+        )
+        self.assertIn("requires exactly one of goal or goals", source)
+        self.assertIn("latest_odom_->pose, goal_poses_", source)
 
     def test_guard_explicitly_spins_its_private_odom_callback_group(self):
         source = SOURCE_FILE.read_text(encoding="utf-8")

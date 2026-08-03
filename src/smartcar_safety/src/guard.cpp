@@ -8,13 +8,16 @@ namespace smartcar_safety {
 
 SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
                          double odom_timeout, double raw_odom_timeout,
-                         double min_voltage, bool require_scan,
+                         double min_voltage, double voltage_timeout,
+                         double max_linear_speed_mps, bool require_scan,
                          bool require_odom, bool require_raw_odom)
     : cmd_timeout_(cmd_timeout),
       scan_timeout_(scan_timeout),
       odom_timeout_(odom_timeout),
       raw_odom_timeout_(raw_odom_timeout),
       min_voltage_(min_voltage),
+      voltage_timeout_(voltage_timeout),
+      max_linear_speed_mps_(max_linear_speed_mps),
       require_scan_(require_scan),
       require_odom_(require_odom),
       require_raw_odom_(require_raw_odom),
@@ -25,6 +28,7 @@ SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
       voltage_at_(NAN),
       voltage_(NAN),
       cmd_invalid_(false),
+      cmd_speed_limit_exceeded_(false),
       estop_(false),
       cmd_at_set_(false),
       scan_at_set_(false),
@@ -47,15 +51,38 @@ SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
   if (!std::isfinite(min_voltage) || min_voltage < 0.0) {
     throw std::invalid_argument("minimum_voltage must be nonnegative finite");
   }
+  if (!std::isfinite(voltage_timeout) || voltage_timeout <= 0.0) {
+    throw std::invalid_argument("voltage_timeout_sec must be positive finite");
+  }
+  if (!std::isfinite(max_linear_speed_mps) || max_linear_speed_mps <= 0.0) {
+    throw std::invalid_argument(
+        "max_linear_speed_mps must be positive finite");
+  }
 }
 
-void SafetyGuard::mark_command(double now_sec) {
+bool SafetyGuard::mark_command(double now_sec, double linear_x) {
+  if (cmd_speed_limit_exceeded_) {
+    return false;
+  }
+  if (!std::isfinite(linear_x)) {
+    mark_command_invalid();
+    return false;
+  }
+  if (std::abs(linear_x) > max_linear_speed_mps_) {
+    cmd_invalid_ = false;
+    cmd_speed_limit_exceeded_ = true;
+    return false;
+  }
   cmd_at_ = now_sec;
   cmd_at_set_ = true;
   cmd_invalid_ = false;
+  cmd_speed_limit_exceeded_ = false;
+  return true;
 }
 
-void SafetyGuard::mark_command_invalid() { cmd_invalid_ = true; }
+void SafetyGuard::mark_command_invalid() {
+  cmd_invalid_ = true;
+}
 
 void SafetyGuard::mark_scan(double now_sec) {
   scan_at_ = now_sec;
@@ -80,6 +107,10 @@ void SafetyGuard::mark_voltage(float voltage, double now_sec) {
 
 void SafetyGuard::set_emergency_stop(bool enabled) { estop_ = enabled; }
 
+void SafetyGuard::clear_command_speed_limit_fault() {
+  cmd_speed_limit_exceeded_ = false;
+}
+
 bool SafetyGuard::command_is_fresh(double now_sec) const {
   return fresh(cmd_at_, now_sec, cmd_timeout_);
 }
@@ -87,6 +118,10 @@ bool SafetyGuard::command_is_fresh(double now_sec) const {
 SafetyVerdict SafetyGuard::evaluate(double now_sec) const {
   if (estop_) {
     return result(false, "emergency_stop");
+  }
+
+  if (cmd_speed_limit_exceeded_) {
+    return result(false, "command_speed_limit_exceeded");
   }
 
   if (cmd_invalid_) {
@@ -130,6 +165,9 @@ SafetyVerdict SafetyGuard::evaluate(double now_sec) const {
   if (min_voltage_ > 0.0) {
     if (!voltage_at_set_) {
       return result(false, "voltage_missing");
+    }
+    if (!fresh(voltage_at_, now_sec, voltage_timeout_)) {
+      return result(false, "voltage_stale");
     }
     if (!std::isfinite(voltage_)) {
       return result(false, "voltage_invalid");

@@ -64,16 +64,13 @@ class TestPushSafety(unittest.TestCase):
 
     def test_default_path_checks_all_subtrees(self):
         with tempfile.TemporaryDirectory() as ok1, \
-                tempfile.TemporaryDirectory() as ok2, \
                 tempfile.TemporaryDirectory() as empty:
             Path(ok1, "pkg.xml").touch()
-            Path(ok2, "pkg.xml").touch()
             # config 为空 -> 整体拒绝
             with mock.patch.object(sync, "LOCAL_VENDOR_ORIGINCAR", Path(ok1)), \
-                    mock.patch.object(sync, "LOCAL_OBSTACLE", Path(ok2)), \
                     mock.patch.object(sync, "LOCAL_CONFIG", Path(empty)):
                 self.assertFalse(sync.check_push_safety())
-            # 三者均非空 -> 通过
+            # 两个关键树均非空 -> 通过
             Path(empty, "cfg.yaml").touch()
             self.assertTrue(sync.check_push_safety())
 
@@ -115,13 +112,12 @@ class TestTargets(unittest.TestCase):
         self.assertTrue(any(d.endswith("/config/") for d in dsts))
         self.assertTrue(all(d.startswith(sync.HOST) for d in dsts))
 
-    def test_init_vendor_two_pulls(self):
+    def test_init_vendor_pulls_origincar_only(self):
         t = sync.init_vendor_targets()
-        self.assertEqual(len(t), 2)
-        self.assertTrue(any(sync.REMOTE_VENDOR_ORIGINCAR in s for s, _ in t))
-        self.assertTrue(any(sync.REMOTE_VENDOR_OBSTACLE in s for s, _ in t))
-        self.assertTrue(any("origincar" in d for _, d in t))
-        self.assertTrue(any("obstacle_detector_2" in d for _, d in t))
+        self.assertEqual(len(t), 1)
+        source, destination = t[0]
+        self.assertIn(sync.REMOTE_VENDOR_ORIGINCAR, source)
+        self.assertIn("origincar", destination)
 
     def test_waypoint_pull_is_scoped_to_one_yaml(self):
         self.assertTrue(sync.REMOTE_WAYPOINTS.endswith("/default_waypoints.yaml"))
@@ -211,12 +207,12 @@ class TestCmdPull(unittest.TestCase):
 
 
 class TestCmdInitVendor(unittest.TestCase):
-    def test_init_vendor_runs_two_rsync_with_vendor_excludes(self):
+    def test_init_vendor_runs_one_rsync_with_vendor_excludes(self):
         ok = mock.Mock(returncode=0)
         with mock.patch.object(sync, "ensure_rsync_available"), \
              mock.patch("subprocess.run", return_value=ok) as run:
             sync.main(["init-vendor"])
-            self.assertEqual(run.call_count, 2)  # origincar + obstacle
+            self.assertEqual(run.call_count, 1)  # origincar
             for call in run.call_args_list:
                 argv = call[0][0]
                 self.assertIn("--exclude", argv)

@@ -192,6 +192,15 @@ class SafetyLaunchContractTests(unittest.TestCase):
         self.assertIn("smartcar_safety.launch.py", source)
         self.assertIn("condition=IfCondition(use_safety)", source)
 
+    def test_physical_base_cannot_bypass_safety_ackermann(self):
+        source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
+        self.assertIn("OpaqueFunction(function=_validate_configuration)", source)
+        self.assertIn("raise RuntimeError('use_base requires use_safety')", source)
+        self.assertIn(
+            "raise RuntimeError('use_base requires use_safety_ackermann')",
+            source,
+        )
+
     def test_top_level_routes_selected_topic_into_vendor_bringup(self):
         tree = source_tree(SMARTCAR_BRINGUP)
         values = string_values(tree)

@@ -1,18 +1,40 @@
-"""Compose chassis, LiDAR, obstacle extraction, and velocity safety."""
+"""Compose chassis, LiDAR, laser odometry, and velocity safety."""
 import os
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+)
 from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PythonExpression
 
 
+def _as_bool(context, name):
+    value = LaunchConfiguration(name).perform(context).strip().lower()
+    if value in ('true', '1'):
+        return True
+    if value in ('false', '0'):
+        return False
+    raise RuntimeError(f'{name} must be true or false')
+
+
+def _validate_configuration(context):
+    if not _as_bool(context, 'use_base'):
+        return []
+    if not _as_bool(context, 'use_safety'):
+        raise RuntimeError('use_base requires use_safety')
+    if not _as_bool(context, 'use_safety_ackermann'):
+        raise RuntimeError('use_base requires use_safety_ackermann')
+    return []
+
+
 def generate_launch_description():
     use_base = LaunchConfiguration('use_base')
     use_lidar = LaunchConfiguration('use_lidar')
-    use_obstacle = LaunchConfiguration('use_obstacle')
     use_laser_odometry = LaunchConfiguration('use_laser_odometry')
     use_imu_filter = LaunchConfiguration('use_imu_filter')
     use_robot_description = LaunchConfiguration('use_robot_description')
@@ -25,7 +47,6 @@ def generate_launch_description():
         'safety_emergency_stop_on_start')
     use_safety_ackermann = LaunchConfiguration('use_safety_ackermann')
     use_safety_cpp = LaunchConfiguration('use_safety_cpp')
-    odom_frame = LaunchConfiguration('odom_frame')
     laser_frame = LaunchConfiguration('laser_frame')
     chassis_input_topic = PythonExpression([
         "'/cmd_vel_safe' if '", use_safety,
@@ -93,15 +114,6 @@ def generate_launch_description():
         }.items(),
         condition=IfCondition(use_lidar),
     )
-    obstacle = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(os.path.join(
-            bringup_dir, 'launch', 'obstacle_detector.launch.py')),
-        launch_arguments={
-            'odom_frame': odom_frame,
-            'use_sim_time': use_sim_time,
-        }.items(),
-        condition=IfCondition(use_obstacle),
-    )
     laser_odometry = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(os.path.join(
             bringup_dir, 'launch', 'laser_odometry.launch.py')),
@@ -130,7 +142,6 @@ def generate_launch_description():
     declarations = [
         DeclareLaunchArgument('use_base', default_value='true'),
         DeclareLaunchArgument('use_lidar', default_value='true'),
-        DeclareLaunchArgument('use_obstacle', default_value='false'),
         DeclareLaunchArgument(
             'use_laser_odometry', default_value='false'),
         DeclareLaunchArgument(
@@ -155,7 +166,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'safety_emergency_stop_on_start', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
-        DeclareLaunchArgument('odom_frame', default_value='odom_combined'),
         DeclareLaunchArgument('laser_frame', default_value='laser'),
     ]
     declarations.extend(
@@ -181,9 +191,9 @@ def generate_launch_description():
             'max_calibrated_steering_command_rad', default_value='0.70'),
     ])
     return LaunchDescription(declarations + [
+        OpaqueFunction(function=_validate_configuration),
         origincar_bringup,
         ydlidar,
-        obstacle,
         laser_odometry,
         safety,
     ])

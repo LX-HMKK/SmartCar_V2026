@@ -1,7 +1,7 @@
 """Launch the motion-disabled semantic waypoint editor and field reference."""
 from launch import LaunchDescription
 from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition, UnlessCondition
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration, PathJoinSubstitution
 from launch_ros.actions import Node
@@ -14,7 +14,6 @@ def generate_launch_description():
     route_planning_file = LaunchConfiguration("route_planning_file")
     start_safety = LaunchConfiguration("start_safety")
     use_rviz = LaunchConfiguration("use_rviz")
-    use_segment_ui = LaunchConfiguration("use_segment_ui")
     use_sim_time = LaunchConfiguration("use_sim_time")
 
     safety = IncludeLaunchDescription(
@@ -45,18 +44,6 @@ def generate_launch_description():
     )
     editor = Node(
         package="smartcar_tools",
-        executable="waypoint_editor_node",
-        name="waypoint_editor",
-        output="screen",
-        parameters=[{
-            "waypoints_file": waypoints_file,
-            "latch_emergency_stop": start_safety,
-            "use_sim_time": use_sim_time,
-        }],
-        condition=UnlessCondition(use_segment_ui),
-    )
-    segment_editor = Node(
-        package="smartcar_tools",
         executable="waypoint_drag_editor",
         name="waypoint_drag_editor",
         output="screen",
@@ -68,7 +55,6 @@ def generate_launch_description():
         additional_env={
             "SMARTCAR_ROUTE_PLANNING_CONFIG": route_planning_file,
         },
-        condition=IfCondition(use_segment_ui),
     )
     rviz = Node(
         package="rviz2",
@@ -113,11 +99,9 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("start_safety", default_value="false"),
         DeclareLaunchArgument("use_rviz", default_value="true"),
-        DeclareLaunchArgument("use_segment_ui", default_value="true"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         safety,
         field_reference,
         editor,
-        segment_editor,
         rviz,
     ])

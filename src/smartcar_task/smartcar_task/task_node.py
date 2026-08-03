@@ -1,10 +1,12 @@
 """ROS 2 adapters and services for semantic waypoint missions."""
 import math
+from pathlib import Path
 import subprocess
 import threading
 import time
 from uuid import uuid4
 
+from ament_index_python.packages import get_package_share_directory
 from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
@@ -67,6 +69,16 @@ def _nonnegative_finite(name, value):
     if not math.isfinite(result) or result < 0.0:
         raise ValueError(f"{name} must be finite and nonnegative")
     return result
+
+
+def _nav2_behavior_tree_path(filename):
+    """Resolve a production behavior tree from the installed Nav2 package."""
+    return str(
+        Path(get_package_share_directory("smartcar_nav2"))
+        / "config"
+        / "behavior_trees"
+        / filename
+    )
 
 
 def _wait_future(future, timeout_sec):
@@ -1262,45 +1274,38 @@ class TaskNode(Node):
         self.declare_parameter("stop_timeout_sec", 5.0)
         self.declare_parameter(
             "reverse_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_to_pose_reverse_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "reverse_handoff_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "precise_forward_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_to_pose_precise_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_to_pose_precise_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "through_poses_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_through_poses_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "reverse_through_poses_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_reverse_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "reverse_locked_through_poses_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "reverse_return_through_poses_behavior_tree",
-            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
-            "config/behavior_trees/"
-            "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter("direction_service_timeout_sec", 0.08)
         self.declare_parameter("direction_lease_timeout_sec", 0.25)
@@ -1335,6 +1340,9 @@ class TaskNode(Node):
             waypoint_document, authored_waypoints = load_waypoint_document(
                 waypoints_file
             )
+            self._waypoint_document_calibrated = (
+                waypoint_document.get("calibrated") is True
+            )
             planning_segments = load_planning_segments(
                 waypoint_document,
                 authored_waypoints,
@@ -1367,6 +1375,11 @@ class TaskNode(Node):
                 "operator_approved",
             )
         }
+        if not self._waypoint_document_calibrated:
+            # Launch arguments are an operator attestation, while the route
+            # document records whether these exact coordinates were approved.
+            # Both must be true before the navigation worker can start.
+            self._motion_gates["waypoints_calibrated"] = False
         if bool(self.get_parameter("use_laser_odometry").value):
             self._motion_gates["laser_odometry_calibrated"] = bool(
                 self.get_parameter("laser_odometry_calibrated").value)

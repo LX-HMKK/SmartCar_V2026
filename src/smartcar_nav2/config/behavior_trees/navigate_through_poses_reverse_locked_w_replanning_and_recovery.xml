@@ -2,6 +2,16 @@
      authored heading. Intermediate free points remain pass-through gates. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
+    <OdomDistanceBudget
+        goals="{goals}"
+        odom_topic="/odom_combined"
+        odom_frame="odom_combined"
+        robot_base_frame="base_footprint"
+        max_distance_ratio="2.00"
+        distance_slack_m="0.80"
+        max_odom_step_m="0.50"
+        odom_timeout_sec="0.50"
+        initial_odom_wait_sec="1.00">
     <Sequence name="NavigateReverseLockedWithSingleRetreat">
       <LatchSuccess name="InitializeReverseLockedRetreatGate">
         <SetBlackboard value="false" output_key="reverse_retreat_used"/>
@@ -23,8 +33,6 @@
                 candidate_timeout_ms="1000"
                 search_budget_ms="2400"
                 through_search_budget_ms="12000"
-                fallback_candidate_limit="4"
-                lookahead_fallback_candidate_limit="0"
                 through_solution_limit="4"
                 max_start_drift_m="0.10"
                 footprint_half_length_m="0.2491"
@@ -85,5 +93,6 @@
       </Sequence>
     </RecoveryNode>
     </Sequence>
+    </OdomDistanceBudget>
   </BehaviorTree>
 </root>

@@ -21,7 +21,6 @@ topics:
 toggles:
   use_base: true
   use_lidar: true
-  use_obstacle: false
   use_laser_odometry: false
   use_imu_filter: false
   use_robot_description: false
@@ -31,6 +30,7 @@ toggles:
   use_camera: true
   use_vision: true
   use_task: true
+  use_visualization: false
   use_speech: false
   nav_autostart: true
   autostart_mission: false

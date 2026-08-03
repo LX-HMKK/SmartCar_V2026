@@ -13,8 +13,8 @@ using smartcar_nav2::ReverseCommand;
 using smartcar_nav2::ReverseCommandFilterStatus;
 using smartcar_nav2::ReverseCommandLimits;
 
-constexpr double kVxMin = -0.09;
-constexpr double kWzMax = 0.42;
+constexpr double kVxMin = -0.30;
+constexpr double kWzMax = 1.3636363636363635;
 constexpr double kTurningRadius = 0.22;
 
 ReverseCommandLimits limits()
@@ -98,16 +98,16 @@ TEST(ReverseCommandFilter, ClampsReverseSpeedToConfiguredMinimum)
 TEST(ReverseCommandFilter, ClampsAngularSpeedToCurvatureAndStaticLimit)
 {
   const auto curvature_limited = smartcar_nav2::enforceReverseCommandLimits(
-    ReverseCommand{-0.09, 0.0, 0.0, 0.0, 0.0, 0.50}, limits());
+    ReverseCommand{-0.30, 0.0, 0.0, 0.0, 0.0, 2.0}, limits());
   ASSERT_EQ(curvature_limited.status, ReverseCommandFilterStatus::kAccepted);
   EXPECT_NEAR(
     curvature_limited.command.angular_z,
     std::abs(kVxMin) / kTurningRadius, 1.0e-12);
 
   auto static_limit = limits();
-  static_limit.vx_min = -0.30;
+  static_limit.vx_min = -0.40;
   const auto statically_limited = smartcar_nav2::enforceReverseCommandLimits(
-    ReverseCommand{-0.20, 0.0, 0.0, 0.0, 0.0, -0.50}, static_limit);
+    ReverseCommand{-0.40, 0.0, 0.0, 0.0, 0.0, -2.0}, static_limit);
   ASSERT_EQ(statically_limited.status, ReverseCommandFilterStatus::kAccepted);
   EXPECT_DOUBLE_EQ(statically_limited.command.angular_z, -kWzMax);
 }
@@ -151,7 +151,7 @@ TEST(ReverseCommandFilter, PreservesPercentageAndNoLimitRepresentation)
 TEST(ReverseCommandFilter, ConvertsAbsoluteSpeedUsingReverseMagnitude)
 {
   const auto absolute = smartcar_nav2::translateReverseSpeedLimit(
-    0.045, false, kVxMin);
+    0.15, false, kVxMin);
   ASSERT_TRUE(absolute.valid);
   EXPECT_NEAR(absolute.forwarded_speed_limit, 50.0, 1.0e-12);
   EXPECT_TRUE(absolute.forwarded_percentage);

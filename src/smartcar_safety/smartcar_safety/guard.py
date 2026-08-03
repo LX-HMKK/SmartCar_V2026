@@ -36,6 +36,8 @@ class SafetyGuard:
         scan_timeout_sec=0.35,
         odom_timeout_sec=0.35,
         minimum_voltage=0.0,
+        voltage_timeout_sec=1.0,
+        max_linear_speed_mps=0.30,
         require_scan=True,
         require_odom=True,
         raw_odom_timeout_sec=0.25,
@@ -51,12 +53,17 @@ class SafetyGuard:
             "raw_odom_timeout_sec", raw_odom_timeout_sec)
         self.minimum_voltage = require_nonnegative_finite(
             "minimum_voltage", minimum_voltage)
+        self.voltage_timeout_sec = require_positive_finite(
+            "voltage_timeout_sec", voltage_timeout_sec)
+        self.max_linear_speed_mps = require_positive_finite(
+            "max_linear_speed_mps", max_linear_speed_mps)
         self.require_scan = bool(require_scan)
         self.require_odom = bool(require_odom)
         self.require_raw_odom = bool(require_raw_odom)
 
         self.command_received_at = None
         self.command_invalid = False
+        self.command_speed_limit_exceeded = False
         self.scan_received_at = None
         self.odom_received_at = None
         self.raw_odom_received_at = None
@@ -64,9 +71,25 @@ class SafetyGuard:
         self.voltage = None
         self.emergency_stop = False
 
-    def mark_command(self, receipt_time_sec):
+    def mark_command(self, receipt_time_sec, linear_x):
+        if self.command_speed_limit_exceeded:
+            return False
+        try:
+            linear_x = float(linear_x)
+        except (TypeError, ValueError, OverflowError):
+            self.mark_command_invalid()
+            return False
+        if not math.isfinite(linear_x):
+            self.mark_command_invalid()
+            return False
+        if abs(linear_x) > self.max_linear_speed_mps:
+            self.command_invalid = False
+            self.command_speed_limit_exceeded = True
+            return False
         self.command_received_at = float(receipt_time_sec)
         self.command_invalid = False
+        self.command_speed_limit_exceeded = False
+        return True
 
     def mark_command_invalid(self):
         self.command_invalid = True
@@ -88,6 +111,9 @@ class SafetyGuard:
         """Latch a stop until a caller explicitly clears it with False."""
         self.emergency_stop = bool(enabled)
 
+    def clear_command_speed_limit_fault(self):
+        self.command_speed_limit_exceeded = False
+
     @staticmethod
     def _fresh(receipt_time_sec, now_sec, timeout_sec):
         if receipt_time_sec is None:
@@ -107,6 +133,9 @@ class SafetyGuard:
         """Return a dict containing the fail-closed decision and its reason."""
         if self.emergency_stop:
             return self._result(False, "emergency_stop")
+
+        if self.command_speed_limit_exceeded:
+            return self._result(False, "command_speed_limit_exceeded")
 
         if self.command_invalid:
             return self._result(False, "command_invalid")
@@ -139,6 +168,10 @@ class SafetyGuard:
         if self.minimum_voltage > 0.0:
             if self.voltage is None:
                 return self._result(False, "voltage_missing")
+            if not self._fresh(
+                self.voltage_received_at, now_sec, self.voltage_timeout_sec
+            ):
+                return self._result(False, "voltage_stale")
             if not math.isfinite(self.voltage):
                 return self._result(False, "voltage_invalid")
             if self.voltage < self.minimum_voltage:
