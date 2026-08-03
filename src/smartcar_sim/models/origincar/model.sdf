@@ -275,7 +275,7 @@
     <wheel_radius>0.03</wheel_radius>
     <!-- Do not configure min/max_velocity here. Fortress applies these values
          to both linear and angular Twist components; max_velocity=0.30 would
-         silently clip the 0.15 / 0.22 = 0.682 rad/s Ackermann request and
+         silently clip the 0.30 / 0.22 = 1.364 rad/s Ackermann request and
          turn it into a ~0.50 m arc. Nav2's velocity_smoother remains the
          sole, explicitly tested owner of simulation speed and yaw limits. -->
     <!-- Fortress independently limits v and w at this layer. A low shared

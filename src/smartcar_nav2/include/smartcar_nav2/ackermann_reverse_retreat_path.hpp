@@ -11,17 +11,21 @@
 namespace smartcar_nav2
 {
 
-// Construct the only recovery trajectory permitted for a reverse lease: a
-// short, zero-curvature motion along the vehicle's physical -X axis.
-inline bool buildAckermannReverseRetreatPath(
+// Construct a short, zero-curvature recovery trajectory along the vehicle's
+// physical longitudinal axis. The caller selects -1 for reverse or +1 for
+// forward motion and must separately bind the matching controller/lease.
+inline bool buildAckermannLinearRetreatPath(
   const geometry_msgs::msg::PoseStamped & start,
   const std::string & global_frame,
   double retreat_distance_m,
+  double longitudinal_direction,
   nav_msgs::msg::Path & path)
 {
   if (global_frame.empty() || start.header.frame_id != global_frame ||
     !std::isfinite(retreat_distance_m) || retreat_distance_m < 0.05 ||
-    retreat_distance_m > 0.25 || !std::isfinite(start.pose.position.x) ||
+    retreat_distance_m > 0.25 || !std::isfinite(longitudinal_direction) ||
+    std::abs(std::abs(longitudinal_direction) - 1.0) > 1.0e-12 ||
+    !std::isfinite(start.pose.position.x) ||
     !std::isfinite(start.pose.position.y))
   {
     return false;
@@ -44,8 +48,8 @@ inline bool buildAckermannReverseRetreatPath(
   }
 
   geometry_msgs::msg::PoseStamped end = start;
-  end.pose.position.x -= retreat_distance_m * std::cos(yaw);
-  end.pose.position.y -= retreat_distance_m * std::sin(yaw);
+  end.pose.position.x += longitudinal_direction * retreat_distance_m * std::cos(yaw);
+  end.pose.position.y += longitudinal_direction * retreat_distance_m * std::sin(yaw);
   if (!std::isfinite(end.pose.position.x) || !std::isfinite(end.pose.position.y)) {
     return false;
   }
@@ -54,6 +58,29 @@ inline bool buildAckermannReverseRetreatPath(
   path.header = start.header;
   path.poses = {start, end};
   return true;
+}
+
+// Construct the normal reverse-only recovery trajectory along physical -X.
+inline bool buildAckermannReverseRetreatPath(
+  const geometry_msgs::msg::PoseStamped & start,
+  const std::string & global_frame,
+  double retreat_distance_m,
+  nav_msgs::msg::Path & path)
+{
+  return buildAckermannLinearRetreatPath(
+    start, global_frame, retreat_distance_m, -1.0, path);
+}
+
+// C1's reverse-arrival recovery must pull forward, away from the terminal
+// pose, before planning another reverse approach.
+inline bool buildAckermannForwardRetreatPath(
+  const geometry_msgs::msg::PoseStamped & start,
+  const std::string & global_frame,
+  double retreat_distance_m,
+  nav_msgs::msg::Path & path)
+{
+  return buildAckermannLinearRetreatPath(
+    start, global_frame, retreat_distance_m, 1.0, path);
 }
 
 }  // namespace smartcar_nav2

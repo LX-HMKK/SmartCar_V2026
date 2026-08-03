@@ -74,7 +74,7 @@ nav_msgs::msg::Path path(std::initializer_list<geometry_msgs::msg::PoseStamped> 
 }
 
 const smartcar_nav2::CostmapFootprintSweepOptions kOptions{
-  0.30, 0.16, 0.025, 254U};
+  0.2491, 0.095, 0.025, 254U};
 
 TEST(CostmapFootprintSweep, RejectsLethalCellUnderVehicleFootprint)
 {
@@ -113,10 +113,10 @@ TEST(CostmapFootprintSweep, ReportsFirstLethalInterpolationPoseAndCell)
   ASSERT_TRUE(diagnostic.has_sample_pose);
   EXPECT_EQ(diagnostic.segment_start_pose_index, 0U);
   EXPECT_EQ(diagnostic.segment_end_pose_index, 1U);
-  EXPECT_EQ(diagnostic.segment_sample_index, 28U);
+  EXPECT_EQ(diagnostic.segment_sample_index, 30U);
   EXPECT_EQ(diagnostic.segment_sample_count, 80U);
-  EXPECT_NEAR(diagnostic.segment_fraction, 0.35, 1.0e-12);
-  EXPECT_NEAR(diagnostic.sample_pose.pose.position.x, 1.70, 1.0e-12);
+  EXPECT_NEAR(diagnostic.segment_fraction, 0.375, 1.0e-12);
+  EXPECT_NEAR(diagnostic.sample_pose.pose.position.x, 1.75, 1.0e-12);
   EXPECT_NEAR(diagnostic.sample_pose.pose.position.y, 2.00, 1.0e-12);
   ASSERT_TRUE(diagnostic.has_blocking_cell);
   EXPECT_EQ(diagnostic.blocking_cell_x, 20U);
@@ -234,7 +234,7 @@ TEST(CostmapFootprintSweep, FailsClosedWhenFootprintLeavesRollingCostmap)
   EXPECT_TRUE(diagnostic.has_sample_pose);
   EXPECT_TRUE(diagnostic.has_boundary_point);
   EXPECT_LT(diagnostic.boundary_world_x, 0.0);
-  EXPECT_LT(diagnostic.boundary_world_y, 0.0);
+  EXPECT_GE(diagnostic.boundary_world_y, 0.0);
 }
 
 TEST(CostmapFootprintSweep, SeparatesInvalidInputFromOutOfBounds)

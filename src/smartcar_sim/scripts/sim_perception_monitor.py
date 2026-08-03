@@ -62,7 +62,7 @@ def quaternion_yaw(quaternion: object) -> float:
 
 
 def parse_track_landmarks(world_file: str | Path) -> tuple[Landmark, ...]:
-    """Read physical A-zone cubes from the same SDF Gazebo loads.
+    """Read physical A-zone lidar-slice cylinders from the active SDF.
 
     The raw costmaps alone cannot detect a shared, incorrect global frame: a
     scan transformed by the wrong TF can still agree with a costmap built from
@@ -85,22 +85,22 @@ def parse_track_landmarks(world_file: str | Path) -> tuple[Landmark, ...]:
             raise ValueError(
                 f"{landmark_id} must have a six-element world pose")
         try:
-            x, y, _, _, _, yaw = (float(value) for value in pose_values)
-            size_text = (model.findtext(
-                "./link/collision/geometry/box/size") or "").strip()
-            size_values = [float(value) for value in size_text.split()]
+            x, y, _, roll, pitch, _ = (float(value) for value in pose_values)
+            radius_text = (model.findtext(
+                "./link/collision/geometry/cylinder/radius") or "").strip()
+            radius = float(radius_text)
         except ValueError as error:
             raise ValueError(
-                f"{landmark_id} has a non-numeric pose or box size") from error
-        if len(size_values) != 3 or size_values[0] <= 0.0 or size_values[1] <= 0.0:
-            raise ValueError(f"{landmark_id} must have a positive box collision size")
+                f"{landmark_id} has a non-numeric pose or cylinder radius") from error
+        if abs(roll) > 1.0e-9 or abs(pitch) > 1.0e-9:
+            raise ValueError(f"{landmark_id} must remain upright")
+        if radius <= 0.0:
+            raise ValueError(f"{landmark_id} must have a positive cylinder collision radius")
         landmarks.append(Landmark(
             landmark_id=landmark_id,
             x=x,
             y=y,
-            yaw=yaw,
-            half_x=size_values[0] / 2.0,
-            half_y=size_values[1] / 2.0,
+            radius=radius,
         ))
     if not landmarks:
         raise ValueError(f"no physical A-zone cones found in {path}")
@@ -110,18 +110,10 @@ def parse_track_landmarks(world_file: str | Path) -> tuple[Landmark, ...]:
 def point_to_landmark_boundary_distance(
     point: tuple[float, float], landmark: Landmark
 ) -> float:
-    """Return Euclidean distance from a point to an oriented box boundary."""
+    """Return Euclidean distance from a point to a cylindrical lidar slice."""
     dx = point[0] - landmark.x
     dy = point[1] - landmark.y
-    cos_yaw = math.cos(landmark.yaw)
-    sin_yaw = math.sin(landmark.yaw)
-    local_x = cos_yaw * dx + sin_yaw * dy
-    local_y = -sin_yaw * dx + cos_yaw * dy
-    excess_x = abs(local_x) - landmark.half_x
-    excess_y = abs(local_y) - landmark.half_y
-    if excess_x <= 0.0 and excess_y <= 0.0:
-        return min(-excess_x, -excess_y)
-    return math.hypot(max(excess_x, 0.0), max(excess_y, 0.0))
+    return abs(math.hypot(dx, dy) - landmark.radius)
 
 
 @dataclass
@@ -143,14 +135,12 @@ class OdomPoseSample:
 
 @dataclass(frozen=True)
 class Landmark:
-    """A physical A-zone cone parsed from the active Gazebo world file."""
+    """A physical A-zone cone's cylindrical lidar slice."""
 
     landmark_id: str
     x: float
     y: float
-    yaw: float
-    half_x: float
-    half_y: float
+    radius: float
 
 
 @dataclass(frozen=True)
@@ -518,7 +508,7 @@ class SimPerceptionMonitor(Node):
             landmark.landmark_id
             for landmark in self._landmarks
             if math.hypot(landmark.x - sensor_x, landmark.y - sensor_y)
-            <= self._max_range + math.hypot(landmark.half_x, landmark.half_y)
+            <= self._max_range + landmark.radius
         ]
 
     def _world_points(

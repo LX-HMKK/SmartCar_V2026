@@ -46,8 +46,8 @@ nav_msgs::msg::OccupancyGrid keepoutMask()
 smartcar_nav2::CostmapFootprintSweepOptions retreatSweepOptions()
 {
   smartcar_nav2::CostmapFootprintSweepOptions options;
-  options.half_length_m = 0.30;
-  options.half_width_m = 0.16;
+  options.half_length_m = 0.2491;
+  options.half_width_m = 0.095;
   options.sample_spacing_m = 0.025;
   options.lethal_cost_threshold = 253U;
   return options;
@@ -75,6 +75,20 @@ TEST(AckermannReverseRetreatPath, UsesPhysicalNegativeXWithoutChangingYaw)
   EXPECT_NEAR(path.poses.front().pose.position.y, 2.0, 1.0e-12);
   EXPECT_NEAR(path.poses.back().pose.position.x, 1.0, 1.0e-12);
   EXPECT_NEAR(path.poses.back().pose.position.y, 1.85, 1.0e-12);
+  EXPECT_NEAR(
+    tf2::getYaw(path.poses.back().pose.orientation), kHalfPi, 1.0e-12);
+}
+
+TEST(AckermannReverseRetreatPath, C1ForwardRecoveryUsesPhysicalPositiveXWithoutChangingYaw)
+{
+  nav_msgs::msg::Path path;
+  ASSERT_TRUE(smartcar_nav2::buildAckermannForwardRetreatPath(
+    pose(1.0, 2.0, kHalfPi), "odom_combined", 0.15, path));
+  ASSERT_EQ(path.poses.size(), 2U);
+  EXPECT_NEAR(path.poses.front().pose.position.x, 1.0, 1.0e-12);
+  EXPECT_NEAR(path.poses.front().pose.position.y, 2.0, 1.0e-12);
+  EXPECT_NEAR(path.poses.back().pose.position.x, 1.0, 1.0e-12);
+  EXPECT_NEAR(path.poses.back().pose.position.y, 2.15, 1.0e-12);
   EXPECT_NEAR(
     tf2::getYaw(path.poses.back().pose.orientation), kHalfPi, 1.0e-12);
 }

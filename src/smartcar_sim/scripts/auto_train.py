@@ -23,6 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
+    allows_reverse_handoff_through_poses,
     load_planning_segments,
     materialize_mission_route,
     materialize_navigation_segments,
@@ -42,18 +43,12 @@ HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
 FORWARD_AVOIDANCE_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
-# The Gazebo keepout overlay replaces the real vehicle's MPPI handoff with
-# RPP so every scored and executed command shares the same Ackermann envelope.
-FORWARD_HANDOFF_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
+NATIVE_RPP_CONTROLLER = (
+    "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+)
 # Runtime removes ordinary free through-poses goals inside 0.50 m. Keep only
 # the odometry observer margin above that implementation contract.
 THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M = 0.52
-# A valid Ackermann detour may need one minimum-radius turn, but a planner
-# must never spend a large circle to reach a nearby endpoint.  The BT enforces
-# a tighter per-edge bound; this independently records and rejects the actual
-# paths published by Nav2 during a simulation run.
-MAX_PLANNED_PATH_DETOUR_RATIO = 1.75
-MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M = 0.80
 # A controller may track a valid Ackermann arc slightly longer than a global
 # plan, but it must not turn a series of short replans into a large circle.
 # This is deliberately looser than the per-plan contract above while still
@@ -70,10 +65,9 @@ MAX_ACCEPTED_PATH_TRACE_POINTS = 64
 MAX_EXECUTION_TRACE_SAMPLES = 128
 EXECUTION_TRACE_SCHEMA_VERSION = 1
 PERCEPTION_READY_TOPIC = "/smartcar/sim_perception_ready"
-# `/plan` is emitted by every ComputePathToPose request, including candidates
-# rejected by the free-heading guard. RecordFollowPath publishes this topic
-# only after controller_server acknowledges the raw FollowPath goal, so it is
-# the route evidence used for detour validation.
+# Custom route trees publish an acknowledged controller path. The native P->A
+# tree has no custom FollowPath wrapper, so its route evidence is Nav2's
+# native /plan publication.
 ACCEPTED_CONTROLLER_PATH_TOPIC = "/smartcar/accepted_global_plan"
 PERCEPTION_REQUIRED_CHECKS = (
     "scan",
@@ -104,7 +98,6 @@ class AutoTrain(Node):
         self.declare_parameter("through_poses_reverse_behavior_tree", "")
         self.declare_parameter(
             "through_poses_reverse_locked_behavior_tree", "")
-        self.declare_parameter("sim_speed_profile", "baseline")
         self.declare_parameter("use_through_poses", True)
         self.declare_parameter("goal_timeout_sec", 120.0)
         self.declare_parameter("inter_goal_delay_sec", 1.0)
@@ -177,6 +170,7 @@ class AutoTrain(Node):
         self._cmd_samples = []
         self._path_messages = []
         self._path_metrics = []
+        self._path_traces = []
         self._accepted_path_messages = []
         self._accepted_path_metrics = []
         self._accepted_path_traces = []
@@ -350,11 +344,12 @@ class AutoTrain(Node):
         odom_samples,
         controller_command_samples,
         candidate_command_samples,
-        accepted_path_start,
+        path_traces,
+        path_start,
     ):
-        """Serialize bounded command/odom evidence against acknowledged plans."""
+        """Serialize bounded command/odom evidence against selected Nav2 plans."""
         accepted_paths = sorted(
-            self._accepted_path_traces[accepted_path_start:],
+            path_traces[path_start:],
             key=lambda sample: sample[0],
         )
         active_path_index = -1
@@ -441,8 +436,13 @@ class AutoTrain(Node):
             ))
 
     def _path_cb(self, msg):
-        """Keep all planner candidates for diagnostics only."""
-        self._record_path(msg, self._path_messages, self._path_metrics)
+        """Record Nav2's native planner output for precise-route evidence."""
+        self._record_path(
+            msg,
+            self._path_messages,
+            self._path_metrics,
+            self._path_traces,
+        )
 
     def _accepted_path_cb(self, msg):
         """Record only an acknowledged raw FollowPath goal."""
@@ -453,8 +453,8 @@ class AutoTrain(Node):
             self._accepted_path_traces,
         )
 
-    def _path_detour_metrics(self, path_start, target_x, target_y, metrics):
-        """Return one correlated worst accepted path sample for one endpoint."""
+    def _accepted_path_summary(self, path_start, target_x, target_y, metrics):
+        """Return one correlated longest accepted Nav2 path sample for one endpoint."""
         samples = [
             sample
             for sample in metrics[path_start:]
@@ -466,8 +466,6 @@ class AutoTrain(Node):
                 "planned_path_max_length_m": None,
                 "planned_path_max_chord_m": None,
                 "planned_path_max_detour_ratio": None,
-                "planned_path_detour_limit_m": None,
-                "planned_path_detour_violation": True,
             }
 
         candidates = []
@@ -475,43 +473,21 @@ class AutoTrain(Node):
             _, length, chord, _, _ = sample
             if not math.isfinite(length) or not math.isfinite(chord):
                 continue
-            limit = max(
-                chord * MAX_PLANNED_PATH_DETOUR_RATIO,
-                chord + MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M,
-            )
-            if chord > 1.0e-3:
-                ratio = length / chord
-            elif length > MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M:
-                # Keep manifests strict JSON while making a zero-chord loop
-                # unambiguously worse than the configured ratio limit.
-                ratio = MAX_PLANNED_PATH_DETOUR_RATIO + 1.0
-            else:
-                ratio = 0.0
-            candidates.append((length, chord, ratio, limit))
+            ratio = length / max(chord, 1.0e-3)
+            candidates.append((length, chord, ratio))
         if not candidates:
             return {
                 "planned_path_max_length_m": None,
                 "planned_path_max_chord_m": None,
                 "planned_path_max_detour_ratio": None,
-                "planned_path_detour_limit_m": None,
-                "planned_path_detour_violation": True,
             }
 
-        # Keep length, chord, ratio, and limit from the same sample. Taking
-        # independent maxima could make a long detour appear valid by pairing
-        # it with another plan's larger chord or allowance.
-        length, chord, ratio, limit = max(
-            candidates,
-            key=lambda value: (
-                value[0] - value[3], value[2], value[0]),
-        )
+        # Keep all reported path metrics from one observed Nav2 path.
+        length, chord, ratio = max(candidates, key=lambda value: (value[2], value[0]))
         return {
             "planned_path_max_length_m": length,
             "planned_path_max_chord_m": chord,
             "planned_path_max_detour_ratio": ratio,
-            "planned_path_detour_limit_m": limit,
-            "planned_path_detour_violation": (
-                length > limit + CONFIG_TOLERANCE_EPSILON),
         }
 
     def _required_path(self, parameter_name):
@@ -680,11 +656,16 @@ class AutoTrain(Node):
                 goal["id"] for goal in stage["goals"]
                 if goal.get("goal_profile", "standard") != "standard"
             ]
-            if len(stage["goals"]) > 1 and nonstandard_goals:
+            if (
+                len(stage["goals"]) > 1
+                and nonstandard_goals
+                and not allows_reverse_handoff_through_poses(stage["goals"])
+            ):
                 raise ValueError(
                     f"Segment {stage['id']!r} combines nonstandard goals "
                     f"({', '.join(nonstandard_goals)}) in NavigateThroughPoses; "
-                    "split them into single-goal stages"
+                    "only a terminal locked reverse_handoff in a reverse "
+                    "stage is supported"
                 )
         route = [goal for stage in stages for goal in stage["goals"]]
 
@@ -781,11 +762,19 @@ class AutoTrain(Node):
         document = self._runtime_nav2_params()
         controller = document["controller_server"]["ros__parameters"]
         smoother = document["velocity_smoother"]["ros__parameters"]
-        forward = controller[
-            "ForwardHandoff"
-            if waypoint.get("goal_profile") == "precise"
-            else "ForwardAvoidance"
-        ]
+        if waypoint.get("goal_profile") == "precise":
+            forward = controller["FollowPath"]
+            planner = document["planner_server"]["ros__parameters"]["GridBased"]
+            return {
+                "plugin": str(forward["plugin"]),
+                "vx_max": float(forward["desired_linear_vel"]),
+                "wz_max": abs(float(smoother["max_velocity"][2])),
+                "min_turning_radius": float(planner["minimum_turning_radius"]),
+                "path_max_cross_track_error": None,
+                "scale_velocities": bool(smoother["scale_velocities"]),
+            }
+
+        forward = controller["ForwardAvoidance"]
         plugin = str(forward["plugin"])
         if plugin == FORWARD_AVOIDANCE_CONTROLLER:
             return {
@@ -798,22 +787,8 @@ class AutoTrain(Node):
                     forward["forward_path_max_cross_track_error"]),
                 "scale_velocities": bool(smoother["scale_velocities"]),
             }
-        if plugin == "smartcar_nav2::ForwardOnlyMPPIController":
-            return {
-                "plugin": plugin,
-                "vx_max": float(forward["vx_max"]),
-                "wz_max": abs(float(forward["wz_max"])),
-                "min_turning_radius": float(
-                    forward["AckermannConstraints"]["min_turning_r"]),
-                # The local-Gazebo precise handoff must replace MPPI with
-                # ForwardOnlyRPPController. Record MPPI as having no path
-                # deviation guard so a malformed overlay produces a failed
-                # result manifest instead of a runner KeyError.
-                "path_max_cross_track_error": 0.0,
-                "scale_velocities": bool(smoother["scale_velocities"]),
-            }
         raise ValueError(
-            "forward controller must be an Ackermann-safe RPP or MPPI wrapper: "
+            "forward controller must be the configured Ackermann-safe RPP wrapper: "
             + plugin)
 
     def _wait_for_odom(self, timeout_sec=10.0):
@@ -1342,17 +1317,28 @@ class AutoTrain(Node):
         target_y = float(position["y"])
         executed_travel = self._executed_travel_metrics(
             start_pose, goal_odom_samples, [waypoint])
+        uses_native_precise_path = waypoint.get("goal_profile") == "precise"
+        if uses_native_precise_path:
+            evidence_messages = self._path_messages
+            evidence_metrics = self._path_metrics
+            evidence_traces = self._path_traces
+            evidence_start = path_start
+        else:
+            evidence_messages = self._accepted_path_messages
+            evidence_metrics = self._accepted_path_metrics
+            evidence_traces = self._accepted_path_traces
+            evidence_start = accepted_path_start
         matching_paths = [
             (path_x, path_y, path_yaw)
             for _, path_x, path_y, path_yaw
-            in self._accepted_path_messages[accepted_path_start:]
+            in evidence_messages[evidence_start:]
             if math.hypot(path_x - target_x, path_y - target_y)
             <= PATH_ENDPOINT_MATCH_TOLERANCE_M
         ]
         matching_path_traces = [
             trace
             for _, path_x, path_y, trace
-            in self._accepted_path_traces[accepted_path_start:]
+            in evidence_traces[evidence_start:]
             if math.hypot(path_x - target_x, path_y - target_y)
             <= PATH_ENDPOINT_MATCH_TOLERANCE_M
         ]
@@ -1361,14 +1347,15 @@ class AutoTrain(Node):
             goal_odom_samples,
             self._controller_cmd_samples[controller_cmd_start:],
             self._cmd_samples[cmd_start:],
-            accepted_path_start,
+            evidence_traces,
+            evidence_start,
         )
         path_messages = len(matching_paths)
-        path_detour = self._path_detour_metrics(
-            accepted_path_start,
+        path_metrics = self._accepted_path_summary(
+            evidence_start,
             target_x,
             target_y,
-            self._accepted_path_metrics,
+            evidence_metrics,
         )
         planner_candidate_path_messages = sum(
             1
@@ -1380,10 +1367,10 @@ class AutoTrain(Node):
             matching_paths[-1][2] if matching_paths else None)
         plan_execution_final_yaw = None
         if plan_final_yaw is not None:
-            plan_execution_final_yaw = math.remainder(
-                plan_final_yaw + (math.pi if direction == "reverse" else 0.0),
-                2.0 * math.pi,
-            )
+            # ComputeReverseFreeHeadingPathToPose restores the physical yaw
+            # before publishing its controller-accepted path. Do not shift
+            # that already-restored reverse endpoint a second time.
+            plan_execution_final_yaw = plan_final_yaw
         signed_plan_goal_yaw_error = (
             math.remainder(
                 plan_execution_final_yaw - target_yaw,
@@ -1395,8 +1382,6 @@ class AutoTrain(Node):
         contract_errors = []
         if outcome == "succeeded" and path_messages <= 0:
             contract_errors.append("path_missing")
-        if outcome == "succeeded" and path_detour["planned_path_detour_violation"]:
-            contract_errors.append("planned_path_detour")
         if outcome == "succeeded" and executed_travel[
             "executed_travel_detour_violation"
         ]:
@@ -1416,15 +1401,14 @@ class AutoTrain(Node):
             if controller_metrics["negative_count"] > 0:
                 contract_errors.append("forward_controller_velocity_sign")
             expected_forward_controller = (
-                FORWARD_HANDOFF_CONTROLLER
-                if waypoint.get("goal_profile") == "precise"
-                else FORWARD_AVOIDANCE_CONTROLLER
+                NATIVE_RPP_CONTROLLER
+                if uses_native_precise_path else FORWARD_AVOIDANCE_CONTROLLER
             )
             if forward_contract["plugin"] != expected_forward_controller:
                 contract_errors.append("forward_controller_plugin")
             if not forward_contract["scale_velocities"]:
                 contract_errors.append("forward_smoother_scaling")
-            if (
+            if not uses_native_precise_path and (
                 not math.isfinite(forward_contract["path_max_cross_track_error"])
                 or forward_contract["path_max_cross_track_error"] <= 0.0
             ):
@@ -1604,15 +1588,15 @@ class AutoTrain(Node):
             "travel_m": self._round_optional(
                 executed_travel["executed_travel_m"]),
             **self._serialized_travel_metrics(executed_travel),
-            # The legacy name now intentionally counts RPP's accepted plan,
-            # not raw planner candidates published while searching headings.
+            # Native P->A records /plan; custom route trees record only their
+            # controller-accepted path through the same legacy field.
             "path_messages": path_messages,
             "planner_candidate_path_messages": planner_candidate_path_messages,
             "accepted_path_trace": (
                 matching_path_traces[-1] if matching_path_traces else []
             ),
             "tracking_trace": tracking_trace,
-            **path_detour,
+            **path_metrics,
             "handoff_speed_cap_mps": (
                 round(handoff_contract["vx_max"], 3)
                 if handoff_contract is not None else None
@@ -1654,7 +1638,7 @@ class AutoTrain(Node):
                 if forward_contract is not None else None
             ),
             "forward_path_max_cross_track_error_m": (
-                round(forward_contract["path_max_cross_track_error"], 3)
+                self._round_optional(forward_contract["path_max_cross_track_error"])
                 if forward_contract is not None else None
             ),
             "forward_controller_plugin": (
@@ -1878,18 +1862,26 @@ class AutoTrain(Node):
         # NavigateThroughPoses success alone does not prove direction or final
         # pose behavior in a custom reverse tree.
         odom_slice = self._odom_samples[odom_start:]
+        terminal = waypoints[-1]
+        terminal_reverse_handoff = allows_reverse_handoff_through_poses(
+            waypoints)
+        handoff_contract = (
+            self._reverse_handoff_contract()
+            if terminal_reverse_handoff else None
+        )
         forward_contract = (
             self._forward_controller_contract(waypoints[-1])
             if direction != "reverse" else None)
         minimum_turning_radius = (
-            forward_contract["min_turning_radius"]
-            if forward_contract is not None else None)
+            handoff_contract["min_turning_radius"]
+            if handoff_contract is not None else (
+                forward_contract["min_turning_radius"]
+                if forward_contract is not None else None))
         controller_metrics = self._command_metrics(
             self._controller_cmd_samples[controller_cmd_start:],
             minimum_turning_radius)
         candidate_metrics = self._command_metrics(
             self._cmd_samples[cmd_start:], minimum_turning_radius)
-        terminal = waypoints[-1]
         terminal_position = terminal["pose"]["position"]
         terminal_x = float(terminal_position["x"])
         terminal_y = float(terminal_position["y"])
@@ -1961,10 +1953,11 @@ class AutoTrain(Node):
             odom_slice,
             self._controller_cmd_samples[controller_cmd_start:],
             self._cmd_samples[cmd_start:],
+            self._accepted_path_traces,
             accepted_path_start,
         )
         path_messages = len(matching_paths)
-        path_detour = self._path_detour_metrics(
+        path_metrics = self._accepted_path_summary(
             accepted_path_start,
             terminal_x,
             terminal_y,
@@ -1979,8 +1972,6 @@ class AutoTrain(Node):
         contract_errors = []
         if success and path_messages <= 0:
             contract_errors.append("path_missing")
-        if success and path_detour["planned_path_detour_violation"]:
-            contract_errors.append("planned_path_detour")
         if success and executed_travel["executed_travel_detour_violation"]:
             contract_errors.append("executed_travel_detour")
         if success:
@@ -2011,6 +2002,33 @@ class AutoTrain(Node):
                         contract_errors.append(f"{prefix}_velocity_missing")
                     if metrics["positive_count"] > 0:
                         contract_errors.append(f"{prefix}_velocity_sign")
+                if terminal_reverse_handoff:
+                    if handoff_contract["plugin"] != REVERSE_HANDOFF_CONTROLLER:
+                        contract_errors.append("handoff_controller_plugin")
+                    if (
+                        handoff_contract["vx_min"] <= 0.0
+                        or handoff_contract["vx_max"] < handoff_contract["vx_min"]
+                    ):
+                        contract_errors.append("handoff_virtual_forward_velocity")
+                    if not handoff_contract["scale_velocities"]:
+                        contract_errors.append("handoff_smoother_scaling")
+                    for prefix, metrics in (
+                        ("handoff_controller", controller_metrics),
+                        ("handoff_candidate", candidate_metrics),
+                    ):
+                        if (
+                            metrics["linear_abs_max"] is None
+                            or metrics["linear_abs_max"]
+                            > handoff_contract["vx_max"] + VELOCITY_EPSILON
+                        ):
+                            contract_errors.append(f"{prefix}_speed_limit")
+                        if (
+                            metrics["angular_abs_max"]
+                            > handoff_contract["wz_max"] + VELOCITY_EPSILON
+                        ):
+                            contract_errors.append(f"{prefix}_angular_limit")
+                        if metrics["kinematic_violation_count"] > 0:
+                            contract_errors.append(f"{prefix}_curvature")
             else:
                 for prefix, metrics in (
                     ("forward_controller", controller_metrics),
@@ -2064,7 +2082,35 @@ class AutoTrain(Node):
                 matching_path_traces[-1] if matching_path_traces else []
             ),
             "tracking_trace": tracking_trace,
-            **path_detour,
+            **path_metrics,
+            "handoff_speed_cap_mps": (
+                round(handoff_contract["vx_max"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_wz_cap_radps": (
+                round(handoff_contract["wz_max"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_min_turning_radius_m": (
+                round(handoff_contract["min_turning_radius"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_controller_plugin": (
+                handoff_contract["plugin"]
+                if handoff_contract is not None else None
+            ),
+            "handoff_internal_vx_min_mps": (
+                round(handoff_contract["vx_min"], 3)
+                if handoff_contract is not None else None
+            ),
+            "handoff_internal_vx_max_mps": (
+                round(handoff_contract["vx_max"], 3)
+                if handoff_contract is not None else None
+            ),
+            "velocity_smoother_scale_velocities": (
+                handoff_contract["scale_velocities"]
+                if handoff_contract is not None else None
+            ),
             "final_pos": (round(cur[1], 3), round(cur[2], 3)),
             "goal_checker": goal_checker,
             "xy_goal_tolerance_m": round(xy_tolerance, 3),
@@ -2217,8 +2263,6 @@ class AutoTrain(Node):
         use_through_poses = bool(self.get_parameter("use_through_poses").value)
         self._execution_manifest = {
             "use_through_poses": use_through_poses,
-            "sim_speed_profile": str(
-                self.get_parameter("sim_speed_profile").value),
         }
         # Do not send even the first Nav2 goal until a live scan is proven to
         # transform at its own stamp and mark both raw costmaps, including the

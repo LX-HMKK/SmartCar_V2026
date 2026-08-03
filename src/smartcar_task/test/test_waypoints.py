@@ -391,32 +391,53 @@ class WaypointTests(unittest.TestCase):
         nav_only = load_waypoints(nav_only_file)
         self.assertEqual(
             [item.id for item in nav_only],
-            ["p_start", "a_task_observe", "c_corner_1", "p_finish"],
+            [
+                "p_start", "a_task_observe", "via_2", "c_corner_1",
+                "via_1", "via_3", "p_finish",
+            ],
         )
         self.assertEqual(
             [item.task for item in nav_only],
-            ["start", "nav", "nav", "return"],
+            ["start", "nav", "via", "nav", "via", "via", "return"],
         )
         self.assertEqual(
             [item.direction for item in nav_only],
             [
-                "forward", "forward", "reverse", "forward",
+                "forward", "forward", "reverse", "reverse", "reverse",
+                "reverse", "reverse",
             ],
         )
         self.assertEqual(
             [item.goal_profile for item in nav_only],
-            ["standard", "precise", "reverse_handoff", "standard"],
+            [
+                "standard", "precise", "standard", "reverse_handoff",
+                "standard", "standard", "standard",
+            ],
         )
-        self.assertTrue(all(is_heading_locked(item) for item in nav_only))
+        self.assertTrue(all(
+            is_heading_locked(item)
+            for item in nav_only
+            if item.id not in {"via_1", "via_2", "via_3"}
+        ))
         self.assertTrue(all(
             not is_zero_quaternion(item.orientation) for item in nav_only
+            if item.id not in {"via_1", "via_2", "via_3"}
         ))
         self.assertEqual(nav_only[1].goal_profile, "precise")
-        self.assertEqual(nav_only[2].task, "nav")
-        self.assertEqual(nav_only[2].position, (0.3867094808286349, 2.65, 0.0))
-        self.assertEqual(nav_only[2].goal_profile, "reverse_handoff")
-        self.assertEqual(nav_only[3].task, "return")
-        self.assertEqual(nav_only[3].direction, "forward")
+        self.assertEqual(nav_only[3].task, "nav")
+        self.assertEqual(
+            nav_only[3].position,
+            (0.9330276705276708, 3.8337068653474913, 0.0),
+        )
+        self.assertEqual(nav_only[3].goal_profile, "reverse_handoff")
+        self.assertEqual(nav_only[2].task, "via")
+        self.assertEqual(nav_only[2].direction, "reverse")
+        self.assertEqual(nav_only[4].task, "via")
+        self.assertEqual(nav_only[4].direction, "reverse")
+        self.assertEqual(nav_only[5].task, "via")
+        self.assertEqual(nav_only[5].direction, "reverse")
+        self.assertEqual(nav_only[6].task, "return")
+        self.assertEqual(nav_only[6].direction, "reverse")
 
         nav_only_document = yaml.safe_load(nav_only_file.read_text(encoding="utf-8"))
         next(
@@ -438,9 +459,18 @@ class WaypointTests(unittest.TestCase):
             if waypoint["id"] == "p_finish"
         )["direction"] = "reverse"
         with tempfile.TemporaryDirectory() as directory:
-            with self.assertRaisesRegex(ValueError, "direction must be forward"):
-                load_waypoints(
-                    self.write_document(directory, direct_return_document))
+            reverse_return = load_waypoints(
+                self.write_document(directory, direct_return_document))
+        self.assertEqual(reverse_return[-1].direction, "reverse")
+
+        next(
+            waypoint for waypoint in direct_return_document["waypoints"]
+            if waypoint["id"] == "p_finish"
+        )["direction"] = "forward"
+        with tempfile.TemporaryDirectory() as directory:
+            forward_return = load_waypoints(
+                self.write_document(directory, direct_return_document))
+        self.assertEqual(forward_return[-1].direction, "forward")
 
     def test_rule_baseline_uses_direct_vlm_handoff_heading(self):
         waypoints = load_waypoints(

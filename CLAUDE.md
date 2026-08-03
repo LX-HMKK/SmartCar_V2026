@@ -2,16 +2,18 @@
 
 本文件为 Claude Code（claude.ai/code）提供本仓库的操作指导。
 
-> 同步基线：2026-08-02。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
+> 同步基线：2026-08-03。`AGENTS.md` 与 `CLAUDE.md` 除工具名称外应保持一致。
 ## 项目背景与当前状态
 
 本仓库面向**第二十一届全国大学生智能汽车竞赛-地瓜机器人智慧医疗赛**，硬件平台为 **OriginCar + RDK X5 8G + ROS2 Humble**。
 
 截至 2026-07-27，仓库包含 RF2O 激光里程计（已标定朝向）、唯一 9 点语义任务路线（三阶段 NavigateThroughPoses）、官方场地参考层、RViz 航点编辑器和语音/二维码/图生文三个独立媒体入口。旧 68 点路线和独立纯导航测试链已删除。实车标定与 P→任务发布点导航验证已完成（含 Nav2 参数链路修复、行为树加固和代价地图调优）。`nav` 任务类型支持跳过视觉的纯导航测试，`nav_only.yaml` + `/root/nav_test.sh` 一键启动但保持急停锁存，必须人工确认后发车。QR→VLM 确定性倒车软件链已部署并通过无底盘测试，实际倒车运动、VLM 后端和完整任务测试尚未完成，不得表述为“已具备竞赛现场运行条件”。
 
-截至 2026-08-02，本机 Ubuntu 22.04 直接运行 Ignition Gazebo 6.18 仿真，不使用
-WSL。仿真 `nav_only.yaml` 已缩减为三个语义阶段：P→A 前进、A→C1 倒车、C1→P 前进，
-没有中间经过点。Gazebo/RViz/TF/Nav2 的感知门禁已验证新鲜 scan 能按其时间戳查询 TF，
+截至 2026-08-03，本机 Ubuntu 22.04 直接运行 Ignition Gazebo 6.18 仿真，不使用
+WSL。仿真 `nav_only.yaml` 保留三个语义阶段：P→A 前进、A→`via_2`→C1 倒车、
+C1→`via_1`→`via_3`→P 倒车。C1 是末端锁定航向的 `reverse_handoff`；普通倒车 `via`
+可与它组成一个 reverse-locked `NavigateThroughPoses` 动作，但 C1 必须为最后一个目标。
+Gazebo/RViz/TF/Nav2 的感知门禁已验证新鲜 scan 能按其时间戳查询 TF，
 并且默认 A 区障碍回波同时进入 local/global raw costmap；这修复了旧的 RViz 点云滞后和
 未受 Gazebo 障碍约束的仿真链路问题。
 
@@ -26,9 +28,9 @@ P→A 已生成无大绕圈的路径（`4.270 m`，弦长 `3.276 m`，倍率 `1.
 
 ## 高层架构
 
-- **任务决策层**：`smartcar_task` 管理五子任务和语义航点；每个非起点航点独立发送 `NavigateToPose`，并把动作 UUID、方向、generation 与方向租约绑定。
+- **任务决策层**：`smartcar_task` 管理五子任务和语义航点；每个显式 planning segment 发送一个导航动作，单目标使用 `NavigateToPose`，有经过点的同向分段使用 `NavigateThroughPoses`，并把动作 UUID、方向、generation 与方向租约绑定。
 - **视觉层**：`smartcar_vision` 使用 `zbar_ros` 识别二维码；图生文请求包含图像等待、JPEG 编码和后端推理，统一受 8 秒硬期限约束并提供兜底文案。
-- **导航层**：单一 Smac Hybrid `DUBIN` planner + Regulated Pure Pursuit；自由过渡点由 `ComputeFreeHeadingPathAction` 解析，不要求到达 yaw。倒车多航点使用虚拟航向与反向校验；规划候选在清图后仍穷尽时，`AckermannReverseRetreat` 可通过专用 `ReverseRecovery` controller 退让一次 `0.15 m` 后重规划。当前仿真路线仅保留 P→A forward、A→C1 reverse、C1→P forward 三段，不含经过点；不启动 `behavior_server` 或 `waypoint_follower`，禁止 Spin recovery 和原地旋转。
+- **导航层**：单一 Smac Hybrid `DUBIN` planner + Regulated Pure Pursuit；自由过渡点由 `ComputeFreeHeadingPathAction` 解析，不要求到达 yaw。倒车多航点使用虚拟航向与反向校验；普通倒车 `via` 后可接一个末端、锁定航向的 `reverse_handoff`，运行时选用 reverse-locked ThroughPoses 树。规划候选在清图后仍穷尽时，`AckermannReverseRetreat` 可通过专用 `ReverseRecovery` controller 退让一次 `0.15 m` 后重规划。当前仿真路线保留 P→A forward、A→`via_2`→C1 reverse、C1→`via_1`→`via_3`→P reverse 三个语义阶段；不启动 `behavior_server` 或 `waypoint_follower`，禁止 Spin recovery 和原地旋转。
 - **避障感知层**：YDLIDAR `/scan` 直接进入 obstacle/inflation costmap；无消费者的 `obstacle_detector_2` 默认关闭，仅保留诊断开关。
 - **定位层**：STM32 轮式里程计 + IMU + 无地图连续扫描匹配激光里程计，经 `robot_localization` EKF 输出 `/odom_combined`；无 SLAM。
 - **控制层**：`controller_server -> /cmd_vel_nav -> velocity_smoother -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，只允许与动作租约一致的速度符号；安全节点（C++ 默认，Python 备选）继续负责指令消毒、急停锁存、传感器心跳超时和 Twist→Ackermann 转换。
@@ -37,8 +39,8 @@ P→A 已生成无大绕圈的路径（`4.270 m`，弦长 `3.276 m`，倍率 `1.
 
 - LiDAR 不做 SLAM 或静态地图定位；必须允许通过连续扫描匹配生成激光里程计并融合进 EKF，同时继续进入 obstacle/inflation costmap。激光里程计不得直接发布 `odom_combined -> base_footprint` TF，EKF 是唯一 TF owner。
 - 运动链必须经过 `smartcar_safety`；系统禁止 `use_base=true,use_safety=false`。安全节点直接发布 `/ackermann_cmd`，`use_safety_ackermann:=true` 时跳过独立的 `cmd_vel_to_ackermann_drive` 节点。
-- 方向门必须位于 velocity smoother 之后。`Prepare/Activate/Renew/Stop` 租约同时绑定 boot epoch、lease ID、generation 和 `NavigateToPose` UUID；错方向、过期许可、非法 Twist 或重放必须完整输出零并锁存故障。
-- 当前仿真 `nav_only.yaml` 的方向模式为：P→A `forward`、A→C1 `reverse`、C1→P `forward`；所有三个阶段均直接连接任务点，没有 `via` 经过点。`validate_waypoints()` 必须拒绝全正向或越界方向配置。
+- 方向门必须位于 velocity smoother 之后。`Prepare/Activate/Renew/Stop` 租约同时绑定 boot epoch、lease ID、generation 和导航动作 UUID；错方向、过期许可、非法 Twist 或重放必须完整输出零并锁存故障。
+- 当前仿真 `nav_only.yaml` 的方向模式为：P→A `forward`、A→`via_2`→C1 `reverse`、C1→`via_1`→`via_3`→P `reverse`。C1 的 `reverse_handoff` 必须位于倒车多目标动作末端并锁定航向；前序点必须为 `standard` reverse `via`。`p_finish` 物理航向相对旧正向回程旋转 180°；`validate_waypoints()` 必须拒绝全正向或越界方向配置。
 - 不可达短退只可出现在 `reverse` 动作的规划失败分支，且仅一次；它必须使用 `FollowPath -> ReverseRecovery -> velocity_smoother -> direction_guard -> safety`，并以新鲜 global/local costmap 的完整足迹扫掠 fail-closed。禁止直接发布 Twist、`BackUp`、`DriveOnHeading`、Spin 和 Wait。
 - 安全节点 odom 回调有 50ms 节流（`odom_throttle_interval_sec`），有效 odom 看门狗窗口 = `odom_timeout + throttle_interval + timer_period`（最坏 ~450ms，0.15 m/s 下 ~6.8 cm）。`raw_odom_timeout_sec` 已参数化。
 - 人物描述由语义航点 `task: vlm` 触发。VFH、YOLO 自动触发不是当前 release 依赖；TTS consumer 已提供但默认关闭，不属于任务或运动门禁依赖。
@@ -159,8 +161,8 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 - ✅ **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
 - ℹ️ **纯导航任务类型 `nav` (2026-07-23)**：`waypoints.py` 新增 `"nav"` 任务类型，可用于替代 `"qr"` 和 `"vlm"` 进行无视觉纯导航测试。`"nav"` 在状态机中等效于 qr/vlm 的位置约束，但不触发任何视觉服务调用，导航段不拆分直通下一航点。见 `nav_only.yaml`。
 - 🔴 **一键导航测试脚本 (2026-08-02 收敛)**：唯一受支持的 RDK 启动入口是仓库根目录 `scripts/nav_test.sh` 部署的 `/root/nav_test.sh`。它执行清理→构建→启动→等就绪→RViz，设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，不会自动发车。任何旧 RDK 副本中会自动解除急停或调用 start 的脚本都不得恢复或执行；已删除的 `scripts/safe_start.sh`、`scripts/deploy/safe_start.sh`、`scripts/deploy/ros_cleanup.sh`、`scripts/verify_autostart.sh` 和 `scripts/monitor_mission.py` 也不得充当安全判据。
-- 🔴 **稀疏仿真路线与倒车 (2026-08-02)**：路线仅为 P→A forward、A→C1 reverse、C1→P forward，不含经过点。非任务点由 free-heading 搜索处理，不使用 `REEDS_SHEPP`、`reverse_penalty` 或航点朝向翻转。若反向候选搜索在清图后仍穷尽，反向树最多安全短退一次再重规划。该恢复已在 Gazebo 触发，但 P→A 紧右弯的控制跟踪尚未通过右侧保护包络，因此全路线未通过。
-- ℹ️ **仿真调参约束 (2026-08-02)**：当前稀疏路线的 P 起点、A、C1 和 P 终点都是固定任务端点，没有可写入的中间航点；只服务旧密集 B/C 路线的离线候选扫描和写入工具已删除。P→A 问题只可修改该弯道的非对称横向反馈，并以完整结果 JSON 复验；不得新增经过点或放宽右侧保护包络。
+- 🔴 **稀疏仿真路线与倒车 (2026-08-03)**：路线为 P→A forward、A→`via_2`→C1 reverse、C1→`via_1`→`via_3`→P reverse。C1 作为锁定航向的末端 `reverse_handoff` 与前序标准 reverse `via` 同属一个 reverse-locked ThroughPoses 动作；它不能成为经过点或与其它非标准 profile 混合。`p_finish` 使用相对旧正向回程翻转 180°后的物理航向，并由反向目标检查器验收。若反向候选搜索在清图后仍穷尽，反向树最多安全短退一次再重规划。该恢复已在 Gazebo 触发，但 P→A 紧右弯的控制跟踪尚未通过右侧保护包络，因此全路线未通过。
+- ℹ️ **仿真调参约束 (2026-08-03)**：P、A、C1 和 P 终点保持语义任务端点；可在倒车段加入或调整标准 `via`，但 C1 必须保持该段最后一个锁定航向目标。不得用 P→A 的额外经过点或放宽右侧保护包络掩盖其控制跟踪问题；任何点位调整都必须通过几何预检并以完整结果 JSON 复验。
 - ℹ️ **电压监控 (2026-07-24)**：`voltage_monitor` 工具订阅 `/PowerVoltage`（STM32 串口 byte 20-21，mV→V），记录到 `/tmp/voltage_history.log`（含时间戳，上限 10 万行自动轮转）。安全节点 `minimum_voltage: 10.0`（`safety.yaml`）——低于 10.0V 锁止运动。当前电池 3S 18650 LiPo，满电 12.6V，充电监控：`ros2 topic echo /PowerVoltage --once`。
 - 🔴 **ROS2 CLI 卡死备用方案**：`ros2 service call` 在 lifecycle 异常后可能无限等待。紧急停车可用 `pkill -9 -f "ros2 launch"` 直接杀 launch 进程，STM32 超时自动发送停止指令。日常清理推荐 `bash scripts/ros_cleanup.sh`。
 

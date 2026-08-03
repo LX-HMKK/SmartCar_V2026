@@ -111,7 +111,7 @@ Visualization Manager:
       Color: 160; 160; 160
       Line Style: Solid
       Line Width: 0.04
-      Enabled: false
+      Enabled: true
 
     # This project topic is published only after controller_server accepts a
     # raw FollowPath goal. Unlike Humble RPP's clipped tracking window, it is

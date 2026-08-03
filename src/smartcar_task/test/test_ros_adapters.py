@@ -328,9 +328,10 @@ class RosAdapterTests(unittest.TestCase):
                 request.behavior_tree,
                 bytes(goal_handle.goal_id.uuid),
             ))
+            goal_index = len(received_goals)
             deadline = time.monotonic() + 2.0
             while (
-                direction_guard.activations < 1
+                direction_guard.activations < goal_index
                 and time.monotonic() < deadline
             ):
                 time.sleep(0.005)
@@ -361,6 +362,8 @@ class RosAdapterTests(unittest.TestCase):
             direction_prepare_retry_period_sec=0.01,
             through_poses_behavior_tree="/tmp/through.xml",
             reverse_through_poses_behavior_tree="/tmp/reverse-through.xml",
+            reverse_locked_through_poses_behavior_tree=(
+                "/tmp/reverse-locked-through.xml"),
         )
         goals = (
             Waypoint(
@@ -397,6 +400,83 @@ class RosAdapterTests(unittest.TestCase):
         self.assertEqual(
             [name for name, _lease in direction_guard.calls].count("activate"),
             1,
+        )
+
+        handoff_goals = (
+            Waypoint(
+                frame_id="odom_combined",
+                position=(2.5, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="via",
+                direction="reverse",
+                id="through_via",
+            ),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(3.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="nav",
+                direction="reverse",
+                id="handoff_terminal",
+                goal_profile="reverse_handoff",
+                heading_mode="locked",
+            ),
+        )
+        handoff = navigator.navigate_through(
+            handoff_goals,
+            reverse_direction=True,
+        )
+
+        self.assertTrue(handoff.success, handoff.status)
+        self.assertEqual(
+            received_goals[1][:2],
+            ([2.5, 3.0], "/tmp/reverse-locked-through.xml"),
+        )
+        prepare = [
+            lease for name, lease in direction_guard.calls if name == "prepare"
+        ]
+        self.assertEqual(len(prepare), 2)
+        self.assertEqual(prepare[1].direction, 2)
+
+        nonterminal_handoff = navigator.navigate_through(
+            (
+                handoff_goals[-1],
+                Waypoint(
+                    frame_id="odom_combined",
+                    position=(3.5, 0.0, 0.0),
+                    orientation=(0.0, 0.0, 0.0, 1.0),
+                    task="nav",
+                    direction="reverse",
+                    id="standard_terminal",
+                ),
+            ),
+            reverse_direction=True,
+        )
+        self.assertFalse(nonterminal_handoff.success)
+        self.assertIn(
+            "navigation_through_nonstandard_goal_profile",
+            nonterminal_handoff.status,
+        )
+
+        mixed_profiles = navigator.navigate_through(
+            (
+                Waypoint(
+                    frame_id="odom_combined",
+                    position=(3.5, 0.0, 0.0),
+                    orientation=(0.0, 0.0, 0.0, 1.0),
+                    task="nav",
+                    direction="reverse",
+                    id="precise_before_handoff",
+                    goal_profile="precise",
+                ),
+                handoff_goals[-1],
+            ),
+            reverse_direction=True,
+        )
+        self.assertFalse(mixed_profiles.success)
+        self.assertIn(
+            "navigation_through_nonstandard_goal_profile",
+            mixed_profiles.status,
         )
 
         mixed_direction = navigator.navigate_through(

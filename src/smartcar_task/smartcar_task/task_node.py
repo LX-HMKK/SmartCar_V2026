@@ -30,9 +30,14 @@ from std_msgs.msg import String
 from std_srvs.srv import Trigger
 from unique_identifier_msgs.msg import UUID
 
-from smartcar_task.mission import Mission, MissionConfig, OperationResult
+from smartcar_task.mission import (
+    Mission,
+    MissionConfig,
+    OperationResult,
+)
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
+    allows_reverse_handoff_through_poses,
     load_planning_segments,
     materialize_mission_route,
     materialize_navigation_segments,
@@ -462,7 +467,10 @@ class RosNavigator:
             for index, waypoint in enumerate(goals)
             if waypoint.goal_profile != "standard"
         ]
-        if nonstandard:
+        if nonstandard and not (
+            reverse_direction
+            and allows_reverse_handoff_through_poses(goals)
+        ):
             return OperationResult(
                 False,
                 "navigation_through_nonstandard_goal_profile:"

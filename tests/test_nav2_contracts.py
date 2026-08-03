@@ -65,16 +65,16 @@ NAVIGATION_LAUNCH_FILE = PACKAGE_ROOT / "launch" / "navigation_launch.py"
 SAFE_OUTPUT_ZERO_DEADLINE_SEC = 0.40
 
 EXPECTED_LOCAL_FOOTPRINT = [
-    [0.27, 0.13],
-    [0.27, -0.13],
-    [-0.27, -0.13],
-    [-0.27, 0.13],
+    [0.2191, 0.065],
+    [0.2191, -0.065],
+    [-0.2191, -0.065],
+    [-0.2191, 0.065],
 ]
 EXPECTED_GLOBAL_FOOTPRINT = [
-    [0.27, 0.13],
-    [0.27, -0.13],
-    [-0.27, -0.13],
-    [-0.27, 0.13],
+    [0.2191, 0.065],
+    [0.2191, -0.065],
+    [-0.2191, -0.065],
+    [-0.2191, 0.065],
 ]
 UNSUPPORTED_HUMBLE_RPP_KEYS = {
     "max_linear_vel",
@@ -364,10 +364,10 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertAlmostEqual(precise["xy_goal_tolerance"], 0.12)
         self.assertAlmostEqual(precise["yaw_goal_tolerance"], 0.15)
         self.assertIs(precise["stateful"], False)
-        self.assertLessEqual(
-            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.30)
-        self.assertLessEqual(
-            controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.25)
+        self.assertAlmostEqual(
+            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.35)
+        self.assertAlmostEqual(
+            controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.50)
         transit = controller["transit_goal_checker"]
         self.assertEqual(
             transit["plugin"], "nav2_controller::PositionGoalChecker"
@@ -520,7 +520,7 @@ class TestNav2Contracts(unittest.TestCase):
         smoother = ros_parameters(self.params, "velocity_smoother")
         self.assertIs(smoother["scale_velocities"], True)
 
-    def test_reverse_handoff_tree_keeps_strict_planning_and_goal_checks(self):
+    def test_reverse_trees_keep_strict_planning_and_goal_checks(self):
         regular = ElementTree.parse(BT_REVERSE_FILE).getroot()
         handoff = ElementTree.parse(BT_REVERSE_HANDOFF_FILE).getroot()
         regular_compute = regular.find(".//ComputeReverseFreeHeadingPathToPose")
@@ -529,10 +529,10 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertIsNotNone(regular_compute)
         self.assertIsNotNone(handoff_compute)
-        # Ordinary reverse waypoints carry a zero quaternion and resolve their
-        # terminal heading in the live costmap. The VLM handoff is heading
-        # locked, so the shared reverse node retains its single authored-yaw
-        # candidate while also providing the same safe retreat barrier.
+        # Ordinary reverse waypoints resolve a terminal heading in the live
+        # costmap. A heading-locked target retains its authored yaw. In either
+        # case, reverse completion must enforce the terminal heading selected
+        # by the shared reverse path node.
         self.assertIn("heading_samples", regular_compute.attrib)
         self.assertIn("heading_samples", handoff_compute.attrib)
         for field in (
@@ -553,11 +553,12 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("minimum_turning_radius", regular_compute.attrib)
         self.assertNotIn("minimum_turning_radius", handoff_compute.attrib)
 
-        follow = handoff.find(".//RecordFollowPath")
-        self.assertIsNotNone(follow)
-        self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
-        self.assertEqual(
-            follow.attrib["goal_checker_id"], "reverse_goal_checker")
+        for behavior_tree in (regular, handoff):
+            follow = behavior_tree.find(".//RecordFollowPath")
+            self.assertIsNotNone(follow)
+            self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
+            self.assertEqual(
+                follow.attrib["goal_checker_id"], "reverse_goal_checker")
 
     def test_reverse_retreat_is_planner_only_and_single_shot(self):
         forward_trees = (BT_FILE, BT_PRECISE_FILE, BT_THROUGH_POSES_FILE)
@@ -863,7 +864,7 @@ class TestNav2Contracts(unittest.TestCase):
         quaternion_norm = math.sqrt(sum(value * value for value in orientation.values()))
         self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
 
-    def test_simulation_route_preserves_protected_semantic_targets(self):
+    def test_simulation_route_keeps_p_and_a_targets_with_a_tuned_reverse_return(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
         semantic_ids = (
@@ -882,7 +883,15 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(
             [waypoint["id"] for waypoint in nav_only["waypoints"]],
-            list(semantic_ids),
+            [
+                "p_start",
+                "a_task_observe",
+                "via_2",
+                "c_corner_1",
+                "via_1",
+                "via_3",
+                "p_finish",
+            ],
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in default["waypoints"]],
@@ -890,12 +899,14 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in nav_only["waypoints"]],
-            ["start", "nav", "nav", "return"],
+            ["start", "nav", "via", "nav", "via", "via", "return"],
         )
 
-        # nav_only suppresses media requests, but it must use the exact
-        # protected physical targets and locked headings of the full mission.
-        for waypoint_id in semantic_ids:
+        # nav_only suppresses media requests and keeps the physical P/A
+        # targets. C1 and p_finish are simulation-route tuning inputs: C1 is
+        # edited in the route editor and p_finish is flipped for the final
+        # reverse action.
+        for waypoint_id in ("p_start", "a_task_observe"):
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
                     default_by_id[waypoint_id]["pose"]["position"],
@@ -932,7 +943,26 @@ class TestNav2Contracts(unittest.TestCase):
             nav_by_id["c_corner_1"].get("goal_profile", "standard"),
             "reverse_handoff",
         )
-        self.assertEqual(nav_by_id["p_finish"]["direction"], "forward")
+        self.assertEqual(nav_by_id["via_1"]["task"], "via")
+        self.assertEqual(nav_by_id["via_1"]["direction"], "reverse")
+        self.assertEqual(nav_by_id["p_finish"]["direction"], "reverse")
+        self.assertEqual(
+            nav_by_id["p_finish"].get("goal_profile", "standard"),
+            "standard",
+        )
+        self.assertEqual(
+            nav_by_id["p_finish"]["pose"]["position"],
+            default_by_id["p_finish"]["pose"]["position"],
+        )
+        self.assertAlmostEqual(
+            math.remainder(
+                planar_yaw(nav_by_id["p_finish"]["pose"]["orientation"])
+                - planar_yaw(default_by_id["p_finish"]["pose"]["orientation"]),
+                2.0 * math.pi,
+            ),
+            math.pi,
+            delta=1.0e-6,
+        )
         self.assertFalse(
             {"via", "corridor", "loop"}
             & {waypoint["task"] for waypoint in default["waypoints"]}

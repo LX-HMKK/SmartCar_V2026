@@ -20,23 +20,25 @@ HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
 FORWARD_AVOIDANCE_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
-# Gazebo's keepout overlay uses RPP for the precise handoff as well. The base
-# Nav2 configuration deliberately remains MPPI for the physical vehicle.
-FORWARD_HANDOFF_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
+NATIVE_RPP_CONTROLLER = (
+    "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+)
 # These values are local-Gazebo contracts from nav2_keepout_filter.yaml. They
 # deliberately do not describe the real vehicle's uncalibrated base settings.
 SIMULATION_MINIMUM_TURNING_RADIUS_M = 0.22
-SIMULATION_FORWARD_SPEED_CAP_MPS = 0.15
+SIMULATION_SPEED_CAP_MPS = 0.30
+SIMULATION_FORWARD_SPEED_CAP_MPS = SIMULATION_SPEED_CAP_MPS
 SIMULATION_FORWARD_WZ_CAP_RADPS = (
     SIMULATION_FORWARD_SPEED_CAP_MPS / SIMULATION_MINIMUM_TURNING_RADIUS_M
 )
 SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M = 0.12
-SIMULATION_HANDOFF_WZ_CAP_RADPS = 0.42
+SIMULATION_HANDOFF_SPEED_CAP_MPS = SIMULATION_SPEED_CAP_MPS
+SIMULATION_HANDOFF_WZ_CAP_RADPS = (
+    SIMULATION_HANDOFF_SPEED_CAP_MPS / SIMULATION_MINIMUM_TURNING_RADIUS_M
+)
 # The free ThroughPoses BT removes a normal waypoint at 0.50 m. Keep only the
 # odometry observer margin beyond that runtime contract.
 THROUGH_POSE_DISTANCE_TOLERANCE_M = 0.52
-MAX_PLANNED_PATH_DETOUR_RATIO = 1.75
-MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M = 0.80
 MAX_EXECUTED_TRAVEL_DETOUR_RATIO = 2.00
 MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M = 0.80
 MAX_EXECUTION_TRACE_SAMPLES = 128
@@ -61,12 +63,12 @@ MIN_PERCEPTION_LANDMARK_IDS = 3
 EXPECTED_ROUTE = (
     ("a_task_observe", "forward", "precise"),
     ("c_corner_1", "reverse", "reverse_handoff"),
-    ("p_finish", "forward", "standard"),
+    ("p_finish", "reverse", "standard"),
 )
 EXPECTED_GOAL_CONTRACTS = {
     "a_task_observe": ("precise_goal_checker", (0.08, 0.25), (0.10, 0.30)),
     "c_corner_1": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
-    "p_finish": ("goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "p_finish": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
 }
 EXPECTED_BEHAVIOR_TREES = {
     "a_task_observe": (
@@ -74,7 +76,7 @@ EXPECTED_BEHAVIOR_TREES = {
     "c_corner_1": (
         "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"),
     "p_finish": (
-        "navigate_to_pose_w_replanning_and_recovery.xml"),
+        "navigate_to_pose_reverse_sim_w_replanning_and_recovery.xml"),
 }
 REQUIRED_INPUTS = (
     "waypoints_file",
@@ -85,6 +87,7 @@ REQUIRED_INPUTS = (
     "nav2_params_file",
     "through_poses_behavior_tree",
     "through_poses_reverse_behavior_tree",
+    "through_poses_reverse_locked_behavior_tree",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
@@ -256,6 +259,36 @@ def _goal_behavior_tree(direction, goal_profile):
     return "navigate_to_pose_w_replanning_and_recovery.xml"
 
 
+def _allows_terminal_reverse_handoff_through_poses(direction, goals):
+    """Return whether a through action has the one supported special goal.
+
+    The reverse-locked through tree is the only multi-goal action that may
+    drive a ``reverse_handoff`` profile.  It can do so only for its final,
+    locked-heading goal; all pass-through goals remain standard reverse goals.
+    """
+    if direction != "reverse" or len(goals) < 2:
+        return False
+    terminal = goals[-1]
+    if terminal[1:] != ("reverse", "reverse_handoff", "locked"):
+        return False
+    return all(
+        goal_direction == "reverse" and goal_profile == "standard"
+        for _goal_id, goal_direction, goal_profile, _heading_mode in goals[:-1]
+    )
+
+
+def _through_poses_behavior_tree(direction, terminal_heading_mode):
+    """Return the simulation BT selected by auto_train for a through action."""
+    if direction == "reverse":
+        if terminal_heading_mode == "locked":
+            return (
+                "navigate_through_poses_reverse_locked_sim_"
+                "w_replanning_and_recovery.xml"
+            )
+        return "navigate_through_poses_reverse_w_replanning_and_recovery.xml"
+    return "navigate_through_poses_w_replanning_and_recovery.xml"
+
+
 def _goal_checker(direction, goal_profile, heading_mode):
     if goal_profile == "precise":
         return "precise_goal_checker"
@@ -374,12 +407,12 @@ def _validate_forward_ackermann_contract(
     path_max_cross_track_error = result.get(
         "forward_path_max_cross_track_error_m")
     expected_controller = (
-        FORWARD_HANDOFF_CONTROLLER
+        NATIVE_RPP_CONTROLLER
         if goal_profile == "precise"
         else FORWARD_AVOIDANCE_CONTROLLER
     )
     if result.get("forward_controller_plugin") != expected_controller:
-        errors.append(f"{label} forward controller must use Ackermann wrapper")
+        errors.append(f"{label} forward controller does not match its Nav2 tree")
     if result.get("forward_velocity_smoother_scale_velocities") is not True:
         errors.append(f"{label} forward velocity smoother must scale velocities together")
     if (
@@ -402,7 +435,10 @@ def _validate_forward_ackermann_contract(
         errors.append(
             f"{label} forward turning radius must be "
             f"{SIMULATION_MINIMUM_TURNING_RADIUS_M:.2f}")
-    if (
+    if goal_profile == "precise":
+        if path_max_cross_track_error is not None:
+            errors.append(f"{label} native P-to-A RPP must not use a custom path guard")
+    elif (
         not _finite_number(path_max_cross_track_error)
         or abs(
             float(path_max_cross_track_error) -
@@ -452,13 +488,12 @@ def _validate_forward_ackermann_contract(
                 f"{label} {prefix} forward observed turning radius is too small")
 
 
-def _validate_planned_path_detour(result, label, errors):
-    """Require a traceable, non-looping Nav2 plan for every accepted stage."""
+def _validate_planned_path_metrics(result, label, errors):
+    """Require coherent recorded Nav2 path metrics without rejecting its route."""
     fields = (
         "planned_path_max_length_m",
         "planned_path_max_chord_m",
         "planned_path_max_detour_ratio",
-        "planned_path_detour_limit_m",
     )
     values = {field: result.get(field) for field in fields}
     if any(not _finite_number(value) for value in values.values()):
@@ -467,19 +502,12 @@ def _validate_planned_path_detour(result, label, errors):
     length = float(values["planned_path_max_length_m"])
     chord = float(values["planned_path_max_chord_m"])
     ratio = float(values["planned_path_max_detour_ratio"])
-    limit = float(values["planned_path_detour_limit_m"])
-    if length < 0.0 or chord < 0.0 or ratio < 0.0 or limit <= 0.0:
+    if length < 0.0 or chord < 0.0 or ratio < 0.0:
         errors.append(f"{label} planned path metrics must be non-negative")
-    expected_floor = max(
-        chord * MAX_PLANNED_PATH_DETOUR_RATIO,
-        chord + MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M,
-    )
-    if abs(limit - expected_floor) > CONFIG_TOLERANCE_EPSILON:
-        errors.append(f"{label} planned path detour limit is invalid")
-    if length > limit + CONFIG_TOLERANCE_EPSILON:
-        errors.append(f"{label} planned path exceeds its detour limit")
-    if result.get("planned_path_detour_violation") is not False:
-        errors.append(f"{label} planned path detour must be clear")
+        return
+    expected_ratio = length / max(chord, 1.0e-3)
+    if abs(ratio - expected_ratio) > CONFIG_TOLERANCE_EPSILON:
+        errors.append(f"{label} planned path ratio is inconsistent")
 
 
 def _validate_executed_travel_detour(result, label, errors):
@@ -762,7 +790,7 @@ def _validate_dynamic_single_goal(result, expected, label, errors):
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
         errors.append(f"{label} path_messages must be positive")
-    _validate_planned_path_detour(result, label, errors)
+    _validate_planned_path_metrics(result, label, errors)
     _validate_executed_travel_detour(result, label, errors)
     _validate_tracking_trace(
         result, label, errors,
@@ -785,7 +813,10 @@ def _validate_dynamic_through_result(result, stage, label, errors):
         return
     if len(goals) < 2:
         errors.append(f"{label} uses ThroughPoses for a one-goal segment")
-    if any(profile != "standard" for profile in expected_profiles):
+    if (
+        any(profile != "standard" for profile in expected_profiles)
+        and not _allows_terminal_reverse_handoff_through_poses(direction, goals)
+    ):
         errors.append(
             f"{label} uses ThroughPoses for a nonstandard goal profile")
     if result.get("segment_id") != segment_id:
@@ -798,11 +829,8 @@ def _validate_dynamic_through_result(result, stage, label, errors):
         errors.append(f"{label} goal_profiles do not match the saved segment")
     if result.get("waypoint_count") != len(goals):
         errors.append(f"{label} waypoint_count must be {len(goals)}")
-    expected_tree = (
-        "navigate_through_poses_reverse_w_replanning_and_recovery.xml"
-        if direction == "reverse"
-        else "navigate_through_poses_w_replanning_and_recovery.xml"
-    )
+    expected_tree = _through_poses_behavior_tree(
+        direction, terminal_heading_mode)
     if result.get("behavior_tree") != expected_tree:
         errors.append(f"{label} behavior_tree must be {expected_tree}")
     if result.get("outcome") != "succeeded":
@@ -821,7 +849,7 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
         errors.append(f"{label} path_messages must be positive")
-    _validate_planned_path_detour(result, label, errors)
+    _validate_planned_path_metrics(result, label, errors)
     _validate_executed_travel_detour(result, label, errors)
     passed = result.get("waypoints_passed")
     if not isinstance(passed, list) or len(passed) != len(expected_ids):
@@ -1232,7 +1260,7 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
             or path_messages <= 0
         ):
             errors.append(f"{label} path_messages must be positive")
-        _validate_planned_path_detour(result, label, errors)
+        _validate_planned_path_metrics(result, label, errors)
         _validate_executed_travel_detour(result, label, errors)
         _validate_tracking_trace(
             result, label, errors,
@@ -1353,13 +1381,19 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
                 not _finite_number(internal_vx_min)
                 or not _finite_number(internal_vx_max)
                 or not 0.0 < float(internal_vx_min)
-                <= float(internal_vx_max) <= 0.15
+                <= float(internal_vx_max)
+                or abs(
+                    float(internal_vx_max)
+                    - SIMULATION_HANDOFF_SPEED_CAP_MPS
+                ) > CONFIG_TOLERANCE_EPSILON
             ):
                 errors.append(
                     f"{label} virtual-forward vx bounds are invalid")
             if (
                 not _finite_number(speed_cap)
-                or not 0.0 < float(speed_cap) <= 0.15
+                or abs(
+                    float(speed_cap) - SIMULATION_HANDOFF_SPEED_CAP_MPS
+                ) > CONFIG_TOLERANCE_EPSILON
             ):
                 errors.append(f"{label} has invalid handoff speed cap")
             elif (

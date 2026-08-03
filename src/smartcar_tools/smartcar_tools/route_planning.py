@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 
-SCHEMA_VERSION = 5
+SCHEMA_VERSION = 7
 CONFIG_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
 
 
@@ -38,14 +38,48 @@ class CZoneKeepoutConfig:
 
 @dataclass(frozen=True)
 class RuntimeFootprintConfig:
-    """Nav2 footprint vertices and padding expressed as half extents."""
+    """Physical dimensions and rear-axle offset for a reverse-safe hull."""
 
-    half_length_m: float
-    half_width_m: float
+    length_m: float
+    width_m: float
+    center_x_from_base_footprint_m: float
     padding_m: float
+
+    def __post_init__(self) -> None:
+        if self.center_x_from_base_footprint_m > self.body_half_length_m:
+            raise RoutePlanningConfigError(
+                "runtime_footprint.center_x_from_base_footprint_m must keep "
+                "base_footprint within the measured vehicle length"
+            )
+
+    @property
+    def body_half_length_m(self) -> float:
+        """Half of the measured physical body length."""
+        return self.length_m / 2.0
+
+    @property
+    def half_width_m(self) -> float:
+        """Half of the measured physical body width."""
+        return self.width_m / 2.0
+
+    @property
+    def front_extent_m(self) -> float:
+        """Physical front extent measured from the rear-axle base frame."""
+        return self.center_x_from_base_footprint_m + self.body_half_length_m
+
+    @property
+    def rear_extent_m(self) -> float:
+        """Physical rear extent measured from the rear-axle base frame."""
+        return self.body_half_length_m - self.center_x_from_base_footprint_m
+
+    @property
+    def half_length_m(self) -> float:
+        """Pi-invariant raw half length accepted by virtual-yaw reverse planning."""
+        return max(self.front_extent_m, self.rear_extent_m)
 
     @property
     def padded_half_length_m(self) -> float:
+        """Pi-invariant collision half length with the per-side padding."""
         return self.half_length_m + self.padding_m
 
     @property
@@ -233,7 +267,7 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
     footprint = _mapping(root["runtime_footprint"], "runtime_footprint")
     _exact_fields(
         footprint,
-        {"half_length_m", "half_width_m", "padding_m"},
+        {"length_m", "width_m", "center_x_from_base_footprint_m", "padding_m"},
         "runtime_footprint",
     )
     preflight = _mapping(root["preflight"], "preflight")
@@ -275,11 +309,15 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             "simulation_minimum_turning_radius_m",
         ),
         runtime_footprint=RuntimeFootprintConfig(
-            half_length_m=_positive_number(
-                footprint["half_length_m"], "runtime_footprint.half_length_m"
+            length_m=_positive_number(
+                footprint["length_m"], "runtime_footprint.length_m"
             ),
-            half_width_m=_positive_number(
-                footprint["half_width_m"], "runtime_footprint.half_width_m"
+            width_m=_positive_number(
+                footprint["width_m"], "runtime_footprint.width_m"
+            ),
+            center_x_from_base_footprint_m=_nonnegative_number(
+                footprint["center_x_from_base_footprint_m"],
+                "runtime_footprint.center_x_from_base_footprint_m",
             ),
             padding_m=_nonnegative_number(
                 footprint["padding_m"], "runtime_footprint.padding_m"

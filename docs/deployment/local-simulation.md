@@ -62,6 +62,11 @@ bash scripts/local_sim.sh --headless --rviz
 资源，并设置模型资源路径。不要额外设置 `FASTRTPS_DEFAULT_PROFILES_FILE`、
 `FASTDDS_DEFAULT_PROFILES_FILE` 或 `CYCLONEDDS_URI`。
 
+本机 Gazebo 仿真固定使用 `0.30 m/s` 线速度上限；前进、倒车交接、短退恢复和
+`velocity_smoother` 使用同一档位。为保持 `0.22 m` 最小转弯半径，角速度上限为
+`0.30 / 0.22 = 1.363636 rad/s`。`sim_speed_profile` 以及旧的 `0.15`、`0.20`、
+`0.25 m/s` 速度档位已移除。
+
 ## 4. 验证
 
 在另一个终端执行：
@@ -113,8 +118,12 @@ bash scripts/local_waypoint_editor.sh
 
 ## 6. 自动路线和调参
 
-当前 `nav_only.yaml` 只保留三个语义阶段：P→A 前进、A→C1 倒车、C1→P 前进，未使用
-中间经过点。最新 P→A 复验的全局路径长 `4.270 m`、弦长 `3.276 m`、倍率 `1.303`，不含
+当前 `nav_only.yaml` 保留三个语义阶段：P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P
+倒车。`via` 是普通无朝向经过点；第二段的 C1 是锁定航向的 `reverse_handoff`，因此它必须是
+该倒车 `NavigateThroughPoses` 动作的最后一个目标，运行时选择
+`navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml`。前序点必须都是普通
+reverse `via`，不能把 `reverse_handoff` 放在中间，也不能把 `precise` 混进该动作。最新 P→A
+复验的全局路径长 `4.270 m`、弦长 `3.276 m`、倍率 `1.303`，不含
 大绕圈；但执行在高位紧右弯的横向反馈过冲到右侧保护包络，约行驶 `1.587 m` 后停在
 `(0.533, 1.255)`，距 A `2.609 m`。因此路线仍未通过，不能通过增加经过点、放宽保护包络
 或把 Gazebo 结果写成实体车辆验收来规避该问题。

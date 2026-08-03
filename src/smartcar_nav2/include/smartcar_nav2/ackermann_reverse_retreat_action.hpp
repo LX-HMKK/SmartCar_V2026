@@ -10,6 +10,7 @@
 #include <mutex>
 #include <optional>
 #include <string>
+#include <thread>
 #include <utility>
 #include <vector>
 
@@ -43,6 +44,7 @@ public:
     const std::string & xml_tag_name,
     const std::string & action_name,
     const BT::NodeConfiguration & configuration);
+  ~AckermannReverseRetreatAction() override;
 
   BT::NodeStatus onStart() override;
   BT::NodeStatus onRunning() override;
@@ -62,7 +64,10 @@ public:
         BT::InputPort<std::string>(
           "goal_checker_id", "recovery_goal_checker", "Strict recovery goal checker"),
         BT::InputPort<double>(
-          "retreat_distance_m", 0.15, "Straight physical reverse distance in meters"),
+          "retreat_distance_m", 0.15, "Straight physical recovery distance in meters"),
+        BT::InputPort<std::string>(
+          "retreat_direction", "reverse",
+          "Physical recovery direction: reverse normally, forward for a reverse-arrival handoff"),
         BT::InputPort<int>(
           "costmap_max_age_ms", 1500, "Maximum accepted local/global costmap age"),
         BT::InputPort<int>(
@@ -80,6 +85,9 @@ public:
         BT::InputPort<std::string>(
           "static_keepout_mask_topic", "",
           "Optional static KeepoutFilter mask; when configured, its full padded-body sweep must clear"),
+        BT::InputPort<bool>(
+          "allow_static_scan_only_evidence", false,
+          "Allow a static-map-only scan witness after the keepout full-body sweep"),
         BT::InputPort<std::int64_t>(
           "costmap_min_stamp_ns", 0,
           "Planner global-costmap stamp; retreat requires a strictly newer raw sample"),
@@ -87,10 +95,10 @@ public:
           "local_costmap_min_stamp_ns", 0,
           "Planner local-costmap stamp; retreat requires a strictly newer raw sample"),
         BT::InputPort<double>(
-          "footprint_half_length_m", 0.30,
+          "footprint_half_length_m", 0.2491,
           "Padded vehicle half length for the recovery footprint sweep"),
         BT::InputPort<double>(
-          "footprint_half_width_m", 0.16,
+          "footprint_half_width_m", 0.095,
           "Padded vehicle half width for the recovery footprint sweep"),
         BT::InputPort<double>(
           "footprint_sweep_step_m", 0.025,
@@ -175,6 +183,9 @@ private:
   BT::NodeStatus waitForGoalHandle();
   BT::NodeStatus waitForResult();
   void cancelFollowPath();
+  void startLateGoalAcknowledgementGuard();
+  void reapLateGoalAcknowledgementGuard();
+  void stopLateGoalAcknowledgementGuard();
   bool armRetreatOdomGuard(std::string & reason);
   bool dispatchedRetreatIsSafe(std::string & reason);
   bool odomIsFresh(OdomSample & sample, std::string & reason) const;
@@ -220,12 +231,14 @@ private:
   std::chrono::milliseconds follow_path_result_timeout_{12000};
   std::chrono::milliseconds scan_costmap_fusion_lag_{1250};
   double retreat_distance_m_{0.15};
+  bool retreat_forward_{false};
   std::int64_t costmap_min_stamp_ns_{0};
   std::int64_t local_costmap_min_stamp_ns_{0};
   CostmapFootprintSweepOptions footprint_sweep_options_;
   double scan_min_obstacle_range_m_{0.25};
   double scan_max_obstacle_range_m_{2.50};
   double scan_costmap_match_radius_m_{0.12};
+  bool allow_static_scan_only_evidence_{false};
   AckermannReverseRetreatOdomLimits retreat_odom_limits_;
 
   rclcpp::Subscription<nav2_msgs::msg::Costmap>::SharedPtr global_costmap_subscription_;
@@ -265,6 +278,7 @@ private:
   nav_msgs::msg::Path retreat_path_;
   FollowPath::Goal goal_;
   std::shared_future<FollowPathGoalHandle::SharedPtr> goal_handle_future_;
+  std::shared_future<FollowPathGoalHandle::SharedPtr> late_goal_handle_future_;
   std::shared_future<FollowPathGoalHandle::WrappedResult> result_future_;
   FollowPathGoalHandle::SharedPtr goal_handle_;
   std::mutex goal_response_handle_mutex_;
@@ -275,6 +289,9 @@ private:
   std::uint64_t active_dispatch_generation_{0U};
   std::atomic<std::uint64_t> next_dispatch_generation_{0U};
   std::atomic<std::uint64_t> cancelled_dispatch_generation_{0U};
+  std::atomic<bool> late_goal_acknowledgement_pending_{false};
+  std::atomic<bool> stop_late_goal_acknowledgement_guard_{false};
+  std::thread late_goal_acknowledgement_guard_;
 };
 
 }  // namespace smartcar_nav2

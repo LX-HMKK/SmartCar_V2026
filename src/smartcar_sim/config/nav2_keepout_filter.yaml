@@ -20,42 +20,36 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 
 controller_server:
   ros__parameters:
+    # The local route's P -> A tree uses stock FollowPath. Keep the real-car
+    # ForwardHandoff plugin out of this Gazebo controller server entirely.
+    controller_plugins: ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"]
     ForwardAvoidance:
-      # The P-only escape connector transitions through two radii before a
-      # northbound straight. A long inherited carrot sees through that leg
-      # into the following right turn, then can keep correcting a small
-      # lateral error as a left arc. Keep the carrot inside the straight leg
-      # so RPP first converges to the body-swept connector before it starts
-      # the obstacle-clear turn.
+      # Local Gazebo uses one 0.30 m/s operating point.  Keep angular speed
+      # coupled to the 0.22 m minimum radius rather than inheriting the
+      # real-vehicle 0.15 m/s settings.
+      desired_linear_vel: 0.30
+      # Keep the carrot inside the current local arc so RPP converges before
+      # beginning the next obstacle-clear turn.
       lookahead_dist: 0.30
       min_lookahead_dist: 0.30
       max_lookahead_dist: 0.30
       use_velocity_scaled_lookahead_dist: false
       regulated_linear_scaling_min_radius: 0.22
-      forward_max_angular_velocity: 0.6818181818181818
+      forward_max_angular_velocity: 1.3636363636363635
       forward_min_turning_radius: 0.22
-      # Do not let RPP recover a connector-tracking error by cutting toward
-      # an obstacle or beginning a new large circle. The controller fails to
-      # the BT's existing clear/replan branch outside this swept path band.
+      # Do not let RPP recover a path-tracking error by cutting toward an
+      # obstacle or beginning a new large circle. The controller fails to the
+      # BT's existing clear/replan branch outside this swept path band.
       forward_path_max_cross_track_error: 0.12
-    ForwardHandoff:
-      # Humble MPPI scores raw Gaussian samples before applying its Ackermann
-      # constraints, then the output wrapper rejects the tighter command.
-      # That model/execution mismatch lets the vehicle drift into the A-zone
-      # keepout. Use the same collision-projecting, forward-only RPP wrapper
-      # as ForwardAvoidance for Gazebo's precise P -> A handoff. This is a
-      # simulation-only override; the real vehicle keeps its MPPI handoff.
-      plugin: "smartcar_nav2::ForwardOnlyRPPController"
-      desired_linear_vel: 0.15
-      # Keep the native RPP fallback's target inside the swept P connector.
-      # The enabled curvature tracker below supplies the actual command from
-      # the local path tangent and curvature, then collision-projects that
-      # exact command against the filtered local costmap.
-      lookahead_dist: 0.15
-      min_lookahead_dist: 0.15
-      max_lookahead_dist: 0.15
+    FollowPath:
+      # P -> A uses Nav2's stock Regulated Pure Pursuit controller. Keep the
+      # only simulation overrides within that controller's native parameters.
+      desired_linear_vel: 0.30
+      lookahead_dist: 0.5
+      min_lookahead_dist: 0.35
+      max_lookahead_dist: 0.8
       lookahead_time: 1.5
-      use_velocity_scaled_lookahead_dist: false
+      use_velocity_scaled_lookahead_dist: true
       transform_tolerance: 0.1
       min_approach_linear_velocity: 0.05
       approach_velocity_scaling_dist: 0.6
@@ -66,50 +60,24 @@ controller_server:
       cost_scaling_gain: 1.0
       inflation_cost_scaling_factor: 5.0
       regulated_linear_scaling_min_radius: 0.22
-      # Keep this at the tight-turn cap. Otherwise RPP's constraint stage
-      # raises a requested 0.04 m/s back to 0.05 m/s before it reaches the
-      # simulated steering actuator.
-      regulated_linear_scaling_min_speed: 0.04
+      regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
       allow_reversing: false
-      forward_max_angular_velocity: 0.6818181818181818
-      forward_min_turning_radius: 0.22
-      forward_path_max_cross_track_error: 0.12
-      # This signature is matched against each accepted FollowPath plan. A
-      # P-only one-sided envelope never leaks into a later ordinary replan.
-      forward_path_lateral_profile: "p_departure_south_v1"
-      forward_path_lateral_profile_frame_id: "odom_combined"
-      forward_path_lateral_profile_start_x_m: 0.0
-      forward_path_lateral_profile_start_y_m: 0.0
-      forward_path_lateral_profile_start_yaw_rad: 0.0
-      forward_path_lateral_profile_start_position_tolerance_m: 0.001
-      forward_path_lateral_profile_start_yaw_tolerance_rad: 0.001
-      forward_path_use_curvature_tracking: true
-      # On the northbound leg, heading-only damping previously held about
-      # 8 cm of left offset until the following right arc. Favor transverse
-      # convergence there, before the one-sided 50 mm south envelope begins.
-      # Command clipping and collision projection remain active.
-      forward_path_heading_gain: 3.0
-      forward_path_cross_track_gain: 6.0
-      forward_path_collision_projection_m: 0.15
-      # The Fortress steering joints still accumulate a small path-right
-      # error at 0.05 m/s on the 0.22 m terminal arc. Give the actuator one
-      # additional control interval per 5 cm of arc; straight and gentle-arc
-      # sections remain eligible for the selected simulation speed profile.
-      forward_path_tight_turn_speed_mps: 0.04
-      forward_path_tight_turn_radius_m: 0.30
-      forward_path_tight_turn_preview_m: 0.50
-      # Only after the P departure and straight terminal approach are
-      # complete, shorten RPP's own collision-projected carrot. This keeps
-      # the final locked-yaw arc ahead of the controller instead of letting
-      # it drive through the task point and attempt a prohibited loop.
-      forward_terminal_lookahead_m: 0.05
-      forward_terminal_activation_distance_m: 0.50
     ReverseHandoff:
-      wz_max: 0.42
+      # Reverse handoff is also part of the single 0.30 m/s simulation
+      # operating point.  Its MPPI sampling envelope must cover that speed.
+      vx_max: 0.30
+      wz_max: 1.3636363636363635
+      vx_std: 0.18
+      wz_std: 0.60
+      batch_size: 500
       AckermannConstraints:
         min_turning_r: 0.22
     ReverseRecovery:
+      # The bounded 0.15 m recovery retains its collision sweep and distance
+      # cap, but does not inherit the old 0.05 m/s simulation limit.
+      vx_max: 0.30
+      vx_std: 0.09
       AckermannConstraints:
         min_turning_r: 0.22
 
@@ -125,12 +93,10 @@ planner_server:
       # visibly clear side of an A-zone obstacle before the independent sweep
       # has to reject the path.
       cost_penalty: 10.0
-      # The P connector terminates 1.25 m from the locked A task pose. Permit
-      # one bounded analytic terminal Dubins connection so its final tangent
-      # agrees with the task yaw instead of merely overwriting the last pose
-      # orientation on a lattice segment. ComputeFreeHeadingPath still sweeps
-      # the complete padded footprint against fresh raw costmap and keepout
-      # data before FollowPath can receive it.
+      # Permit one bounded analytic terminal Dubins connection so the final
+      # tangent agrees with the locked task yaw. ComputeFreeHeadingPath still
+      # sweeps the complete padded footprint against fresh raw costmap and
+      # keepout data before FollowPath can receive it.
       analytic_expansion_max_length: 1.5
       # A local-Gazebo-only vehicle constraint. The matching controller limits
       # and SDF steering geometry are changed together.
@@ -153,8 +119,8 @@ planner_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      # RPP collision projection must use the same grid as the P-departure
-      # full-footprint sweep and the static KeepoutFilter mask.  At the old
+      # RPP collision projection must use the same grid as the full-footprint
+      # sweep and the static KeepoutFilter mask. At the old
       # 0.03 m inherited grid, the south boundary was rounded inward by a
       # whole local cell and rejected an independently swept-clear first arc.
       # This aligns discretization; it does not shrink the footprint or turn
@@ -169,23 +135,23 @@ local_costmap:
       transform_tolerance: 0.10
       # Shared simulation footprint; sync_route_planning.py updates this
       # overlay without ever changing the real-vehicle costmap parameters.
-      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       filters: ["keepout_filter"]
       keepout_filter:
         plugin: "nav2_costmap_2d::KeepoutFilter"
         enabled: true
         filter_info_topic: "/keepout_filter_info"
-      # The official B-zone opening is 1.0 m wide.  The vehicle's padded
-      # half-width is 0.16 m, so the real-system 0.55 m inflation radius
-      # would mark the entire simulated opening impassable.  Gazebo still
-      # retains the physical B walls; this overlay leaves a 0.30 m planning
-      # preference without changing the real-vehicle configuration. It is not
-      # the robot collision envelope: KeepoutFilter owns lethal mask cells
-      # independently of this InflationLayer setting.
+      # The official B-zone opening is 1.0 m wide. The vehicle's padded
+      # half-width is 0.095 m, so the real-system 0.55 m inflation radius
+      # would mark the entire simulated opening impassable. Gazebo's 0.05 m
+      # lidar-slice cone model uses a 0.15 m total inflation radius instead,
+      # without changing the real-vehicle configuration. It is not the robot
+      # collision envelope: KeepoutFilter owns lethal mask cells independently
+      # of this InflationLayer setting.
       # The scalar is synchronized from route_planning.yaml.
       inflation_layer:
-        inflation_radius: 0.3
+        inflation_radius: 0.15
       obstacle_layer:
         # The headless GPU lidar runs at 20 Hz. Retain only the newest scan and mark
         # the buffer stale if two expected frames are missed; this makes a
@@ -210,7 +176,7 @@ global_costmap:
       # simulation-only planner validator consumes this topic directly.
       publish_frequency: 5.0
       transform_tolerance: 0.10
-      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       filters: ["keepout_filter"]
       keepout_filter:
@@ -218,7 +184,7 @@ global_costmap:
         enabled: true
         filter_info_topic: "/keepout_filter_info"
       inflation_layer:
-        inflation_radius: 0.3
+        inflation_radius: 0.15
       obstacle_layer:
         observation_persistence: 0.0
         expected_update_rate: 0.10
@@ -226,3 +192,9 @@ global_costmap:
           min_obstacle_height: 0.05
           max_obstacle_height: 0.50
           inf_is_valid: false
+
+velocity_smoother:
+  ros__parameters:
+    # Couple linear and angular limits to the 0.22 m kinematic envelope.
+    max_velocity: [0.30, 0.0, 1.3636363636363635]
+    min_velocity: [-0.30, 0.0, -1.3636363636363635]

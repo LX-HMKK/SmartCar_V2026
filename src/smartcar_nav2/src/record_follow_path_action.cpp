@@ -2,6 +2,7 @@
 
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <exception>
 #include <memory>
 #include <stdexcept>
@@ -10,6 +11,8 @@
 
 #include "action_msgs/msg/goal_status.hpp"
 #include "behaviortree_cpp_v3/bt_factory.h"
+#include "behaviortree_cpp_v3/condition_node.h"
+#include "nav2_util/robot_utils.hpp"
 #include "rclcpp/rclcpp.hpp"
 
 namespace smartcar_nav2
@@ -20,8 +23,64 @@ namespace
 constexpr char kAcceptedGlobalPlanTopic[] = "/smartcar/accepted_global_plan";
 constexpr std::chrono::milliseconds kMinimumGoalAcknowledgementTimeout{500};
 constexpr std::chrono::milliseconds kLateGoalAcknowledgementSpinPeriod{50};
+constexpr double kQuaternionNormTolerance = 1.0e-3;
+
+bool finiteQuaternion(const geometry_msgs::msg::Quaternion & quaternion)
+{
+  return std::isfinite(quaternion.x) && std::isfinite(quaternion.y) &&
+         std::isfinite(quaternion.z) && std::isfinite(quaternion.w);
+}
+
+bool quaternionYaw(const geometry_msgs::msg::Quaternion & quaternion, double & yaw)
+{
+  if (!finiteQuaternion(quaternion)) {
+    return false;
+  }
+  const double norm = std::sqrt(
+    quaternion.x * quaternion.x + quaternion.y * quaternion.y +
+    quaternion.z * quaternion.z + quaternion.w * quaternion.w);
+  if (!std::isfinite(norm) || std::abs(norm - 1.0) > kQuaternionNormTolerance) {
+    return false;
+  }
+  yaw = std::atan2(
+    2.0 * (quaternion.w * quaternion.z + quaternion.x * quaternion.y),
+    1.0 - 2.0 * (quaternion.y * quaternion.y + quaternion.z * quaternion.z));
+  return std::isfinite(yaw);
+}
+
+double angularDistance(const double first, const double second)
+{
+  return std::abs(std::atan2(std::sin(first - second), std::cos(first - second)));
+}
 
 }  // namespace
+
+class ReverseRecoveryEligible : public BT::ConditionNode
+{
+public:
+  ReverseRecoveryEligible(
+    const std::string & name,
+    const BT::NodeConfiguration & configuration)
+  : BT::ConditionNode(name, configuration)
+  {
+  }
+
+  static BT::PortsList providedPorts()
+  {
+    return {
+      BT::InputPort<bool>("eligible", false, "Whether reverse retreat is authorized"),
+    };
+  }
+
+  BT::NodeStatus tick() override
+  {
+    bool eligible = false;
+    if (!getInput("eligible", eligible)) {
+      return BT::NodeStatus::FAILURE;
+    }
+    return eligible ? BT::NodeStatus::SUCCESS : BT::NodeStatus::FAILURE;
+  }
+};
 
 RecordFollowPathAction::RecordFollowPathAction(
   const std::string & xml_tag_name,
@@ -30,6 +89,10 @@ RecordFollowPathAction::RecordFollowPathAction(
 : nav2_behavior_tree::BtActionNode<nav2_msgs::action::FollowPath>(
     xml_tag_name, action_name, configuration)
 {
+  tf_buffer_ = configuration.blackboard->get<std::shared_ptr<tf2_ros::Buffer>>("tf_buffer");
+  node_->get_parameter("global_frame", global_frame_);
+  node_->get_parameter("robot_base_frame", robot_base_frame_);
+  node_->get_parameter("transform_tolerance", transform_tolerance_);
   accepted_path_publisher_ = node_->create_publisher<nav_msgs::msg::Path>(
     kAcceptedGlobalPlanTopic, rclcpp::QoS(1).reliable().transient_local());
 }
@@ -45,6 +108,15 @@ void RecordFollowPathAction::on_tick()
   getInput("path", goal_.path);
   getInput("controller_id", goal_.controller_id);
   getInput("goal_checker_id", goal_.goal_checker_id);
+  terminal_verification_pending_ = false;
+  terminal_verification_deadline_ = std::chrono::steady_clock::time_point();
+
+  bool verify_terminal_pose = false;
+  if (getInput("verify_physical_terminal_pose", verify_terminal_pose) &&
+    verify_terminal_pose)
+  {
+    setOutput("terminal_recovery_eligible", false);
+  }
 }
 
 void RecordFollowPathAction::on_wait_for_result(
@@ -164,9 +236,19 @@ BT::NodeStatus RecordFollowPathAction::tick()
 
   BT::NodeStatus result_status;
   switch (result_.code) {
-    case rclcpp_action::ResultCode::SUCCEEDED:
+    case rclcpp_action::ResultCode::SUCCEEDED: {
+      const auto verification = verifyPhysicalTerminalPose();
+      if (verification == TerminalVerificationResult::kWaiting) {
+        return BT::NodeStatus::RUNNING;
+      }
       result_status = on_success();
+      if (result_status == BT::NodeStatus::SUCCESS &&
+        verification == TerminalVerificationResult::kFailed)
+      {
+        result_status = BT::NodeStatus::FAILURE;
+      }
       break;
+    }
     case rclcpp_action::ResultCode::ABORTED:
       result_status = on_aborted();
       break;
@@ -182,12 +264,114 @@ BT::NodeStatus RecordFollowPathAction::tick()
   return result_status;
 }
 
+RecordFollowPathAction::TerminalVerificationResult
+RecordFollowPathAction::verifyPhysicalTerminalPose()
+{
+  bool verify_terminal_pose = false;
+  if (!getInput("verify_physical_terminal_pose", verify_terminal_pose) ||
+    !verify_terminal_pose)
+  {
+    return TerminalVerificationResult::kPassed;
+  }
+
+  double position_tolerance_m = 0.0;
+  double yaw_tolerance_rad = 0.0;
+  int verification_delay_ms = 0;
+  setOutput("terminal_recovery_eligible", false);
+  if (!getInput("terminal_position_tolerance_m", position_tolerance_m) ||
+    !getInput("terminal_yaw_tolerance_rad", yaw_tolerance_rad) ||
+    !getInput("terminal_verification_delay_ms", verification_delay_ms) ||
+    !std::isfinite(position_tolerance_m) || !std::isfinite(yaw_tolerance_rad) ||
+    position_tolerance_m <= 0.0 || yaw_tolerance_rad <= 0.0 ||
+    verification_delay_ms < 0 || verification_delay_ms > 2000)
+  {
+    RCLCPP_ERROR(
+      node_->get_logger(), "Physical terminal-pose verification ports are invalid");
+    return TerminalVerificationResult::kFailed;
+  }
+
+  if (!terminal_verification_pending_) {
+    terminal_verification_pending_ = true;
+    terminal_verification_deadline_ = std::chrono::steady_clock::now() +
+      std::chrono::milliseconds(verification_delay_ms);
+  }
+  if (std::chrono::steady_clock::now() < terminal_verification_deadline_) {
+    return TerminalVerificationResult::kWaiting;
+  }
+  terminal_verification_pending_ = false;
+
+  geometry_msgs::msg::PoseStamped target;
+  if (!getInput("terminal_goal", target)) {
+    RCLCPP_ERROR(
+      node_->get_logger(), "Physical terminal-pose verification has no terminal goal");
+    return TerminalVerificationResult::kFailed;
+  }
+  if (target.header.frame_id.empty() || target.header.frame_id != global_frame_) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Physical terminal-pose verification requires a %s-frame terminal goal",
+      global_frame_.c_str());
+    return TerminalVerificationResult::kFailed;
+  }
+
+  geometry_msgs::msg::PoseStamped current;
+  if (!nav2_util::getCurrentPose(
+      current, *tf_buffer_, global_frame_, robot_base_frame_, transform_tolerance_))
+  {
+    RCLCPP_ERROR(
+      node_->get_logger(), "Physical terminal-pose verification has no fresh robot pose");
+    return TerminalVerificationResult::kFailed;
+  }
+
+  double current_yaw = 0.0;
+  double target_yaw = 0.0;
+  if (!quaternionYaw(current.pose.orientation, current_yaw) ||
+    !quaternionYaw(target.pose.orientation, target_yaw) ||
+    !std::isfinite(current.pose.position.x) || !std::isfinite(current.pose.position.y) ||
+    !std::isfinite(target.pose.position.x) || !std::isfinite(target.pose.position.y))
+  {
+    RCLCPP_ERROR(
+      node_->get_logger(), "Physical terminal-pose verification received an invalid pose");
+    return TerminalVerificationResult::kFailed;
+  }
+
+  const double position_error = std::hypot(
+    current.pose.position.x - target.pose.position.x,
+    current.pose.position.y - target.pose.position.y);
+  const double yaw_error = angularDistance(current_yaw, target_yaw);
+  if (position_error <= position_tolerance_m && yaw_error <= yaw_tolerance_rad) {
+    return TerminalVerificationResult::kPassed;
+  }
+
+  if (position_error > position_tolerance_m) {
+    RCLCPP_WARN(
+      node_->get_logger(),
+      "FollowPath reported success outside the physical terminal position envelope "
+      "(position=%.3f/%.3f m, yaw=%.3f/%.3f rad); clearing and replanning without retreat",
+      position_error, position_tolerance_m, yaw_error, yaw_tolerance_rad);
+    return TerminalVerificationResult::kFailed;
+  }
+
+  // The vehicle is still at the intended terminal position but misses its
+  // locked heading. The enclosing reverse-only tree may safely retreat once,
+  // clear both maps, and replan from the measured physical pose.
+  setOutput("terminal_recovery_eligible", true);
+  RCLCPP_WARN(
+    node_->get_logger(),
+    "FollowPath reported success outside the physical terminal envelope "
+    "(position=%.3f/%.3f m, yaw=%.3f/%.3f rad)",
+    position_error, position_tolerance_m, yaw_error, yaw_tolerance_rad);
+  return TerminalVerificationResult::kFailed;
+}
+
 void RecordFollowPathAction::halt()
 {
   // BtActionNode cannot cancel an action whose response has not arrived yet.
   // Marking this dispatch first makes a late acceptance fail closed in our
   // goal-response callback; an already accepted handle is cancelled below.
   reapLateGoalAcknowledgementGuard();
+  terminal_verification_pending_ = false;
+  terminal_verification_deadline_ = std::chrono::steady_clock::time_point();
   if (late_goal_acknowledgement_pending_.load()) {
     setStatus(BT::NodeStatus::IDLE);
     return;
@@ -408,4 +592,6 @@ BT_REGISTER_NODES(factory)
 
   factory.registerBuilder<smartcar_nav2::RecordFollowPathAction>(
     "RecordFollowPath", builder);
+  factory.registerNodeType<smartcar_nav2::ReverseRecoveryEligible>(
+    "ReverseRecoveryEligible");
 }

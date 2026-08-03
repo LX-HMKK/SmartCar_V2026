@@ -13,6 +13,8 @@ from dataclasses import dataclass, replace
 import re
 from typing import Any, Mapping, Sequence
 
+from smartcar_task.waypoints import is_heading_locked
+
 
 
 PLANNING_SEGMENTS_KEY = "planning_segments"
@@ -38,6 +40,41 @@ class PlanningSegment:
     @property
     def route_ids(self) -> tuple[str, ...]:
         return (self.start_id, *self.through_ids, self.end_id)
+
+
+def _goal_field(goal: Any, name: str, default: Any = None) -> Any:
+    """Read a route-goal field from either a Waypoint or manifest mapping."""
+    if isinstance(goal, Mapping):
+        return goal.get(name, default)
+    return getattr(goal, name, default)
+
+
+def allows_reverse_handoff_through_poses(goals: Sequence[Any]) -> bool:
+    """Return whether goals use the sole supported special ThroughPoses form.
+
+    A reverse handoff shares the reverse locked-through tree only as the
+    terminal goal.  Every preceding pass-through goal is ordinary, so the
+    whole action still has one direction, controller, and goal checker.
+    """
+    items = tuple(goals)
+    if len(items) < 2:
+        return False
+    if any(_goal_field(goal, "direction") != "reverse" for goal in items):
+        return False
+    if any(
+        _goal_field(goal, "goal_profile", "standard") != "standard"
+        for goal in items[:-1]
+    ):
+        return False
+    terminal = items[-1]
+    if _goal_field(terminal, "goal_profile", "standard") != "reverse_handoff":
+        return False
+    if isinstance(terminal, Mapping):
+        return _goal_field(terminal, "heading_mode") == "locked"
+    try:
+        return is_heading_locked(terminal)
+    except (TypeError, ValueError):
+        return False
 
 
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -297,10 +334,15 @@ def materialize_navigation_segments(
             for waypoint in action
             if getattr(waypoint, "goal_profile", "standard") != "standard"
         ]
-        if len(action) > 1 and nonstandard_goal_ids:
+        if (
+            len(action) > 1
+            and nonstandard_goal_ids
+            and not allows_reverse_handoff_through_poses(action)
+        ):
             raise PlanningSegmentError(
                 "NavigateThroughPoses cannot combine nonstandard goal "
-                "profiles; split into single-goal actions: "
+                "profiles except a terminal locked reverse_handoff in a "
+                "reverse action; split into single-goal actions: "
                 + ", ".join(nonstandard_goal_ids)
             )
     return actions

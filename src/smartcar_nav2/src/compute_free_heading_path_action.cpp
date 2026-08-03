@@ -202,12 +202,6 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
       "through_solution_limit", 4,
       "Maximum complete through-poses heading chains compared before publication"),
     BT::InputPort<double>(
-      "max_initial_path_length_ratio", 1.60,
-      "Expand fallback headings when the live geometric candidate is this much longer than direct"),
-    BT::InputPort<double>(
-      "max_edge_path_length_ratio", 1.60,
-      "Reject one planner edge when it exceeds this multiple of its direct distance"),
-    BT::InputPort<double>(
       "max_start_drift_m", 0.10,
       "Reject a plan whose captured robot start has become stale"),
     BT::InputPort<int>(
@@ -220,10 +214,10 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
       "maximum_path_cost", 252,
       "Maximum permitted sampled global costmap cost for a candidate path"),
     BT::InputPort<double>(
-      "footprint_half_length_m", 0.30,
+      "footprint_half_length_m", 0.2491,
       "Padded vehicle half length used for global-costmap footprint checks"),
     BT::InputPort<double>(
-      "footprint_half_width_m", 0.16,
+      "footprint_half_width_m", 0.095,
       "Padded vehicle half width used for global-costmap footprint checks"),
     BT::InputPort<double>(
       "footprint_sweep_step_m", 0.025,
@@ -640,20 +634,6 @@ bool ComputeFreeHeadingPathAction::loadInputs()
     return false;
   }
   through_solution_limit_ = static_cast<std::size_t>(through_solution_limit);
-  if (!getInput("max_initial_path_length_ratio", max_initial_path_length_ratio_) ||
-    !finite(max_initial_path_length_ratio_) || max_initial_path_length_ratio_ < 1.0)
-  {
-    RCLCPP_ERROR(node_->get_logger(), "max_initial_path_length_ratio must be at least 1.0");
-    return false;
-  }
-  if (!getInput("max_edge_path_length_ratio", max_edge_path_length_ratio_) ||
-    !finite(max_edge_path_length_ratio_) || max_edge_path_length_ratio_ < 1.0 ||
-    max_edge_path_length_ratio_ > 5.0)
-  {
-    RCLCPP_ERROR(
-      node_->get_logger(), "max_edge_path_length_ratio must lie in [1.0, 5.0]");
-    return false;
-  }
   if (!getInput("max_start_drift_m", max_start_drift_m_) ||
     !finite(max_start_drift_m_) || max_start_drift_m_ <= 0.0)
   {
@@ -1314,23 +1294,6 @@ bool ComputeFreeHeadingPathAction::endpointMatchesCandidateAndRealGoal(
          validation_options_.goal_yaw_tolerance;
 }
 
-bool ComputeFreeHeadingPathAction::edgePathWithinLengthRatio(
-  double edge_length,
-  const geometry_msgs::msg::PoseStamped & start,
-  const geometry_msgs::msg::PoseStamped & goal) const
-{
-  const double direct_distance = planarDistance(start, goal);
-  if (!finite(edge_length) || !finite(direct_distance)) {
-    return false;
-  }
-  if (direct_distance <= kPositionEpsilon) {
-    // A position-only transit at the current position must not manufacture a
-    // loop solely to satisfy a sampled heading.
-    return edge_length <= goal_position_tolerance_;
-  }
-  return edge_length <= direct_distance * max_edge_path_length_ratio_ + kPositionEpsilon;
-}
-
 bool ComputeFreeHeadingPathAction::startCandidateQuery()
 {
   if (target_index_ >= real_goals_.size() || candidate_index_ >= candidate_goals_.size() ||
@@ -1598,14 +1561,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
     return advanceCandidate();
   }
 
-  if (!edgePathWithinLengthRatio(length, virtual_start_, active_virtual_goal_)) {
-    RCLCPP_WARN(
-      node_->get_logger(),
-      "Rejected free-heading candidate %zu for goal %zu: edge detour exceeds %.2f x",
-      candidate_index_ + 1, target_index_ + 1, max_edge_path_length_ratio_);
-    return advanceCandidate();
-  }
-
   if (through_poses_) {
     return completeThroughCandidate(candidate_segment, length);
   }
@@ -1683,8 +1638,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
       validation_options_.goal_yaw_tolerance &&
       endpointMatchesCandidateAndRealGoal(
       endpoint, active_lookahead_goal_, real_goals_[target_index_ + 1]);
-    continuation_is_valid = continuation_is_valid && edgePathWithinLengthRatio(
-      continuation_length, pending_candidate_->path.poses.back(), active_lookahead_goal_);
     if (continuation_is_valid && !reverse_ && departure_connectors_.empty()) {
       const auto forward_geometry = validateForwardPathGeometry(
         *candidate_path, forwardPathGeometryOptions(validation_options_),
@@ -1861,30 +1814,10 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughPath()
       through_complete_path_count_,
       validation_reason.empty() ? "costmap_or_footprint" : validation_reason.c_str());
   }
-  double direct_constraint_length = 0.0;
-  if (!virtual_path_.poses.empty()) {
-    geometry_msgs::msg::PoseStamped previous = planning_virtual_start_;
-    for (const auto & goal : real_goals_) {
-      direct_constraint_length += planarDistance(previous, goal);
-      previous = goal;
-    }
-  }
-  const bool path_is_reasonable =
-    direct_constraint_length <= kPositionEpsilon ||
-    quality.length_m <= direct_constraint_length * max_initial_path_length_ratio_;
-  if (!path_is_reasonable) {
-    RCLCPP_DEBUG(
-      node_->get_logger(),
-      "Rejected free-heading through-poses chain %zu: length %.3f exceeds %.3f x %.2f",
-      through_complete_path_count_, quality.length_m, direct_constraint_length,
-      max_initial_path_length_ratio_);
-  }
-
-  // Every candidate reaching this point has already passed edge validation;
-  // the full chain above repeats costmap/footprint and reverse-kinematic
-  // validation. Rank only those valid chains by length. A bounded search does
-  // not establish a global continuous-heading optimum.
-  if (chain_is_valid && path_is_reasonable &&
+  // The full chain has passed costmap/footprint and reverse-kinematic
+  // validation. Rank those Nav2 candidates by length; do not impose a second
+  // hand-authored detour ratio on top of the planner's result.
+  if (chain_is_valid &&
     (!best_through_quality_.has_value() ||
     quality.length_m < best_through_quality_->length_m - kPositionEpsilon))
   {
@@ -1915,7 +1848,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughPath()
     if (!best_through_path_.has_value()) {
       RCLCPP_ERROR(
         node_->get_logger(),
-        "No free-heading through-poses chain satisfies the path-length bound");
+        "No free-heading through-poses chain passed Nav2 collision and kinematic validation");
       setRecoveryEligible(true);
       clearPathOutput();
       return BT::NodeStatus::FAILURE;

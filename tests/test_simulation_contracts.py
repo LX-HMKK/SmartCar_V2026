@@ -42,7 +42,6 @@ FIELD_MAP_GENERATOR = SIM / "scripts" / "generate_field_map.py"
 FIELD_MAP = SIM / "maps" / "field_map.pgm"
 FIELD_MAP_YAML = SIM / "maps" / "field_map.yaml"
 KEEPOUT_OVERLAY = SIM / "config" / "nav2_keepout_filter.yaml"
-SIM_SPEED_PROFILES = SIM / "launch" / "sim_speed_profiles.py"
 ROUTE_PLANNING_SYNC = SIM / "scripts" / "sync_route_planning.py"
 ROUTE_PLANNING = (
     ROOT / "src" / "smartcar_tools" / "config" / "routes" / "route_planning.yaml"
@@ -116,13 +115,6 @@ SIM_REVERSE_BT_FILES = (
     / "behavior_trees"
     / "navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml",
 )
-FREE_HEADING_ACTION = (
-    ROOT
-    / "src"
-    / "smartcar_nav2"
-    / "src"
-    / "compute_free_heading_path_action.cpp"
-)
 PACKAGE_XML = SIM / "package.xml"
 
 
@@ -152,18 +144,6 @@ def pgm_value_at(
         raise ValueError(f"point ({x}, {y}) lies outside the PGM")
     row = height - 1 - row_from_bottom
     return pixels[row * width + col]
-
-
-def load_sim_speed_profiles():
-    spec = importlib.util.spec_from_file_location(
-        "sim_speed_profiles_for_test", SIM_SPEED_PROFILES)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[spec.name] = module
-    try:
-        spec.loader.exec_module(module)
-    finally:
-        sys.modules.pop(spec.name, None)
-    return module
 
 
 class SimulationContractTests(unittest.TestCase):
@@ -199,122 +179,55 @@ class SimulationContractTests(unittest.TestCase):
             with self.subTest(session_variable=session_variable):
                 self.assertNotIn(f"unset {session_variable}", runner)
 
-    def test_sim_speed_profiles_are_constrained_and_preserve_keepout(self) -> None:
-        profiles = load_sim_speed_profiles()
-        config_dir = SIM / "config"
-
-        self.assertEqual(
-            set(profiles.SIM_SPEED_PROFILES), {"baseline", "0.20", "0.25"})
-        baseline = profiles.resolve_sim_speed_profile("baseline", config_dir)
-        self.assertEqual(baseline.linear_speed_mps, 0.15)
-        self.assertIsNone(profiles.speed_overlay_path(baseline, config_dir))
-
+    def test_simulation_speed_is_fixed_at_030_and_preserves_keepout(self) -> None:
         keepout = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
         keepout_controllers = keepout["controller_server"]["ros__parameters"]
-        for controller_name in ("ForwardAvoidance", "ForwardHandoff"):
-            self.assertAlmostEqual(
-                keepout_controllers[controller_name][
-                    "forward_path_max_cross_track_error"],
-                0.12,
-            )
-        for name, expected_speed in (("0.20", 0.20), ("0.25", 0.25)):
-            with self.subTest(profile=name):
-                profile = profiles.resolve_sim_speed_profile(name, config_dir)
-                overlay_path = profiles.speed_overlay_path(profile, config_dir)
-                self.assertIsNotNone(overlay_path)
-                profiles.validate_speed_overlay(profile, overlay_path)
-                overlay = yaml.safe_load(overlay_path.read_text(encoding="utf-8"))
-                controller = overlay["controller_server"]["ros__parameters"]
-                smoother = overlay["velocity_smoother"]["ros__parameters"]
-                self.assertEqual(
-                    controller["ForwardAvoidance"]["desired_linear_vel"],
-                    expected_speed,
-                )
-                self.assertAlmostEqual(
-                    controller["ForwardAvoidance"]["forward_max_angular_velocity"],
-                    expected_speed / profiles.SIMULATION_MINIMUM_TURNING_RADIUS_M,
-                )
-                self.assertEqual(
-                    controller["ForwardHandoff"]["desired_linear_vel"],
-                    expected_speed,
-                )
-                self.assertAlmostEqual(
-                    controller["ForwardHandoff"]["forward_max_angular_velocity"],
-                    expected_speed / profiles.SIMULATION_MINIMUM_TURNING_RADIUS_M,
-                )
-                self.assertEqual(smoother["max_velocity"][:2],
-                                 [expected_speed, 0.0])
-                self.assertAlmostEqual(
-                    smoother["max_velocity"][2],
-                    expected_speed / profiles.SIMULATION_MINIMUM_TURNING_RADIUS_M,
-                )
-                self.assertEqual(smoother["min_velocity"][:2],
-                                 [-expected_speed, 0.0])
-                self.assertAlmostEqual(
-                    smoother["min_velocity"][2],
-                    -expected_speed / profiles.SIMULATION_MINIMUM_TURNING_RADIUS_M,
-                )
-                self.assertNotIn("ReverseHandoff", controller)
+        smoother = keepout["velocity_smoother"]["ros__parameters"]
+        expected_speed = 0.30
+        expected_radius = 0.22
+        expected_wz = expected_speed / expected_radius
 
-                with tempfile.TemporaryDirectory() as temporary:
-                    merged_path = Path(temporary) / "merged.yaml"
-                    profiles.write_merged_nav2_overlay(
-                        KEEPOUT_OVERLAY, overlay_path, merged_path)
-                    merged = yaml.safe_load(merged_path.read_text(encoding="utf-8"))
-                    self.assertEqual(
-                        merged["controller_server"]["ros__parameters"]
-                        ["ForwardAvoidance"]["desired_linear_vel"],
-                        expected_speed,
-                    )
-                    self.assertEqual(
-                        merged["controller_server"]["ros__parameters"]
-                        ["ForwardHandoff"]["desired_linear_vel"],
-                        expected_speed,
-                    )
-                    self.assertEqual(
-                        merged["local_costmap"]["local_costmap"]["ros__parameters"]
-                        ["filters"],
-                        keepout["local_costmap"]["local_costmap"]["ros__parameters"]
-                        ["filters"],
-                    )
-                    materialized_path = (
-                        Path(temporary) / "nav2_params_fixed.yaml"
-                    )
-                    profiles.write_merged_nav2_parameters(
-                        NAV2_PARAMS, KEEPOUT_OVERLAY, materialized_path)
-                    materialized = yaml.safe_load(
-                        materialized_path.read_text(encoding="utf-8"))
-                    self.assertEqual(
-                        materialized["controller_server"]["ros__parameters"]
-                        ["ForwardHandoff"]["plugin"],
-                        "smartcar_nav2::ForwardOnlyRPPController",
-                    )
+        self.assertAlmostEqual(
+            keepout_controllers["ForwardAvoidance"]
+            ["forward_path_max_cross_track_error"],
+            0.12,
+        )
+        self.assertNotIn("ForwardHandoff", keepout_controllers)
+        self.assertEqual(
+            keepout_controllers["ForwardAvoidance"]["desired_linear_vel"],
+            expected_speed,
+        )
+        self.assertAlmostEqual(
+            keepout_controllers["ForwardAvoidance"]
+            ["forward_max_angular_velocity"],
+            expected_wz,
+        )
+        self.assertEqual(
+            keepout_controllers["FollowPath"]["desired_linear_vel"],
+            expected_speed,
+        )
+        self.assertEqual(
+            keepout_controllers["ReverseHandoff"]["vx_max"], expected_speed)
+        self.assertAlmostEqual(
+            keepout_controllers["ReverseHandoff"]["wz_max"], expected_wz)
+        self.assertEqual(
+            keepout_controllers["ReverseRecovery"]["vx_max"], expected_speed)
+        self.assertEqual(smoother["max_velocity"], [expected_speed, 0.0, expected_wz])
+        self.assertEqual(smoother["min_velocity"], [-expected_speed, 0.0, -expected_wz])
+        self.assertFalse((SIM / "config" / "nav2_speed_020.yaml").exists())
+        self.assertFalse((SIM / "config" / "nav2_speed_025.yaml").exists())
 
-        with self.assertRaises(ValueError):
-            profiles.resolve_sim_speed_profile("0.30", config_dir)
-
-    def test_sim_speed_launch_is_opt_in_and_keeps_real_defaults(self) -> None:
+    def test_simulation_launch_has_no_speed_profile_and_keeps_real_defaults(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
         runner = AUTO_TRAIN.read_text(encoding="utf-8")
         params = yaml.safe_load(NAV2_PARAMS.read_text(encoding="utf-8"))
 
-        self.assertIn('LaunchConfiguration("sim_speed_profile")', launch)
-        self.assertIn('"sim_speed_profile",\n            default_value="baseline"', launch)
-        self.assertIn(
-            "from launch_ros.parameter_descriptions import ParameterValue", launch
-        )
-        self.assertIn(
-            "ParameterValue(\n                sim_speed_profile, value_type=str)", launch
-        )
-        self.assertIn("prepare_sim_speed_overlay", launch)
-        self.assertIn("validate_speed_overlay", launch)
-        self.assertIn("write_merged_nav2_overlay", launch)
+        self.assertNotIn("sim_speed_profile", launch)
+        self.assertNotIn("sim_speed_profile", runner)
         self.assertIn('"nav2_params_file": active_nav2_params_file', launch)
         self.assertIn('"nav2_params_overlay_file": active_nav2_overlay_file', launch)
         self.assertIn("OnShutdown", launch)
         self.assertIn('self.declare_parameter("nav2_params_overlay_file", "")', runner)
-        self.assertIn('self.declare_parameter("sim_speed_profile", "baseline")', runner)
-        self.assertIn('"sim_speed_profile": str(', runner)
         self.assertEqual(
             params["controller_server"]["ros__parameters"]["ForwardAvoidance"]
             ["desired_linear_vel"],
@@ -1126,9 +1039,7 @@ class SimulationContractTests(unittest.TestCase):
         controller = overlay["controller_server"]["ros__parameters"]
         navigator = overlay["bt_navigator"]["ros__parameters"]
         self.assertEqual(planner["minimum_turning_radius"], 0.22)
-        # A locked P->A terminal needs a short exact Dubins connection. It is
-        # still accepted only after the independent raw-costmap and static
-        # keepout full-footprint sweeps in ComputeFreeHeadingPath.
+        # A locked P->A terminal is planned directly by Smac Hybrid-A*.
         self.assertEqual(planner["analytic_expansion_max_length"], 1.5)
         self.assertEqual(
             navigator["free_heading_minimum_turning_radius"],
@@ -1150,53 +1061,40 @@ class SimulationContractTests(unittest.TestCase):
         )
         self.assertAlmostEqual(
             controller["ForwardAvoidance"]["forward_max_angular_velocity"],
-            0.15 / planner["minimum_turning_radius"],
+            0.30 / planner["minimum_turning_radius"],
         )
-        forward_handoff = controller["ForwardHandoff"]
+        self.assertNotIn("ForwardHandoff", controller)
         self.assertEqual(
-            forward_handoff["plugin"],
-            "smartcar_nav2::ForwardOnlyRPPController",
+            controller["controller_plugins"],
+            ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"],
         )
-        self.assertEqual(forward_handoff["desired_linear_vel"], 0.15)
-        # The P departure transitions from a gentle egress arc to the 0.22 m
-        # simulator arc. Its local swept curvature is used as the primary
-        # command and Nav2 still collision-projects that exact command.
-        self.assertAlmostEqual(forward_handoff["lookahead_dist"], 0.15)
-        self.assertAlmostEqual(forward_handoff["min_lookahead_dist"], 0.15)
-        self.assertAlmostEqual(forward_handoff["max_lookahead_dist"], 0.15)
-        self.assertIs(forward_handoff["use_velocity_scaled_lookahead_dist"], False)
+        follow_path = controller["FollowPath"]
+        self.assertEqual(follow_path["desired_linear_vel"], 0.30)
+        self.assertAlmostEqual(follow_path["lookahead_dist"], 0.5)
+        self.assertAlmostEqual(follow_path["min_lookahead_dist"], 0.35)
+        self.assertAlmostEqual(follow_path["max_lookahead_dist"], 0.8)
+        self.assertIs(follow_path["use_velocity_scaled_lookahead_dist"], True)
         self.assertEqual(
-            forward_handoff["forward_min_turning_radius"],
+            follow_path["regulated_linear_scaling_min_radius"],
             planner["minimum_turning_radius"],
         )
-        self.assertAlmostEqual(
-            forward_handoff["forward_max_angular_velocity"],
-            0.15 / planner["minimum_turning_radius"],
-        )
-        self.assertIs(forward_handoff["use_collision_detection"], True)
-        self.assertIs(forward_handoff["allow_reversing"], False)
-        self.assertIs(forward_handoff["use_rotate_to_heading"], False)
-        self.assertIs(forward_handoff["forward_path_use_curvature_tracking"], True)
-        self.assertGreater(forward_handoff["forward_path_heading_gain"], 0.0)
-        self.assertGreater(forward_handoff["forward_path_cross_track_gain"], 0.0)
-        self.assertAlmostEqual(
-            forward_handoff["forward_path_collision_projection_m"], 0.15)
-        self.assertAlmostEqual(
-            forward_handoff["forward_path_tight_turn_speed_mps"], 0.04)
-        self.assertAlmostEqual(
-            forward_handoff["forward_path_tight_turn_radius_m"], 0.30)
-        self.assertAlmostEqual(
-            forward_handoff["forward_path_tight_turn_preview_m"], 0.50)
-        self.assertAlmostEqual(forward_handoff["forward_terminal_lookahead_m"], 0.05)
-        self.assertAlmostEqual(
-            forward_handoff["forward_terminal_activation_distance_m"], 0.50)
+        self.assertIs(follow_path["use_collision_detection"], True)
+        self.assertIs(follow_path["allow_reversing"], False)
+        self.assertIs(follow_path["use_rotate_to_heading"], False)
+        for key in follow_path:
+            self.assertNotIn("forward_", key)
         self.assertEqual(
             controller["ReverseHandoff"]["AckermannConstraints"]
             ["min_turning_r"], planner["minimum_turning_radius"])
-        self.assertEqual(controller["ReverseHandoff"]["wz_max"], 0.42)
+        self.assertEqual(controller["ReverseHandoff"]["vx_max"], 0.30)
+        self.assertAlmostEqual(
+            controller["ReverseHandoff"]["wz_max"],
+            0.30 / planner["minimum_turning_radius"],
+        )
         self.assertEqual(
             controller["ReverseRecovery"]["AckermannConstraints"]
             ["min_turning_r"], planner["minimum_turning_radius"])
+        self.assertEqual(controller["ReverseRecovery"]["vx_max"], 0.30)
 
         # Keep heading quantization finer than the base planner; the separate
         # continuous full-body sweep remains the final safety authority.
@@ -1211,7 +1109,7 @@ class SimulationContractTests(unittest.TestCase):
             self.assertEqual(keepout["plugin"], "nav2_costmap_2d::KeepoutFilter")
             self.assertIs(keepout["enabled"], True)
             self.assertEqual(keepout["filter_info_topic"], "/keepout_filter_info")
-            self.assertEqual(parameters["inflation_layer"]["inflation_radius"], 0.30)
+            self.assertEqual(parameters["inflation_layer"]["inflation_radius"], 0.15)
 
         self.assertIn('executable="costmap_filter_info_server"', launch)
         self.assertIn('"topic_name": "/keepout_filter_mask"', launch)
@@ -1222,13 +1120,12 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("launch_nav2_once", launch)
         self.assertIn("OpaqueFunction(function=launch_nav2_once)", launch)
 
-        # Every trial starts from the same simulation-only keepout overlay;
-        # optional speed caps are merged into a temporary file before Nav2.
+        # Every run starts from the same simulation-only keepout overlay,
+        # materialized into one Nav2 parameter file before lifecycle startup.
         self.assertIn(
             "keepout_overlay_path = Path(nav2_keepout_overlay.perform(context))",
             launch,
         )
-        self.assertIn("write_merged_nav2_overlay(", launch)
         self.assertIn("write_merged_nav2_parameters(", launch)
         self.assertIn('"params_file": str(params_path)', launch)
         self.assertIn('"params_overlay_file": ""', launch)
@@ -1260,7 +1157,7 @@ class SimulationContractTests(unittest.TestCase):
         self.assertNotIn("cmd_vel", startup_source)
         self.assertNotIn("ros2 lifecycle set /map_server", launch)
 
-    def test_route_planning_sync_keeps_rpp_handoff_radius_in_lockstep(self) -> None:
+    def test_route_planning_sync_keeps_native_rpp_radius_in_lockstep(self) -> None:
         spec = importlib.util.spec_from_file_location(
             "sync_route_planning_for_test", ROUTE_PLANNING_SYNC)
         module = importlib.util.module_from_spec(spec)
@@ -1284,10 +1181,9 @@ class SimulationContractTests(unittest.TestCase):
         finally:
             sys.modules.pop(spec.name, None)
 
-        handoff = overlay["controller_server"]["ros__parameters"]["ForwardHandoff"]
+        follow_path = overlay["controller_server"]["ros__parameters"]["FollowPath"]
         self.assertEqual(
-            handoff["regulated_linear_scaling_min_radius"], expected_radius)
-        self.assertEqual(handoff["forward_min_turning_radius"], expected_radius)
+            follow_path["regulated_linear_scaling_min_radius"], expected_radius)
 
     def test_run_route_uses_an_isolated_switch_and_explicit_trees(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
@@ -1371,16 +1267,24 @@ class SimulationContractTests(unittest.TestCase):
             [
                 ("p_to_qr", "forward", "p_start", "a_task_observe"),
                 ("qr_to_vlm", "reverse", "a_task_observe", "c_corner_1"),
-                ("return_to_p", "forward", "c_corner_1", "p_finish"),
+                ("return_to_p", "reverse", "c_corner_1", "p_finish"),
             ],
         )
-        self.assertTrue(all(
-            segment["through_ids"] == []
-            for segment in nav_only["planning_segments"]
-        ))
+        self.assertEqual(
+            [segment["through_ids"] for segment in nav_only["planning_segments"]],
+            [[], ["via_2"], ["via_1", "via_3"]],
+        )
         self.assertEqual(
             [waypoint["id"] for waypoint in nav_only["waypoints"]],
-            ["p_start", "a_task_observe", "c_corner_1", "p_finish"],
+            [
+                "p_start",
+                "a_task_observe",
+                "via_2",
+                "c_corner_1",
+                "via_1",
+                "via_3",
+                "p_finish",
+            ],
         )
         waypoint_ids = {waypoint["id"] for waypoint in nav_only["waypoints"]}
         self.assertFalse(
@@ -1401,99 +1305,76 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(c_corner_1["heading_mode"], "locked")
         self.assertEqual(c_corner_1["goal_profile"], "reverse_handoff")
         self.assertIn("orientation", c_corner_1["pose"])
+        via_1 = next(
+            waypoint for waypoint in nav_only["waypoints"]
+            if waypoint["id"] == "via_1"
+        )
+        self.assertEqual(via_1["task"], "via")
+        self.assertEqual(via_1["direction"], "reverse")
+        self.assertEqual(via_1["goal_profile"], "standard")
+        self.assertNotIn("orientation", via_1["pose"])
         direct_return = next(
             waypoint for waypoint in nav_only["waypoints"]
             if waypoint["id"] == "p_finish"
         )
         self.assertEqual(direct_return["task"], "return")
-        self.assertEqual(direct_return["direction"], "forward")
+        self.assertEqual(direct_return["direction"], "reverse")
+        self.assertEqual(
+            direct_return["pose"]["orientation"],
+            {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.3826834323650898,
+                "w": 0.9238795325112867,
+            },
+        )
         self.assertIn("orientation", direct_return["pose"])
 
-    def test_sim_precise_tree_keeps_its_connector_and_tracking_grid_is_typed(self) -> None:
+    def test_sim_precise_tree_uses_native_smac_and_rpp(self) -> None:
         real_compute = ET.parse(REAL_PRECISE_BT).find(
             ".//ComputeFreeHeadingPathToPose")
-        sim_compute = ET.parse(SIM_PRECISE_BT).find(
-            ".//ComputeFreeHeadingPathToPose")
+        root = ET.parse(SIM_PRECISE_BT).getroot()
+        tags = [element.tag for element in root.iter()]
+        sim_compute = root.find(".//ComputePathToPose")
+        sim_follow = root.find(".//FollowPath")
+
         self.assertIsNotNone(real_compute)
         self.assertIsNotNone(sim_compute)
-        self.assertEqual(
-            real_compute.attrib["departure_connector_enabled"], "false")
-        self.assertEqual(
-            sim_compute.attrib["departure_connector_enabled"], "true")
-        self.assertEqual(
-            real_compute.attrib["local_tracking_cross_track_error_m"], "0.10")
-        self.assertEqual(
-            sim_compute.attrib["local_tracking_cross_track_error_m"], "0.12")
-        self.assertEqual(
-            sim_compute.attrib["departure_connector_terminal_radius_m"], "0.23")
-        self.assertEqual(
-            sim_compute.attrib[
-                "departure_connector_high_right_turn_radius_m"
-            ],
-            "0.24",
-        )
-        self.assertNotEqual(
-            sim_compute.attrib[
-                "departure_connector_high_right_turn_radius_m"
-            ],
-            "0.22",
-        )
-        self.assertEqual(
-            sim_compute.attrib["local_tracking_horizon_m"], "0.50")
-        self.assertEqual(sim_compute.attrib["costmap_wait_timeout_ms"], "1000")
-        self.assertEqual(sim_compute.attrib["costmap_max_age_ms"], "300")
-        self.assertEqual(
-            sim_compute.attrib["local_tracking_lateral_profile"],
-            "p_departure_south_v1",
-        )
-        self.assertEqual(
-            sim_compute.attrib[
-                "local_tracking_profile_start_position_tolerance_m"
-            ],
-            "0.001",
-        )
-        self.assertEqual(
-            sim_compute.attrib["static_keepout_mask_topic"],
-            "/keepout_filter_mask",
-        )
-        self.assertNotIn("local_tracking_lateral_profile", real_compute.attrib)
-        self.assertNotIn(
-            "departure_connector_high_right_turn_radius_m", real_compute.attrib)
-        self.assertNotIn("costmap_wait_timeout_ms", real_compute.attrib)
-        self.assertNotIn("costmap_max_age_ms", real_compute.attrib)
+        self.assertIsNotNone(sim_follow)
+        self.assertEqual(sim_compute.attrib["planner_id"], "GridBased")
+        self.assertEqual(sim_follow.attrib["controller_id"], "FollowPath")
+        self.assertEqual(sim_follow.attrib["goal_checker_id"], "precise_goal_checker")
+        for custom_tag in (
+            "ComputeFreeHeadingPathToPose",
+            "RecordFollowPath",
+            "OdomDistanceBudget",
+            "LatchSuccess",
+        ):
+            self.assertNotIn(custom_tag, tags)
+        for forbidden_tag in ("Spin", "BackUp", "Wait", "DriveOnHeading"):
+            self.assertNotIn(forbidden_tag, tags)
 
         keepout_overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
-        forward_handoff = keepout_overlay["controller_server"]["ros__parameters"]["ForwardHandoff"]
+        controller = keepout_overlay["controller_server"]["ros__parameters"]
+        self.assertNotIn("ForwardHandoff", controller)
+        # The simulation inherits the base reverse arrival envelope rather
+        # than adding a simulation-only terminal constraint.
+        self.assertNotIn("reverse_goal_checker", controller)
         self.assertEqual(
-            forward_handoff["forward_path_lateral_profile"],
-            "p_departure_south_v1",
+            controller["controller_plugins"],
+            ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"],
         )
-        self.assertEqual(
-            forward_handoff["forward_path_lateral_profile_frame_id"],
-            "odom_combined",
-        )
-        self.assertEqual(
-            forward_handoff["forward_path_lateral_profile_start_position_tolerance_m"],
-            0.001,
-        )
+        follow_path = controller["FollowPath"]
+        self.assertIs(follow_path["allow_reversing"], False)
+        self.assertIs(follow_path["use_rotate_to_heading"], False)
+        self.assertEqual(follow_path["regulated_linear_scaling_min_radius"], 0.22)
+        self.assertFalse(any(key.startswith("forward_") for key in follow_path))
 
         launch = LAUNCH.read_text(encoding="utf-8")
         self.assertIn(
             '"navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"',
             launch,
         )
-
-        action = FREE_HEADING_ACTION.read_text(encoding="utf-8")
-        self.assertIn(
-            "local_filtered_costmap_subscription_ = "
-            "node_->create_subscription<nav_msgs::msg::OccupancyGrid>(",
-            action,
-        )
-        self.assertIn('"/local_costmap/costmap"', action)
-        self.assertIn(
-            "localCostmapTrackingOccupancyGridToCostmap(*costmap)", action)
-        self.assertIn("forwardPathLateralProfileMatchesPlan", action)
-        self.assertIn("pDepartureStaticKeepoutMaskRequired", action)
 
     def test_sim_reverse_retreat_sweeps_keepout_without_changing_real_trees(self) -> None:
         def signature(element):
@@ -1518,9 +1399,89 @@ class SimulationContractTests(unittest.TestCase):
                     retreat.attrib["static_keepout_mask_topic"],
                     "/keepout_filter_mask",
                 )
-                self.assertEqual(retreat.attrib["controller_id"], "ReverseRecovery")
                 self.assertEqual(retreat.attrib["retreat_distance_m"], "0.15")
                 retreat.attrib.pop("static_keepout_mask_topic")
+
+                if sim_tree.name == (
+                    "navigate_to_pose_reverse_handoff_sim_w_replanning_and_recovery.xml"
+                ):
+                    # C1 uses the configured reverse arrival envelope. Once
+                    # Nav2 reports a valid arrival, do not add a second,
+                    # stricter terminal-pose check followed by a recovery.
+                    follow = sim_root.find(".//RecordFollowPath")
+                    self.assertIsNotNone(follow)
+                    self.assertNotIn("verify_physical_terminal_pose", follow.attrib)
+                    self.assertNotIn("terminal_goal", follow.attrib)
+                    self.assertNotIn("terminal_position_tolerance_m", follow.attrib)
+                    self.assertNotIn("terminal_yaw_tolerance_rad", follow.attrib)
+                    self.assertNotIn("terminal_verification_delay_ms", follow.attrib)
+                    self.assertNotIn("terminal_recovery_eligible", follow.attrib)
+                    compute = sim_root.find(
+                        ".//ComputeReverseFreeHeadingPathToPose")
+                    self.assertIsNotNone(compute)
+                    self.assertEqual(
+                        compute.attrib["recovery_eligible"],
+                        "{reverse_handoff_recovery_eligible}")
+                    self.assertEqual(
+                        retreat.attrib["allow_retreat"],
+                        "{reverse_handoff_recovery_eligible}")
+                    self.assertEqual(retreat.attrib["controller_id"], "FollowPath")
+                    self.assertEqual(retreat.attrib["retreat_direction"], "forward")
+                    self.assertEqual(
+                        retreat.attrib["allow_static_scan_only_evidence"], "true")
+                    recovery = sim_root.find(
+                        ".//Fallback[@name='RecoverReverseHandoffTerminalPoseOrClear']")
+                    self.assertIsNotNone(recovery)
+                    retreat_branch = recovery.find(
+                        "./Sequence[@name='ReverseHandoffRetreatBeforeReplan']")
+                    self.assertIsNotNone(retreat_branch)
+                    self.assertEqual(
+                        [child.tag for child in retreat_branch][:4],
+                        [
+                            "ReverseRecoveryEligible",
+                            "ClearEntireCostmap",
+                            "ClearEntireCostmap",
+                            "AckermannReverseRetreat",
+                        ],
+                    )
+                    clear_branch = recovery.find(
+                        "./Sequence[@name='ClearReverseHandoffCostmapsRecovery']")
+                    self.assertIsNotNone(clear_branch)
+                    self.assertEqual(clear_branch[0].tag, "Inverter")
+                    self.assertEqual(
+                        clear_branch[0][0].attrib["eligible"],
+                        "{reverse_handoff_recovery_eligible}")
+
+                    record_follow_source = (
+                        ROOT / "src" / "smartcar_nav2" / "src"
+                        / "record_follow_path_action.cpp"
+                    ).read_text(encoding="utf-8")
+                    verifier = record_follow_source.split(
+                        "RecordFollowPathAction::verifyPhysicalTerminalPose()",
+                        1,
+                    )[1].split("void RecordFollowPathAction::halt()", 1)[0]
+                    self.assertIn('getInput("terminal_goal", target)', verifier)
+                    self.assertIn('getInput("terminal_verification_delay_ms",', verifier)
+                    self.assertIn("terminal_verification_deadline_", verifier)
+                    self.assertIn("TerminalVerificationResult::kWaiting", verifier)
+                    position_failure = verifier.index(
+                        "if (position_error > position_tolerance_m)")
+                    retreat_authorization = verifier.index(
+                        'setOutput("terminal_recovery_eligible", true)')
+                    self.assertLess(position_failure, retreat_authorization)
+                    position_failure_block = verifier.split(
+                        "if (position_error > position_tolerance_m)", 1
+                    )[1].split(
+                        "// The vehicle is still at the intended terminal position", 1
+                    )[0]
+                    self.assertNotIn(
+                        'setOutput("terminal_recovery_eligible", true)',
+                        position_failure_block,
+                    )
+                    continue
+
+                self.assertEqual(retreat.attrib["controller_id"], "ReverseRecovery")
+                self.assertNotIn("retreat_direction", retreat.attrib)
 
                 real_retreat_nodes = real_root.findall(
                     ".//AckermannReverseRetreat")
@@ -1566,6 +1527,11 @@ class SimulationContractTests(unittest.TestCase):
             self.assertIn(field, runner)
         self.assertIn("orientation = endpoint_pose.orientation", runner)
         self.assertIn("matching_paths[-1][2]", runner)
+        self.assertIn("plan_execution_final_yaw = plan_final_yaw", runner)
+        self.assertNotIn(
+            'plan_final_yaw + (math.pi if direction == "reverse" else 0.0)',
+            runner,
+        )
         self.assertIn('contract_errors.append("reverse_velocity_sign")', runner)
         self.assertIn("if positive_command_samples > 0:", runner)
         self.assertIn('if heading_mode == "locked":', runner)

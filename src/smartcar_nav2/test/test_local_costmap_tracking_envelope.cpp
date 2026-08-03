@@ -177,7 +177,7 @@ TEST(LocalCostmapTrackingEnvelope, PDepartureProfileLeavesOnlyTheSouthErrorBudge
   setCostAtWorld(south_obstacle, 0.4875, 0.8625, 254U);
   const auto candidate = path({pose(0.25, 1.0, 0.0), pose(0.75, 1.0, 0.0)});
   // A short longitudinal body isolates the station-specific side allowance;
-  // the production sweep retains its full 0.30 m half-length.
+  // the production sweep retains its 0.2491 m padded half-length.
   const smartcar_nav2::CostmapFootprintSweepOptions short_body{
     0.01, 0.10, 0.025, 254U};
   const auto symmetric = smartcar_nav2::localCostmapTrackingEnvelopeSweep(

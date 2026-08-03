@@ -32,6 +32,12 @@ REVERSE_HANDOFF_BT_FILE = (
     / "behavior_trees"
     / "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"
 )
+SIM_REVERSE_HANDOFF_BT_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_reverse_handoff_sim_w_replanning_and_recovery.xml"
+)
 THROUGH_POSES_BT_FILE = (
     PACKAGE_ROOT
     / "config"
@@ -172,20 +178,16 @@ class TestReverseNavigationContracts(unittest.TestCase):
         follow = root.find(".//RecordFollowPath")
         self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
         self.assertEqual(
-            follow.attrib["goal_checker_id"], "transit_goal_checker"
+            follow.attrib["goal_checker_id"], "reverse_goal_checker"
         )
 
-    def test_reverse_goal_checker_is_stricter_than_forward(self):
+    def test_reverse_goal_checker_uses_the_navigation_arrival_envelope(self):
         controller = self.params["controller_server"]["ros__parameters"]
         self.assertIn("reverse_goal_checker", controller["goal_checker_plugins"])
         forward = controller["goal_checker"]
         reverse = controller["reverse_goal_checker"]
-        self.assertLess(
-            reverse["xy_goal_tolerance"], forward["xy_goal_tolerance"]
-        )
-        self.assertLess(
-            reverse["yaw_goal_tolerance"], forward["yaw_goal_tolerance"]
-        )
+        self.assertEqual(reverse["xy_goal_tolerance"], forward["xy_goal_tolerance"])
+        self.assertEqual(reverse["yaw_goal_tolerance"], forward["yaw_goal_tolerance"])
         self.assertIs(reverse["stateful"], False)
 
     def test_through_poses_removes_passed_goals_on_every_bt_tick(self):
@@ -422,7 +424,8 @@ class TestReverseNavigationContracts(unittest.TestCase):
         # node preserves exactly one locked-yaw candidate despite exposing the
         # ordinary bounded heading-search port.
         self.assertEqual(handoff_compute.attrib["heading_samples"], "12")
-        self.assertEqual(handoff_compute.attrib["max_edge_path_length_ratio"], "1.60")
+        self.assertNotIn("max_initial_path_length_ratio", handoff_compute.attrib)
+        self.assertNotIn("max_edge_path_length_ratio", handoff_compute.attrib)
 
         follow = handoff_root.find(".//RecordFollowPath")
         self.assertIsNotNone(follow)
@@ -901,6 +904,9 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn(
             '"static_keepout_mask_topic", ""', header
         )
+        self.assertIn(
+            '"allow_static_scan_only_evidence", false', header
+        )
         self.assertNotIn("static_keepout_mask_topic.empty() ||", source)
         self.assertIn("staticKeepoutMaskPathIsClear", header)
         self.assertIn("staticKeepoutMaskFootprintPathSweep", source)
@@ -932,6 +938,10 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn(
             "result != StaticKeepoutMaskFilterResult::kFiltered", dynamic_filter
         )
+        self.assertNotIn(
+            "scan has no endpoints outside occupied or unknown keepout mask cells",
+            dynamic_filter,
+        )
         self.assertIn(
             "std::vector<std::pair<double, double>> global_witness_points = global_points",
             retreat_check,
@@ -947,6 +957,8 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn(
             "*local_sample.costmap, local_witness_points", retreat_check
         )
+        self.assertIn("allow_static_scan_only_evidence_", retreat_check)
+        self.assertIn("Unknown cells are lethal", retreat_check)
         configure = source.split(
             "bool AckermannReverseRetreatAction::configureKeepoutMaskSubscription", 1
         )[1].split("void AckermannReverseRetreatAction::armCostmapBarrier", 1)[0]
@@ -954,6 +966,35 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn("return true;", configure[empty_topic:])
         self.assertNotIn(
             "requires a static keepout mask topic", configure
+        )
+
+    def test_c1_simulation_retreat_allows_static_scan_evidence_only_with_keepout_sweep(self):
+        sim_handoff = ElementTree.parse(
+            SIM_REVERSE_HANDOFF_BT_FILE
+        ).getroot()
+        sim_retreat = sim_handoff.find(".//AckermannReverseRetreat")
+        self.assertIsNotNone(sim_retreat)
+        self.assertEqual(
+            sim_retreat.attrib["allow_static_scan_only_evidence"], "true")
+        self.assertEqual(
+            sim_retreat.attrib["static_keepout_mask_topic"],
+            "/keepout_filter_mask")
+        self.assertEqual(sim_retreat.attrib["retreat_direction"], "forward")
+        self.assertEqual(sim_retreat.attrib["controller_id"], "FollowPath")
+
+        real_handoff = ElementTree.parse(
+            REVERSE_HANDOFF_BT_FILE
+        ).getroot()
+        real_retreat = real_handoff.find(".//AckermannReverseRetreat")
+        self.assertIsNotNone(real_retreat)
+        self.assertNotIn("allow_static_scan_only_evidence", real_retreat.attrib)
+
+        source = (
+            PACKAGE_ROOT / "src" / "ackermann_reverse_retreat_action.cpp"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "Static-only scan evidence requires a configured static keepout mask",
+            source,
         )
 
     def test_reverse_retreat_cancels_a_late_accepted_goal_after_ack_timeout(self):
@@ -1018,14 +1059,18 @@ class TestReverseNavigationContracts(unittest.TestCase):
                 clear_index = source.index("clearPathOutput()", failure_index)
                 self.assertLess(cancel_index, clear_index)
 
-    def test_reverse_retreat_enforces_its_only_permitted_controller_contract(self):
+    def test_recovery_enforces_its_direction_specific_controller_contract(self):
         source = (
             PACKAGE_ROOT / "src" / "ackermann_reverse_retreat_action.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn('controller_id != "ReverseRecovery"', source)
+        self.assertIn(
+            'retreat_forward_ ? "FollowPath" : "ReverseRecovery"', source
+        )
+        self.assertIn('controller_id != expected_controller', source)
         self.assertIn('goal_checker_id != "recovery_goal_checker"', source)
         self.assertIn(
-            "requires ReverseRecovery and recovery_goal_checker", source
+            "Forward recovery is restricted to the static-mask C1 handoff contract",
+            source,
         )
 
     def test_reverse_retreat_cancels_non_success_terminal_results(self):
@@ -1138,18 +1183,15 @@ class TestReverseNavigationContracts(unittest.TestCase):
         )
         self.assertNotIn("commit_best_after_cancellation_", source)
 
-    def test_free_heading_trees_set_the_per_edge_detour_bound_explicitly(self):
-        for behavior_tree, expected_ratio in (
-            # The direct VLM -> P return is preflighted at about 1.717x its
-            # chord. It is the sole route edge allowed to use the 1.75x
-            # forward bound; all reverse and ThroughPoses searches stay 1.60x.
-            (FORWARD_BT_FILE, "1.75"),
-            (PRECISE_FORWARD_BT_FILE, "1.40"),
-            (THROUGH_POSES_BT_FILE, "1.60"),
-            (REVERSE_BT_FILE, "1.60"),
-            (REVERSE_HANDOFF_BT_FILE, "1.60"),
-            (REVERSE_THROUGH_POSES_BT_FILE, "1.60"),
-            (REVERSE_LOCKED_THROUGH_POSES_BT_FILE, "1.60"),
+    def test_free_heading_trees_leave_route_length_to_nav2(self):
+        for behavior_tree in (
+            FORWARD_BT_FILE,
+            PRECISE_FORWARD_BT_FILE,
+            THROUGH_POSES_BT_FILE,
+            REVERSE_BT_FILE,
+            REVERSE_HANDOFF_BT_FILE,
+            REVERSE_THROUGH_POSES_BT_FILE,
+            REVERSE_LOCKED_THROUGH_POSES_BT_FILE,
         ):
             with self.subTest(behavior_tree=behavior_tree.name):
                 root = ElementTree.parse(behavior_tree).getroot()
@@ -1160,18 +1202,17 @@ class TestReverseNavigationContracts(unittest.TestCase):
                     or "ComputeReverseFreeHeadingPath" in element.tag
                 ]
                 self.assertEqual(len(computes), 1)
-                self.assertEqual(
-                    computes[0].attrib["max_edge_path_length_ratio"],
-                    expected_ratio,
-                )
+                self.assertNotIn("max_initial_path_length_ratio", computes[0].attrib)
+                self.assertNotIn("max_edge_path_length_ratio", computes[0].attrib)
 
-    def test_free_heading_rejects_single_edge_detours_before_commit(self):
+    def test_free_heading_has_no_hand_authored_detour_filter(self):
         source = (
             PACKAGE_ROOT / "src" / "compute_free_heading_path_action.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn('"max_edge_path_length_ratio", 1.60', source)
-        self.assertIn("edgePathWithinLengthRatio", source)
-        self.assertIn("edge detour exceeds", source)
+        self.assertNotIn("max_initial_path_length_ratio", source)
+        self.assertNotIn("max_edge_path_length_ratio", source)
+        self.assertNotIn("edgePathWithinLengthRatio", source)
+        self.assertNotIn("edge detour exceeds", source)
 
     def test_free_heading_query_timeout_is_one_budget_for_handle_and_result(self):
         source = (

@@ -125,11 +125,14 @@ target_include_directories(smartcar_record_follow_path_action_bt_node PUBLIC
 ament_target_dependencies(smartcar_record_follow_path_action_bt_node
   action_msgs
   behaviortree_cpp_v3
+  geometry_msgs
   nav2_behavior_tree
   nav2_msgs
+  nav2_util
   nav_msgs
   rclcpp
   rclcpp_action
+  tf2_ros
 )
 
 add_library(smartcar_reverse_only_mppi_controller SHARED

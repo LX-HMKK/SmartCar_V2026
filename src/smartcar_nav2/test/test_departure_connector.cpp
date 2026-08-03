@@ -114,7 +114,7 @@ TEST(DepartureConnector, ClearsSouthBoundaryAndFirstAZoneConeWithThePaddedFootpr
   const auto connectors = smartcar_nav2::buildLeftDepartureConnectors(
     pStart(), connectorOptions());
   const smartcar_nav2::CostmapFootprintSweepOptions footprint{
-    0.30, 0.16, 0.025, 254U};
+    0.2491, 0.095, 0.025, 254U};
 
   ASSERT_EQ(connectors.size(), 2U);
   for (const auto & connector : connectors) {
@@ -197,7 +197,7 @@ TEST(DepartureConnector, BuildsLatticeAlignedArcAndStraightCandidates)
     smartcar_nav2::CostmapFootprintSweepDiagnostic diagnostic;
     const auto sweep_result = smartcar_nav2::costmapFootprintPathSweep(
       candidate.path, pFieldCostmap(), smartcar_nav2::CostmapFootprintSweepOptions{
-        0.30, 0.16, 0.025, 254U}, &diagnostic);
+        0.2491, 0.095, 0.025, 254U}, &diagnostic);
     EXPECT_EQ(
       sweep_result,
       smartcar_nav2::CostmapFootprintSweepResult::kClear)
@@ -329,7 +329,7 @@ TEST(DepartureConnector, PDepartureUsesHighRightTurnBeforeEastSmacHandoff)
   smartcar_nav2::CostmapFootprintSweepDiagnostic diagnostic;
   const auto sweep_result = smartcar_nav2::costmapFootprintPathSweep(
     connector.path, pFieldCostmap(), smartcar_nav2::CostmapFootprintSweepOptions{
-      0.30, 0.16, 0.025, 254U}, &diagnostic);
+      0.2491, 0.095, 0.025, 254U}, &diagnostic);
   EXPECT_EQ(sweep_result, smartcar_nav2::CostmapFootprintSweepResult::kClear)
     << "sample=(" << diagnostic.sample_pose.pose.position.x << ","
     << diagnostic.sample_pose.pose.position.y << ","
@@ -390,7 +390,7 @@ TEST(DepartureConnector, PDepartureClearsTheOneSidedTrackingEnvelope)
   smartcar_nav2::CostmapFootprintSweepDiagnostic diagnostic;
   const auto result = smartcar_nav2::localCostmapTrackingProfiledFootprintPathSweep(
     connectors.front().path, pFieldCostmap(),
-    smartcar_nav2::CostmapFootprintSweepOptions{0.30, 0.16, 0.025, 254U},
+    smartcar_nav2::CostmapFootprintSweepOptions{0.2491, 0.095, 0.025, 254U},
     smartcar_nav2::kForwardPathLateralProfilePDepartureSouthV1, 0.12, &diagnostic);
   EXPECT_EQ(result, smartcar_nav2::CostmapFootprintSweepResult::kClear)
     << "sample=(" << diagnostic.sample_pose.pose.position.x << ","
@@ -449,7 +449,7 @@ TEST(DepartureConnector, PDepartureRslTerminalUsesSimulationMinimumRadiusAndSwee
   EXPECT_EQ(
     smartcar_nav2::costmapFootprintPathSweep(
       complete, pFieldCostmap(), smartcar_nav2::CostmapFootprintSweepOptions{
-        0.30, 0.16, 0.025, 254U}),
+        0.2491, 0.095, 0.025, 254U}),
     smartcar_nav2::CostmapFootprintSweepResult::kClear);
 
   // Exercise the full staged departure and the deterministic RSL terminal,
@@ -460,7 +460,7 @@ TEST(DepartureConnector, PDepartureRslTerminalUsesSimulationMinimumRadiusAndSwee
   EXPECT_EQ(
     smartcar_nav2::localCostmapTrackingProfiledFootprintPathSweep(
       complete, pFieldCostmap(), smartcar_nav2::CostmapFootprintSweepOptions{
-        0.30, 0.16, 0.025, 254U},
+        0.2491, 0.095, 0.025, 254U},
       smartcar_nav2::kForwardPathLateralProfilePDepartureSouthV1, 0.12, &diagnostic),
     smartcar_nav2::CostmapFootprintSweepResult::kClear)
     << "sample=(" << diagnostic.sample_pose.pose.position.x << ","
@@ -511,10 +511,10 @@ TEST(DepartureConnector, ScansForTheMinimumSmootherPDepartureRslTerminal)
     if (!smartcar_nav2::validateForwardConnectorPath(complete, pStart(), options).valid ||
       smartcar_nav2::costmapFootprintPathSweep(
         complete, pFieldCostmap(), smartcar_nav2::CostmapFootprintSweepOptions{
-          0.30, 0.16, 0.025, 254U}) != smartcar_nav2::CostmapFootprintSweepResult::kClear ||
+          0.2491, 0.095, 0.025, 254U}) != smartcar_nav2::CostmapFootprintSweepResult::kClear ||
       smartcar_nav2::localCostmapTrackingProfiledFootprintPathSweep(
         complete, pFieldCostmap(), smartcar_nav2::CostmapFootprintSweepOptions{
-          0.30, 0.16, 0.025, 254U},
+          0.2491, 0.095, 0.025, 254U},
         smartcar_nav2::kForwardPathLateralProfilePDepartureSouthV1, 0.12) !=
       smartcar_nav2::CostmapFootprintSweepResult::kClear)
     {

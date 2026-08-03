@@ -177,8 +177,8 @@ controller_server:
       stateful: false
     reverse_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.30
-      yaw_goal_tolerance: 0.25
+      xy_goal_tolerance: 0.35
+      yaw_goal_tolerance: 0.50
       stateful: false
     # Non-task route points are position constraints.  Requiring an arrival
     # yaw here makes an Ackermann vehicle overshoot a valid transit point
@@ -510,7 +510,7 @@ local_costmap:
       # pi-invariant conservative hull. MPPI evaluates the same physical body
       # at a virtual yaw shifted by pi, so an asymmetric rear-axle footprint
       # would swap its front and rear collision extents.
-      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:
@@ -546,7 +546,7 @@ global_costmap:
       resolution: 0.05
       # pi-invariant hull of the real footprint. This keeps virtual-yaw
       # reverse planning collision-equivalent to the physical vehicle.
-      footprint: "[[0.27, 0.13], [0.27, -0.13], [-0.27, -0.13], [-0.27, 0.13]]"
+      footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
       obstacle_layer:

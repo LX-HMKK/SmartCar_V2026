@@ -245,10 +245,6 @@ private:
     const geometry_msgs::msg::PoseStamped & endpoint,
     const geometry_msgs::msg::PoseStamped & candidate,
     const geometry_msgs::msg::PoseStamped & real_goal) const;
-  bool edgePathWithinLengthRatio(
-    double edge_length_m,
-    const geometry_msgs::msg::PoseStamped & start,
-    const geometry_msgs::msg::PoseStamped & goal) const;
   static double planarDistance(
     const geometry_msgs::msg::PoseStamped & first,
     const geometry_msgs::msg::PoseStamped & second);
@@ -281,8 +277,6 @@ private:
   std::chrono::steady_clock::time_point costmap_wait_deadline_;
   std::size_t through_solution_limit_{4};
   double goal_position_tolerance_{0.20};
-  double max_initial_path_length_ratio_{1.60};
-  double max_edge_path_length_ratio_{1.60};
   double max_start_drift_m_{0.10};
   std::uint8_t maximum_path_cost_{252U};
   CostmapFootprintSweepOptions footprint_sweep_options_;

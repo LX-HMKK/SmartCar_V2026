@@ -28,12 +28,13 @@
 ## 导航与运动
 
 - **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.50` 已修复。
-- **P→A 紧右弯跟踪尚未通过（2026-08-02）**：稀疏 `nav_only.yaml` 已删除中间经过点，P→A
-  的全局路径 `4.270 m / 3.276 m = 1.303`，不是大绕圈；但 RPP 在高位紧右弯从路径左侧
-  收敛后越过中心并触及右侧 `50 mm` 保护包络，故障安全停车。不得放宽右侧保护或重新增加
-  密集点位；待实施该弯道的非对称横向反馈后再做完整 Gazebo 复验。
+- **P→A 紧右弯跟踪尚未通过（2026-08-03）**：当前 `nav_only.yaml` 的后两段有必要的倒车
+  `via` 约束，但 P→A 本身仍没有额外经过点。该段的历史全局路径为
+  `4.270 m / 3.276 m = 1.303`，不是大绕圈；RPP 在高位紧右弯从路径左侧收敛后越过中心并
+  触及右侧 `50 mm` 保护包络，故障安全停车。不得放宽右侧保护或向 P→A 增加点位掩盖问题；
+  待实施该弯道的非对称横向反馈后再做完整 Gazebo 复验。
 - **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版"IntegrationClock 导致 EKF pose/速度冲突"的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
-- **倒车导航实现 (2026-08-01)**：QR→VLM 段必须倒车。每个航点独立发送 `NavigateToPose`；QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），QR yaw 对齐 P→QR 直达切线 `17.342°`，避免为追逐原 `30°` 航向绕圈；Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。每条规划边都受 `1.60` 直接距离倍率约束，拒绝明显绕行；该阈值仍须以完整仿真可行证据复验。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线仿真和实体倒车仍需复测。
+- **倒车导航实现 (2026-08-03)**：QR→VLM 段必须倒车。QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。倒车多目标允许普通 `via` 后接一个作为末端、锁定航向的 `reverse_handoff`，并使用 reverse-locked ThroughPoses 树；不再使用旧的 `1.60` 人工 edge-detour 筛选，路径可行性由 Nav2 的代价地图和阿克曼约束决定。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线仿真和实体倒车仍需复测。
 - **方向门倒车转向翻转 (2026-07-24)**：用户在实体车上观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
 
 ## Nav2 配置与行为树

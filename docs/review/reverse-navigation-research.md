@@ -2,15 +2,15 @@
 
 > **日期**: 2026-07-24 | **作者**: LX-HMKK | **状态**: 研究过程已归档；推荐的 Orientation Flip 未采用
 
-> **当前实现修订（2026-07-24）**：本文第 1 节之后保留的是实施前调研，不得作为当前部署步骤。实际 release 使用逐点 guarded `NavigateToPose`、单一 DUBIN planner、虚拟航向反向 BT 和动作 UUID 方向租约门；不使用 `REEDS_SHEPP`、`reverse_penalty`、目标朝向翻转、`FollowWaypoints` 或开环倒车。权威运行步骤见 [`../deployment/rdk-environment-setup.md`](../deployment/rdk-environment-setup.md)。
+> **当前实现修订（2026-08-03）**：本文第 1 节之后保留的是实施前调研，不得作为当前部署步骤。实际 release 按 planning segment 使用 guarded `NavigateToPose` 或 `NavigateThroughPoses`、单一 DUBIN planner、虚拟航向反向 BT 和动作 UUID 方向租约门；不使用 `REEDS_SHEPP`、`reverse_penalty`、目标朝向翻转、`FollowWaypoints` 或开环倒车。权威运行步骤见 [`../deployment/rdk-environment-setup.md`](../deployment/rdk-environment-setup.md)。
 
 ## 0. 最终实施结果
 
 ### 0.1 当前链路
 
-1. `validate_waypoints()` 强制 start/QR 正向、QR 后 outbound corridor 与 VLM 倒车、VLM 后至 return 正向。
-2. `smartcar_task` 为每个非起点航点创建一个 `NavigateToPose` goal，并预先生成 UUID。
-3. 普通正向 goal 使用默认 BT；QR 方向切换点使用精确正向 BT；反向 goal 使用 `navigate_to_pose_reverse_w_replanning_and_recovery.xml`。
+1. `validate_waypoints()` 校验 YAML 中每个航点的方向和 profile；未标定实车模板与 Gazebo `nav_only.yaml` 分开维护。
+2. `smartcar_task` 为每个 planning segment 创建一个导航动作：单目标为 `NavigateToPose`，同向多目标为 `NavigateThroughPoses`，并预先生成 UUID。
+3. 普通正向 goal 使用默认 BT；QR 方向切换点使用精确正向 BT；普通反向动作使用 reverse BT。倒车多目标中，普通 `via` 可位于前序，锁定航向的 `reverse_handoff` 只能作为最后一个目标并使用 reverse-locked ThroughPoses BT。
 4. `ComputeReverseFreeHeadingPath*` 从 TF 获取实际起点，把规划起点与目标 yaw 临时加 π，显式 `use_start=true` 调用唯一 DUBIN planner，再把路径姿态恢复 π；零 yaw transit 做有界航向搜索，锁定的 handoff 目标只保留其单一 authored yaw 候选。
 5. 路径在交给 RPP 前验证 frame、finite、单位四元数、端点、严格反向投影、无 cusp、曲率上限和 global costmap 有效性。
 6. 方向门在 reverse 租约下翻转 `angular.z`；这是用户针对实体车辆倒车转向打反进行现场 A/B 后确认有效的硬件链补偿，当前不得依据通用模型推导删除。
@@ -32,7 +32,9 @@ smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
 - Gazebo 已验证 scan/odom/TF/costmap 的时间一致性门禁，以及反向规划候选耗尽后仅一次
   `0.15 m` 的 `AckermannReverseRetreat`。短退只经 `FollowPath -> ReverseRecovery`，并在
   fresh global/local raw costmap 的完整足迹扫掠通过后执行。
-- 仿真路线已减为 P→A forward、A→C1 reverse、C1→P forward，且没有经过点。P→A 的规划
+- 仿真路线保留 P→A forward、A→`via_2`→C1 reverse、C1→`via_1`→`via_3`→P reverse 三个
+  语义阶段。C1 是末端锁定航向的 `reverse_handoff`；前序倒车 `via` 是连续 ThroughPoses
+  经过约束。P→A 的规划
   路径没有大绕圈（`4.270 m / 3.276 m = 1.303`），但高位紧右弯的 RPP 跟踪尚触发右侧保护，
   所以全路线未通过。
 - 实测最小转弯半径约 `0.20 m`；Nav2 与仿真使用保守的 `0.22 m`。未进行实际倒车或完整

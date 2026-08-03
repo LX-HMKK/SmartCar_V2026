@@ -9,12 +9,15 @@ planning_segments:
   direction: reverse
   start_id: a_task_observe
   end_id: c_corner_1
-  through_ids: []
+  through_ids:
+  - via_2
 - id: return_to_p
-  direction: forward
+  direction: reverse
   start_id: c_corner_1
   end_id: p_finish
-  through_ids: []
+  through_ids:
+  - via_1
+  - via_3
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -43,28 +46,56 @@ waypoints:
       y: 0.0
       z: 0.15076091589065388
       w: 0.9885702535681575
-  # Simulator-only substitute for the protected QR pose.
   task: nav
-  heading_mode: locked
   direction: forward
   goal_profile: precise
+  heading_mode: locked
+- id: via_2
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.7304189792471045
+      y: 2.818009974259976
+      z: 0.0
+  task: via
+  direction: reverse
+  goal_profile: standard
 - id: c_corner_1
   frame_id: odom_combined
   pose:
     position:
-      x: 0.3867094808286349
-      y: 2.65
+      x: 0.9330276705276708
+      y: 3.8337068653474913
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.4999999999999998
-      w: 0.8660254037844388
-  # Simulator-only substitute for the protected VLM handoff pose.
+      z: -1.0
+      w: -1.6081226496766364e-16
   task: nav
-  heading_mode: locked
   direction: reverse
   goal_profile: reverse_handoff
+  heading_mode: locked
+- id: via_1
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.597243327229539
+      y: 3.3192295499280795
+      z: 0.0
+  task: via
+  direction: reverse
+  goal_profile: standard
+- id: via_3
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 1.9780821492448313
+      y: 2.125441223786812
+      z: 0.0
+  task: via
+  direction: reverse
+  goal_profile: standard
 - id: p_finish
   frame_id: odom_combined
   pose:
@@ -75,8 +106,8 @@ waypoints:
     orientation:
       x: 0.0
       y: 0.0
-      z: -0.9238795325112867
-      w: 0.38268343236508984
+      z: 0.3826834323650898
+      w: 0.9238795325112867
   task: return
-  direction: forward
+  direction: reverse
   goal_profile: standard

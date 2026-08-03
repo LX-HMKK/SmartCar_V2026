@@ -1,72 +1,37 @@
-<!-- Gazebo-only precise P-to-A handoff: no backup, wait, spin, or rotation. -->
+<!-- Gazebo P-to-A navigation: native Nav2 planning and RPP only. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <OdomDistanceBudget
-        goal="{goal}"
-        odom_topic="/odom_combined"
-        odom_frame="odom_combined"
-        robot_base_frame="base_footprint"
-        max_distance_ratio="1.40"
-        distance_slack_m="0.40"
-        max_odom_step_m="0.50"
-        odom_timeout_sec="0.50"
-        initial_odom_wait_sec="1.00">
-      <RecoveryNode number_of_retries="1" name="NavigatePreciseSimRecovery">
-        <PipelineSequence name="NavigatePreciseSimWithReplanning">
-          <LatchSuccess name="LatchPreciseSimFreeHeadingPathToPose">
-            <RateController hz="0.5">
-              <RecoveryNode number_of_retries="1" name="ComputePreciseSimFreeHeadingPathToPose">
-                <!-- This connector is limited to the local Fortress model.
-                     It remains subject to global raw/static full-body sweeps
-                     and to the filtered local tracking-error envelope. -->
-                <ComputeFreeHeadingPathToPose
-                    goal="{goal}"
-                    path="{path}"
-                    planner_id="GridBased"
-                    heading_samples="12"
-                    candidate_timeout_ms="3500"
-                    max_initial_path_length_ratio="1.60"
-                    max_edge_path_length_ratio="1.40"
-                    max_start_drift_m="0.10"
-                    costmap_wait_timeout_ms="1000"
-                    costmap_max_age_ms="300"
-                    footprint_half_length_m="0.30"
-                    footprint_half_width_m="0.16"
-                    footprint_sweep_step_m="0.025"
-                    footprint_lethal_cost="254"
-                    local_tracking_cross_track_error_m="0.12"
-                    local_tracking_horizon_m="0.50"
-                    local_tracking_lethal_cost="254"
-                    local_tracking_lateral_profile="p_departure_south_v1"
-                    local_tracking_profile_start_position_tolerance_m="0.001"
-                    local_tracking_profile_start_yaw_tolerance_rad="0.001"
-                    static_keepout_mask_topic="/keepout_filter_mask"
-                    maximum_direction_error="0.15"
-                    departure_connector_enabled="true"
-                    departure_connector_radius_margin_m="0.28"
-                    departure_connector_maximum_active_radius_m="0.50"
-                    departure_connector_terminal_radius_m="0.23"
-                    departure_connector_high_right_turn_radius_m="0.24"
-                    departure_connector_start_x_m="0.0"
-                    departure_connector_start_y_m="0.0"
-                    departure_connector_start_yaw_rad="0.0"
-                    departure_connector_start_position_tolerance_m="0.10"
-                    departure_connector_start_yaw_tolerance_rad="0.15"
-                    departure_connector_heading_bins="144"/>
-                <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSimContext" service_name="global_costmap/clear_entirely_global_costmap"/>
-              </RecoveryNode>
-            </RateController>
-          </LatchSuccess>
-          <RecoveryNode number_of_retries="1" name="FollowPreciseSimPath">
-            <RecordFollowPath path="{path}" controller_id="ForwardHandoff" goal_checker_id="precise_goal_checker"/>
-            <ClearEntireCostmap name="ClearLocalCostmap-PreciseSimContext" service_name="local_costmap/clear_entirely_local_costmap"/>
+    <RecoveryNode number_of_retries="1" name="NavigatePreciseSimRecovery">
+      <PipelineSequence name="NavigatePreciseSimWithReplanning">
+        <RateController hz="1.0">
+          <RecoveryNode number_of_retries="1" name="ComputePreciseSimPath">
+            <ComputePathToPose
+                goal="{goal}"
+                path="{path}"
+                planner_id="GridBased"/>
+            <ClearEntireCostmap
+                name="ClearGlobalCostmap-PreciseSimContext"
+                service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
-        </PipelineSequence>
-        <Sequence name="ClearPreciseSimCostmapsRecovery">
-          <ClearEntireCostmap name="ClearLocalCostmap-PreciseSimSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
-          <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSimSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
-        </Sequence>
-      </RecoveryNode>
-    </OdomDistanceBudget>
+        </RateController>
+        <RecoveryNode number_of_retries="1" name="FollowPreciseSimPath">
+          <FollowPath
+              path="{path}"
+              controller_id="FollowPath"
+              goal_checker_id="precise_goal_checker"/>
+          <ClearEntireCostmap
+              name="ClearLocalCostmap-PreciseSimContext"
+              service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="ClearPreciseSimCostmapsRecovery">
+        <ClearEntireCostmap
+            name="ClearLocalCostmap-PreciseSimSubtree"
+            service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap
+            name="ClearGlobalCostmap-PreciseSimSubtree"
+            service_name="global_costmap/clear_entirely_global_costmap"/>
+      </Sequence>
+    </RecoveryNode>
   </BehaviorTree>
 </root>

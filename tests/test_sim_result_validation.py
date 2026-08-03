@@ -34,16 +34,10 @@ SPEC.loader.exec_module(VALIDATION)
 
 
 def planned_path_fields(chord=1.0, length=1.0):
-    limit = max(
-        chord * VALIDATION.MAX_PLANNED_PATH_DETOUR_RATIO,
-        chord + VALIDATION.MAX_PLANNED_PATH_DETOUR_ALLOWANCE_M,
-    )
     return {
         "planned_path_max_length_m": length,
         "planned_path_max_chord_m": chord,
-        "planned_path_max_detour_ratio": length / chord if chord else 0.0,
-        "planned_path_detour_limit_m": limit,
-        "planned_path_detour_violation": False,
+        "planned_path_max_detour_ratio": length / max(chord, 1.0e-3),
     }
 
 
@@ -79,14 +73,15 @@ def forward_ackermann_fields(direction, goal_profile="standard"):
             "forward_velocity_smoother_scale_velocities": None,
         }
     return {
-        "forward_speed_cap_mps": 0.15,
+        "forward_speed_cap_mps": VALIDATION.SIMULATION_FORWARD_SPEED_CAP_MPS,
         "forward_wz_cap_radps": VALIDATION.SIMULATION_FORWARD_WZ_CAP_RADPS,
         "forward_min_turning_radius_m": (
             VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
         "forward_path_max_cross_track_error_m": (
-            VALIDATION.SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M),
+            None if goal_profile == "precise"
+            else VALIDATION.SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M),
         "forward_controller_plugin": (
-            VALIDATION.FORWARD_HANDOFF_CONTROLLER
+            VALIDATION.NATIVE_RPP_CONTROLLER
             if goal_profile == "precise"
             else VALIDATION.FORWARD_AVOIDANCE_CONTROLLER
         ),
@@ -200,7 +195,8 @@ def valid_manifest():
             **executed_travel_fields(),
             **forward_ackermann_fields(direction, goal_profile),
             "handoff_speed_cap_mps": (
-                0.09 if goal_profile == "reverse_handoff" else None),
+                VALIDATION.SIMULATION_HANDOFF_SPEED_CAP_MPS
+                if goal_profile == "reverse_handoff" else None),
             "handoff_wz_cap_radps": (
                 VALIDATION.SIMULATION_HANDOFF_WZ_CAP_RADPS
                 if goal_profile == "reverse_handoff" else None),
@@ -213,7 +209,8 @@ def valid_manifest():
             "handoff_internal_vx_min_mps": (
                 0.02 if goal_profile == "reverse_handoff" else None),
             "handoff_internal_vx_max_mps": (
-                0.09 if goal_profile == "reverse_handoff" else None),
+                VALIDATION.SIMULATION_HANDOFF_SPEED_CAP_MPS
+                if goal_profile == "reverse_handoff" else None),
             "velocity_smoother_scale_velocities": (
                 True if goal_profile == "reverse_handoff" else None),
             "controller_cmd_linear_min": minimum,
@@ -310,7 +307,8 @@ def dynamic_manifest():
         "goal_ids": ["reverse_a", "reverse_b"],
         "goal_profiles": ["standard", "standard"],
         "behavior_tree": (
-            "navigate_through_poses_reverse_w_replanning_and_recovery.xml"),
+            "navigate_through_poses_reverse_locked_sim_"
+            "w_replanning_and_recovery.xml"),
         "waypoint_count": 2,
         "outcome": "succeeded",
         "status": VALIDATION.SUCCEEDED_STATUS,
@@ -477,11 +475,8 @@ def _through_poses_result(stage):
         "heading_mode": heading_mode,
         "goal_ids": [goal["id"] for goal in goals],
         "goal_profiles": [goal["goal_profile"] for goal in goals],
-        "behavior_tree": (
-            "navigate_through_poses_reverse_w_replanning_and_recovery.xml"
-            if direction == "reverse"
-            else "navigate_through_poses_w_replanning_and_recovery.xml"
-        ),
+        "behavior_tree": VALIDATION._through_poses_behavior_tree(
+            direction, heading_mode),
         "waypoint_count": len(goals),
         "outcome": "succeeded",
         "status": VALIDATION.SUCCEEDED_STATUS,
@@ -602,10 +597,10 @@ class SimResultValidationTests(unittest.TestCase):
         ))
 
         precise["tracking_trace"] = valid_tracking_trace()
-        precise["forward_path_max_cross_track_error_m"] = 0.0
+        precise["forward_path_max_cross_track_error_m"] = 0.12
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any(
-            "forward path tracking threshold" in error for error in errors
+            "must not use a custom path guard" in error for error in errors
         ))
 
     def test_saved_dynamic_segments_and_through_poses_are_accepted(self):
@@ -652,8 +647,8 @@ class SimResultValidationTests(unittest.TestCase):
             [stage[0] for stage in stages],
             [
                 "action_1_a_task_observe_to_a_task_observe",
-                "action_2_c_corner_1_to_c_corner_1",
-                "action_3_p_finish_to_p_finish",
+                "action_2_via_2_to_c_corner_1",
+                "action_3_via_1_to_p_finish",
             ],
         )
         self.assertEqual(
@@ -684,13 +679,13 @@ class SimResultValidationTests(unittest.TestCase):
     def test_waypoint_snapshot_requires_locked_semantic_quaternions(self):
         manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
         reverse_stage = stages[1]
-        self.assertEqual(len(reverse_stage[2]), 1)
+        self.assertEqual(len(reverse_stage[2]), 2)
         source = yaml.safe_load(NAV_ONLY_WAYPOINTS.read_text(encoding="utf-8"))
         source_goal = next(
             waypoint for waypoint in source["waypoints"]
             if waypoint["id"] == "c_corner_1")
         self.assertIn("orientation", source_goal["pose"])
-        first_reverse_goal = manifest["route"]["segments"][1]["goals"][0]
+        first_reverse_goal = manifest["route"]["segments"][1]["goals"][-1]
         self.assertEqual(first_reverse_goal["id"], "c_corner_1")
         self.assertEqual(first_reverse_goal["heading_mode"], "locked")
         self.assertEqual(
@@ -785,29 +780,68 @@ class SimResultValidationTests(unittest.TestCase):
             for error in errors
         ))
 
-    def test_dynamic_through_poses_rejects_nonstandard_goal_profiles(self):
+    def test_dynamic_through_poses_accepts_terminal_locked_reverse_handoff(self):
         manifest = dynamic_manifest()
-        manifest["route"]["segments"][1]["goals"][1]["goal_profile"] = (
-            "reverse_handoff"
-        )
+        manifest["route"]["segments"][1]["goals"][-1]["goal_profile"] = (
+            "reverse_handoff")
         manifest["results"][1]["goal_profiles"][1] = "reverse_handoff"
+
+        self.assertEqual(VALIDATION.validate_manifest(manifest, 199.0), [])
+
+        manifest["results"][1]["behavior_tree"] = (
+            "navigate_through_poses_reverse_w_replanning_and_recovery.xml")
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any(
+            "navigate_through_poses_reverse_locked_sim_"
+            "w_replanning_and_recovery.xml" in error
+            for error in errors
+        ))
+
+    def test_dynamic_through_poses_rejects_nonterminal_or_unlocked_handoff(self):
+        manifest = dynamic_manifest()
+        manifest["route"]["segments"][1]["goals"][0]["goal_profile"] = (
+            "reverse_handoff")
+        manifest["results"][1]["goal_profiles"][0] = "reverse_handoff"
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
 
         self.assertTrue(any("nonstandard goal profile" in error for error in errors))
 
-    def test_dynamic_route_rejects_a_planned_detour_before_it_can_pass(self):
+        manifest = dynamic_manifest()
+        terminal = manifest["route"]["segments"][1]["goals"][-1]
+        terminal["goal_profile"] = "reverse_handoff"
+        terminal["heading_mode"] = "free"
+        terminal["pose"]["orientation"] = {
+            "x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0,
+        }
+        through = manifest["results"][1]
+        through.update({
+            "heading_mode": "free",
+            "goal_profiles": ["standard", "reverse_handoff"],
+            "behavior_tree": (
+                "navigate_through_poses_reverse_w_replanning_and_recovery.xml"),
+            "goal_checker": "transit_goal_checker",
+            "xy_goal_tolerance_m": 0.35,
+            "yaw_goal_tolerance_rad": None,
+            "target_yaw_rad": None,
+            "goal_yaw_error_rad": None,
+            "signed_goal_yaw_error_rad": None,
+        })
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+
+        self.assertTrue(any("nonstandard goal profile" in error for error in errors))
+
+    def test_dynamic_route_records_a_planned_detour_without_rejecting_nav2(self):
         manifest = dynamic_manifest()
         result = manifest["results"][0]
         result["planned_path_max_length_m"] = 4.0
         result["planned_path_max_chord_m"] = 1.0
         result["planned_path_max_detour_ratio"] = 4.0
-        result["planned_path_detour_limit_m"] = 1.75
-        result["planned_path_detour_violation"] = True
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
 
-        self.assertTrue(any("planned path" in error for error in errors))
+        self.assertFalse(any("planned path" in error for error in errors))
 
     def test_dynamic_route_rejects_an_executed_detour_before_it_can_pass(self):
         manifest = dynamic_manifest()
@@ -858,7 +892,8 @@ class SimResultValidationTests(unittest.TestCase):
         manifest["results"][1]["cmd_linear_max"] = 0.05
         manifest["results"][0]["cmd_linear_min"] = -0.05
         manifest["results"][1]["controller_cmd_linear_max"] = 0.05
-        manifest["results"][2]["controller_cmd_linear_min"] = -0.05
+        manifest["results"][0]["controller_cmd_linear_min"] = -0.05
+        manifest["results"][2]["controller_cmd_linear_max"] = 0.05
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(
@@ -958,7 +993,8 @@ class SimResultValidationTests(unittest.TestCase):
     def test_reverse_handoff_enforces_both_command_layers(self):
         with reverse_handoff_manifest() as manifest:
             handoff = manifest["results"][0]
-            handoff["controller_cmd_linear_min"] = -0.12
+            handoff["controller_cmd_linear_min"] = (
+                -VALIDATION.SIMULATION_HANDOFF_SPEED_CAP_MPS - 0.01)
             handoff["cmd_kinematic_violation_count"] = 1
             handoff["controller_cmd_min_turning_radius_m"] = 0.20
             errors = VALIDATION.validate_manifest(manifest, 199.0)

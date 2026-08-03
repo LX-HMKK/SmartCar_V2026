@@ -19,6 +19,13 @@
 namespace smartcar_nav2
 {
 
+namespace
+{
+
+constexpr std::chrono::milliseconds kLateGoalAcknowledgementSpinPeriod{50};
+
+}  // namespace
+
 AckermannReverseRetreatAction::AckermannReverseRetreatAction(
   const std::string & xml_tag_name,
   const std::string & action_name,
@@ -36,12 +43,12 @@ AckermannReverseRetreatAction::AckermannReverseRetreatAction(
   callback_group_executor_.add_callback_group(
     callback_group_, node_->get_node_base_interface());
 
-  // FollowPath intentionally stays on bt_navigator's default callback group.
-  // If this BT node is halted while its goal response is in flight, that group
-  // continues to run the response callback and immediately cancels a late
-  // acceptance. The perception subscriptions remain private and are advanced
-  // explicitly once per BT tick below.
-  follow_path_client_ = rclcpp_action::create_client<FollowPath>(node_, action_name_);
+  // This stateful action advances its private executor each BT tick. Keep the
+  // FollowPath action client in that group as well; the navigator's default
+  // group is occupied while this recovery subtree is running and can otherwise
+  // delay a valid goal response past the acknowledgement deadline.
+  follow_path_client_ = rclcpp_action::create_client<FollowPath>(
+    node_, action_name_, callback_group_);
   accepted_path_publisher_ = node_->create_publisher<nav_msgs::msg::Path>(
     "/smartcar/accepted_global_plan", rclcpp::QoS(1).reliable().transient_local());
 
@@ -69,8 +76,22 @@ AckermannReverseRetreatAction::AckermannReverseRetreatAction(
     }, options);
 }
 
+AckermannReverseRetreatAction::~AckermannReverseRetreatAction()
+{
+  stopLateGoalAcknowledgementGuard();
+  cancelFollowPath();
+}
+
 BT::NodeStatus AckermannReverseRetreatAction::onStart()
 {
+  reapLateGoalAcknowledgementGuard();
+  if (late_goal_acknowledgement_pending_.load()) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Refusing a new Ackermann reverse retreat while a cancelled FollowPath "
+      "goal acknowledgement is unresolved");
+    return BT::NodeStatus::FAILURE;
+  }
   callback_group_executor_.spin_some();
   resetOperation();
   clearPathOutput();
@@ -91,10 +112,14 @@ BT::NodeStatus AckermannReverseRetreatAction::onStart()
     RCLCPP_ERROR(node_->get_logger(), "Ackermann reverse retreat has no fresh robot pose");
     return BT::NodeStatus::FAILURE;
   }
-  if (!buildAckermannReverseRetreatPath(
-      current_pose, global_frame_, retreat_distance_m_, retreat_path_))
+  const bool built_retreat_path = retreat_forward_ ?
+    buildAckermannForwardRetreatPath(
+    current_pose, global_frame_, retreat_distance_m_, retreat_path_) :
+    buildAckermannReverseRetreatPath(
+    current_pose, global_frame_, retreat_distance_m_, retreat_path_);
+  if (!built_retreat_path)
   {
-    RCLCPP_ERROR(node_->get_logger(), "Ackermann reverse retreat path inputs are invalid");
+    RCLCPP_ERROR(node_->get_logger(), "Ackermann recovery path inputs are invalid");
     return BT::NodeStatus::FAILURE;
   }
 
@@ -128,6 +153,7 @@ void AckermannReverseRetreatAction::onHalted()
 {
   clearPathOutput();
   cancelFollowPath();
+  startLateGoalAcknowledgementGuard();
   resetOperation();
 }
 
@@ -170,11 +196,13 @@ bool AckermannReverseRetreatAction::loadInputs()
   int scan_costmap_fusion_lag_ms = 0;
   std::int64_t costmap_min_stamp_ns = 0;
   std::int64_t local_costmap_min_stamp_ns = 0;
+  std::string retreat_direction;
   std::string static_keepout_mask_topic;
+  bool allow_static_scan_only_evidence = false;
   if (!getInput("allow_retreat", allow_retreat) || !allow_retreat) {
     RCLCPP_WARN(
       node_->get_logger(),
-      "Refusing Ackermann reverse retreat because the planner failure is not recoverable");
+      "Refusing Ackermann reverse retreat because the recovery condition is not eligible");
     return false;
   }
   if (!getInput("retreat_used", retreat_used) || retreat_used) {
@@ -184,6 +212,7 @@ bool AckermannReverseRetreatAction::loadInputs()
     return false;
   }
   if (!getInput("retreat_distance_m", retreat_distance_m) ||
+    !getInput("retreat_direction", retreat_direction) ||
     !getInput("costmap_max_age_ms", costmap_max_age_ms) ||
     !getInput("perception_wait_timeout_ms", perception_wait_timeout_ms) ||
     !getInput("follow_path_goal_timeout_ms", follow_path_goal_timeout_ms) ||
@@ -192,7 +221,9 @@ bool AckermannReverseRetreatAction::loadInputs()
     !getInput("costmap_min_stamp_ns", costmap_min_stamp_ns) ||
     !getInput("local_costmap_min_stamp_ns", local_costmap_min_stamp_ns) ||
     !getInput("static_keepout_mask_topic", static_keepout_mask_topic) ||
+    !getInput("allow_static_scan_only_evidence", allow_static_scan_only_evidence) ||
     !std::isfinite(retreat_distance_m) || retreat_distance_m <= 0.0 ||
+    (retreat_direction != "reverse" && retreat_direction != "forward") ||
     costmap_min_stamp_ns <= 0 || local_costmap_min_stamp_ns <= 0 ||
     costmap_max_age_ms < 100 || costmap_max_age_ms > 2000 ||
     perception_wait_timeout_ms < 2500 || perception_wait_timeout_ms > 5000 ||
@@ -211,24 +242,40 @@ bool AckermannReverseRetreatAction::loadInputs()
   follow_path_result_timeout_ = std::chrono::milliseconds(follow_path_result_timeout_ms);
   scan_costmap_fusion_lag_ = std::chrono::milliseconds(scan_costmap_fusion_lag_ms);
   retreat_distance_m_ = retreat_distance_m;
+  retreat_forward_ = retreat_direction == "forward";
   costmap_min_stamp_ns_ = costmap_min_stamp_ns;
   local_costmap_min_stamp_ns_ = local_costmap_min_stamp_ns;
   if (!configureKeepoutMaskSubscription(static_keepout_mask_topic)) {
     return false;
   }
-  std::string controller_id;
-  std::string goal_checker_id;
-  if (!getInput("controller_id", controller_id) ||
-    !getInput("goal_checker_id", goal_checker_id) ||
-    controller_id != "ReverseRecovery" ||
-    goal_checker_id != "recovery_goal_checker")
-  {
-    // This node is the only physical recovery motion allowed by the reverse
-    // trees.  Do not let a BT wiring regression substitute a controller that
-    // can issue a positive, curved, or tolerance-shortened command.
+  if (allow_static_scan_only_evidence && static_keepout_mask_topic.empty()) {
     RCLCPP_ERROR(
       node_->get_logger(),
-      "Ackermann reverse retreat requires ReverseRecovery and recovery_goal_checker");
+      "Static-only scan evidence requires a configured static keepout mask");
+    return false;
+  }
+  if (retreat_forward_ && !allow_static_scan_only_evidence) {
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Forward recovery is restricted to the static-mask C1 handoff contract");
+    return false;
+  }
+  allow_static_scan_only_evidence_ = allow_static_scan_only_evidence;
+  std::string controller_id;
+  std::string goal_checker_id;
+  const std::string expected_controller = retreat_forward_ ? "FollowPath" : "ReverseRecovery";
+  if (!getInput("controller_id", controller_id) ||
+    !getInput("goal_checker_id", goal_checker_id) ||
+    controller_id != expected_controller ||
+    goal_checker_id != "recovery_goal_checker")
+  {
+    // Reverse recovery may only use ReverseRecovery. The C1 simulation
+    // handoff is the sole forward pull-away and must use the native
+    // forward-only FollowPath controller.
+    RCLCPP_ERROR(
+      node_->get_logger(),
+      "Ackermann recovery requires %s and recovery_goal_checker",
+      expected_controller.c_str());
     return false;
   }
   goal_.controller_id = controller_id;
@@ -515,8 +562,8 @@ BT::NodeStatus AckermannReverseRetreatAction::dispatchRetreat()
   state_ = State::WAITING_FOR_GOAL_HANDLE;
   RCLCPP_WARN(
     node_->get_logger(),
-    "Reverse planner exhausted its candidates; retreating %.3f m before one replan",
-    retreat_distance_m_);
+    "Recovery authorized; moving %.3f m %s before one replan",
+    retreat_distance_m_, retreat_forward_ ? "forward" : "in reverse");
   return BT::NodeStatus::RUNNING;
 }
 
@@ -548,6 +595,7 @@ BT::NodeStatus AckermannReverseRetreatAction::waitForGoalHandle()
       // server accepts it after this deadline, goal_response_callback()
       // observes the generation and cancels it before it can move the robot.
       cancelFollowPath();
+      startLateGoalAcknowledgementGuard();
       clearPathOutput();
       state_ = State::IDLE;
       return BT::NodeStatus::FAILURE;
@@ -690,6 +738,55 @@ void AckermannReverseRetreatAction::cancelFollowPath()
   }
 }
 
+void AckermannReverseRetreatAction::startLateGoalAcknowledgementGuard()
+{
+  reapLateGoalAcknowledgementGuard();
+  if (!goal_handle_future_.valid() ||
+    late_goal_acknowledgement_pending_.exchange(true))
+  {
+    return;
+  }
+
+  late_goal_handle_future_ = goal_handle_future_;
+  const auto goal_future = late_goal_handle_future_;
+  stop_late_goal_acknowledgement_guard_.store(false);
+  late_goal_acknowledgement_guard_ = std::thread(
+    [this, goal_future]() {
+      while (rclcpp::ok() && !stop_late_goal_acknowledgement_guard_.load()) {
+        const auto result = callback_group_executor_.spin_until_future_complete(
+          goal_future, kLateGoalAcknowledgementSpinPeriod);
+        if (result == rclcpp::FutureReturnCode::SUCCESS ||
+          (result == rclcpp::FutureReturnCode::INTERRUPTED &&
+          stop_late_goal_acknowledgement_guard_.load()))
+        {
+          break;
+        }
+      }
+      late_goal_acknowledgement_pending_.store(false);
+    });
+}
+
+void AckermannReverseRetreatAction::reapLateGoalAcknowledgementGuard()
+{
+  if (!late_goal_acknowledgement_pending_.load() &&
+    late_goal_acknowledgement_guard_.joinable())
+  {
+    late_goal_acknowledgement_guard_.join();
+    late_goal_handle_future_ = std::shared_future<FollowPathGoalHandle::SharedPtr>();
+  }
+}
+
+void AckermannReverseRetreatAction::stopLateGoalAcknowledgementGuard()
+{
+  stop_late_goal_acknowledgement_guard_.store(true);
+  callback_group_executor_.cancel();
+  if (late_goal_acknowledgement_guard_.joinable()) {
+    late_goal_acknowledgement_guard_.join();
+  }
+  late_goal_acknowledgement_pending_.store(false);
+  late_goal_handle_future_ = std::shared_future<FollowPathGoalHandle::SharedPtr>();
+}
+
 bool AckermannReverseRetreatAction::scanIsFresh(
   const ScanSample & sample, std::string & reason) const
 {
@@ -828,10 +925,9 @@ bool AckermannReverseRetreatAction::filterStaticKeepoutPoints(
     reason = std::string("keepout mask ") + staticKeepoutMaskFilterResultName(result);
     return false;
   }
-  if (filtered_points.empty()) {
-    reason = "scan has no endpoints outside occupied or unknown keepout mask cells";
-    return false;
-  }
+  // An empty result is valid: a clean recovery area can see only protected
+  // field-boundary returns. The caller may accept that only through the
+  // explicit static-only evidence contract after it has swept the static mask.
   return true;
 }
 
@@ -931,17 +1027,29 @@ bool AckermannReverseRetreatAction::retreatPathIsClear(
       return false;
     }
   }
-  if (!costmapHasLethalObservationAtPoints(
-      *global_sample.costmap, global_witness_points,
-      footprint_sweep_options_.lethal_cost_threshold, scan_costmap_match_radius_m_) ||
-    !costmapHasLethalObservationAtPoints(
-      *local_sample.costmap, local_witness_points,
-      footprint_sweep_options_.lethal_cost_threshold, scan_costmap_match_radius_m_))
+  const bool global_dynamic_observation = costmapHasLethalObservationAtPoints(
+    *global_sample.costmap, global_witness_points,
+    footprint_sweep_options_.lethal_cost_threshold, scan_costmap_match_radius_m_);
+  const bool local_dynamic_observation = costmapHasLethalObservationAtPoints(
+    *local_sample.costmap, local_witness_points,
+    footprint_sweep_options_.lethal_cost_threshold, scan_costmap_match_radius_m_);
+  if ((!global_dynamic_observation || !local_dynamic_observation) &&
+    !allow_static_scan_only_evidence_)
   {
     reason = static_keepout_required ?
       "non-keepout post-clear scan endpoints are not marked in both raw costmaps" :
       "post-clear scan endpoints are not marked in both raw costmaps";
     return false;
+  }
+  if (!global_dynamic_observation || !local_dynamic_observation) {
+    // The static-only contract is used only in the simulation C1 handoff.
+    // It still requires a post-clear scan-associated map pair, a static-mask
+    // sweep, and the raw-map sweep below. Unknown cells are lethal to that
+    // sweep, so this cannot authorize a blind retreat through unobserved space.
+    RCLCPP_DEBUG(
+      node_->get_logger(),
+      "No dynamic scan endpoint is marked in both raw costmaps; using the "
+      "static-mask and fail-closed raw-footprint evidence");
   }
 
   const auto global_result = costmapFootprintPathSweep(

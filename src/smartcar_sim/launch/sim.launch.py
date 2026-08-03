@@ -21,19 +21,13 @@ import sys
 import tempfile
 
 # Launch files are installed as standalone modules. Keep the local-Gazebo
-# speed-profile helper beside this file so both source and install workspaces
-# resolve the same constrained profiles.
+# Nav2 parameter helper beside this file so source and install workspaces use
+# the same materialized configuration.
 _LAUNCH_DIRECTORY = os.path.dirname(os.path.abspath(__file__))
 if _LAUNCH_DIRECTORY not in sys.path:
     sys.path.insert(0, _LAUNCH_DIRECTORY)
 
-from sim_speed_profiles import (
-    resolve_sim_speed_profile,
-    speed_overlay_path,
-    validate_speed_overlay,
-    write_merged_nav2_overlay,
-    write_merged_nav2_parameters,
-)
+from sim_nav2_parameters import write_merged_nav2_parameters
 
 from launch import LaunchDescription
 from launch.actions import (
@@ -60,7 +54,6 @@ from launch.substitutions import (
 )
 from launch_ros.actions import LifecycleNode, Node
 from launch_ros.event_handlers import OnStateTransition
-from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
 
@@ -91,7 +84,6 @@ def generate_launch_description():
     sensor_preflight_timeout_sec = LaunchConfiguration(
         "sensor_preflight_timeout_sec", default="35.0")
     run_route = LaunchConfiguration("run_route", default="false")
-    sim_speed_profile = LaunchConfiguration("sim_speed_profile")
     active_nav2_overlay_file = LaunchConfiguration(
         "sim_active_nav2_overlay_file")
     active_nav2_params_file = LaunchConfiguration(
@@ -251,7 +243,7 @@ def generate_launch_description():
         name="sim_perception_monitor",
         parameters=[{
             "use_sim_time": True,
-            # Parse the physical A-zone cone collision boxes from this exact
+            # Parse the physical A-zone cone collision cylinders from this exact
             # world so scan/costmap agreement cannot hide a shared bad frame.
             "track_world_file": world_path,
         }],
@@ -360,41 +352,21 @@ def generate_launch_description():
 
     active_nav2_overlay = None
     active_nav2_params = None
-    generated_speed_overlay = None
     generated_nav2_params = None
 
-    def prepare_sim_speed_overlay(context):
-        """Validate a named local speed tier before Gazebo or Nav2 starts."""
+    def prepare_sim_nav2_parameters(context):
+        """Materialize the single local-Gazebo Nav2 configuration."""
         nonlocal active_nav2_overlay
         nonlocal active_nav2_params
-        nonlocal generated_speed_overlay
         nonlocal generated_nav2_params
 
-        config_dir = Path(pkg_sim) / "config"
-        profile = resolve_sim_speed_profile(
-            sim_speed_profile.perform(context), config_dir
-        )
         keepout_overlay_path = Path(nav2_keepout_overlay.perform(context))
-        overlay_path = speed_overlay_path(profile, config_dir)
-        if overlay_path is None:
-            active_nav2_overlay = keepout_overlay_path
-        else:
-            validate_speed_overlay(profile, overlay_path)
-            generated_speed_overlay = Path(tempfile.gettempdir()) / (
-                f"smartcar_sim_nav2_{os.getpid()}_"
-                f"{profile.name.replace('.', '_')}.yaml"
-            )
-            active_nav2_overlay = write_merged_nav2_overlay(
-                keepout_overlay_path,
-                overlay_path,
-                generated_speed_overlay,
-            )
+        active_nav2_overlay = keepout_overlay_path
         # Use one resolved parameter file for the local simulator. Passing a
         # base file and an overlay as independent ``--params-file`` entries
-        # left controller plugin replacement order implementation-dependent:
-        # ForwardHandoff could still instantiate MPPI while validation read
-        # RPP from the overlay. The materialized file is the exact runtime
-        # contract and is removed on launch shutdown.
+        # left controller-plugin replacement order implementation-dependent.
+        # The materialized file is the exact runtime contract and is removed
+        # on launch shutdown.
         generated_nav2_params = (
             Path(tempfile.gettempdir())
             / f"smartcar_sim_nav2_{os.getpid()}_params"
@@ -411,15 +383,12 @@ def generate_launch_description():
             SetLaunchConfiguration(
                 "sim_active_nav2_params_file", str(active_nav2_params)),
             LogInfo(msg=(
-                "[sim] Nav2 local-Gazebo speed profile "
-                f"{profile.name} ({profile.linear_speed_mps:.2f} m/s); "
+                "[sim] Nav2 local-Gazebo speed fixed at 0.30 m/s; "
                 "real-vehicle Nav2 parameters are unchanged"
             )),
         ]
 
-    def remove_generated_speed_overlay(context):
-        if generated_speed_overlay is not None:
-            generated_speed_overlay.unlink(missing_ok=True)
+    def remove_generated_nav2_parameters(context):
         if generated_nav2_params is not None:
             generated_nav2_params.unlink(missing_ok=True)
             try:
@@ -637,12 +606,6 @@ def generate_launch_description():
             "use_through_poses": use_through_poses_lc,
             "nav2_params_file": active_nav2_params_file,
             "nav2_params_overlay_file": active_nav2_overlay_file,
-            # Numeric-looking launch arguments are normally YAML-coerced when
-            # rendered into a node parameter file.  Keep profile names such as
-            # "0.20" as strings so AutoTrain can record the exact selected
-            # local-only speed tier.
-            "sim_speed_profile": ParameterValue(
-                sim_speed_profile, value_type=str),
             "results_file": results_file,
             "start_goal_id": start_goal_id,
             "end_goal_id": end_goal_id,
@@ -701,16 +664,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "sensor_preflight_timeout_sec", default_value="35.0"),
         DeclareLaunchArgument("run_route", default_value="false"),
-        # Only these exact values are accepted by prepare_sim_speed_overlay.
-        # baseline uses the unchanged 0.15 m/s smartcar_nav2 defaults.
-        DeclareLaunchArgument(
-            "sim_speed_profile",
-            default_value="baseline",
-            description=(
-                "Local Gazebo speed trial: baseline, 0.20, or 0.25. "
-                "Never used by the real-vehicle launch."
-            ),
-        ),
         # A trial route can be supplied without modifying the saved editor
         # file. The default remains the one authoritative simulation route.
         DeclareLaunchArgument(
@@ -728,12 +681,12 @@ def generate_launch_description():
         set_rmw,
         set_localhost,
         set_model_path,
-        # Resolve a trial before starting cleanup, Gazebo, or Nav2. Invalid
-        # values fail closed instead of silently changing a motion limit.
-        OpaqueFunction(function=prepare_sim_speed_overlay),
+        # Resolve the base plus simulation-only overlay before Gazebo or Nav2
+        # starts, so controller plugin selection has one source of truth.
+        OpaqueFunction(function=prepare_sim_nav2_parameters),
         RegisterEventHandler(
             OnShutdown(on_shutdown=[
-                OpaqueFunction(function=remove_generated_speed_overlay),
+                OpaqueFunction(function=remove_generated_nav2_parameters),
             ])
         ),
         # ExecuteProcess is asynchronous. Register the handler first so no

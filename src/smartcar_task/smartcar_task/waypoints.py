@@ -306,9 +306,10 @@ def validate_waypoints(waypoints):
             if task == "return":
                 # A direct semantic return is valid when the live planner can
                 # trace the obstacle-constrained arc without authored guide
-                # points. It deliberately changes back to forward motion after
-                # the reverse VLM handoff; there is no in-place turn action.
-                expected_direction = "forward"
+                # points. Its direction remains an explicit operator decision:
+                # both forward and reverse return arcs are supported without
+                # an in-place turn action.
+                expected_direction = waypoints[i].direction
                 state = "done"
             elif task in {"via", "loop", "corridor"}:
                 # Once the vehicle leaves the VLM handoff, retain one

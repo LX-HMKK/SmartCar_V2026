@@ -370,12 +370,12 @@ class PlanningSegmentTests(unittest.TestCase):
                 (
                     "a_task_observe",
                     ("qr_to_vlm",),
-                    ("c_corner_1",),
+                    ("via_2", "c_corner_1"),
                 ),
                 (
                     "c_corner_1",
                     ("return_to_p",),
-                    ("p_finish",),
+                    ("via_1", "via_3", "p_finish"),
                 ),
             ],
         )
@@ -430,7 +430,10 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertTrue(qr_to_vlm.feasible)
         self.assertEqual(
             [(leg.start_id, leg.end_id) for leg in qr_to_vlm.legs],
-            [("a_task_observe", "c_corner_1")],
+            [
+                ("a_task_observe", "via_2"),
+                ("via_2", "c_corner_1"),
+            ],
         )
         return_to_p = next(
             item for item in report.segments if item.segment_id == "return_to_p"
@@ -438,10 +441,14 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertTrue(return_to_p.feasible)
         self.assertEqual(
             [(leg.start_id, leg.end_id) for leg in return_to_p.legs],
-            [("c_corner_1", "p_finish")],
+            [
+                ("c_corner_1", "via_1"),
+                ("via_1", "via_3"),
+                ("via_3", "p_finish"),
+            ],
         )
 
-    def test_direct_vlm_return_passes_preflight_without_transit_points(self):
+    def test_vlm_return_passes_preflight_through_saved_transit_points(self):
         document, source = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, source)
 
@@ -456,7 +463,11 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertTrue(direct_return.feasible)
         self.assertEqual(
             [(leg.start_id, leg.end_id) for leg in direct_return.legs],
-            [("c_corner_1", "p_finish")],
+            [
+                ("c_corner_1", "via_1"),
+                ("via_1", "via_3"),
+                ("via_3", "p_finish"),
+            ],
         )
         direct_leg = direct_return.legs[0]
         start = next(item for item in source if item.id == direct_leg.start_id)

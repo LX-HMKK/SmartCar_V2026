@@ -1,7 +1,7 @@
 <?xml version="1.0" ?>
 <sdf version="1.8">
 <world name="smartcar_track">
-  <!-- Physics: 200Hz step (0.005s), sufficient for 0.15 m/s Ackermann navigation.
+  <!-- Physics: 200Hz step (0.005s), sufficient for 0.30 m/s Ackermann navigation.
        type="dart" is Gazebo Fortress default; 5ms vs 1ms saves ~40% CPU. -->
   <physics name="5ms" type="dart">
     <max_step_size>0.005</max_step_size>
@@ -84,46 +84,48 @@
     <uri>model://competition_field</uri>
   </include>
 
-  <!-- ===== ZONE-A CONE OBSTACLES (0.3×0.3m cubes, randomly placeable) =====
-    A 区随机锥桶群。调参时修改 <pose> 调整位置，或注释掉部分锥桶测试不同密度。
+  <!-- ===== ZONE-A CONE OBSTACLES (0.05m LiDAR-slice radius) =====
+    The planar sensor reads each traffic cone as a 0.05 m radius cylinder at
+    z=0.26 m. Visual and collision geometry deliberately match, so GPU lidar,
+    DART contact, and Nav2 receive the same obstacle footprint.
   -->
   <model name="cone_a1"><static>true</static><pose>1.1 0.3 0.15 0 0 0</pose>
     <link name="link">
-      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry>
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
-      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+      <collision name="c"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry></collision>
     </link></model>
   <model name="cone_a2"><static>true</static><pose>1.5 0.3 0.15 0 0 0</pose>
     <link name="link">
-      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry>
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
-      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+      <collision name="c"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry></collision>
     </link></model>
   <model name="cone_a3"><static>true</static><pose>2.2 0.5 0.15 0 0 0.3</pose>
     <link name="link">
-      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry>
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
-      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+      <collision name="c"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry></collision>
     </link></model>
   <model name="cone_a4"><static>true</static><pose>1.0 0.8 0.15 0 0 0.5</pose>
     <link name="link">
-      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry>
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
-      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+      <collision name="c"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry></collision>
     </link></model>
   <model name="cone_a5"><static>true</static><pose>1.8 0.9 0.15 0 0 -0.3</pose>
     <link name="link">
-      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry>
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
-      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+      <collision name="c"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry></collision>
     </link></model>
   <!-- Keep this physical A-zone return inside the 2.5 m startup scan range,
        while leaving the protected QR vehicle footprint clear. -->
   <model name="cone_a6"><static>true</static><pose>2.45 0.15 0.15 0 0 0.7</pose>
     <link name="link">
-      <visual name="v"><geometry><box><size>0.3 0.3 0.3</size></box></geometry>
+      <visual name="v"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry>
       <material><ambient>1 0.5 0 1</ambient><diffuse>1 0.5 0 1</diffuse></material></visual>
-      <collision name="c"><geometry><box><size>0.3 0.3 0.3</size></box></geometry></collision>
+      <collision name="c"><geometry><cylinder><radius>0.05</radius><length>0.30</length></cylinder></geometry></collision>
     </link></model>
 
   <!-- ===== ROBOT ===== -->

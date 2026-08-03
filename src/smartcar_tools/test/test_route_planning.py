@@ -104,13 +104,19 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertEqual(config.simulation_keepout.map_resolution_m, 0.025)
         self.assertEqual(config.simulation_keepout.boundary_padding_m, 0.25)
         footprint = config.runtime_footprint
-        self.assertEqual(footprint.half_length_m, 0.27)
-        self.assertEqual(footprint.half_width_m, 0.13)
+        self.assertEqual(footprint.length_m, 0.27)
+        self.assertEqual(footprint.width_m, 0.13)
+        self.assertEqual(footprint.center_x_from_base_footprint_m, 0.0841)
+        self.assertEqual(footprint.body_half_length_m, 0.135)
+        self.assertAlmostEqual(footprint.front_extent_m, 0.2191)
+        self.assertAlmostEqual(footprint.rear_extent_m, 0.0509)
+        self.assertAlmostEqual(footprint.half_length_m, 0.2191)
+        self.assertEqual(footprint.half_width_m, 0.065)
         self.assertEqual(footprint.padding_m, 0.03)
-        self.assertAlmostEqual(footprint.padded_half_length_m, 0.30)
-        self.assertAlmostEqual(footprint.padded_half_width_m, 0.16)
+        self.assertAlmostEqual(footprint.padded_half_length_m, 0.2491)
+        self.assertAlmostEqual(footprint.padded_half_width_m, 0.095)
         self.assertEqual(
-            config.simulation_keepout.costmap_inflation_radius_m, 0.30
+            config.simulation_keepout.costmap_inflation_radius_m, 0.15
         )
         self.assertEqual(config.c_zone_keepout.horizontal_inset_m, 0.80)
         self.assertEqual(config.c_zone_keepout.vertical_inset_m, 0.15)
@@ -141,6 +147,25 @@ class SharedRoutePlanningTests(unittest.TestCase):
                         "simulation_minimum_turning_radius_m",
                     ):
                         load_route_planning_config(altered_path)
+
+    def test_footprint_dimensions_reject_legacy_half_extent_fields(self) -> None:
+        document = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
+        document["runtime_footprint"] = {
+            "half_length_m": 0.27,
+            "half_width_m": 0.13,
+            "center_x_from_base_footprint_m": 0.0841,
+            "padding_m": 0.03,
+        }
+
+        with tempfile.TemporaryDirectory() as temporary:
+            altered_path = Path(temporary) / "route_planning.yaml"
+            altered_path.write_text(
+                yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
+            )
+            with self.assertRaisesRegex(
+                RoutePlanningConfigError, "runtime_footprint"
+            ):
+                load_route_planning_config(altered_path)
 
     def test_simulation_boundary_padding_is_required_and_positive(self) -> None:
         document = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -209,8 +234,9 @@ class SharedRoutePlanningTests(unittest.TestCase):
         planning["minimum_turning_radius_m"] = 0.63
         planning["simulation_minimum_turning_radius_m"] = 0.21
         planning["runtime_footprint"] = {
-            "half_length_m": 0.29,
-            "half_width_m": 0.14,
+            "length_m": 0.58,
+            "width_m": 0.28,
+            "center_x_from_base_footprint_m": 0.11,
             "padding_m": 0.04,
         }
         planning["simulation_keepout"]["costmap_inflation_radius_m"] = 0.17
@@ -260,16 +286,16 @@ class SharedRoutePlanningTests(unittest.TestCase):
                 )
 
         controller = overlay["controller_server"]["ros__parameters"]
-        for name in ("ForwardAvoidance", "ForwardHandoff"):
-            with self.subTest(controller=name):
-                self.assertEqual(
-                    controller[name]["regulated_linear_scaling_min_radius"],
-                    0.21,
-                )
-                self.assertEqual(
-                    controller[name]["forward_min_turning_radius"],
-                    0.21,
-                )
+        forward_avoidance = controller["ForwardAvoidance"]
+        self.assertEqual(
+            forward_avoidance["regulated_linear_scaling_min_radius"], 0.21
+        )
+        self.assertEqual(forward_avoidance["forward_min_turning_radius"], 0.21)
+        follow_path = controller["FollowPath"]
+        self.assertEqual(
+            follow_path["regulated_linear_scaling_min_radius"], 0.21
+        )
+        self.assertNotIn("forward_min_turning_radius", follow_path)
         for name in ("ReverseHandoff", "ReverseRecovery"):
             with self.subTest(controller=name):
                 self.assertEqual(
@@ -280,7 +306,7 @@ class SharedRoutePlanningTests(unittest.TestCase):
             parameters = overlay[name][name]["ros__parameters"]
             self.assertEqual(
                 parameters["footprint"],
-                "[[0.29, 0.14], [0.29, -0.14], [-0.29, -0.14], [-0.29, 0.14]]",
+                "[[0.4, 0.14], [0.4, -0.14], [-0.4, -0.14], [-0.4, 0.14]]",
             )
             self.assertEqual(parameters["footprint_padding"], 0.04)
             self.assertEqual(
@@ -302,10 +328,10 @@ class SharedRoutePlanningTests(unittest.TestCase):
             (1.3, 2.7, 3.15, 3.50),
         ):
             self.assertAlmostEqual(actual, expected)
-        # A tangent vehicle clears the last C-core mask row, while the
-        # diagonal entry that previously appeared in RViz intersects it.
-        self.assertTrue(planner._is_free(1.25, 3.66, 0.0))
-        self.assertFalse(planner._is_free(1.25, 3.66, 0.757))
+        # The padded 0.33 x 0.19 m body clears this C-core edge while aligned
+        # with the field, but its rotated envelope intersects it.
+        self.assertTrue(planner._is_free(1.04, 3.40, 0.0))
+        self.assertFalse(planner._is_free(1.04, 3.40, 0.40))
         # P remains valid, but no padded vehicle pose can use the map's
         # exterior ring as an unmodelled shortcut below the south field edge.
         self.assertTrue(planner._is_free(0.0, 0.0, 0.0))

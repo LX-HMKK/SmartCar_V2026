@@ -478,7 +478,7 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(items[4].goal_profile, "standard")
         self.assertEqual(mission.state, MissionState.COMPLETED)
 
-    def test_rejects_nonstandard_multi_goal_navigation_segment(self):
+    def test_rejects_precise_multi_goal_navigation_segment(self):
         items = [
             waypoint("start", 0.0),
             Waypoint(
@@ -510,6 +510,113 @@ class MissionTests(unittest.TestCase):
         )
         self.assertEqual(self.navigator.calls, [])
         self.assertEqual(self.navigator.through_calls, [])
+
+    def test_allows_locked_reverse_handoff_at_multi_goal_terminal(self):
+        items = [
+            waypoint("start", 0.0),
+            Waypoint(
+                "odom_combined",
+                (1.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+                "via",
+                "reverse",
+                id="via_before_handoff",
+            ),
+            Waypoint(
+                "odom_combined",
+                (2.0, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+                "nav",
+                "reverse",
+                id="reverse_handoff_terminal",
+                goal_profile="reverse_handoff",
+                heading_mode="locked",
+            ),
+        ]
+        mission = self.make_mission()
+
+        result = mission.execute(
+            items,
+            navigation_segments=[tuple(items[1:])],
+        )
+
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(
+            self.navigator.through_calls,
+            [(tuple(items[1:]), True)],
+        )
+
+    def test_rejects_nonterminal_mixed_and_unlocked_reverse_handoff(self):
+        def reverse_waypoint(
+            waypoint_id,
+            x,
+            goal_profile="standard",
+            heading_mode=None,
+        ):
+            return Waypoint(
+                "odom_combined",
+                (x, 0.0, 0.0),
+                (0.0, 0.0, 0.0, 1.0),
+                "nav",
+                "reverse",
+                id=waypoint_id,
+                goal_profile=goal_profile,
+                heading_mode=heading_mode,
+            )
+
+        cases = (
+            (
+                "nonterminal",
+                (
+                    reverse_waypoint(
+                        "handoff_before_terminal",
+                        1.0,
+                        "reverse_handoff",
+                        "locked",
+                    ),
+                    reverse_waypoint("standard_terminal", 2.0),
+                ),
+            ),
+            (
+                "mixed",
+                (
+                    reverse_waypoint("precise_before_handoff", 1.0, "precise"),
+                    reverse_waypoint(
+                        "handoff_terminal",
+                        2.0,
+                        "reverse_handoff",
+                        "locked",
+                    ),
+                ),
+            ),
+            (
+                "unlocked",
+                (
+                    reverse_waypoint("via_before_handoff", 1.0),
+                    reverse_waypoint(
+                        "unlocked_handoff_terminal",
+                        2.0,
+                        "reverse_handoff",
+                        "free",
+                    ),
+                ),
+            ),
+        )
+        for label, segment in cases:
+            with self.subTest(label=label):
+                mission = self.make_mission()
+                result = mission.execute(
+                    [waypoint("start", 0.0), *segment],
+                    navigation_segments=[segment],
+                )
+
+                self.assertFalse(result.success)
+                self.assertEqual(
+                    result.status,
+                    "navigation_segment_nonstandard_goal_profile",
+                )
+                self.assertEqual(self.navigator.calls, [])
+                self.assertEqual(self.navigator.through_calls, [])
 
     def test_single_semantic_goal_uses_navigate_to_pose(self):
         items = [

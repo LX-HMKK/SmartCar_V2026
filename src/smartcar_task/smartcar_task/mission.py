@@ -4,6 +4,8 @@ from enum import Enum
 import math
 import threading
 
+from smartcar_task.planning_segments import allows_reverse_handoff_through_poses
+
 
 VLM_HARD_TIMEOUT_SEC = 8.0
 VLM_FALLBACK_TEXT = "检测到人物立牌"
@@ -305,11 +307,16 @@ class Mission:
             for waypoint in segment[:-1]
         ):
             return "navigation_segment_semantic_boundary"
-        if len(segment) > 1 and any(
-            getattr(waypoint, "goal_profile", "standard") != "standard"
-            for waypoint in segment
-        ):
-            return "navigation_segment_nonstandard_goal_profile"
+        if len(segment) > 1:
+            nonstandard = any(
+                getattr(waypoint, "goal_profile", "standard") != "standard"
+                for waypoint in segment
+            )
+            if nonstandard and not (
+                direction == "reverse"
+                and allows_reverse_handoff_through_poses(segment)
+            ):
+                return "navigation_segment_nonstandard_goal_profile"
         return None
 
     def _navigate(self, generation, segment):

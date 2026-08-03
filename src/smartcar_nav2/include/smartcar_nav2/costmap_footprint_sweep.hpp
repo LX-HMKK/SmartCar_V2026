@@ -25,8 +25,8 @@ namespace smartcar_nav2
 // independent continuous check has the same hard-collision semantics.
 struct CostmapFootprintSweepOptions
 {
-  double half_length_m{0.30};
-  double half_width_m{0.16};
+  double half_length_m{0.2491};
+  double half_width_m{0.095};
   double sample_spacing_m{0.025};
   std::uint8_t lethal_cost_threshold{254U};
 };

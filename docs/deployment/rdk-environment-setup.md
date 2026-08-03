@@ -183,7 +183,13 @@ operator_approved
 
 仓库只保留 `default_waypoints.yaml` 一份 11 点语义路线：P -> QR 留距位 -> 两个出站通道点 -> C 区角 1/VLM -> 角 2 -> 角 3 -> 角 4 -> 两个回程通道点 -> P。它明确标记 `calibrated: false`，规则图推算不能替代现场实测。
 
-路线方向合同是固定的：start/QR 为 `forward`；QR 后两个出站 corridor 和 VLM 为 `reverse`；VLM 后至 return 全部为 `forward`。任务为每个非起点航点独立发送 `NavigateToPose`，不使用 `FollowWaypoints`。`validate_waypoints()` 会拒绝全正向或方向越界的 YAML。
+`default_waypoints.yaml` 是未标定的实车模板：其路线方向合同为 start/QR `forward`、QR 后两个
+出站 corridor 和 VLM `reverse`、VLM 后至 return `forward`。它与 Gazebo 专用
+`nav_only.yaml` 分开维护，后者的第三语义阶段为倒车且可含标准 `via`。任务按
+`planning_segments` 执行：单目标段发送 `NavigateToPose`，同向多目标段发送
+`NavigateThroughPoses`，不使用 `FollowWaypoints`。`reverse_handoff` 只允许作为倒车多目标段
+最后一个锁定航向目标；当前实车模板没有经过点，仍只产生单目标动作。`validate_waypoints()`
+会拒绝全正向或方向越界的 YAML。
 
 倒车使用单一 DUBIN planner 和专用 BT：插件从 TF 获取实际起点，把起点/目标 yaw 临时加 π 后规划，再恢复路径 yaw；路径必须 frame、端点、四元数、反向投影、无 cusp 和曲率全部合规。随后动作 UUID 绑定的方向租约只允许负 `linear.x` 通过后置方向门。这里的保证是“严格倒车，否则完整零输出”，不是“实车路线已经通过”。
 

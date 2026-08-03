@@ -20,6 +20,7 @@ ROUTE_PLANNING = ROOT / "src" / "smartcar_tools" / "config" / "routes" / "route_
 FIELD_GEOMETRY = ROOT / "src" / "smartcar_tools" / "config" / "routes" / "field_geometry.yaml"
 
 PROTECTED_IDS = ("p_start", "a_task_observe", "c_corner_1", "p_finish")
+SHARED_ROUTE_IDS = ("p_start", "a_task_observe")
 
 
 def _pose_values(text: str) -> tuple[float, float, float, float, float, float]:
@@ -36,44 +37,27 @@ def _yaw_from_quaternion(orientation: dict[str, float]) -> float:
     )
 
 
-def _corners(
+def _point_to_oriented_rectangle_distance(
+    point_x: float,
+    point_y: float,
     center_x: float,
     center_y: float,
     yaw: float,
     half_x: float,
     half_y: float,
-) -> list[tuple[float, float]]:
+) -> float:
+    """Return signed distance from a point to an oriented rectangle."""
     cosine = math.cos(yaw)
     sine = math.sin(yaw)
-    return [
-        (
-            center_x + sign_x * half_x * cosine - sign_y * half_y * sine,
-            center_y + sign_x * half_x * sine + sign_y * half_y * cosine,
-        )
-        for sign_x, sign_y in ((1.0, 1.0), (1.0, -1.0), (-1.0, -1.0), (-1.0, 1.0))
-    ]
-
-
-def _minimum_sat_separation(
-    first: list[tuple[float, float]], second: list[tuple[float, float]]
-) -> float:
-    """Return the smallest SAT overlap; a negative value is a true clearance."""
-    overlaps: list[float] = []
-    for polygon in (first, second):
-        for current, following in zip(polygon, polygon[1:] + polygon[:1]):
-            edge_x = following[0] - current[0]
-            edge_y = following[1] - current[1]
-            length = math.hypot(edge_x, edge_y)
-            if length <= 0.0:
-                raise ValueError("collision polygon has a zero-length edge")
-            axis_x, axis_y = -edge_y / length, edge_x / length
-            first_projection = [axis_x * x + axis_y * y for x, y in first]
-            second_projection = [axis_x * x + axis_y * y for x, y in second]
-            overlaps.append(
-                min(max(first_projection), max(second_projection))
-                - max(min(first_projection), min(second_projection))
-            )
-    return min(overlaps)
+    delta_x = point_x - center_x
+    delta_y = point_y - center_y
+    local_x = cosine * delta_x + sine * delta_y
+    local_y = -sine * delta_x + cosine * delta_y
+    excess_x = abs(local_x) - half_x
+    excess_y = abs(local_y) - half_y
+    if excess_x <= 0.0 and excess_y <= 0.0:
+        return -min(-excess_x, -excess_y)
+    return math.hypot(max(excess_x, 0.0), max(excess_y, 0.0))
 
 
 def _load_waypoints(path: Path) -> dict[str, dict]:
@@ -91,21 +75,40 @@ def _load_a_zone_cones() -> dict[str, dict[str, float]]:
         if model.findtext("static") != "true":
             raise ValueError(f"{name} must remain static")
         pose_text = model.findtext("pose")
-        size_text = model.findtext("./link/collision/geometry/box/size")
-        if pose_text is None or size_text is None:
-            raise ValueError(f"{name} must retain a box collision geometry")
+        collision_radius_text = model.findtext(
+            "./link/collision/geometry/cylinder/radius")
+        collision_length_text = model.findtext(
+            "./link/collision/geometry/cylinder/length")
+        visual_radius_text = model.findtext("./link/visual/geometry/cylinder/radius")
+        visual_length_text = model.findtext("./link/visual/geometry/cylinder/length")
+        if (
+            pose_text is None
+            or collision_radius_text is None
+            or collision_length_text is None
+            or visual_radius_text is None
+            or visual_length_text is None
+        ):
+            raise ValueError(f"{name} must retain matching cylindrical geometry")
         x, y, z, roll, pitch, yaw = _pose_values(pose_text)
-        size_x, size_y, size_z = (float(value) for value in size_text.split())
+        collision_radius = float(collision_radius_text)
+        collision_length = float(collision_length_text)
+        visual_radius = float(visual_radius_text)
+        visual_length = float(visual_length_text)
         if abs(roll) > 1.0e-9 or abs(pitch) > 1.0e-9:
             raise ValueError(f"{name} must remain upright")
+        if collision_radius <= 0.0 or collision_length <= 0.0:
+            raise ValueError(f"{name} must have positive collision dimensions")
+        if abs(collision_radius - visual_radius) > 1.0e-9 or abs(
+            collision_length - visual_length
+        ) > 1.0e-9:
+            raise ValueError(f"{name} visual and collision geometry must match")
         cones[name] = {
             "x": x,
             "y": y,
             "z": z,
             "yaw": yaw,
-            "half_x": size_x * 0.5,
-            "half_y": size_y * 0.5,
-            "half_z": size_z * 0.5,
+            "radius": collision_radius,
+            "half_z": collision_length * 0.5,
         }
     return cones
 
@@ -120,12 +123,12 @@ class SimulationTaskClearanceTests(unittest.TestCase):
         self.keepout_overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
         self.field_geometry = yaml.safe_load(FIELD_GEOMETRY.read_text(encoding="utf-8"))
 
-    def test_protected_task_poses_match_between_runtime_routes(self) -> None:
-        self.assertTrue(set(PROTECTED_IDS).issubset(self.nav_only))
-        self.assertTrue(set(PROTECTED_IDS).issubset(self.default))
+    def test_shared_initial_poses_match_between_runtime_routes(self) -> None:
+        self.assertTrue(set(SHARED_ROUTE_IDS).issubset(self.nav_only))
+        self.assertTrue(set(SHARED_ROUTE_IDS).issubset(self.default))
         self.assertEqual(self.default["a_task_observe"]["task"], "qr")
         self.assertEqual(self.default["c_corner_1"]["task"], "vlm")
-        for waypoint_id in PROTECTED_IDS:
+        for waypoint_id in SHARED_ROUTE_IDS:
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
                     self.nav_only[waypoint_id]["pose"],
@@ -135,27 +138,34 @@ class SimulationTaskClearanceTests(unittest.TestCase):
     def test_a_zone_cones_remain_physical_and_clear_all_protected_bodies(self) -> None:
         self.assertEqual(set(self.cones), {f"cone_a{index}" for index in range(1, 7)})
         footprint = self.route_planning["runtime_footprint"]
-        half_length = float(footprint["half_length_m"]) + float(footprint["padding_m"])
-        half_width = float(footprint["half_width_m"]) + float(footprint["padding_m"])
+        half_length = (
+            float(footprint["center_x_from_base_footprint_m"])
+            + 0.5 * float(footprint["length_m"])
+            + float(footprint["padding_m"])
+        )
+        half_width = 0.5 * float(footprint["width_m"]) + float(footprint["padding_m"])
 
         for waypoint_id in PROTECTED_IDS:
             pose = self.nav_only[waypoint_id]["pose"]
             position = pose["position"]
-            vehicle = _corners(
-                float(position["x"]),
-                float(position["y"]),
-                _yaw_from_quaternion(pose["orientation"]),
-                half_length,
-                half_width,
-            )
+            vehicle_x = float(position["x"])
+            vehicle_y = float(position["y"])
+            vehicle_yaw = _yaw_from_quaternion(pose["orientation"])
             for cone_id, cone in self.cones.items():
                 with self.subTest(waypoint=waypoint_id, cone=cone_id):
-                    obstacle = _corners(
-                        cone["x"], cone["y"], cone["yaw"], cone["half_x"], cone["half_y"]
+                    self.assertAlmostEqual(cone["radius"], 0.05)
+                    clearance = _point_to_oriented_rectangle_distance(
+                        cone["x"],
+                        cone["y"],
+                        vehicle_x,
+                        vehicle_y,
+                        vehicle_yaw,
+                        half_length,
+                        half_width,
                     )
-                    self.assertLess(
-                        _minimum_sat_separation(vehicle, obstacle),
-                        -1.0e-6,
+                    self.assertGreater(
+                        clearance,
+                        cone["radius"] + 1.0e-6,
                         "padded protected vehicle footprint overlaps a physical A-zone obstacle",
                     )
 
@@ -168,13 +178,10 @@ class SimulationTaskClearanceTests(unittest.TestCase):
         a_zone_max_x = float(geometry["field_width_m"]) - p_origin_x
         a_zone_min_y = -p_origin_y
         a_zone_max_y = float(geometry["zone_a_height_m"]) - p_origin_y
-        for x, y in _corners(
-            cone["x"], cone["y"], cone["yaw"], cone["half_x"], cone["half_y"]
-        ):
-            self.assertGreaterEqual(x, a_zone_min_x)
-            self.assertLessEqual(x, a_zone_max_x)
-            self.assertGreaterEqual(y, a_zone_min_y)
-            self.assertLessEqual(y, a_zone_max_y)
+        self.assertGreaterEqual(cone["x"] - cone["radius"], a_zone_min_x)
+        self.assertLessEqual(cone["x"] + cone["radius"], a_zone_max_x)
+        self.assertGreaterEqual(cone["y"] - cone["radius"], a_zone_min_y)
+        self.assertLessEqual(cone["y"] + cone["radius"], a_zone_max_y)
 
         base_scan = self.nav2_params["local_costmap"]["local_costmap"]["ros__parameters"][
             "obstacle_layer"

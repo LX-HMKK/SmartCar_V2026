@@ -53,7 +53,7 @@ class RouteVisualizationContracts(unittest.TestCase):
 
         self.assertEqual(candidate["Class"], "rviz_default_plugins/Path")
         self.assertEqual(candidate["Name"], SIM_CANDIDATE_PATH_NAME)
-        self.assertFalse(candidate["Enabled"])
+        self.assertTrue(candidate["Enabled"])
         self.assertEqual(accepted["Class"], "rviz_default_plugins/Path")
         self.assertEqual(accepted["Name"], SIM_ACCEPTED_PATH_NAME)
         self.assertEqual(tracking["Class"], "rviz_default_plugins/Path")
