@@ -156,7 +156,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["goal_checker", "precise_goal_checker", "reverse_goal_checker", "transit_goal_checker", "recovery_goal_checker"]
+    goal_checker_plugins: ["goal_checker", "precise_goal_checker", "reverse_goal_checker", "return_goal_checker", "transit_goal_checker", "recovery_goal_checker"]
     current_goal_checker: "goal_checker"
     controller_plugins: ["FollowPath", "ForwardAvoidance", "ForwardHandoff", "ReverseHandoff", "ReverseRecovery"]
     progress_checker:
@@ -179,6 +179,13 @@ controller_server:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.35
       yaw_goal_tolerance: 0.50
+      stateful: false
+    # The return-to-P endpoint must not inherit the broad C1 handoff envelope.
+    # This keeps P at least 0.17 m closer than the observed 0.32 m early stop.
+    return_goal_checker:
+      plugin: "nav2_controller::SimpleGoalChecker"
+      xy_goal_tolerance: 0.15
+      yaw_goal_tolerance: 0.15
       stateful: false
     # Non-task route points are position constraints.  Requiring an arrival
     # yaw here makes an Ackermann vehicle overshoot a valid transit point

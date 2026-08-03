@@ -713,7 +713,7 @@ class DragEditor:
         )).on_clicked(self._add_selected_through)
         remove_axis = self._new_panel_axis([0.835, 0.190, 0.145, 0.035])
         self._style_button(Button(
-            remove_axis, "移除", color=PANEL_INPUT, hovercolor="#3C4654"
+            remove_axis, "删除途经点", color=PANEL_INPUT, hovercolor="#3C4654"
         )).on_clicked(self._remove_selected_through)
         up_axis = self._new_panel_axis([0.675, 0.145, 0.145, 0.035])
         self._style_button(Button(
@@ -952,18 +952,54 @@ class DragEditor:
             segment is None or self._selected_through is None
             or self._selected_through >= len(segment.through_ids)
         ):
-            self._set_route_status("请先从途经点列表中选中要移除的点")
+            self._set_route_status("请先从途经点列表中选中要删除的点")
             self._build_route_panel()
             return
+        removed = segment.through_ids[self._selected_through]
+        if any(
+            removed in {candidate.start_id, candidate.end_id}
+            for candidate in self._segments
+        ):
+            self._set_route_status(
+                f"{removed} 正在作为分段端点，请先合并或修改分段后再删除"
+            )
+            self._build_route_panel()
+            return
+
         self._push_history()
-        through = list(segment.through_ids)
-        removed = through.pop(self._selected_through)
-        self._segments[self._selected_segment] = replace(
-            segment, through_ids=tuple(through)
+        # A route constraint is one waypoint model, not a panel-only entry.
+        # Remove every through reference as well as the waypoint so the route
+        # remains complete for validation, redraw, persistence, and RViz.
+        self._segments = [
+            replace(
+                candidate,
+                through_ids=tuple(
+                    waypoint_id
+                    for waypoint_id in candidate.through_ids
+                    if waypoint_id != removed
+                ),
+            )
+            for candidate in self._segments
+        ]
+        waypoint_index = next(
+            (
+                index
+                for index, waypoint in enumerate(self._waypoints)
+                if waypoint.id == removed
+            ),
+            None,
         )
+        if waypoint_index is not None:
+            with self._lock:
+                del self._waypoints[waypoint_index]
+            if self._selected == waypoint_index:
+                self._selected = None
+            elif self._selected is not None and self._selected > waypoint_index:
+                self._selected -= 1
         self._selected_through = None
-        self._set_route_status(f"已移除 {removed}；保存前需将它加入其他分段")
+        self._set_route_status(f"已删除途经点 {removed}")
         self._mark_route_changed(rebuild_panel=True)
+        self._publish_markers()
 
     def _move_selected_through(self, offset):
         segment = self._current_segment()

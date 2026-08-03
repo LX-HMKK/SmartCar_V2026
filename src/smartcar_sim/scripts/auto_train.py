@@ -98,6 +98,8 @@ class AutoTrain(Node):
         self.declare_parameter("through_poses_reverse_behavior_tree", "")
         self.declare_parameter(
             "through_poses_reverse_locked_behavior_tree", "")
+        self.declare_parameter(
+            "through_poses_reverse_return_behavior_tree", "")
         self.declare_parameter("use_through_poses", True)
         self.declare_parameter("goal_timeout_sec", 120.0)
         self.declare_parameter("inter_goal_delay_sec", 1.0)
@@ -544,6 +546,18 @@ class AutoTrain(Node):
         return mode
 
     @classmethod
+    def _uses_reverse_return_tree(cls, waypoints):
+        """Return whether a ThroughPoses segment ends at the locked P return."""
+        if not waypoints:
+            return False
+        terminal = waypoints[-1]
+        return (
+            terminal.get("direction") == "reverse"
+            and terminal.get("task") == "return"
+            and cls._heading_mode(terminal) == "locked"
+        )
+
+    @classmethod
     def _orientation_mapping(cls, pose, heading_mode):
         """Return a locked unit quaternion or the free-heading sentinel."""
         orientation = pose.get("orientation")
@@ -572,6 +586,7 @@ class AutoTrain(Node):
         orientation = cls._orientation_mapping(pose, heading_mode)
         return {
             "id": goal["id"],
+            "task": goal["task"],
             "direction": goal["direction"],
             "goal_profile": goal.get("goal_profile", "standard"),
             "heading_mode": heading_mode,
@@ -718,7 +733,9 @@ class AutoTrain(Node):
         return self._required_path("forward_behavior_tree")
 
     @classmethod
-    def _goal_checker_for(cls, waypoint):
+    def _goal_checker_for(cls, waypoint, reverse_return=False):
+        if reverse_return:
+            return "return_goal_checker"
         if waypoint.get("goal_profile") == "precise":
             return "precise_goal_checker"
         if cls._heading_mode(waypoint) == "free":
@@ -727,10 +744,10 @@ class AutoTrain(Node):
             return "reverse_goal_checker"
         return "goal_checker"
 
-    def _goal_tolerances(self, waypoint):
+    def _goal_tolerances(self, waypoint, reverse_return=False):
         document = self._runtime_nav2_params()
         controller = document["controller_server"]["ros__parameters"]
-        checker_name = self._goal_checker_for(waypoint)
+        checker_name = self._goal_checker_for(waypoint, reverse_return)
         checker = controller[checker_name]
         return (
             checker_name,
@@ -1717,6 +1734,7 @@ class AutoTrain(Node):
             "through_poses_behavior_tree",
             "through_poses_reverse_behavior_tree",
             "through_poses_reverse_locked_behavior_tree",
+            "through_poses_reverse_return_behavior_tree",
         )
         manifest = {}
         for name in parameters:
@@ -1863,6 +1881,7 @@ class AutoTrain(Node):
         # pose behavior in a custom reverse tree.
         odom_slice = self._odom_samples[odom_start:]
         terminal = waypoints[-1]
+        terminal_reverse_return = self._uses_reverse_return_tree(waypoints)
         terminal_reverse_handoff = allows_reverse_handoff_through_poses(
             waypoints)
         handoff_contract = (
@@ -1905,7 +1924,7 @@ class AutoTrain(Node):
                 ),
             )
         goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
-            terminal)
+            terminal, reverse_return=terminal_reverse_return)
         goal_error = None
         goal_yaw_error = None
         signed_goal_yaw_error = None
@@ -2208,9 +2227,13 @@ class AutoTrain(Node):
         if use_through_poses and len(goals) > 1:
             if direction == "reverse":
                 behavior_tree_param = (
-                    "through_poses_reverse_locked_behavior_tree"
-                    if self._heading_mode(goals[-1]) == "locked"
-                    else "through_poses_reverse_behavior_tree"
+                    "through_poses_reverse_return_behavior_tree"
+                    if self._uses_reverse_return_tree(goals)
+                    else (
+                        "through_poses_reverse_locked_behavior_tree"
+                        if self._heading_mode(goals[-1]) == "locked"
+                        else "through_poses_reverse_behavior_tree"
+                    )
                 )
             else:
                 behavior_tree_param = "through_poses_behavior_tree"

@@ -14,15 +14,15 @@
                 service_name="global_costmap/clear_entirely_global_costmap"/>
           </RecoveryNode>
         </RateController>
-        <RecoveryNode number_of_retries="1" name="FollowPreciseSimPath">
-          <FollowPath
-              path="{path}"
-              controller_id="FollowPath"
-              goal_checker_id="precise_goal_checker"/>
-          <ClearEntireCostmap
-              name="ClearLocalCostmap-PreciseSimContext"
-              service_name="local_costmap/clear_entirely_local_costmap"/>
-        </RecoveryNode>
+        <!-- A collision must reach the outer recovery immediately. Retrying
+             FollowPath after only a local clear re-sends the stale {path}
+             and consumes the controller patience window before GridBased can
+             produce a fresh route. The outer branch clears both costmaps and
+             re-enters this PipelineSequence at ComputePathToPose. -->
+        <FollowPath
+            path="{path}"
+            controller_id="FollowPath"
+            goal_checker_id="precise_goal_checker"/>
       </PipelineSequence>
       <Sequence name="ClearPreciseSimCostmapsRecovery">
         <ClearEntireCostmap

@@ -88,11 +88,15 @@ REQUIRED_INPUTS = (
     "through_poses_behavior_tree",
     "through_poses_reverse_behavior_tree",
     "through_poses_reverse_locked_behavior_tree",
+    "through_poses_reverse_return_behavior_tree",
 )
 SHA256_PATTERN = re.compile(r"^[0-9a-f]{64}$")
 ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
 ALLOWED_GOAL_PROFILES = frozenset({
     "standard", "precise", "reverse_handoff",
+})
+ALLOWED_TASKS = frozenset({
+    "start", "qr", "vlm", "corridor", "loop", "return", "nav", "via",
 })
 ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
 MAX_DYNAMIC_GOAL_TOLERANCES = {
@@ -101,6 +105,7 @@ MAX_DYNAMIC_GOAL_TOLERANCES = {
     ("reverse", "standard"): (0.35, 0.50),
     ("reverse", "reverse_handoff"): (0.20, 0.30),
 }
+RETURN_DYNAMIC_GOAL_TOLERANCES = (0.15, 0.15)
 # Position-only transit gates may use the temporary 0.50 m verification
 # envelope. Semantic task poses use their dedicated tighter checkers.
 MAX_TRANSIT_XY_GOAL_TOLERANCE_M = 0.50
@@ -222,12 +227,15 @@ def _dynamic_route_stages(data):
                 errors.append(f"{goal_label} must be an object")
                 continue
             goal_id = raw_goal.get("id")
+            task = raw_goal.get("task")
             goal_direction = raw_goal.get("direction")
             goal_profile = raw_goal.get("goal_profile", "standard")
             heading_mode = raw_goal.get("heading_mode")
             if not _nonempty_string(goal_id):
                 errors.append(f"{goal_label}.id must be non-empty")
                 continue
+            if task not in ALLOWED_TASKS:
+                errors.append(f"{goal_label}.task is invalid")
             if goal_id in goal_ids:
                 errors.append(f"route visits waypoint {goal_id!r} more than once")
             goal_ids.add(goal_id)
@@ -243,7 +251,7 @@ def _dynamic_route_stages(data):
                 errors.append(f"{goal_label}.heading_mode must be free or locked")
             _route_goal_pose(raw_goal, goal_label, errors, heading_mode)
             parsed_goals.append(
-                (goal_id, goal_direction, goal_profile, heading_mode)
+                (goal_id, goal_direction, goal_profile, heading_mode, task)
             )
         stages.append((segment_id, direction, tuple(parsed_goals)))
     return tuple(stages), errors
@@ -268,18 +276,38 @@ def _allows_terminal_reverse_handoff_through_poses(direction, goals):
     """
     if direction != "reverse" or len(goals) < 2:
         return False
-    terminal = goals[-1]
-    if terminal[1:] != ("reverse", "reverse_handoff", "locked"):
+    _terminal_id, goal_direction, goal_profile, heading_mode, _task = goals[-1]
+    if (goal_direction, goal_profile, heading_mode) != (
+        "reverse", "reverse_handoff", "locked"
+    ):
         return False
     return all(
         goal_direction == "reverse" and goal_profile == "standard"
-        for _goal_id, goal_direction, goal_profile, _heading_mode in goals[:-1]
+        for _goal_id, goal_direction, goal_profile, _heading_mode, _task
+        in goals[:-1]
     )
 
 
-def _through_poses_behavior_tree(direction, terminal_heading_mode):
+def _is_reverse_return_terminal(direction, heading_mode, task):
+    return (
+        direction == "reverse"
+        and task == "return"
+        and heading_mode == "locked"
+    )
+
+
+def _through_poses_behavior_tree(
+    direction, terminal_heading_mode, terminal_task=None
+):
     """Return the simulation BT selected by auto_train for a through action."""
     if direction == "reverse":
+        if _is_reverse_return_terminal(
+            direction, terminal_heading_mode, terminal_task
+        ):
+            return (
+                "navigate_through_poses_reverse_return_sim_"
+                "w_replanning_and_recovery.xml"
+            )
         if terminal_heading_mode == "locked":
             return (
                 "navigate_through_poses_reverse_locked_sim_"
@@ -289,7 +317,9 @@ def _through_poses_behavior_tree(direction, terminal_heading_mode):
     return "navigate_through_poses_w_replanning_and_recovery.xml"
 
 
-def _goal_checker(direction, goal_profile, heading_mode):
+def _goal_checker(direction, goal_profile, heading_mode, reverse_return=False):
+    if reverse_return:
+        return "return_goal_checker"
     if goal_profile == "precise":
         return "precise_goal_checker"
     if heading_mode == "free":
@@ -299,8 +329,12 @@ def _goal_checker(direction, goal_profile, heading_mode):
     return "goal_checker"
 
 
-def _goal_tolerance_limits(direction, goal_profile, heading_mode):
+def _goal_tolerance_limits(
+    direction, goal_profile, heading_mode, reverse_return=False
+):
     """Return the maximum accepted execution tolerance for one goal."""
+    if reverse_return:
+        return RETURN_DYNAMIC_GOAL_TOLERANCES
     if goal_profile == "precise":
         return MAX_DYNAMIC_GOAL_TOLERANCES[(direction, goal_profile)]
     if heading_mode == "free":
@@ -309,10 +343,17 @@ def _goal_tolerance_limits(direction, goal_profile, heading_mode):
 
 
 def _validate_goal_completion(
-    result, direction, goal_profile, heading_mode, label, errors
+    result,
+    direction,
+    goal_profile,
+    heading_mode,
+    label,
+    errors,
+    reverse_return=False,
 ):
     """Check observed terminal pose against the goal checker recorded at run time."""
-    expected_checker = _goal_checker(direction, goal_profile, heading_mode)
+    expected_checker = _goal_checker(
+        direction, goal_profile, heading_mode, reverse_return)
     if result.get("goal_checker") != expected_checker:
         errors.append(
             f"{label} goal_checker does not match its direction/profile/heading"
@@ -323,8 +364,7 @@ def _validate_goal_completion(
         errors.append(f"{label} xy_goal_tolerance_m must be finite")
         return
     max_xy, max_yaw = _goal_tolerance_limits(
-        direction, goal_profile, heading_mode
-    )
+        direction, goal_profile, heading_mode, reverse_return)
     if float(xy_tolerance) <= 0.0 or float(xy_tolerance) > max_xy:
         errors.append(f"{label} xy_goal_tolerance_m exceeds its safe contract")
     if max_yaw is None:
@@ -766,7 +806,7 @@ def _validate_perception(data, errors):
 
 
 def _validate_dynamic_single_goal(result, expected, label, errors):
-    waypoint_id, direction, goal_profile, heading_mode = expected
+    waypoint_id, direction, goal_profile, heading_mode, _task = expected
     if not isinstance(result, dict):
         errors.append(f"{label} must be an object")
         return
@@ -808,6 +848,9 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     expected_ids = [goal[0] for goal in goals]
     expected_profiles = [goal[2] for goal in goals]
     terminal_heading_mode = goals[-1][3]
+    terminal_task = goals[-1][4]
+    reverse_return = _is_reverse_return_terminal(
+        direction, terminal_heading_mode, terminal_task)
     if not isinstance(result, dict):
         errors.append(f"{label} must be an object")
         return
@@ -830,7 +873,7 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     if result.get("waypoint_count") != len(goals):
         errors.append(f"{label} waypoint_count must be {len(goals)}")
     expected_tree = _through_poses_behavior_tree(
-        direction, terminal_heading_mode)
+        direction, terminal_heading_mode, terminal_task)
     if result.get("behavior_tree") != expected_tree:
         errors.append(f"{label} behavior_tree must be {expected_tree}")
     if result.get("outcome") != "succeeded":
@@ -840,7 +883,13 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     if result.get("contract_errors") != []:
         errors.append(f"{label} contract_errors must be empty")
     _validate_goal_completion(
-        result, direction, "standard", terminal_heading_mode, label, errors
+        result,
+        direction,
+        "standard",
+        terminal_heading_mode,
+        label,
+        errors,
+        reverse_return=reverse_return,
     )
     _validate_command_direction(result, direction, label, errors)
     _validate_forward_ackermann_contract(
@@ -1143,7 +1192,9 @@ def _validate_reconstructed_route(data, path, errors):
             actual_goal = actual_goals[goal_index]
             if not isinstance(actual_goal, dict):
                 continue
-            for field in ("id", "direction", "goal_profile", "heading_mode"):
+            for field in (
+                "id", "task", "direction", "goal_profile", "heading_mode"
+            ):
                 default = "standard" if field == "goal_profile" else None
                 if actual_goal.get(field, default) != expected_goal[field]:
                     errors.append(
@@ -1175,6 +1226,7 @@ def _result_stage_contract(stages):
                     goal["direction"],
                     goal["goal_profile"],
                     goal["heading_mode"],
+                    goal["task"],
                 )
                 for goal in goals
             ),

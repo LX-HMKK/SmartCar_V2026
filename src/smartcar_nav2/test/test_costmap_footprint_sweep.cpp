@@ -61,6 +61,38 @@ nav_msgs::msg::OccupancyGrid wideKeepoutMask()
   return result;
 }
 
+nav_msgs::msg::OccupancyGrid pFinishSouthBoundaryMask()
+{
+  nav_msgs::msg::OccupancyGrid result;
+  result.header.frame_id = "odom_combined";
+  result.info.resolution = 0.025F;
+  result.info.width = 100U;
+  result.info.height = 100U;
+  result.info.origin.position.x = -0.75;
+  result.info.origin.position.y = -0.50;
+  result.info.origin.orientation.w = 1.0;
+  result.data.assign(10000U, 0);
+  // The top row of the P-side exterior ring ends at y=-0.25. Its cell centre
+  // is (-0.1125, -0.2625), where the p_finish 45-degree terminal pose has a
+  // real 6.7 mm clearance.
+  result.data[9U * 100U + 25U] = 100;
+  return result;
+}
+
+nav2_msgs::msg::Costmap pFinishSouthBoundaryCostmap()
+{
+  nav2_msgs::msg::Costmap result;
+  result.metadata.resolution = 0.025F;
+  result.metadata.size_x = 100U;
+  result.metadata.size_y = 100U;
+  result.metadata.origin.position.x = -0.75;
+  result.metadata.origin.position.y = -0.50;
+  result.metadata.origin.orientation.w = 1.0;
+  result.data.assign(10000U, 0U);
+  result.data[9U * 100U + 25U] = 254U;
+  return result;
+}
+
 void setCost(nav2_msgs::msg::Costmap & map, std::size_t x, std::size_t y, std::uint8_t cost)
 {
   map.data[y * static_cast<std::size_t>(map.metadata.size_x) + x] = cost;
@@ -113,10 +145,10 @@ TEST(CostmapFootprintSweep, ReportsFirstLethalInterpolationPoseAndCell)
   ASSERT_TRUE(diagnostic.has_sample_pose);
   EXPECT_EQ(diagnostic.segment_start_pose_index, 0U);
   EXPECT_EQ(diagnostic.segment_end_pose_index, 1U);
-  EXPECT_EQ(diagnostic.segment_sample_index, 30U);
+  EXPECT_EQ(diagnostic.segment_sample_index, 31U);
   EXPECT_EQ(diagnostic.segment_sample_count, 80U);
-  EXPECT_NEAR(diagnostic.segment_fraction, 0.375, 1.0e-12);
-  EXPECT_NEAR(diagnostic.sample_pose.pose.position.x, 1.75, 1.0e-12);
+  EXPECT_NEAR(diagnostic.segment_fraction, 0.3875, 1.0e-12);
+  EXPECT_NEAR(diagnostic.sample_pose.pose.position.x, 1.775, 1.0e-12);
   EXPECT_NEAR(diagnostic.sample_pose.pose.position.y, 2.00, 1.0e-12);
   ASSERT_TRUE(diagnostic.has_blocking_cell);
   EXPECT_EQ(diagnostic.blocking_cell_x, 20U);
@@ -183,6 +215,34 @@ TEST(CostmapFootprintSweep, SweepsStaticKeepoutMaskAsAFullBodyConstraint)
     smartcar_nav2::staticKeepoutMaskFootprintPathSweep(
       nullptr, "odom_combined", path({pose(2.0, 2.0, 0.0)}), kOptions),
     smartcar_nav2::StaticKeepoutMaskSweepResult::kNoMask);
+}
+
+TEST(CostmapFootprintSweep, PreservesExactPFinishClearanceAtSouthBoundary)
+{
+  constexpr double kPFinishYaw = 0.78539816339744830962;
+  auto mask = pFinishSouthBoundaryMask();
+  auto raw_costmap = pFinishSouthBoundaryCostmap();
+
+  EXPECT_EQ(
+    smartcar_nav2::costmapFootprintPathSweep(
+      path({pose(0.0, 0.0, kPFinishYaw)}), raw_costmap, kOptions),
+    smartcar_nav2::CostmapFootprintSweepResult::kClear);
+
+  EXPECT_EQ(
+    smartcar_nav2::staticKeepoutMaskFootprintPathSweep(
+      &mask, "odom_combined", path({pose(0.0, 0.0, kPFinishYaw)}), kOptions),
+    smartcar_nav2::StaticKeepoutMaskSweepResult::kClear);
+
+  // Crossing the true exterior edge by less than one centimetre remains
+  // blocked in both raw and static-mask sweeps.
+  EXPECT_EQ(
+    smartcar_nav2::costmapFootprintPathSweep(
+      path({pose(0.0, -0.007, kPFinishYaw)}), raw_costmap, kOptions),
+    smartcar_nav2::CostmapFootprintSweepResult::kLethalOverlap);
+  EXPECT_EQ(
+    smartcar_nav2::staticKeepoutMaskFootprintPathSweep(
+      &mask, "odom_combined", path({pose(0.0, -0.007, kPFinishYaw)}), kOptions),
+    smartcar_nav2::StaticKeepoutMaskSweepResult::kOccupiedOrUnknown);
 }
 
 TEST(CostmapFootprintSweep, TreatsOnlyPhysicalOrUnknownCellsAsBlocked)

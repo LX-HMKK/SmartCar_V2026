@@ -345,6 +345,7 @@ def dynamic_manifest():
                     "goals": [
                         {
                             "id": "entry",
+                            "task": "nav",
                             "direction": "forward",
                             "goal_profile": "standard",
                             "heading_mode": "locked",
@@ -364,6 +365,7 @@ def dynamic_manifest():
                     "goals": [
                         {
                             "id": "reverse_a",
+                            "task": "via",
                             "direction": "reverse",
                             "goal_profile": "standard",
                             "heading_mode": "locked",
@@ -377,6 +379,7 @@ def dynamic_manifest():
                         },
                         {
                             "id": "reverse_b",
+                            "task": "loop",
                             "direction": "reverse",
                             "goal_profile": "standard",
                             "heading_mode": "locked",
@@ -465,6 +468,9 @@ def _single_goal_result(goal):
 def _through_poses_result(stage):
     segment_id, direction, goals = stage
     heading_mode = goals[-1]["heading_mode"]
+    terminal_task = goals[-1]["task"]
+    reverse_return = VALIDATION._is_reverse_return_terminal(
+        direction, heading_mode, terminal_task)
     minimum, maximum = (-0.10, -0.02) if direction == "reverse" else (0.02, 0.10)
     return {
         "id": "through_poses[{}]".format(
@@ -476,15 +482,19 @@ def _through_poses_result(stage):
         "goal_ids": [goal["id"] for goal in goals],
         "goal_profiles": [goal["goal_profile"] for goal in goals],
         "behavior_tree": VALIDATION._through_poses_behavior_tree(
-            direction, heading_mode),
+            direction, heading_mode, terminal_task),
         "waypoint_count": len(goals),
         "outcome": "succeeded",
         "status": VALIDATION.SUCCEEDED_STATUS,
         "goal_checker": VALIDATION._goal_checker(
-            direction, "standard", heading_mode
+            direction, "standard", heading_mode, reverse_return
         ),
-        "xy_goal_tolerance_m": 0.35 if heading_mode == "free" else 0.12,
-        "yaw_goal_tolerance_rad": None if heading_mode == "free" else 0.25,
+        "xy_goal_tolerance_m": (
+            0.15 if reverse_return else (
+                0.35 if heading_mode == "free" else 0.12)),
+        "yaw_goal_tolerance_rad": (
+            0.15 if reverse_return else (
+                None if heading_mode == "free" else 0.25)),
         "position_observer_margin_m": (
             VALIDATION.POSITION_OBSERVER_MARGIN_M),
         "yaw_observer_margin_rad": VALIDATION.YAW_OBSERVER_MARGIN_RAD,
@@ -542,7 +552,6 @@ def manifest_from_waypoint_snapshot(snapshot):
                         {
                             key: copy.deepcopy(value)
                             for key, value in goal.items()
-                            if key != "task"
                         }
                         for goal in goals
                     ],
@@ -654,6 +663,32 @@ class SimResultValidationTests(unittest.TestCase):
         self.assertEqual(
             VALIDATION.validate_manifest(
                 manifest, 199.0, NAV_ONLY_WAYPOINTS), [])
+
+        self.assertEqual(
+            manifest["results"][1]["behavior_tree"],
+            "navigate_through_poses_reverse_locked_sim_"
+            "w_replanning_and_recovery.xml",
+        )
+        returned = manifest["results"][2]
+        self.assertEqual(
+            returned["behavior_tree"],
+            "navigate_through_poses_reverse_return_sim_"
+            "w_replanning_and_recovery.xml",
+        )
+        self.assertEqual(returned["goal_checker"], "return_goal_checker")
+        self.assertEqual(returned["xy_goal_tolerance_m"], 0.15)
+        self.assertEqual(returned["yaw_goal_tolerance_rad"], 0.15)
+
+        returned["goal_checker"] = "reverse_goal_checker"
+        returned["xy_goal_tolerance_m"] = 0.35
+        returned["yaw_goal_tolerance_rad"] = 0.50
+        errors = VALIDATION.validate_manifest(manifest, 199.0, NAV_ONLY_WAYPOINTS)
+        self.assertTrue(any("goal_checker" in error for error in errors))
+        self.assertTrue(any("xy_goal_tolerance_m" in error for error in errors))
+        self.assertTrue(any("yaw_goal_tolerance_rad" in error for error in errors))
+        returned["goal_checker"] = "return_goal_checker"
+        returned["xy_goal_tolerance_m"] = 0.15
+        returned["yaw_goal_tolerance_rad"] = 0.15
 
         manifest["inputs"]["waypoints_file"]["sha256"] = "b" * 64
         hash_errors = VALIDATION.validate_manifest(

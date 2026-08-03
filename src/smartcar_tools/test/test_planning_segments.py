@@ -3,6 +3,7 @@ from dataclasses import replace
 import math
 from pathlib import Path
 import sys
+import threading
 import unittest
 from unittest import mock
 
@@ -36,6 +37,7 @@ from smartcar_tools.route_preflight import (  # noqa: E402
     preflight_route,
 )
 import smartcar_tools.route_preflight as route_preflight_module  # noqa: E402
+from smartcar_tools.waypoint_drag_editor import DragEditor  # noqa: E402
 
 
 GEOMETRY_FILE = PACKAGE_ROOT / "config" / "routes" / "field_geometry.yaml"
@@ -79,6 +81,43 @@ def mission_waypoints():
         waypoint("return_corridor", "corridor", 1.5, 1.5),
         waypoint("p_finish", "return", 0.0, 0.0),
     )
+
+
+class DragEditorDeletionTests(unittest.TestCase):
+    def test_deleting_a_through_point_removes_its_model_and_keeps_route_valid(self):
+        document, loaded = load_waypoint_document(NAV_ONLY_FILE)
+        editor = DragEditor.__new__(DragEditor)
+        editor._waypoints = list(loaded)
+        editor._segments = list(load_planning_segments(document, loaded))
+        editor._history = []
+        editor._selected_segment = 2
+        editor._selected_through = 1
+        editor._selected = next(
+            index
+            for index, waypoint in enumerate(editor._waypoints)
+            if waypoint.id == "via_3"
+        )
+        editor._lock = threading.Lock()
+        editor._set_route_status = mock.Mock()
+        editor._build_route_panel = mock.Mock()
+        editor._mark_route_changed = mock.Mock()
+        editor._publish_markers = mock.Mock()
+
+        editor._remove_selected_through(None)
+
+        self.assertNotIn("via_3", [item.id for item in editor._waypoints])
+        self.assertEqual(editor._segments[2].through_ids, ("via_1",))
+        self.assertIsNone(editor._selected)
+        self.assertIsNone(editor._selected_through)
+        self.assertEqual(len(editor._history), 1)
+        self.assertEqual(
+            validate_planning_segments(editor._segments, editor._waypoints),
+            tuple(editor._segments),
+        )
+        route = materialize_route(editor._waypoints, editor._segments)
+        self.assertEqual(validate_waypoints(route), route)
+        editor._mark_route_changed.assert_called_once_with(rebuild_panel=True)
+        editor._publish_markers.assert_called_once_with()
 
 
 class PlanningSegmentTests(unittest.TestCase):

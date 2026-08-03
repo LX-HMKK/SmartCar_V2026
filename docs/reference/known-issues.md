@@ -1,7 +1,7 @@
 # 已知问题与避坑指南
 
 > 源文件：`CLAUDE.md` → 本文件（低频查阅，为 CLAUDE.md 减负）
-> 最后更新：2026-08-02
+> 最后更新：2026-08-03
 
 ## Ubuntu 本机 Gazebo 仿真
 
@@ -27,12 +27,16 @@
 
 ## 导航与运动
 
-- **Ackermann 终点兜圈**：无法原地旋转。`xy_goal_tolerance=0.25, yaw_goal_tolerance=0.50` 已修复。
-- **P→A 紧右弯跟踪尚未通过（2026-08-03）**：当前 `nav_only.yaml` 的后两段有必要的倒车
-  `via` 约束，但 P→A 本身仍没有额外经过点。该段的历史全局路径为
-  `4.270 m / 3.276 m = 1.303`，不是大绕圈；RPP 在高位紧右弯从路径左侧收敛后越过中心并
-  触及右侧 `50 mm` 保护包络，故障安全停车。不得放宽右侧保护或向 P→A 增加点位掩盖问题；
-  待实施该弯道的非对称横向反馈后再做完整 Gazebo 复验。
+- **Ackermann 终点兜圈**：无法原地旋转。第三段回 P 使用专用
+  `return_goal_checker`（`xy_goal_tolerance=0.15`、`yaw_goal_tolerance=0.15`），
+  避免在 P 点外 0.32 m 提前完成；C1 保持原倒车到达包络。
+- **P→A 前进碰撞恢复（2026-08-03）**：历史上 RPP 在高位紧右弯触及右侧
+  `50 mm` 保护包络后，精确仿真树的内层 `FollowPath` recovery 只清 local costmap 并重发
+  旧路径，导致控制器反复碰撞而没有及时取得新路径。现已移除该旧路径重试：碰撞或 patience
+  超时会直接进入外层 recovery，依次清 local/global costmap、重新 `ComputePathToPose`，再
+  重新跟随。两次定向 P→A Gazebo 运行均成功，末端位置误差均为 `0.102 m`，航向误差分别为
+  `0.085 rad`、`0.073 rad`；第二次明确记录了碰撞超时、双 costmap 清理和新路径后成功到达。
+  前进段不执行短退。该证据只覆盖 P→A 定向运行，完整三阶段路线仍未复验，不得标记为全路线通过。
 - **0.30 m/s 运动异常未定因**：原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版"IntegrationClock 导致 EKF pose/速度冲突"的推断已撤回。现已消除 EKF 非零 TF 等待、降低 BT tick 负载并关闭 RF2O 逐帧 INFO；复测前仍按 0.15 m/s 已验证上限管理，详见 `docs/review/odometry-speed-analysis.md`。
 - **倒车导航实现 (2026-08-03)**：QR→VLM 段必须倒车。QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。倒车多目标允许普通 `via` 后接一个作为末端、锁定航向的 `reverse_handoff`，并使用 reverse-locked ThroughPoses 树；不再使用旧的 `1.60` 人工 edge-detour 筛选，路径可行性由 Nav2 的代价地图和阿克曼约束决定。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线仿真和实体倒车仍需复测。
 - **方向门倒车转向翻转 (2026-07-24)**：用户在实体车上观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
@@ -41,7 +45,9 @@
 
 - **Nav2 参数链路 (2026-07-23 修复)**：Nav2 1.1.20 (TROS Humble) 的 `RewrittenYaml` chain 存在 bug——`ParameterFile` 输出被 YDLIDAR 驱动参数覆盖，导致 `controller_server` 加载默认 DWB 而非 RPP。修复方案：`CMakeLists.txt` 自动生成 `nav2_params_fixed.yaml`（BT 路径硬编码），`navigation_launch.py` 直接使用该文件。任何对 `nav2_params.yaml` 的修改会在 `colcon build` 时自动同步到 fixed 文件。不可手动创建/编辑 `nav2_params_fixed.yaml`。
 - **Nav2 启动入口收敛**：`navigation_launch.py` 直接启动 Nav2 节点，默认使用构建生成的 `nav2_params_fixed.yaml`。航点由任务节点加载；旧的 `use_waypoint_follower`、BT XML 覆盖和 Nav2 航点文件入口均不存在。需要仿真覆盖时仅传入已解析的 `params_overlay_file`。
-- **行为树已移除 backup/wait recovery (2026-07-23)**：两个 BT XML 文件不再包含 `BackUp` 和 `Wait` 恢复动作，仅保留 `ClearEntireCostmap` + 重规划。阿克曼底盘不可引入原地旋转或后退恢复。
+- **行为树已移除 backup/wait recovery (2026-07-23)**：前进树不包含 `BackUp`、`Wait`、Spin
+  或直接倒退恢复；前进碰撞经 local/global `ClearEntireCostmap` 后重新规划。仅反向规划候选在
+  清图后仍穷尽时，才可在完整足迹检查通过后执行一次受限的 `AckermannReverseRetreat`。
 
 ## ROS2 生命周期与运维
 

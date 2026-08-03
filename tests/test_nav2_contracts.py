@@ -345,6 +345,7 @@ class TestNav2Contracts(unittest.TestCase):
                 "goal_checker",
                 "precise_goal_checker",
                 "reverse_goal_checker",
+                "return_goal_checker",
                 "transit_goal_checker",
                 "recovery_goal_checker",
             ],
@@ -368,6 +369,12 @@ class TestNav2Contracts(unittest.TestCase):
             controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.35)
         self.assertAlmostEqual(
             controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.50)
+        returned = controller["return_goal_checker"]
+        self.assertEqual(
+            returned["plugin"], "nav2_controller::SimpleGoalChecker")
+        self.assertAlmostEqual(returned["xy_goal_tolerance"], 0.15)
+        self.assertAlmostEqual(returned["yaw_goal_tolerance"], 0.15)
+        self.assertIs(returned["stateful"], False)
         transit = controller["transit_goal_checker"]
         self.assertEqual(
             transit["plugin"], "nav2_controller::PositionGoalChecker"

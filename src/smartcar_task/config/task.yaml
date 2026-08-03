@@ -17,6 +17,7 @@ task_node:
     through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
     reverse_through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_w_replanning_and_recovery.xml"
     reverse_locked_through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml"
+    reverse_return_through_poses_behavior_tree: "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/behavior_trees/navigate_through_poses_reverse_return_w_replanning_and_recovery.xml"
     direction_service_timeout_sec: 0.15
     direction_lease_timeout_sec: 0.50
     direction_prepare_timeout_sec: 1.0

@@ -88,6 +88,12 @@ REAL_REVERSE_BT_FILES = (
     / "config"
     / "behavior_trees"
     / "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
+    ROOT
+    / "src"
+    / "smartcar_nav2"
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
 )
 SIM_REVERSE_BT_FILES = (
     ROOT
@@ -114,6 +120,12 @@ SIM_REVERSE_BT_FILES = (
     / "config"
     / "behavior_trees"
     / "navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml",
+    ROOT
+    / "src"
+    / "smartcar_nav2"
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_return_sim_w_replanning_and_recovery.xml",
 )
 PACKAGE_XML = SIM / "package.xml"
 
@@ -1344,6 +1356,28 @@ class SimulationContractTests(unittest.TestCase):
         self.assertEqual(sim_compute.attrib["planner_id"], "GridBased")
         self.assertEqual(sim_follow.attrib["controller_id"], "FollowPath")
         self.assertEqual(sim_follow.attrib["goal_checker_id"], "precise_goal_checker")
+        # A controller collision must escape directly to the outer recovery,
+        # which clears both costmaps before ComputePathToPose is ticked again.
+        # Retrying FollowPath after only a local clear would send the old
+        # blackboard path back to RPP and exhaust controller patience first.
+        self.assertIsNone(
+            root.find('.//RecoveryNode[@name="FollowPreciseSimPath"]')
+        )
+        recovery = root.find(
+            './/RecoveryNode[@name="NavigatePreciseSimRecovery"]'
+        )
+        self.assertIsNotNone(recovery)
+        recovery_children = list(recovery)
+        self.assertEqual(len(recovery_children), 2)
+        recovery_clear = recovery_children[1]
+        self.assertEqual(recovery_clear.tag, "Sequence")
+        self.assertEqual(
+            [child.attrib.get("service_name") for child in recovery_clear],
+            [
+                "local_costmap/clear_entirely_local_costmap",
+                "global_costmap/clear_entirely_global_costmap",
+            ],
+        )
         for custom_tag in (
             "ComputeFreeHeadingPathToPose",
             "RecordFollowPath",
@@ -1502,6 +1536,11 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn(
             '"through_poses_reverse_locked_behavior_tree": (\n'
             '                bt_reverse_locked_through_poses)',
+            launch,
+        )
+        self.assertIn(
+            '"through_poses_reverse_return_behavior_tree": (\n'
+            '                bt_reverse_return_through_poses)',
             launch,
         )
 

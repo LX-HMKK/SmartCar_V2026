@@ -179,6 +179,66 @@ inline void mapToWorld(
     std::sin(origin_yaw) * local_x + std::cos(origin_yaw) * local_y;
 }
 
+inline bool footprintIntersectsCostmapCell(
+  const geometry_msgs::msg::PoseStamped & pose,
+  const nav2_msgs::msg::Costmap & costmap,
+  const CostmapFootprintSweepOptions & options,
+  std::size_t map_x,
+  std::size_t map_y)
+{
+  const double footprint_yaw = tf2::getYaw(pose.pose.orientation);
+  const double costmap_yaw = tf2::getYaw(costmap.metadata.origin.orientation);
+  if (!finite(footprint_yaw) || !finite(costmap_yaw)) {
+    return true;
+  }
+
+  double cell_x = 0.0;
+  double cell_y = 0.0;
+  mapToWorld(costmap, map_x, map_y, cell_x, cell_y);
+  if (!finite(cell_x) || !finite(cell_y)) {
+    return true;
+  }
+
+  // Test the padded vehicle OBB against the complete occupied cell exactly.
+  // A half-cell-diagonal expansion would reject a body that only passes near
+  // a cell corner, even though the vehicle and the filled grid cell do not
+  // overlap.
+  const double footprint_axis_x_x = std::cos(footprint_yaw);
+  const double footprint_axis_x_y = std::sin(footprint_yaw);
+  const double footprint_axis_y_x = -footprint_axis_x_y;
+  const double footprint_axis_y_y = footprint_axis_x_x;
+  const double cell_axis_x_x = std::cos(costmap_yaw);
+  const double cell_axis_x_y = std::sin(costmap_yaw);
+  const double cell_axis_y_x = -cell_axis_x_y;
+  const double cell_axis_y_y = cell_axis_x_x;
+  const double cell_half_extent = static_cast<double>(costmap.metadata.resolution) * 0.5;
+  const double delta_x = cell_x - pose.pose.position.x;
+  const double delta_y = cell_y - pose.pose.position.y;
+  const std::array<std::pair<double, double>, 4> axes = {{
+      {footprint_axis_x_x, footprint_axis_x_y},
+      {footprint_axis_y_x, footprint_axis_y_y},
+      {cell_axis_x_x, cell_axis_x_y},
+      {cell_axis_y_x, cell_axis_y_y},
+    }};
+
+  for (const auto & axis : axes) {
+    const double footprint_projection =
+      options.half_length_m * std::abs(footprint_axis_x_x * axis.first +
+      footprint_axis_x_y * axis.second) +
+      options.half_width_m * std::abs(footprint_axis_y_x * axis.first +
+      footprint_axis_y_y * axis.second);
+    const double cell_projection = cell_half_extent * (
+      std::abs(cell_axis_x_x * axis.first + cell_axis_x_y * axis.second) +
+      std::abs(cell_axis_y_x * axis.first + cell_axis_y_y * axis.second));
+    if (std::abs(delta_x * axis.first + delta_y * axis.second) >
+      footprint_projection + cell_projection)
+    {
+      return false;
+    }
+  }
+  return true;
+}
+
 enum class FootprintBoundsResult
 {
   kInside,
@@ -252,13 +312,13 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
   const double cosine = std::cos(yaw);
   const double sine = std::sin(yaw);
   const double resolution = static_cast<double>(costmap.metadata.resolution);
-  // A cell's centre can sit outside the vehicle while its area still overlaps
-  // it. Inflate by the cell half-diagonal to make the grid test conservative.
-  const double cell_radius = resolution * 0.70710678118654752440;
+  // Search the true vehicle AABB and one neighbouring cell in each direction.
+  // The extra cells make an edge contact visible to the exact OBB test below;
+  // they do not expand the vehicle's collision geometry.
   const double extent_x = options.half_length_m * std::abs(cosine) +
-    options.half_width_m * std::abs(sine) + cell_radius;
+    options.half_width_m * std::abs(sine);
   const double extent_y = options.half_length_m * std::abs(sine) +
-    options.half_width_m * std::abs(cosine) + cell_radius;
+    options.half_width_m * std::abs(cosine);
 
   std::array<std::pair<double, double>, 4> corners = {{
       {pose.pose.position.x - extent_x, pose.pose.position.y - extent_y},
@@ -282,14 +342,26 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
     min_y = std::min(min_y, local_y);
     max_y = std::max(max_y, local_y);
   }
-  const auto first_x = static_cast<std::size_t>(std::max(
+  auto first_x = static_cast<std::size_t>(std::max(
     0.0, std::floor(min_x / resolution)));
-  const auto first_y = static_cast<std::size_t>(std::max(
+  auto first_y = static_cast<std::size_t>(std::max(
     0.0, std::floor(min_y / resolution)));
-  const auto last_x = static_cast<std::size_t>(std::min(
+  auto last_x = static_cast<std::size_t>(std::min(
     static_cast<double>(costmap.metadata.size_x - 1U), std::floor(max_x / resolution)));
-  const auto last_y = static_cast<std::size_t>(std::min(
+  auto last_y = static_cast<std::size_t>(std::min(
     static_cast<double>(costmap.metadata.size_y - 1U), std::floor(max_y / resolution)));
+  if (first_x > 0U) {
+    --first_x;
+  }
+  if (first_y > 0U) {
+    --first_y;
+  }
+  if (last_x + 1U < costmap.metadata.size_x) {
+    ++last_x;
+  }
+  if (last_y + 1U < costmap.metadata.size_y) {
+    ++last_y;
+  }
   if (first_x > last_x || first_y > last_y) {
     setDiagnosticResult(diagnostic, CostmapFootprintSweepResult::kInvalidInput);
     return CostmapFootprintSweepResult::kInvalidInput;
@@ -302,17 +374,12 @@ inline CostmapFootprintSweepResult footprintPoseIsClear(
       if (costmap.data[index] < options.lethal_cost_threshold) {
         continue;
       }
-      double world_x = 0.0;
-      double world_y = 0.0;
-      mapToWorld(costmap, map_x, map_y, world_x, world_y);
-      const double delta_x = world_x - pose.pose.position.x;
-      const double delta_y = world_y - pose.pose.position.y;
-      const double vehicle_x = delta_x * cosine + delta_y * sine;
-      const double vehicle_y = -delta_x * sine + delta_y * cosine;
-      if (std::abs(vehicle_x) <= options.half_length_m + cell_radius &&
-        std::abs(vehicle_y) <= options.half_width_m + cell_radius)
+      if (footprintIntersectsCostmapCell(pose, costmap, options, map_x, map_y))
       {
         if (diagnostic != nullptr) {
+          double world_x = 0.0;
+          double world_y = 0.0;
+          mapToWorld(costmap, map_x, map_y, world_x, world_y);
           diagnostic->has_blocking_cell = true;
           diagnostic->blocking_cell_x = map_x;
           diagnostic->blocking_cell_y = map_y;

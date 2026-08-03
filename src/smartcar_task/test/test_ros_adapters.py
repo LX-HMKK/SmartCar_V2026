@@ -364,6 +364,8 @@ class RosAdapterTests(unittest.TestCase):
             reverse_through_poses_behavior_tree="/tmp/reverse-through.xml",
             reverse_locked_through_poses_behavior_tree=(
                 "/tmp/reverse-locked-through.xml"),
+            reverse_return_through_poses_behavior_tree=(
+                "/tmp/reverse-return-through.xml"),
         )
         goals = (
             Waypoint(
@@ -437,6 +439,49 @@ class RosAdapterTests(unittest.TestCase):
         ]
         self.assertEqual(len(prepare), 2)
         self.assertEqual(prepare[1].direction, 2)
+
+        return_goals = (
+            Waypoint(
+                frame_id="odom_combined",
+                position=(3.5, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="via",
+                direction="reverse",
+                id="return_via",
+            ),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(4.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="return",
+                direction="reverse",
+                id="p_finish",
+                heading_mode="locked",
+            ),
+        )
+        returned = navigator.navigate_through(
+            return_goals,
+            reverse_direction=True,
+        )
+
+        self.assertTrue(returned.success, returned.status)
+        self.assertEqual(
+            received_goals[2][:2],
+            ([3.5, 4.0], "/tmp/reverse-return-through.xml"),
+        )
+        prepare = [
+            lease for name, lease in direction_guard.calls if name == "prepare"
+        ]
+        self.assertEqual(len(prepare), 3)
+        self.assertEqual(prepare[2].direction, 2)
+        self.assertEqual(
+            navigator._through_behavior_tree(
+                reverse_direction=True,
+                terminal_heading_locked=False,
+                terminal_is_return=True,
+            ),
+            "/tmp/reverse-through.xml",
+        )
 
         nonterminal_handoff = navigator.navigate_through(
             (

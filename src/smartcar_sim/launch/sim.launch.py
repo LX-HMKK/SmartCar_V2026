@@ -349,6 +349,10 @@ def generate_launch_description():
         pkg_nav2, "config", "behavior_trees",
         "navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml",
     ])
+    bt_reverse_return_through_poses = PathJoinSubstitution([
+        pkg_nav2, "config", "behavior_trees",
+        "navigate_through_poses_reverse_return_sim_w_replanning_and_recovery.xml",
+    ])
 
     active_nav2_overlay = None
     active_nav2_params = None
@@ -603,6 +607,8 @@ def generate_launch_description():
             "through_poses_reverse_behavior_tree": bt_reverse_through_poses,
             "through_poses_reverse_locked_behavior_tree": (
                 bt_reverse_locked_through_poses),
+            "through_poses_reverse_return_behavior_tree": (
+                bt_reverse_return_through_poses),
             "use_through_poses": use_through_poses_lc,
             "nav2_params_file": active_nav2_params_file,
             "nav2_params_overlay_file": active_nav2_overlay_file,

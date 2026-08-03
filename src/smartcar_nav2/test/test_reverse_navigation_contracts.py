@@ -56,6 +56,12 @@ REVERSE_LOCKED_THROUGH_POSES_BT_FILE = (
     / "behavior_trees"
     / "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml"
 )
+REVERSE_RETURN_THROUGH_POSES_BT_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml"
+)
 
 
 class TestReverseNavigationContracts(unittest.TestCase):
@@ -189,6 +195,31 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertEqual(reverse["xy_goal_tolerance"], forward["xy_goal_tolerance"])
         self.assertEqual(reverse["yaw_goal_tolerance"], forward["yaw_goal_tolerance"])
         self.assertIs(reverse["stateful"], False)
+
+    def test_reverse_return_tree_isolated_from_the_c1_arrival_envelope(self):
+        controller = self.params["controller_server"]["ros__parameters"]
+        self.assertIn("return_goal_checker", controller["goal_checker_plugins"])
+        returned = controller["return_goal_checker"]
+        self.assertEqual(returned["plugin"], "nav2_controller::SimpleGoalChecker")
+        self.assertAlmostEqual(returned["xy_goal_tolerance"], 0.15)
+        self.assertAlmostEqual(returned["yaw_goal_tolerance"], 0.15)
+        self.assertIs(returned["stateful"], False)
+
+        root = ElementTree.parse(REVERSE_RETURN_THROUGH_POSES_BT_FILE).getroot()
+        compute = root.find(".//ComputeReverseFreeHeadingPathThroughPoses")
+        self.assertIsNotNone(compute)
+        self.assertAlmostEqual(
+            float(compute.attrib["goal_position_tolerance"]), 0.15)
+        self.assertAlmostEqual(float(compute.attrib["goal_yaw_tolerance"]), 0.15)
+        follow = root.find(".//RecordFollowPath")
+        self.assertIsNotNone(follow)
+        self.assertEqual(follow.attrib["controller_id"], "ReverseHandoff")
+        self.assertEqual(follow.attrib["goal_checker_id"], "return_goal_checker")
+        self.assert_reverse_retreat_contract(
+            root,
+            "ComputeReverseFreeHeadingPathThroughPoses",
+            "reverse_planner_unreachable",
+        )
 
     def test_through_poses_removes_passed_goals_on_every_bt_tick(self):
         cases = (

@@ -328,6 +328,7 @@ class RosNavigator:
         through_poses_behavior_tree="",
         reverse_through_poses_behavior_tree="",
         reverse_locked_through_poses_behavior_tree="",
+        reverse_return_through_poses_behavior_tree="",
     ):
         self._node = node
         self._client = ActionClient(
@@ -374,6 +375,8 @@ class RosNavigator:
             reverse_through_poses_behavior_tree).strip()
         self._reverse_locked_through_poses_behavior_tree = str(
             reverse_locked_through_poses_behavior_tree).strip()
+        self._reverse_return_through_poses_behavior_tree = str(
+            reverse_return_through_poses_behavior_tree).strip()
         self._navigation_timeout_sec = _positive_finite(
             "navigation_timeout_sec", navigation_timeout_sec)
         self._goal_response_timeout_sec = _positive_finite(
@@ -417,6 +420,7 @@ class RosNavigator:
             self._through_poses_behavior_tree
             or self._reverse_through_poses_behavior_tree
             or self._reverse_locked_through_poses_behavior_tree
+            or self._reverse_return_through_poses_behavior_tree
         ):
             clients.append(self._through_client)
         for client in clients:
@@ -478,7 +482,10 @@ class RosNavigator:
             )
         try:
             behavior_tree = self._through_behavior_tree(
-                reverse_direction, is_heading_locked(goals[-1]))
+                reverse_direction,
+                is_heading_locked(goals[-1]),
+                goals[-1].task == "return",
+            )
             goal = NavigateThroughPoses.Goal()
             goal.poses = [self._pose_stamped(waypoint) for waypoint in goals]
             goal.behavior_tree = behavior_tree
@@ -486,8 +493,13 @@ class RosNavigator:
             return OperationResult(False, f"navigation_config:{error}")
         return self._navigate_goal(goal, self._through_client, reverse_direction)
 
-    def _through_behavior_tree(self, reverse_direction, terminal_heading_locked):
-        if reverse_direction and terminal_heading_locked:
+    def _through_behavior_tree(
+        self, reverse_direction, terminal_heading_locked, terminal_is_return=False
+    ):
+        if reverse_direction and terminal_heading_locked and terminal_is_return:
+            behavior_tree = self._reverse_return_through_poses_behavior_tree
+            direction = "reverse_return"
+        elif reverse_direction and terminal_heading_locked:
             behavior_tree = self._reverse_locked_through_poses_behavior_tree
             direction = "reverse_locked"
         elif reverse_direction:
@@ -1284,6 +1296,12 @@ class TaskNode(Node):
             "config/behavior_trees/"
             "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
         )
+        self.declare_parameter(
+            "reverse_return_through_poses_behavior_tree",
+            "/root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/"
+            "config/behavior_trees/"
+            "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
+        )
         self.declare_parameter("direction_service_timeout_sec", 0.08)
         self.declare_parameter("direction_lease_timeout_sec", 0.25)
         self.declare_parameter("direction_prepare_timeout_sec", 1.0)
@@ -1405,6 +1423,8 @@ class TaskNode(Node):
             self.get_parameter("reverse_through_poses_behavior_tree").value,
             self.get_parameter(
                 "reverse_locked_through_poses_behavior_tree").value,
+            self.get_parameter(
+                "reverse_return_through_poses_behavior_tree").value,
         )
         self._vision = RosVision(self, self._io_group)
         self._localization = RosLocalization(

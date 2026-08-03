@@ -122,11 +122,19 @@ bash scripts/local_waypoint_editor.sh
 倒车。`via` 是普通无朝向经过点；第二段的 C1 是锁定航向的 `reverse_handoff`，因此它必须是
 该倒车 `NavigateThroughPoses` 动作的最后一个目标，运行时选择
 `navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml`。前序点必须都是普通
-reverse `via`，不能把 `reverse_handoff` 放在中间，也不能把 `precise` 混进该动作。最新 P→A
-复验的全局路径长 `4.270 m`、弦长 `3.276 m`、倍率 `1.303`，不含
-大绕圈；但执行在高位紧右弯的横向反馈过冲到右侧保护包络，约行驶 `1.587 m` 后停在
-`(0.533, 1.255)`，距 A `2.609 m`。因此路线仍未通过，不能通过增加经过点、放宽保护包络
-或把 Gazebo 结果写成实体车辆验收来规避该问题。
+reverse `via`，不能把 `reverse_handoff` 放在中间，也不能把 `precise` 混进该动作。第三段的
+`p_finish` 是锁定航向的 `task: return`，选择
+`navigate_through_poses_reverse_return_sim_w_replanning_and_recovery.xml`，并使用专用
+`return_goal_checker`（`0.15 m / 0.15 rad`）；它不继承 C1 的宽松到达包络。
+反向候选和短退仍经过完整车体扫掠；栅格碰撞使用车辆 OBB 与完整 cell 的精确相交测试，避免
+P 点南侧仅贴近 cell 角落的真实净空被半对角近似误拒绝，同时实际相交仍会 fail-closed。
+
+P→A 使用精确前进树。RPP 碰撞或 controller patience 超时时，`FollowPath` 会直接进入外层
+recovery：清 local/global costmap、重新 `ComputePathToPose`，再发送新的控制器路径；不能先清
+local costmap 后重发旧 `{path}`。2026-08-03 的两次定向 P→A 运行均完成，位置误差均为
+`0.102 m`，航向误差为 `0.085 rad` 与 `0.073 rad`；其中一次实际记录了碰撞超时、双 costmap
+清理和新路径后的成功到达。前进段不执行短退，短退只属于反向规划候选穷尽后的受限恢复。
+这些结果不等同于三阶段完整路线通过，更不构成实体车辆验收。
 
 运行路线会让 Gazebo 模型运动：
 
