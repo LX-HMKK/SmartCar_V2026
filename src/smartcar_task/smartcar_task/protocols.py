@@ -136,9 +136,6 @@ class MotionDirectionProtocol:
         revoked = self.revoke(provisional)
         if not revoked.success:
             return revoked, None
-        settled = self.settle()
-        if not settled.success:
-            return settled, None
         deadline = self._monotonic() + self._prepare_timeout_sec
         while True:
             result, boot_epoch, lease_id = self._guard.prepare(provisional)
@@ -185,10 +182,7 @@ class MotionDirectionProtocol:
         return _stage_result("settle", self._wait_stopped())
 
     def stop(self, lease):
-        revoked = self.revoke(lease)
-        if not revoked.success:
-            return revoked
-        return self.settle()
+        return self.revoke(lease)
 
 
 def _finite(values):

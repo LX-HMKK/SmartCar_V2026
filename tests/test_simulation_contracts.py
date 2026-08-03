@@ -1139,8 +1139,8 @@ class SimulationContractTests(unittest.TestCase):
             launch,
         )
         self.assertIn("write_merged_nav2_parameters(", launch)
-        self.assertIn('"params_file": str(params_path)', launch)
-        self.assertIn('"params_overlay_file": ""', launch)
+        self.assertIn('"nav2_params_file": str(params_path)', launch)
+        self.assertIn('"nav2_params_overlay_file": ""', launch)
         self.assertIn('"lifecycle_manager_delay_sec": "6.0"', launch)
         self.assertIn('"autostart": "false"', launch)
         self.assertIn('executable="nav2_lifecycle_startup.py"', launch)

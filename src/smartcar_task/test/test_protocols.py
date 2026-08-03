@@ -153,7 +153,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertTrue(result.success, result.status)
         self.assertEqual(
             [name for name, _value in calls],
-            ["stop", "settled", "prepare"],
+            ["stop", "prepare"],
         )
         provisional = calls[0][1]
         self.assertEqual(provisional.direction, MOTION_REVERSE)
@@ -170,8 +170,7 @@ class ProtocolTests(unittest.TestCase):
         self.assertEqual(
             [name for name, _value in calls],
             [
-                "stop", "settled", "prepare", "activate", "renew",
-                "stop", "settled",
+                "stop", "prepare", "activate", "renew", "stop",
             ],
         )
         for name, identity in calls[3:6]:

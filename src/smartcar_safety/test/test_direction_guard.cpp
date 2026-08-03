@@ -146,17 +146,17 @@ TEST(DirectionGuardTest, FirstMotionCandidateStartsTheCandidateWatchdog) {
   EXPECT_EQ(guard.status(), "fault_candidate_timeout");
 }
 
-TEST(DirectionGuardTest, ReverseLeaseFlipsAngularSignOnceForCandidateAndReplay) {
+TEST(DirectionGuardTest, ReverseLeasePreservesAngularSignForCandidateAndReplay) {
   DirectionGuard guard(test_config(), 42);
   const auto identity = prepare_and_activate(
       guard, MotionDirection::Reverse, 1, uuid(1), 0.0);
   EXPECT_EQ(guard.on_candidate(command(-0.12, 0.2), 0.15),
-            command(-0.12, -0.2));
-  EXPECT_EQ(guard.evaluate(0.16), command(-0.12, -0.2));
+            command(-0.12, 0.2));
+  EXPECT_EQ(guard.evaluate(0.16), command(-0.12, 0.2));
 
   EXPECT_EQ(guard.on_candidate(command(-0.12, -0.3), 0.17),
-            command(-0.12, 0.3));
-  EXPECT_EQ(guard.evaluate(0.18), command(-0.12, 0.3));
+            command(-0.12, -0.3));
+  EXPECT_EQ(guard.evaluate(0.18), command(-0.12, -0.3));
   EXPECT_TRUE(guard.renew(identity, 0.20).success);
 
   const auto tiny_positive = guard.on_candidate(command(0.00005, 0.2), 0.21);

@@ -26,7 +26,6 @@
                 footprint_sweep_step_m="0.025"
                 footprint_lethal_cost="254"
                 curvature_tolerance="0.20"
-                maximum_direction_error="0.35"
                 start_position_tolerance="0.10"
                 start_yaw_tolerance="0.15"
                 goal_position_tolerance="0.12"

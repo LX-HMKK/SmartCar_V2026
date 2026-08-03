@@ -4,16 +4,6 @@
     <!-- The P-to-A geometry has a direct 1.00x feasible Dubins path. Limit
          measured travel to one modest avoidance arc; a controller that starts
          orbiting must fail/replan instead of completing a large circle. -->
-    <OdomDistanceBudget
-        goal="{goal}"
-        odom_topic="/odom_combined"
-        odom_frame="odom_combined"
-        robot_base_frame="base_footprint"
-        max_distance_ratio="1.40"
-        distance_slack_m="0.40"
-        max_odom_step_m="0.50"
-        odom_timeout_sec="0.50"
-        initial_odom_wait_sec="1.00">
       <!-- One clear/replan retry is enough for a transient scan; more retries
            create repeated Ackermann arcs and can turn a local failure into a
            large loop. -->
@@ -22,9 +12,6 @@
           <LatchSuccess name="LatchPreciseFreeHeadingPathToPose">
             <RateController hz="0.5">
               <RecoveryNode number_of_retries="1" name="ComputePreciseFreeHeadingPathToPose">
-                <!-- The shared real-car tree must never inject the P-only
-                     Gazebo departure connector. The simulator uses a copied
-                     tree with this opt-in enabled after its own wiring. -->
                 <ComputeFreeHeadingPathToPose
                     goal="{goal}"
                     path="{path}"
@@ -39,7 +26,6 @@
                     local_tracking_cross_track_error_m="0.10"
                     local_tracking_horizon_m="0.50"
                     local_tracking_lethal_cost="254"
-                    maximum_direction_error="0.15"
                     departure_connector_enabled="false"
                     departure_connector_radius_margin_m="0.28"
                     departure_connector_maximum_active_radius_m="0.50"
@@ -66,6 +52,5 @@
           <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
         </Sequence>
       </RecoveryNode>
-    </OdomDistanceBudget>
   </BehaviorTree>
 </root>

@@ -412,8 +412,8 @@ def generate_launch_description():
             ),
             launch_arguments={
                 "use_sim_time": "true",
-                "params_file": str(params_path),
-                "params_overlay_file": "",
+                "nav2_params_file": str(params_path),
+                "nav2_params_overlay_file": "",
                 # Let the verified helper below issue STARTUP only after the
                 # lifecycle manager has created and warmed its Fast DDS
                 # response readers. Autostart can race controller plugin

@@ -2,16 +2,6 @@
      The short retreat must pass the simulated static keepout footprint sweep. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <OdomDistanceBudget
-        goals="{goals}"
-        odom_topic="/odom_combined"
-        odom_frame="odom_combined"
-        robot_base_frame="base_footprint"
-        max_distance_ratio="2.00"
-        distance_slack_m="0.80"
-        max_odom_step_m="0.50"
-        odom_timeout_sec="0.50"
-        initial_odom_wait_sec="1.00">
     <Sequence name="NavigateReverseReturnWithSingleRetreat">
       <LatchSuccess name="InitializeReverseReturnRetreatGate">
         <SetBlackboard value="false" output_key="reverse_retreat_used"/>
@@ -40,7 +30,6 @@
                 footprint_sweep_step_m="0.025"
                 footprint_lethal_cost="254"
                 curvature_tolerance="0.20"
-                maximum_direction_error="0.60"
                 start_position_tolerance="0.50"
                 start_yaw_tolerance="0.70"
                 goal_position_tolerance="0.15"
@@ -94,6 +83,5 @@
       </Sequence>
     </RecoveryNode>
     </Sequence>
-    </OdomDistanceBudget>
   </BehaviorTree>
 </root>

@@ -878,15 +878,12 @@ class RosNavigator:
                     return OperationResult(False, "direction_stale_generation")
                 if self._guard_stopped_generation == generation:
                     return OperationResult(True, "stopped")
-            result = self._motion_protocol.settle()
-            with self._condition:
-                if generation == self._goal_generation:
-                    if result.success:
-                        self._guard_stopped_generation = generation
-                    else:
-                        self._poisoned = True
-                    self._condition.notify_all()
-            return result
+                # Stop revokes the direction lease and makes the command gate
+                # output zero immediately. EKF velocity is not a reliable
+                # terminal condition for the next navigation action.
+                self._guard_stopped_generation = generation
+                self._condition.notify_all()
+        return OperationResult(True, "stopped")
 
     def _stop_motion(self, generation):
         revoked = self._revoke_motion(generation)

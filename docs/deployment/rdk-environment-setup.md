@@ -17,6 +17,50 @@ source ~/source_env.sh
 
 不要再叠加 source `/userdata/dev_ws/install/setup.bash`。官方源码已经 vendor 化到本仓库，并统一在 `/root/ros2_ws` 构建，重复 overlay 可能加载旧包。
 
+### USB 有线直连（RNDIS）
+
+RDK 的 USB Device 网口使用静态地址，不提供 DHCP。本机通过 USB 连接后，RDK 侧
+`usb0` 为 `192.168.128.10/24`；本机应使用同网段的不同地址。当前开发机已保存以下
+NetworkManager 配置，正常插线后等待数秒即可：
+
+```bash
+ping 192.168.128.10
+ssh root@192.168.128.10
+```
+
+若未自动连接，激活已保存的连接：
+
+```bash
+nmcli connection up '有线连接 5'
+```
+
+若更换主机或该连接被删除，先用 `nmcli device status` 找到 RNDIS 对应的有线连接名，再将
+该连接改为静态地址（本机当前使用 `192.168.128.100`，不得填写 `192.168.128.10`）：
+
+```bash
+nmcli connection modify '有线连接 5' \
+  ipv4.method manual \
+  ipv4.addresses 192.168.128.100/24 \
+  ipv4.gateway '' \
+  ipv4.never-default yes \
+  ipv6.method disabled
+nmcli connection up '有线连接 5'
+```
+
+`ipv4.never-default yes` 很重要：USB 直连只用于 RDK 网段，不能抢占本机 Wi-Fi 的默认路由。
+
+诊断时，以下特征表示 USB 网卡驱动正常，而无 IPv4 通常只是误设为 DHCP：
+
+```bash
+lsusb -t                 # 应显示 rndis_host
+ip -brief addr           # 应显示 RNDIS 网卡的 192.168.128.100/24
+nmcli device status      # 不应长期停在“正在获取 IP 配置”
+```
+
+在本机 2026-08-03 的已验证设备中，USB 设备为 `0525:a4a2 Linux-USB Ethernet/RNDIS Gadget`，
+内核驱动为 `rndis_host`。驱动已绑定但 NetworkManager 长期等待 DHCP 时，不是 RNDIS 驱动故障；
+按上述静态地址配置后，再测试 `ping 192.168.128.10`。
+
 已确认硬件：
 
 | 设备 | 接口 | 已验证状态 |
@@ -191,6 +235,19 @@ C1/VLM -> `via_1` -> `via_3` -> P。它明确标记 `calibrated: false`，仿真
 `NavigateThroughPoses`，不使用 `FollowWaypoints`。`reverse_handoff` 只允许作为倒车多目标段
 最后一个锁定航向目标。`validate_waypoints()` 会拒绝全正向或方向越界的 YAML。
 
+### 6.1 纯导航实车记录（2026-08-03）
+
+同一 7 点路线已先在本机 Gazebo 完整通过：P→A、A→`via_2`→C1、C1→`via_1`→`via_3`→P
+分别为 `13.62 s`、`31.29 s`、`35.07 s`，三段均为 `succeeded`。随后在 RDK
+`172.16.24.66` 上使用正式 `nav_only.yaml` 完成同样三段纯导航实车运行：
+P→A `12.06 s`、A→C1 `30.95 s`、C1→P `32.26 s`，任务终态为 `mission_completed`，
+车辆回到 P 点。A→C1 首次自由航向候选因 costmap 新鲜度失败，现有清图重规划后成功；
+没有发生控制器掉线、命令超时或导航段间中止。
+
+该记录只覆盖无相机、无二维码、无 VLM 的 `task: nav` 路线，因此正式 `nav_only.yaml` 标记为
+`calibrated: true`。语义路线 `default_waypoints.yaml` 仍保持 `calibrated: false`；五项默认运动门禁
+和完整语义任务验收状态均未因这次纯导航运行改变。
+
 倒车使用单一 DUBIN planner 和专用 BT：插件从 TF 获取实际起点，把起点/目标 yaw 临时加 π 后规划，再恢复路径 yaw；路径必须 frame、端点、四元数、反向投影、无 cusp 和曲率全部合规。随后动作 UUID 绑定的方向租约只允许负 `linear.x` 通过后置方向门。这里的保证是“严格倒车，否则完整零输出”，不是“实车路线已经通过”。
 
 速度链和唯一所有者：
@@ -208,7 +265,7 @@ smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
 bash /root/nav_test.sh
 ```
 
-脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但固定设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，没有自动发车选项。它不授予五项运动门禁，且当前 YAML 仍为 `calibrated: false`，所以此时 `start` 会被拒绝。完成对应实测、现场标定并显式满足门禁后，才可人工 reset、解除急停、start。运行配置的 `minimum_turning_radius` 使用保守的 `0.22 m`，线速度已与 Gazebo 同步为 `0.30 m/s`；这不是实体速度验收。QR→VLM 实际倒车和完整赛道仍未验证，任何全路线测试均不得无人看守。
+脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但固定设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，没有自动发车选项。它使用已标定的正式 `nav_only.yaml`，但不改变其他运动门禁；仍须人工 reset、解除急停并满足运行前置条件后才可 start。运行配置的 `minimum_turning_radius` 使用保守的 `0.22 m`，线速度为 `0.30 m/s`。2026-08-03 已完成相同点位的纯导航实车全路线记录；QR→VLM 实际倒车、媒体服务和完整五子任务仍未验证，任何全路线测试均不得无人看守。
 
 只允许把仓库根目录的 `scripts/nav_test.sh` 部署为 `/root/nav_test.sh`。任何旧 RDK 副本中会自动解除急停或调用 start 的脚本都不得恢复或执行。历史的 `scripts/safe_start.sh`、`scripts/deploy/safe_start.sh`、`scripts/deploy/ros_cleanup.sh`、`scripts/verify_autostart.sh` 和 `scripts/monitor_mission.py` 已移除，不得从旧 RDK 副本恢复使用。安全确认必须直接观察下述 ROS 话题和物理状态。
 
@@ -365,11 +422,11 @@ ros2 action list | grep navigate_to_pose
 
 1. 自动化测试和无硬件 smoke 全部通过。
 2. 复核现有外参、轮速和陀螺仪标定，完成转向比例、偏置和有效转弯半径标定；如启用 RF2O，单独完成激光里程计数据质量和回退验证。
-3. 用 `waypoint_editor.launch.py` 对照官方参考层标定唯一语义路线，现场逐点复核期间保持 `calibrated: false`。
+3. 用 `waypoint_editor.launch.py` 对照官方参考层标定语义路线 `default_waypoints.yaml`，现场逐点复核期间保持 `calibrated: false`。
 4. 人工物理急停可用，车轮离地测试。
 5. 低速直线、低速转向、急停、串口断线分别验证。
 6. 先在车轮离地条件下验证正向租约只出正速度、QR→VLM 租约只出负速度以及 STOP 立即归零。
-7. 受看护地面先跑 P→QR→`via_2`→VLM，抵达 VLM 立即急停；再按 `0.30 m/s` 依次验证 P→QR、QR→`via_2`→VLM、VLM→`via_1`→`via_3`→P。
+7. 已完成纯导航 P→A、A→`via_2`→C1、C1→`via_1`→`via_3`→P 的受看护实车运行；接下来分别验证 QR、VLM 和它们之间的实际倒车。
 8. 最后进行视觉、语音和完整五子任务联调。
 
-在上述步骤完成前，软件状态只能称为“代码合同完成、待物理标定与实车验证”。
+在媒体分项和完整五子任务完成前，软件状态只能称为“纯导航实车已验证，媒体与完整任务待验证”。

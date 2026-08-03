@@ -1,4 +1,4 @@
-calibrated: false
+calibrated: true
 planning_segments:
 - id: p_to_qr
   direction: forward

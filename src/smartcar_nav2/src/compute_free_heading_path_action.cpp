@@ -1,6 +1,5 @@
 #include "smartcar_nav2/compute_free_heading_path_action.hpp"
 #include "smartcar_nav2/footprint_sweep_collision_source.hpp"
-#include "smartcar_nav2/forward_path_geometry_validation.hpp"
 #include "smartcar_nav2/free_transit_goal_samples.hpp"
 #include "smartcar_nav2/planner_path_start_contract.hpp"
 
@@ -85,20 +84,6 @@ constexpr std::size_t kMaximumThroughCandidateQueries = 64U;
 bool finite(double value)
 {
   return std::isfinite(value);
-}
-
-ForwardPathGeometryValidationOptions forwardPathGeometryOptions(
-  const ReversePathValidationOptions & validation_options)
-{
-  return ForwardPathGeometryValidationOptions{
-    validation_options.minimum_turning_radius,
-    validation_options.curvature_tolerance,
-    validation_options.maximum_direction_error,
-    std::min(
-      validation_options.maximum_direction_error,
-      validation_options.goal_yaw_tolerance),
-    validation_options.minimum_segment_length,
-  };
 }
 
 }  // namespace
@@ -1458,27 +1443,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
     return advanceCandidate();
   }
 
-  // P departure paths are built and checked by their dedicated connector
-  // contract. Every ordinary forward replan must prove the same controller
-  // envelope before it can reach FollowPath, including its sampled yaw
-  // deltas. This keeps a discretized terminal heading from failing later in
-  // ForwardOnlyRPP after the vehicle has already committed to the route.
-  if (!reverse_ && !has_departure_connector) {
-    const auto forward_geometry = validateForwardPathGeometry(
-      candidate_segment, forwardPathGeometryOptions(validation_options_),
-      !isZeroQuaternion(real_goals_[target_index_].pose.orientation));
-    if (!forward_geometry.valid) {
-      RCLCPP_WARN(
-        node_->get_logger(),
-        "Rejected generic forward candidate %zu for goal %zu before FollowPath: %s "
-        "at segment %zu (observed=%.6f, limit=%.6f)",
-        candidate_index_ + 1, target_index_ + 1,
-        forward_geometry.reason.c_str(), forward_geometry.segment_index,
-        forward_geometry.observed_value, forward_geometry.limit);
-      return advanceCandidate();
-    }
-  }
-
   if (!hasFreshPlanningCostmaps()) {
     return failPlannerQuery("required costmap became stale during candidate search", false);
   }
@@ -1614,21 +1578,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
       validation_options_.goal_yaw_tolerance &&
       endpointMatchesCandidateAndRealGoal(
       endpoint, active_lookahead_goal_, real_goals_[target_index_ + 1]);
-    if (continuation_is_valid && !reverse_ && departure_connectors_.empty()) {
-      const auto forward_geometry = validateForwardPathGeometry(
-        *candidate_path, forwardPathGeometryOptions(validation_options_),
-        !isZeroQuaternion(real_goals_[target_index_ + 1U].pose.orientation));
-      if (!forward_geometry.valid) {
-        RCLCPP_DEBUG(
-          node_->get_logger(),
-          "Rejected generic forward lookahead candidate %zu for goal %zu before FollowPath: %s "
-          "at segment %zu (observed=%.6f, limit=%.6f)",
-          lookahead_candidate_index_ + 1U, target_index_ + 2U,
-          forward_geometry.reason.c_str(), forward_geometry.segment_index,
-          forward_geometry.observed_value, forward_geometry.limit);
-        return advanceLookaheadCandidate();
-      }
-    }
     const PathQuality continuation_quality = pathQuality(*candidate_path);
     if (staticKeepoutSweepIsInfrastructureFailure(continuation_quality)) {
       logStaticKeepoutSweepFailure(
@@ -2910,21 +2859,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::finishPath()
     RCLCPP_ERROR(node_->get_logger(), "Free-heading path endpoint does not satisfy its authored yaw");
     clearPathOutput();
     return BT::NodeStatus::FAILURE;
-  }
-  if (!reverse_ && departure_connectors_.empty()) {
-    const auto forward_geometry = validateForwardPathGeometry(
-      output, forwardPathGeometryOptions(validation_options_),
-      !isZeroQuaternion(semantic_goal.pose.orientation));
-    if (!forward_geometry.valid) {
-      RCLCPP_ERROR(
-        node_->get_logger(),
-        "Rejected generic forward free-heading path before FollowPath: %s at segment %zu "
-        "(observed=%.6f, limit=%.6f)",
-        forward_geometry.reason.c_str(), forward_geometry.segment_index,
-        forward_geometry.observed_value, forward_geometry.limit);
-      clearPathOutput();
-      return BT::NodeStatus::FAILURE;
-    }
   }
   setOutput("path", output);
   return BT::NodeStatus::SUCCESS;

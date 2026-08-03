@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run a bounded forward circle through the normal SmartCar motion chain."""
+"""Run a bounded steering circle through the normal SmartCar motion chain."""
 
 import argparse
 import csv
@@ -29,6 +29,7 @@ from smartcar_tools.steering_calibration import (
 
 
 MOTION_FORWARD = 1
+MOTION_REVERSE = 2
 RENEW_PERIOD_SEC = 0.10
 SERVICE_TIMEOUT_SEC = 1.0
 
@@ -42,15 +43,17 @@ def quaternion_yaw(quaternion):
 
 
 class SteeringCircleDrive(Node):
-    """Record a ground-circle run while holding a forward direction lease."""
+    """Record a ground-circle run while holding a direction lease."""
 
-    def __init__(self, angle, speed, duration, out_path, rate, wheelbase):
+    def __init__(self, angle, speed, duration, out_path, rate, wheelbase,
+                 direction):
         super().__init__("steering_circle_drive")
         qos = QoSProfile(history=HistoryPolicy.KEEP_LAST, depth=10)
+        signed_speed = speed if direction == MOTION_FORWARD else -speed
         self._command = Twist()
-        self._command.linear.x = speed
+        self._command.linear.x = signed_speed
         self._command.angular.z = angular_velocity_for_steering(
-            speed, angle, wheelbase)
+            signed_speed, angle, wheelbase)
         self._cmd_pub = self.create_publisher(Twist, "/cmd_vel_nav", qos)
         self._odom_sub = self.create_subscription(
             Odometry, "/odom", self._on_odom, qos)
@@ -66,7 +69,7 @@ class SteeringCircleDrive(Node):
             StopMotion, "/smartcar/direction_guard/stop")
 
         self._angle = angle
-        self._speed = speed
+        self._speed = signed_speed
         self._duration = duration
         self._out_path = Path(out_path)
         self._rate = rate
@@ -74,6 +77,7 @@ class SteeringCircleDrive(Node):
         self._last_odom = None
         self._last_imu = None
         self._identity = None
+        self._direction = direction
 
     def _on_odom(self, message):
         self._last_odom = message
@@ -114,7 +118,7 @@ class SteeringCircleDrive(Node):
 
     def _prepare_motion(self):
         request = PrepareMotion.Request()
-        request.direction = MOTION_FORWARD
+        request.direction = self._direction
         request.generation = max(1, time.monotonic_ns())
         request.action_uuid = self._new_action_uuid()
         response = self._call(self._prepare_client, request, "prepare")
@@ -229,11 +233,14 @@ class SteeringCircleDrive(Node):
 def parse_arguments(args=None):
     parser = argparse.ArgumentParser(
         description=(
-            "Drive a bounded forward arc for steering-radius calibration."))
+            "Drive a bounded arc for steering-radius calibration."))
     parser.add_argument("--angle", type=float, required=True,
                         help="signed steering angle in radians")
     parser.add_argument("--speed", type=float, default=0.15,
-                        help="forward speed in m/s (maximum 0.15)")
+                        help="speed magnitude in m/s (maximum 0.15)")
+    parser.add_argument("--direction", choices=("forward", "reverse"),
+                        default="forward",
+                        help="motion direction for the direction lease")
     parser.add_argument("--duration", type=float, default=20.0,
                         help="run duration in seconds (maximum 60)")
     parser.add_argument("--out", default="/tmp/steering_circle.csv",
@@ -271,7 +278,8 @@ def main(args=None):
     rclpy.init(args=[])
     node = SteeringCircleDrive(
         parsed.angle, parsed.speed, parsed.duration, parsed.out, parsed.rate,
-        parsed.wheelbase)
+        parsed.wheelbase,
+        MOTION_FORWARD if parsed.direction == "forward" else MOTION_REVERSE)
     try:
         node.run()
     except KeyboardInterrupt:

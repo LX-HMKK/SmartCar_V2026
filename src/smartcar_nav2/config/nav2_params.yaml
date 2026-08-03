@@ -74,7 +74,6 @@ bt_navigator:
       - nav2_is_battery_charging_condition_bt_node
       - smartcar_compute_free_heading_path_action_bt_node
       - smartcar_ackermann_reverse_retreat_action_bt_node
-      - smartcar_odom_distance_budget_action_bt_node
       - smartcar_record_follow_path_action_bt_node
 
 bt_navigator_navigate_through_poses_rclcpp_node:
@@ -135,7 +134,6 @@ bt_navigator_navigate_through_poses_rclcpp_node:
       - nav2_goal_checker_selector_bt_node
       - smartcar_compute_free_heading_path_action_bt_node
       - smartcar_ackermann_reverse_retreat_action_bt_node
-      - smartcar_odom_distance_budget_action_bt_node
       - smartcar_record_follow_path_action_bt_node
 
 bt_navigator_navigate_to_pose_rclcpp_node:
@@ -269,8 +267,8 @@ controller_server:
       # projecting beyond the strict handoff pose into the outer keepout.
       time_steps: 60
       model_dt: 0.05
-      batch_size: 1000
-      iteration_count: 2
+      batch_size: 100
+      iteration_count: 1
       vx_std: 0.18
       vy_std: 0.0
       wz_std: 0.60

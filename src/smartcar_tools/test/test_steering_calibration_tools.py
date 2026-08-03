@@ -70,6 +70,9 @@ class SteeringCalibrationCommandContracts(unittest.TestCase):
             with self.subTest(service=service):
                 self.assertIn(f'"/smartcar/direction_guard/{service}"', source)
         self.assertIn("MOTION_FORWARD = 1", source)
+        self.assertIn("MOTION_REVERSE = 2", source)
+        self.assertIn('choices=("forward", "reverse")', source)
+        self.assertIn("request.direction = self._direction", source)
         self.assertIn("--yes", source)
         self.assertIn("finally:\n            self._stop_motion()", source)
         self.assertIn("self._publish_zero()", source)

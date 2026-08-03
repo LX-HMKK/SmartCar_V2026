@@ -28,7 +28,6 @@ from launch.actions import (
 )
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
-from launch_ros.descriptions import ParameterFile
 CORE_LIFECYCLE_NODES = (
     'controller_server',
     'planner_server',
@@ -90,8 +89,8 @@ def _navigation_node_actions(
     context,
     *,
     use_sim_time,
-    params_file,
-    params_overlay_file,
+    nav2_params_file,
+    nav2_params_overlay_file,
     use_respawn,
     log_level,
 ):
@@ -101,13 +100,13 @@ def _navigation_node_actions(
     The base file is therefore generated at build time, while a launch caller
     may add a small, fully-resolved overlay for simulation-only behavior.
     """
-    parameters = [ParameterFile(
-        params_file.perform(context),
-        allow_substs=True,
-    )]
-    overlay_path = params_overlay_file.perform(context).strip()
+    # This file is generated at build time with all BT paths resolved.  On
+    # TROS Nav2 1.1.20, wrapping it in ParameterFile can lose nested
+    # controller parameters and make controller_server fall back to DWB.
+    parameters = [nav2_params_file.perform(context)]
+    overlay_path = nav2_params_overlay_file.perform(context).strip()
     if overlay_path:
-        parameters.append(ParameterFile(overlay_path, allow_substs=True))
+        parameters.append(overlay_path)
     parameters.append({
         "use_sim_time": _as_bool(context, use_sim_time, "use_sim_time"),
     })
@@ -172,8 +171,8 @@ def generate_launch_description():
     autostart = LaunchConfiguration('autostart')
     lifecycle_manager_delay_sec = LaunchConfiguration(
         'lifecycle_manager_delay_sec')
-    params_file = LaunchConfiguration('params_file')
-    params_overlay_file = LaunchConfiguration('params_overlay_file')
+    nav2_params_file = LaunchConfiguration('nav2_params_file')
+    nav2_params_overlay_file = LaunchConfiguration('nav2_params_overlay_file')
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
 
@@ -186,15 +185,17 @@ def generate_launch_description():
         default_value='false',
         description='Use simulation (Gazebo) clock if true',
     )
-    declare_params_file_cmd = DeclareLaunchArgument(
-        'params_file',
+    declare_nav2_params_file_cmd = DeclareLaunchArgument(
+        'nav2_params_file',
         default_value=os.path.join(pkg_dir, 'config', 'nav2_params_fixed.yaml'),
         description='Resolved Nav2 parameter file for all launched nodes',
     )
-    declare_params_overlay_file_cmd = DeclareLaunchArgument(
-        'params_overlay_file',
+    declare_nav2_params_overlay_file_cmd = DeclareLaunchArgument(
+        'nav2_params_overlay_file',
         default_value='',
-        description='Optional resolved parameter overlay applied after params_file',
+        description=(
+            'Optional resolved parameter overlay applied after nav2_params_file'
+        ),
     )
     declare_autostart_cmd = DeclareLaunchArgument(
         'autostart',
@@ -222,8 +223,8 @@ def generate_launch_description():
         function=_navigation_node_actions,
         kwargs={
             'use_sim_time': use_sim_time,
-            'params_file': params_file,
-            'params_overlay_file': params_overlay_file,
+            'nav2_params_file': nav2_params_file,
+            'nav2_params_overlay_file': nav2_params_overlay_file,
             'use_respawn': use_respawn,
             'log_level': log_level,
         },
@@ -242,8 +243,8 @@ def generate_launch_description():
     launch_description = LaunchDescription()
     launch_description.add_action(stdout_linebuf_envvar)
     launch_description.add_action(declare_use_sim_time_cmd)
-    launch_description.add_action(declare_params_file_cmd)
-    launch_description.add_action(declare_params_overlay_file_cmd)
+    launch_description.add_action(declare_nav2_params_file_cmd)
+    launch_description.add_action(declare_nav2_params_overlay_file_cmd)
     launch_description.add_action(declare_autostart_cmd)
     launch_description.add_action(declare_lifecycle_manager_delay_cmd)
     launch_description.add_action(declare_use_respawn_cmd)

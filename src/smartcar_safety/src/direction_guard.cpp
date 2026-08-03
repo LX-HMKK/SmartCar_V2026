@@ -250,13 +250,6 @@ TwistComponents DirectionGuard::on_candidate(const TwistComponents &candidate,
   if (std::abs(candidate[0]) <= config_.direction_epsilon) {
     return zero_command();
   }
-  // The physical vehicle requires this reverse steering sign compensation.
-  // It encodes an empirically verified actuator convention, not an RPP fix.
-  if (direction_ == MotionDirection::Reverse) {
-    auto corrected = candidate;
-    corrected[5] = -corrected[5];
-    return corrected;
-  }
   return candidate;
 }
 
@@ -319,13 +312,6 @@ TwistComponents DirectionGuard::evaluate(double now_sec) {
   }
   if (std::abs(candidate[0]) <= config_.direction_epsilon) {
     return zero_command();
-  }
-  // The physical vehicle requires this reverse steering sign compensation.
-  // It encodes an empirically verified actuator convention, not an RPP fix.
-  if (direction_ == MotionDirection::Reverse) {
-    auto corrected = candidate;
-    corrected[5] = -corrected[5];
-    return corrected;
   }
   return candidate;
 }

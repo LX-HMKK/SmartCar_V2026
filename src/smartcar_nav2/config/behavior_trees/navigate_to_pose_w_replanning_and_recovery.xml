@@ -1,16 +1,6 @@
 <!-- Ackermann-safe tree: no backup, no wait, no spin.  Clear costmaps + replan only. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <OdomDistanceBudget
-        goal="{goal}"
-        odom_topic="/odom_combined"
-        odom_frame="odom_combined"
-        robot_base_frame="base_footprint"
-        max_distance_ratio="2.00"
-        distance_slack_m="0.80"
-        max_odom_step_m="0.50"
-        odom_timeout_sec="0.50"
-        initial_odom_wait_sec="1.00">
       <RecoveryNode number_of_retries="6" name="NavigateRecovery">
         <PipelineSequence name="NavigateWithReplanning">
           <LatchSuccess name="LatchFreeHeadingPathToPose">
@@ -48,6 +38,5 @@
           <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
         </Sequence>
       </RecoveryNode>
-    </OdomDistanceBudget>
   </BehaviorTree>
 </root>

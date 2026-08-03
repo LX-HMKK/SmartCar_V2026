@@ -12,7 +12,8 @@
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
-- 已部署的 7 点路线为 P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P 倒车，且保持 `calibrated: false`；必须现场实测后才能授权运动。
+- 已部署的 `nav_only.yaml` 已完成同一 7 点路线的受看护实车纯导航，标记为 `calibrated: true`；它仅跳过 QR/VLM 的 `task: nav` 流程。
+- 正式语义路线 `default_waypoints.yaml` 仍为 `calibrated: false`；QR/VLM、语音和完整五子任务尚未完成实体验收。
 - `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参已测量并接入；更换或重装传感器后必须重新确认。
 - 轮速、陀螺仪和转向命令比例/偏置已完成标定；运行链仍须通过车轮离地、低速地面和完整赛道复验。
 - QR→VLM 倒车仅完成软件与无底盘验证；规划与安全链采用保守 `0.22 m` 最小转弯半径，不能视为实体倒车验收。

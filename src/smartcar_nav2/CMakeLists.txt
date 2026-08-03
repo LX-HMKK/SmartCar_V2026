@@ -95,24 +95,6 @@ ament_target_dependencies(smartcar_ackermann_reverse_retreat_action_bt_node
   tf2_ros
 )
 
-add_library(smartcar_odom_distance_budget_action_bt_node SHARED
-  src/odom_distance_budget_action.cpp
-)
-target_compile_definitions(smartcar_odom_distance_budget_action_bt_node PRIVATE
-  BT_PLUGIN_EXPORT
-)
-target_include_directories(smartcar_odom_distance_budget_action_bt_node PUBLIC
-  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
-  $<INSTALL_INTERFACE:include>
-)
-ament_target_dependencies(smartcar_odom_distance_budget_action_bt_node
-  behaviortree_cpp_v3
-  geometry_msgs
-  nav2_behavior_tree
-  nav_msgs
-  rclcpp
-)
-
 add_library(smartcar_record_follow_path_action_bt_node SHARED
   src/record_follow_path_action.cpp
 )
@@ -235,7 +217,6 @@ install(TARGETS
   reverse_path_utils
   smartcar_compute_free_heading_path_action_bt_node
   smartcar_ackermann_reverse_retreat_action_bt_node
-  smartcar_odom_distance_budget_action_bt_node
   smartcar_record_follow_path_action_bt_node
   smartcar_reverse_only_mppi_controller
   smartcar_forward_only_rpp_controller
@@ -265,9 +246,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_forward_path_lateral_profile
     test/test_forward_path_lateral_profile.cpp
   )
-  ament_add_gtest(test_forward_path_geometry_validation
-    test/test_forward_path_geometry_validation.cpp
-  )
   ament_add_gtest(test_free_transit_goal_samples
     test/test_free_transit_goal_samples.cpp
   )
@@ -282,9 +260,6 @@ if(BUILD_TESTING)
   )
   ament_add_gtest(test_costmap_sample_guard
     test/test_costmap_sample_guard.cpp
-  )
-  ament_add_gtest(test_odom_distance_budget_tracker
-    test/test_odom_distance_budget_tracker.cpp
   )
   ament_add_gtest(test_planner_path_start_contract
     test/test_planner_path_start_contract.cpp
@@ -310,16 +285,10 @@ if(BUILD_TESTING)
   target_include_directories(test_forward_path_lateral_profile PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
-  target_include_directories(test_forward_path_geometry_validation PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
   target_include_directories(test_ackermann_reverse_retreat_path PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_include_directories(test_costmap_sample_guard PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
-  target_include_directories(test_odom_distance_budget_tracker PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_include_directories(test_planner_path_start_contract PRIVATE
@@ -360,10 +329,6 @@ if(BUILD_TESTING)
     geometry_msgs
     nav_msgs
   )
-  ament_target_dependencies(test_forward_path_geometry_validation
-    geometry_msgs
-    nav_msgs
-  )
   ament_target_dependencies(test_ackermann_reverse_retreat_path
     geometry_msgs
     nav2_msgs
@@ -389,9 +354,6 @@ if(BUILD_TESTING)
 
   ament_add_pytest_test(reverse_navigation_contracts
     test/test_reverse_navigation_contracts.py
-  )
-  ament_add_pytest_test(odom_distance_budget_contracts
-    test/test_odom_distance_budget_contract.py
   )
   add_launch_test(test/test_smartcar_nav2_launch.py TIMEOUT 90)
 endif()

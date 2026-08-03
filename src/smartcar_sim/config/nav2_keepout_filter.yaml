@@ -68,7 +68,7 @@ controller_server:
       wz_max: 1.3636363636363635
       vx_std: 0.18
       wz_std: 0.60
-      batch_size: 500
+      batch_size: 100
       AckermannConstraints:
         min_turning_r: 0.22
     ReverseRecovery:

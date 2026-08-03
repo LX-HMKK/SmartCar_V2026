@@ -438,7 +438,7 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertAlmostEqual(
             handoff["model_dt"], 1.0 / controller["controller_frequency"]
         )
-        self.assertEqual(handoff["iteration_count"], 2)
+        self.assertEqual(handoff["iteration_count"], 1)
         self.assertLessEqual(handoff["batch_size"], 1000)
         self.assertIs(handoff["visualize"], False)
         self.assertIs(handoff["regenerate_noises"], False)
@@ -525,7 +525,6 @@ class TestNav2Contracts(unittest.TestCase):
             "path",
             "planner_id",
             "curvature_tolerance",
-            "maximum_direction_error",
             "start_position_tolerance",
             "start_yaw_tolerance",
             "goal_position_tolerance",
@@ -537,6 +536,8 @@ class TestNav2Contracts(unittest.TestCase):
             )
         self.assertNotIn("minimum_turning_radius", regular_compute.attrib)
         self.assertNotIn("minimum_turning_radius", handoff_compute.attrib)
+        self.assertNotIn("maximum_direction_error", regular_compute.attrib)
+        self.assertNotIn("maximum_direction_error", handoff_compute.attrib)
 
         for behavior_tree in (regular, handoff):
             follow = behavior_tree.find(".//RecordFollowPath")
@@ -756,9 +757,13 @@ class TestNav2Contracts(unittest.TestCase):
     def test_navigation_launch_uses_the_requested_resolved_parameter_files(self):
         source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
 
-        self.assertIn("params_file.perform(context)", source)
-        self.assertIn("params_overlay_file.perform(context)", source)
+        self.assertIn("nav2_params_file.perform(context)", source)
+        self.assertIn("nav2_params_overlay_file.perform(context)", source)
         self.assertIn("nav2_params_fixed.yaml", source)
+        self.assertIn("parameters = [nav2_params_file.perform(context)]", source)
+        self.assertNotIn("LaunchConfiguration('params_file')", source)
+        self.assertNotIn("from launch_ros.descriptions", source)
+        self.assertNotIn("ParameterFile(", source)
 
     def test_navigation_launch_is_the_single_public_entrypoint(self):
         self.assertFalse(
@@ -844,6 +849,8 @@ class TestNav2Contracts(unittest.TestCase):
     def test_deployment_route_matches_simulation_geometry_and_restores_media_tasks(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
+        self.assertFalse(default["calibrated"])
+        self.assertTrue(nav_only["calibrated"])
         route_ids = (
             "p_start", "a_task_observe", "via_2", "c_corner_1",
             "via_1", "via_3", "p_finish",

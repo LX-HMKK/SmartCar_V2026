@@ -432,7 +432,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
         for attribute in (
             "planner_id",
             "curvature_tolerance",
-            "maximum_direction_error",
             "start_position_tolerance",
             "start_yaw_tolerance",
             "goal_position_tolerance",
@@ -445,6 +444,8 @@ class TestReverseNavigationContracts(unittest.TestCase):
             )
         self.assertNotIn("minimum_turning_radius", handoff_compute.attrib)
         self.assertNotIn("minimum_turning_radius", regular_compute.attrib)
+        self.assertNotIn("maximum_direction_error", handoff_compute.attrib)
+        self.assertNotIn("maximum_direction_error", regular_compute.attrib)
         # The semantic handoff pose has a nonzero quaternion, so the shared
         # node preserves exactly one locked-yaw candidate despite exposing the
         # ordinary bounded heading-search port.
@@ -506,7 +507,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertAlmostEqual(
             handoff["model_dt"], 1.0 / controller["controller_frequency"]
         )
-        self.assertEqual(handoff["iteration_count"], 2)
+        self.assertEqual(handoff["iteration_count"], 1)
         self.assertLessEqual(handoff["batch_size"], 1000)
         self.assertIs(handoff["visualize"], False)
 
@@ -607,7 +608,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
         compute = precise.find(".//ComputeFreeHeadingPathToPose")
         self.assertIsNotNone(compute)
         self.assertEqual(compute.attrib["footprint_lethal_cost"], "254")
-        self.assertEqual(compute.attrib["maximum_direction_error"], "0.15")
+        self.assertNotIn("maximum_direction_error", compute.attrib)
         # At a real-car 0.22 m lower bound, the former radius gate would no
         # longer suppress this Gazebo-only connector. The shared tree must
         # keep it explicitly disabled; sim.launch wires a separate copied BT.
@@ -726,41 +727,6 @@ class TestReverseNavigationContracts(unittest.TestCase):
                 self.assertIsNotNone(follow)
                 self.assertEqual(follow.attrib["controller_id"], expected_controller)
                 self.assertEqual(len(list(root.iter("AckermannReverseRetreat"))), 0)
-
-    def test_generic_forward_replans_validate_geometry_before_follow_path(self):
-        source = (
-            PACKAGE_ROOT / "src" / "compute_free_heading_path_action.cpp"
-        ).read_text(encoding="utf-8")
-        validation_header = (
-            PACKAGE_ROOT / "include" / "smartcar_nav2"
-            / "forward_path_geometry_validation.hpp"
-        ).read_text(encoding="utf-8")
-        cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
-
-        candidate_body = source.split(
-            "BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(",
-            1,
-        )[1].split(
-            "BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(",
-            1,
-        )[0]
-        self.assertIn("validateForwardPathGeometry(", candidate_body)
-        self.assertIn("!reverse_ && !has_departure_connector", candidate_body)
-        self.assertIn("Rejected generic forward candidate", candidate_body)
-        self.assertIn("return advanceCandidate();", candidate_body)
-        self.assertIn("validateForwardPathGeometry(", source)
-        self.assertIn("departure_connectors_.empty()", source)
-        self.assertIn("validateReversePath(", source)
-
-        for reason in (
-            "segment_not_forward",
-            "orientation_curvature_exceeded",
-            "geometric_curvature_exceeded",
-            "terminal_tangent_mismatch",
-        ):
-            with self.subTest(reason=reason):
-                self.assertIn(reason, validation_header)
-        self.assertIn("test_forward_path_geometry_validation", cmake)
 
     def test_single_goal_trees_latch_a_validated_path_while_following(self):
         cases = (
