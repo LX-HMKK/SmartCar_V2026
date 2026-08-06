@@ -33,6 +33,34 @@ def generate_launch_description():
             description="Start mission without an explicit Trigger request",
         ),
         DeclareLaunchArgument(
+            "navigation_test_end_segment_id",
+            default_value="",
+            description=(
+                "Run only the contiguous route prefix through this segment; "
+                "empty runs the complete route"),
+        ),
+        DeclareLaunchArgument(
+            "supervised_p_to_a_only",
+            default_value="false",
+            description=(
+                "Permit the uncalibrated pure-navigation P-to-A test only; "
+                "all motion gates still require explicit confirmation"),
+        ),
+        DeclareLaunchArgument(
+            "supervised_p_to_c1_only",
+            default_value="false",
+            description=(
+                "Permit the uncalibrated pure-navigation P-to-A-to-C1 test "
+                "only; all motion gates still require explicit confirmation"),
+        ),
+        DeclareLaunchArgument(
+            "qr_handoff_test_mode",
+            default_value="false",
+            description=(
+                "After QR handling, announce the next diagnosis-room segment "
+                "and stop before it; disabled by default"),
+        ),
+        DeclareLaunchArgument(
             "waypoints_calibrated",
             default_value="false",
             description="Allow motion only after replacing placeholder coordinates",
@@ -102,6 +130,14 @@ def generate_launch_description():
                         "laser_odometry_calibrated"),
                     "autostart_mission": LaunchConfiguration(
                         "autostart_mission"),
+                    "navigation_test_end_segment_id": LaunchConfiguration(
+                        "navigation_test_end_segment_id"),
+                    "supervised_p_to_a_only": LaunchConfiguration(
+                        "supervised_p_to_a_only"),
+                    "supervised_p_to_c1_only": LaunchConfiguration(
+                        "supervised_p_to_c1_only"),
+                    "qr_handoff_test_mode": LaunchConfiguration(
+                        "qr_handoff_test_mode"),
                     "barcode_reader_image_topic": LaunchConfiguration(
                         "barcode_reader_image_topic"),
                     "use_sim_time": LaunchConfiguration("use_sim_time"),

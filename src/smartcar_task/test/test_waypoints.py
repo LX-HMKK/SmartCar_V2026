@@ -506,9 +506,9 @@ class WaypointTests(unittest.TestCase):
         qr = waypoints[1]
         vlm = next(item for item in waypoints if item.id == "c_corner_1")
         return_waypoint = waypoints[-1]
-        self.assertEqual(qr.position, (3.127294927294929, 0.9765623265623269, 0.0))
+        self.assertEqual(qr.position, (3.025965510598539, 1.2045443727459233, 0.0))
         standoff = math.hypot(4.15 - qr.position[0], 1.35 - qr.position[1])
-        self.assertAlmostEqual(standoff, 1.08875220, delta=1.0e-6)
+        self.assertAlmostEqual(standoff, 1.13340676, delta=1.0e-6)
         self.assertGreater(standoff, 0.5)
         self.assertEqual(
             [item.id for item in waypoints],

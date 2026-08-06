@@ -175,8 +175,12 @@ controller_server:
       stateful: false
     reverse_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.35
-      yaw_goal_tolerance: 0.50
+      # C1 is a locked reverse handoff endpoint, not a transit waypoint.
+      # Keep its arrival envelope aligned with the proven precise A endpoint
+      # so the controller cannot report success at the old 0.35 m / 0.50 rad
+      # early-stop boundary.
+      xy_goal_tolerance: 0.12
+      yaw_goal_tolerance: 0.15
       stateful: false
     # The return-to-P endpoint must not inherit the broad C1 handoff envelope.
     # This keeps P at least 0.17 m closer than the observed 0.32 m early stop.
@@ -439,6 +443,15 @@ local_costmap:
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
+      # The filter is a field-rule constraint, not a localization layer.  Its
+      # mask is published in odom_combined only after the vehicle is manually
+      # reset at P, and it makes the marked prohibited zones lethal in both
+      # rolling costmaps.
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/keepout_filter_info"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -446,12 +459,23 @@ local_costmap:
         scan:
           topic: /scan
           data_type: LaserScan
+          # A rolling costmap must not retain a historical scan after the next
+          # update. Clearing rays still remove cells that disappeared from the
+          # current scan, while this prevents old observations from being
+          # replayed after a delayed sensor frame.
+          observation_persistence: 0.0
           clearing: true
           marking: true
           obstacle_max_range: 2.5
           obstacle_min_range: 0.25
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
+          # The laser frame is about 0.26 m above base_footprint.  Set the
+          # height window explicitly; Nav2's zero default rejects every scan
+          # return before the obstacle layer can feed InflationLayer.
+          min_obstacle_height: 0.05
+          max_obstacle_height: 0.50
+          inf_is_valid: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
@@ -475,6 +499,11 @@ global_costmap:
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
+      filters: ["keepout_filter"]
+      keepout_filter:
+        plugin: "nav2_costmap_2d::KeepoutFilter"
+        enabled: true
+        filter_info_topic: "/keepout_filter_info"
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
@@ -482,12 +511,18 @@ global_costmap:
         scan:
           topic: /scan
           data_type: LaserScan
+          observation_persistence: 0.0
           clearing: true
           marking: true
           obstacle_max_range: 2.5
           obstacle_min_range: 0.25
           raytrace_max_range: 3.0
           raytrace_min_range: 0.0
+          # Keep the production and simulation observation height contracts
+          # identical so the physical laser returns are marked consistently.
+          min_obstacle_height: 0.05
+          max_obstacle_height: 0.50
+          inf_is_valid: false
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true

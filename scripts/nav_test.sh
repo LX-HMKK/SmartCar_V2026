@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SmartCar 纯导航安全测试（DUBIN 虚拟倒车 + 方向门）
-# 用法: bash /root/nav_test.sh [--no-rviz]
+# 用法: bash /root/nav_test.sh [--no-rviz] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]
 # ============================================================
 set -uo pipefail
 
@@ -20,22 +20,125 @@ cd "$WORKSPACE"
 
 # ---- 参数解析 ----
 NO_RVIZ=false
+END_SEGMENT_ID=""
+RESET_ORIGIN=false
+SUPERVISED_P_TO_A=false
+SUPERVISED_P_TO_C1=false
 for arg in "$@"; do
   case "$arg" in
     --no-rviz)   NO_RVIZ=true ;;
+    --p-to-a)    END_SEGMENT_ID="p_to_qr" ;;
+    --p-to-c1)   END_SEGMENT_ID="qr_to_vlm" ;;
+    --supervised-p-to-a) SUPERVISED_P_TO_A=true ;;
+    --supervised-p-to-c1) SUPERVISED_P_TO_C1=true ;;
+    --reset-origin) RESET_ORIGIN=true ;;
     *)
       echo "未知选项: $arg"
-      echo "用法: bash /root/nav_test.sh [--no-rviz]"
+      echo "用法: bash /root/nav_test.sh [--no-rviz] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]"
       exit 1
       ;;
   esac
 done
+
+if $SUPERVISED_P_TO_A && [ "$END_SEGMENT_ID" != "p_to_qr" ]; then
+  echo "✗ --supervised-p-to-a 必须同时指定 --p-to-a"
+  exit 1
+fi
+if $SUPERVISED_P_TO_C1 && [ "$END_SEGMENT_ID" != "qr_to_vlm" ]; then
+  echo "✗ --supervised-p-to-c1 必须同时指定 --p-to-c1"
+  exit 1
+fi
+if $SUPERVISED_P_TO_A && $SUPERVISED_P_TO_C1; then
+  echo "✗ 一次只能选择一个受看护导航前缀"
+  exit 1
+fi
+if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
+  # A watched P-to-A measurement is only meaningful when the vehicle's
+  # current, manually aligned heading is made the localization origin.
+  RESET_ORIGIN=true
+fi
 
 export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
 
 banner() { echo ""; echo "=== $* ==="; }
 
 die()  { echo "✗ $*"; exit 1; }
+
+require_parameter() {
+  local node=$1
+  local parameter=$2
+  local expected=$3
+  local result
+  local attempt
+
+  for attempt in 1 2 3; do
+    # ros_cleanup restarts the CLI daemon before launch; querying that cached
+    # graph can return "Node not found" while the lifecycle nodes are active.
+    result=$(timeout 8s ros2 param get --no-daemon "$node" "$parameter" 2>&1) || true
+    if [[ "$result" == *"$expected"* ]]; then
+      echo "  ✓ $node $parameter = $expected"
+      return 0
+    fi
+    if [ "$attempt" -lt 3 ]; then
+      sleep 2
+    fi
+  done
+
+  echo "  ✗ $node 参数 $parameter 不是 $expected"
+  echo "    实际: $result"
+  return 1
+}
+
+require_topic_sample() {
+  local topic=$1
+  local message_type=$2
+
+  if ! timeout 8s ros2 topic echo --no-daemon --once --qos-reliability best_effort \
+      "$topic" "$message_type" >/dev/null 2>&1; then
+    echo "  ✗ 8 秒内未收到 $topic ($message_type)"
+    return 1
+  fi
+  echo "  ✓ 收到 $topic"
+}
+
+require_latched_topic_sample() {
+  local topic=$1
+  local message_type=$2
+
+  # The map server publishes these configuration messages once with
+  # transient-local durability. A volatile late subscriber would falsely
+  # report the already-active keepout stack as unavailable.
+  if ! timeout 8s ros2 topic echo --no-daemon --once --qos-reliability reliable \
+      --qos-durability transient_local "$topic" "$message_type" >/dev/null 2>&1; then
+    echo "  ✗ 8 秒内未收到锁存话题 $topic ($message_type)"
+    return 1
+  fi
+  echo "  ✓ 收到锁存话题 $topic"
+}
+
+verify_obstacle_avoidance() {
+  banner "避障与禁区验证"
+  local costmap
+  for costmap in /local_costmap/local_costmap /global_costmap/global_costmap; do
+    require_parameter "$costmap" "obstacle_layer.enabled" "Boolean value is: True" || return 1
+    require_parameter "$costmap" "obstacle_layer.observation_sources" "String value is: scan" || return 1
+    require_parameter "$costmap" "obstacle_layer.scan.topic" "String value is: /scan" || return 1
+    require_parameter "$costmap" "obstacle_layer.scan.observation_persistence" "Double value is: 0.0" || return 1
+    require_parameter "$costmap" "obstacle_layer.scan.min_obstacle_height" "Double value is: 0.05" || return 1
+    require_parameter "$costmap" "obstacle_layer.scan.max_obstacle_height" "Double value is: 0.5" || return 1
+    require_parameter "$costmap" "obstacle_layer.scan.inf_is_valid" "Boolean value is: False" || return 1
+    require_parameter "$costmap" "inflation_layer.enabled" "Boolean value is: True" || return 1
+    require_parameter "$costmap" "keepout_filter.enabled" "Boolean value is: True" || return 1
+    require_parameter "$costmap" "keepout_filter.filter_info_topic" "String value is: /keepout_filter_info" || return 1
+  done
+  require_topic_sample /scan sensor_msgs/msg/LaserScan || return 1
+  require_latched_topic_sample /keepout_filter_mask nav_msgs/msg/OccupancyGrid || return 1
+  require_latched_topic_sample /keepout_filter_info nav2_msgs/msg/CostmapFilterInfo || return 1
+  require_topic_sample /local_costmap/costmap_raw nav2_msgs/msg/Costmap || return 1
+  require_topic_sample /global_costmap/costmap_raw nav2_msgs/msg/Costmap || return 1
+  require_topic_sample /local_costmap/costmap nav_msgs/msg/OccupancyGrid || return 1
+  require_topic_sample /global_costmap/costmap nav_msgs/msg/OccupancyGrid || return 1
+}
 
 # ---- 1. 清理 ----
 banner "[1/6] 彻底清理"
@@ -71,6 +174,19 @@ fi
 # ---- 4. 启动系统 ----
 BANNER_MSG="DUBIN + 强制倒车，急停锁存"
 EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
+if [ -n "$END_SEGMENT_ID" ]; then
+  EXTRA_ARGS="$EXTRA_ARGS navigation_test_end_segment_id:=$END_SEGMENT_ID"
+fi
+if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
+  # The task node permits only one fixed pure-navigation prefix.  This is an
+  # explicit operator attestation for a watched field test, never a default
+  # or a full-route authorization.
+  SUPERVISED_ARG="supervised_p_to_a_only:=true"
+  if $SUPERVISED_P_TO_C1; then
+    SUPERVISED_ARG="supervised_p_to_c1_only:=true"
+  fi
+  EXTRA_ARGS="$EXTRA_ARGS $SUPERVISED_ARG waypoints_calibrated:=true extrinsics_calibrated:=true steering_calibrated:=true emergency_stop_ready:=true operator_approved:=true"
+fi
 if $NO_RVIZ; then
   VISUALIZATION_ARG="use_visualization:=false"
 else
@@ -91,7 +207,8 @@ echo "  Launch PID: $LAUNCH_PID"
 # ---- 5. 等就绪 ----
 banner "[5/6] 等待就绪"
 READY=0
-for i in $(seq 1 60); do
+READY_TIMEOUT_SEC=120
+for i in $(seq 1 $((READY_TIMEOUT_SEC / 10))); do
   if grep -q "Managed nodes are active" "$LOG" 2>/dev/null; then
     READY=1; echo "  Nav2 就绪 (${i}0s)"; break
   fi
@@ -100,9 +217,28 @@ for i in $(seq 1 60); do
   fi
   sleep 10
 done
-[ "$READY" -eq 0 ] && { echo "  ✗ 超时"; tail -30 "$LOG"; exit 1; }
+[ "$READY" -eq 0 ] && {
+  echo "  ✗ Nav2 lifecycle ${READY_TIMEOUT_SEC}s 内未全部 active"
+  tail -60 "$LOG"
+  exit 1
+}
 sleep 5
 echo "  ✓ 全部 lifecycle active"
+verify_obstacle_avoidance || die "避障感知未就绪；急停保持锁存，禁止解除急停或发车"
+
+if $RESET_ORIGIN; then
+  banner "定位原点复位"
+  RESET_RESULT=$(timeout 12s ros2 service call --no-daemon /smartcar/task/reset \
+    std_srvs/srv/Trigger "{}" 2>&1) || {
+      echo "$RESET_RESULT"
+      die "定位复位调用失败；急停保持锁存"
+    }
+  if [[ "$RESET_RESULT" != *"success=True"* ]]; then
+    echo "$RESET_RESULT"
+    die "定位复位未通过原点验证；急停保持锁存"
+  fi
+  echo "  ✓ 已将人工放置的 P 点当前位置和航向写入定位原点"
+fi
 
 # ---- 6. RViz ----
 if $NO_RVIZ; then

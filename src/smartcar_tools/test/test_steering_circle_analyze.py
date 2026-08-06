@@ -17,7 +17,10 @@ from smartcar_tools.steering_circle_analyze import (  # noqa: E402
 )
 
 
-FIELDS = ("t", "vx", "gyro_wz", "odom_wz", "x", "y", "yaw")
+FIELDS = (
+    "t", "vx", "gyro_wz", "odom_wz", "x", "y", "yaw",
+    "ekf_x", "ekf_y", "ekf_yaw",
+)
 
 
 def write_csv(path, rows, fieldnames=FIELDS):
@@ -41,6 +44,9 @@ def circle_rows(radius_m=0.5, speed_mps=0.15, count=41):
             "x": 1.0 + radius_m * math.cos(theta),
             "y": -0.4 + radius_m * math.sin(theta),
             "yaw": theta,
+            "ekf_x": 1.0 + radius_m * math.cos(theta),
+            "ekf_y": -0.4 + radius_m * math.sin(theta),
+            "ekf_yaw": theta,
         })
     return rows
 
@@ -64,6 +70,29 @@ class SteeringCircleAnalyzeTests(unittest.TestCase):
             places=6,
         )
         self.assertIn("R_gyro = 0.5000 m", format_report(analysis))
+        self.assertAlmostEqual(analysis.ekf_yaw_delta_rad, 1.2, places=6)
+        self.assertAlmostEqual(analysis.gyro_vs_odom_yaw_delta_rad, 0.0, places=6)
+        self.assertAlmostEqual(analysis.ekf_vs_odom_yaw_delta_rad, 0.0, places=6)
+
+    def test_opposing_gyro_and_ekf_yaw_is_rejected_for_navigation(self):
+        rows = circle_rows()
+        for row in rows:
+            row["gyro_wz"] *= -1.0
+            row["ekf_yaw"] *= -1.0
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "opposing.csv"
+            write_csv(path, rows)
+            analysis = analyze_csv(str(path))
+
+        self.assertTrue(analysis.ok)
+        self.assertLess(analysis.gyro_yaw_delta_rad, 0.0)
+        self.assertLess(analysis.ekf_yaw_delta_rad, 0.0)
+        self.assertTrue(
+            any("IMU and wheel" in warning for warning in analysis.warnings)
+        )
+        self.assertTrue(
+            any("EKF and wheel" in warning for warning in analysis.warnings)
+        )
 
     def test_empty_or_invalid_csv_returns_readable_error(self):
         with tempfile.TemporaryDirectory() as directory:

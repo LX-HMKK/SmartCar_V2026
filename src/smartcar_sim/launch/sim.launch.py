@@ -414,6 +414,9 @@ def generate_launch_description():
                 "use_sim_time": "true",
                 "nav2_params_file": str(params_path),
                 "nav2_params_overlay_file": "",
+                # sim.launch owns the same keepout servers itself, with a
+                # simulator-specific lifecycle/sensor readiness gate.
+                "use_keepout_filter": "false",
                 # Let the verified helper below issue STARTUP only after the
                 # lifecycle manager has created and warmed its Fast DDS
                 # response readers. Autostart can race controller plugin

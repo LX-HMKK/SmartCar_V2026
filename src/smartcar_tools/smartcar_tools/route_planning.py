@@ -1,8 +1,8 @@
-"""Versioned tuning shared by route preflight and simulation keepouts.
+"""Versioned tuning shared by route preflight and field keepout rendering.
 
 The waypoint editor deliberately does not parse Nav2's large parameter file.
 Instead this small document owns the geometry and motion constraints which both
-the editor's local preflight and the simulation keepout mask can represent.
+the editor's local preflight and the shared Nav2 keepout mask can represent.
 """
 
 from __future__ import annotations

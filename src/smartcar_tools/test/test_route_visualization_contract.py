@@ -61,6 +61,16 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
         self.assertEqual(reference["Name"], REFERENCE_NAME)
 
+    def test_navigation_scan_display_shows_only_the_newest_frame(self):
+        navigation = yaml.safe_load(NAVIGATION_RVIZ.read_text(encoding="utf-8"))
+        scan = display_by_topic(navigation, "/scan")
+
+        self.assertEqual(scan["Topic"]["Depth"], 1)
+        self.assertEqual(scan["Topic"]["Durability Policy"], "Volatile")
+        self.assertEqual(scan["Topic"]["Reliability Policy"], "Best Effort")
+        self.assertEqual(scan["Queue Size"], 1)
+        self.assertEqual(scan["Decay Time"], 0.0)
+
     def test_editor_reference_display_is_not_named_as_a_nav2_path(self):
         document = yaml.safe_load(EDITOR_RVIZ.read_text(encoding="utf-8"))
         reference = display_by_topic(document, "/smartcar/waypoint_editor/markers")

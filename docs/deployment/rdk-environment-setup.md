@@ -186,7 +186,8 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 - 已测量 `base_footprint -> base_link`：`(0.0841, 0, 0.03)`。
 - 已测量 `base_link -> laser`：`(-0.05, 0, 0.23)`，`laser_yaw=1.5708`。
 - 已测量 `base_link -> camera`：`(0.1205, 0, 0.11)`。
-- 已验证 `gyro_z_bias=0.000614` 和 `longitudinal_velocity_scale=1.03`。
+- 2026-08-05 车辆静止 60 秒、1200 样本复标后，使用
+  `gyro_z_bias=-0.00036369`；`longitudinal_velocity_scale=1.03` 保持不变。
 - 已验证转向直通配置：`steering_command_scale=1.0`、`steering_command_offset_rad=0.0`，
   `0.70 rad` 指令可到达下位机；0.7 rad 地面画圆卷尺测得 `R_min ≈ 0.20 m`。运行时
   Nav2 与路线预检使用保守的 `minimum_turning_radius=0.22 m`，不等同于完整路线验收。
@@ -224,29 +225,28 @@ operator_approved
 
 ## 6. 航点、倒车与三个媒体分项测试
 
-`default_waypoints.yaml` 使用已完成 Gazebo 验证的 7 点几何路线：P -> QR -> `via_2` ->
-C1/VLM -> `via_1` -> `via_3` -> P。它明确标记 `calibrated: false`，仿真通过和规则图坐标
-都不能替代现场实测。
+`default_waypoints.yaml` 使用 7 点语义路线：P -> QR -> `via_2` -> C1/VLM -> `via_1` ->
+`via_3` -> P。它明确标记 `calibrated: false`，仿真通过和规则图坐标都不能替代现场实测。
 
-实车语义路线与 Gazebo 专用 `nav_only.yaml` 使用同一组点位、航向、方向和
-`planning_segments`；前者在 A/C1 恢复 `qr`/`vlm` 任务，后者以 `nav` 替代它们以跳过媒体服务。
-三阶段均为 P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P 倒车。任务按
+实车语义路线与受看护纯导航 `nav_only.yaml` 共享 `planning_segments`、航点 ID、方向、goal
+profile 和除 A 外的姿态；前者的 A 为 QR 语义点，后者的 A 为 P→A 停点，二者需要分别复测。
+两份 YAML 均标记 `calibrated: false`。前者在 A/C1 恢复 `qr`/`vlm` 任务，后者以 `nav` 替代
+它们以跳过媒体服务。三阶段均为 P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P 倒车。任务按
 `planning_segments` 执行：单目标段发送 `NavigateToPose`，同向多目标段发送
 `NavigateThroughPoses`，不使用 `FollowWaypoints`。`reverse_handoff` 只允许作为倒车多目标段
 最后一个锁定航向目标。`validate_waypoints()` 会拒绝全正向或方向越界的 YAML。
 
-### 6.1 纯导航实车记录（2026-08-03）
+### 6.1 受看护纯导航现场记录（2026-08-04）
 
-同一 7 点路线已先在本机 Gazebo 完整通过：P→A、A→`via_2`→C1、C1→`via_1`→`via_3`→P
-分别为 `13.62 s`、`31.29 s`、`35.07 s`，三段均为 `succeeded`。随后在 RDK
-`172.16.24.66` 上使用正式 `nav_only.yaml` 完成同样三段纯导航实车运行：
-P→A `12.06 s`、A→C1 `30.95 s`、C1→P `32.26 s`，任务终态为 `mission_completed`，
-车辆回到 P 点。A→C1 首次自由航向候选因 costmap 新鲜度失败，现有清图重规划后成功；
-没有发生控制器掉线、命令超时或导航段间中止。
+RDK `172.16.24.164` 上的受看护记录中，三个纯导航动作均报告成功：P→A `12.10 s`、
+A→`via_2`→C1 `26.90 s`、C1→`via_1`→`via_3`→P `32.17 s`，终态为
+`mission_completed`。但操作员观察到 P→A 在完成判定前越过物理 QR/A 点；这表明定位或
+场地坐标仍需复测，不能通过放宽 goal checker 掩盖。完整证据见
+[`rdk-field-navigation-test-2026-08-04.md`](../review/rdk-field-navigation-test-2026-08-04.md)。
 
-该记录只覆盖无相机、无二维码、无 VLM 的 `task: nav` 路线，因此正式 `nav_only.yaml` 标记为
-`calibrated: true`。语义路线 `default_waypoints.yaml` 仍保持 `calibrated: false`；五项默认运动门禁
-和完整语义任务验收状态均未因这次纯导航运行改变。
+该记录只覆盖无相机、无二维码、无 VLM 的 `task: nav` 路线。测试后 `nav_only.yaml` 已恢复为
+`calibrated: false`；语义路线 `default_waypoints.yaml` 同样保持 `calibrated: false`。五项默认
+运动门禁和完整语义任务验收状态均未因这次受看护测试改变。
 
 倒车使用单一 DUBIN planner 和专用 BT：插件从 TF 获取实际起点，把起点/目标 yaw 临时加 π 后规划，再恢复路径 yaw；路径必须 frame、端点、四元数、反向投影、无 cusp 和曲率全部合规。随后动作 UUID 绑定的方向租约只允许负 `linear.x` 通过后置方向门。这里的保证是“严格倒车，否则完整零输出”，不是“实车路线已经通过”。
 
@@ -265,7 +265,7 @@ smartcar_safety -> /cmd_vel_safe + /ackermann_cmd
 bash /root/nav_test.sh
 ```
 
-脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但固定设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，没有自动发车选项。它使用已标定的正式 `nav_only.yaml`，但不改变其他运动门禁；仍须人工 reset、解除急停并满足运行前置条件后才可 start。运行配置的 `minimum_turning_radius` 使用保守的 `0.22 m`，线速度为 `0.30 m/s`。2026-08-03 已完成相同点位的纯导航实车全路线记录；QR→VLM 实际倒车、媒体服务和完整五子任务仍未验证，任何全路线测试均不得无人看守。
+脚本会清理、增量构建、启动无相机/无视觉系统并打开 RViz，但固定设置 `autostart_mission:=false` 和 `safety_emergency_stop_on_start:=true`，没有自动发车选项。它还会验证两个 costmap 的 KeepoutFilter、规则掩膜和 filter-info 服务；任一项失败都会保持急停锁存并退出。默认 `nav_only.yaml` 未标定，因而普通 `start` 会被拒绝。只有显式 `--p-to-a --supervised-p-to-a` 的受看护单段复验才会临时满足该固定前缀的门禁；它仍不解除急停、不自动发车，也不授权 C1 或全路线。运行配置的 `minimum_turning_radius` 使用保守的 `0.22 m`，线速度为 `0.30 m/s`。QR→VLM 实际倒车、媒体服务和完整五子任务仍未验证，任何路线测试均不得无人看守。
 
 只允许把仓库根目录的 `scripts/nav_test.sh` 部署为 `/root/nav_test.sh`。任何旧 RDK 副本中会自动解除急停或调用 start 的脚本都不得恢复或执行。历史的 `scripts/safe_start.sh`、`scripts/deploy/safe_start.sh`、`scripts/deploy/ros_cleanup.sh`、`scripts/verify_autostart.sh` 和 `scripts/monitor_mission.py` 已移除，不得从旧 RDK 副本恢复使用。安全确认必须直接观察下述 ROS 话题和物理状态。
 
@@ -426,7 +426,7 @@ ros2 action list | grep navigate_to_pose
 4. 人工物理急停可用，车轮离地测试。
 5. 低速直线、低速转向、急停、串口断线分别验证。
 6. 先在车轮离地条件下验证正向租约只出正速度、QR→VLM 租约只出负速度以及 STOP 立即归零。
-7. 已完成纯导航 P→A、A→`via_2`→C1、C1→`via_1`→`via_3`→P 的受看护实车运行；接下来分别验证 QR、VLM 和它们之间的实际倒车。
+7. RDK 受看护纯导航记录中的三段均报告成功，但 P→A 已观察到越过物理 QR/A 点；先完成 P→A 单段测量并修正坐标或里程计，再分别验证 QR、VLM 和它们之间的实际倒车。
 8. 最后进行视觉、语音和完整五子任务联调。
 
-在媒体分项和完整五子任务完成前，软件状态只能称为“纯导航实车已验证，媒体与完整任务待验证”。
+在媒体分项、当前坐标复验和完整五子任务完成前，软件状态只能称为“受看护纯导航有记录，媒体与完整任务待验证”。

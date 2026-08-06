@@ -187,13 +187,12 @@ class TestReverseNavigationContracts(unittest.TestCase):
             follow.attrib["goal_checker_id"], "reverse_goal_checker"
         )
 
-    def test_reverse_goal_checker_uses_the_navigation_arrival_envelope(self):
+    def test_reverse_goal_checker_uses_the_precise_c1_arrival_envelope(self):
         controller = self.params["controller_server"]["ros__parameters"]
         self.assertIn("reverse_goal_checker", controller["goal_checker_plugins"])
-        forward = controller["goal_checker"]
         reverse = controller["reverse_goal_checker"]
-        self.assertEqual(reverse["xy_goal_tolerance"], forward["xy_goal_tolerance"])
-        self.assertEqual(reverse["yaw_goal_tolerance"], forward["yaw_goal_tolerance"])
+        self.assertEqual(reverse["xy_goal_tolerance"], 0.12)
+        self.assertEqual(reverse["yaw_goal_tolerance"], 0.15)
         self.assertIs(reverse["stateful"], False)
 
     def test_reverse_return_tree_isolated_from_the_c1_arrival_envelope(self):

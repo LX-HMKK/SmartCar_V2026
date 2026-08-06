@@ -4,7 +4,7 @@
 
 ## 软件里程碑
 
-当前软件基线包含可选 RF2O、一条三阶段 7 点语义路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与 Gazebo `nav_only.yaml` 共享 P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P 倒车的点位、航向和方向；前者在 A/C1 触发 QR/VLM，后者用 `nav` 跳过媒体服务。`via` 是无朝向的普通经过约束；C1 保持锁定航向的 `reverse_handoff`，只能作为倒车多目标 `NavigateThroughPoses` 的最后一个目标。专用 BT 用虚拟航向调用唯一的 DUBIN planner，后置方向门将动作 UUID 与速度方向租约绑定。2026-07-24 的 RDK 核心包验证为 `108 tests, 0 errors, 0 failures, 0 skipped`；当前本机根合同已通过。它们不包含实体倒车、真实相机、云端 API、音频或完整赛道运动验收。
+当前软件基线包含可选 RF2O、一条三阶段 7 点语义路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与受看护纯导航 `nav_only.yaml` 共享 P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P 倒车的分段、方向、goal profile 和除 A 外的几何；前者的 A 是待标定 QR 语义点，后者的 A 是受看护 P→A 停点，二者姿态独立维护。前者在 A/C1 触发 QR/VLM，后者用 `nav` 跳过媒体服务，且两份 YAML 均保持 `calibrated: false`。`via` 是无朝向的普通经过约束；C1 保持锁定航向的 `reverse_handoff`，只能作为倒车多目标 `NavigateThroughPoses` 的最后一个目标。专用 BT 用虚拟航向调用唯一的 DUBIN planner，后置方向门将动作 UUID 与速度方向租约绑定。2026-07-24 的 RDK 核心包验证为 `108 tests, 0 errors, 0 failures, 0 skipped`；当前本机根合同已通过。它们不包含实体倒车、真实相机、云端 API、音频或完整赛道运动验收。
 
 ## 当前边界
 
@@ -12,8 +12,8 @@
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
-- 已部署的 `nav_only.yaml` 已完成同一 7 点路线的受看护实车纯导航，标记为 `calibrated: true`；它仅跳过 QR/VLM 的 `task: nav` 流程。
-- 正式语义路线 `default_waypoints.yaml` 仍为 `calibrated: false`；QR/VLM、语音和完整五子任务尚未完成实体验收。
+- `nav_only.yaml` 当前保持 `calibrated: false`；它的 A 点仅用于受看护 P→A 纯导航复验，不构成当前完整路线或语义任务验收。
+- 正式语义路线 `default_waypoints.yaml` 也保持 `calibrated: false`；其 QR/A 点须单独按现场坐标复测，QR/VLM、语音和完整五子任务尚未完成实体验收。
 - `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参已测量并接入；更换或重装传感器后必须重新确认。
 - 轮速、陀螺仪和转向命令比例/偏置已完成标定；运行链仍须通过车轮离地、低速地面和完整赛道复验。
 - QR→VLM 倒车仅完成软件与无底盘验证；规划与安全链采用保守 `0.22 m` 最小转弯半径，不能视为实体倒车验收。
@@ -30,7 +30,7 @@
 
 - RDK X5 8G，TROS ROS 2 Humble，环境入口由 `~/source_env.sh` 统一提供。
 - OriginCar 阿克曼底盘，`/odom`、`/imu/data_raw` 和可选 `/odom_laser` 经 EKF 输出 `/odom_combined`。
-- YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；实体运行不使用静态地图、AMCL 或 SLAM。仿真专用 keepout PGM 由独立 `map_server` 提供给 KeepoutFilter。
+- YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；实体运行不使用静态地图、AMCL 或 SLAM。规则场地 keepout PGM 由独立 `map_server` 提供给实体和仿真的 KeepoutFilter，作为禁行约束而非定位地图。
 - 导航固定使用单一 Smac Hybrid `DUBIN` planner；倒车 BT 只接受全程严格反向、无 cusp、曲率和端点均合规的路径。
 - 速度链为 `/cmd_vel_nav -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，错误方向或过期租约只能得到完整零输出。
 - Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
@@ -143,7 +143,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整的分段、途经点、无朝向、预检、保存和仿真同步流程见 [`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md)。
 
-无视觉导航测试使用已部署的 `/root/nav_test.sh`。脚本完成清理、增量构建、启动和 RViz 准备，但明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车：
+无视觉导航测试使用已部署的 `/root/nav_test.sh`。脚本完成清理、增量构建、启动和 RViz 准备，并在就绪前验证两个 costmap 的 KeepoutFilter、规则掩膜和 filter-info 话题；它明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车：
 
 ```bash
 ssh root@<RDK_IP>

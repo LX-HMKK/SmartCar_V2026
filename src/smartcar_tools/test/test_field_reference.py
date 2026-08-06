@@ -56,23 +56,23 @@ class TestFieldReferenceModel(unittest.TestCase):
     def test_corridor_and_ring_match_the_official_dimensions(self):
         self.assert_bounds(
             self.reference.corridor,
-            (1.5, 2.5, 1.75, 2.5),
+            (1.5, 2.5, 1.75, 2.7),
         )
         self.assert_bounds(
             self.reference.ring_outer,
-            (0.0, 4.0, 2.5, 4.15),
+            (0.0, 4.0, 2.7, 4.35),
         )
         self.assert_bounds(
             self.reference.ring_inner,
-            (0.5, 3.5, 3.0, 3.65),
+            (0.5, 3.5, 3.2, 3.85),
         )
         self.assertEqual(
             self.reference.ring_outer_outline[0],
-            type(self.reference.p_origin)(2.5, 2.5),
+            type(self.reference.p_origin)(2.5, 2.7),
         )
         self.assertEqual(
             self.reference.ring_outer_outline[-1],
-            type(self.reference.p_origin)(1.5, 2.5),
+            type(self.reference.p_origin)(1.5, 2.7),
         )
         self.assertNotEqual(
             self.reference.ring_outer_outline[0],

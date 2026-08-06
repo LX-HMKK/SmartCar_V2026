@@ -547,17 +547,33 @@ bool origincar_base::Get_Sensor_Data(rclcpp::Time & sensor_time)
       const double raw_vy = constrained_lateral_velocity(
         Odom_Trans(Receive_Data.rx[4], Receive_Data.rx[5]),
         command_mode == CommandMode::kAckermann);
+      const double raw_gyro_z =
+        Mpu6050_Data.gyros_z_data * GYROSCOPE_RATIO;
       const SensorSample calibrated = calibrate_sensor_sample(
         SensorSample(
           Odom_Trans(Receive_Data.rx[2], Receive_Data.rx[3]),
           raw_vy,
           Odom_Trans(Receive_Data.rx[6], Receive_Data.rx[7]),
-          Mpu6050_Data.gyros_z_data * GYROSCOPE_RATIO),
+          raw_gyro_z),
         sensor_calibration_);
+      const StationaryGyroBiasUpdate gyro_bias_update =
+        stationary_gyro_bias_estimator_.update(
+          raw_gyro_z * sensor_calibration_.gyro_z_scale,
+          calibrated.vx,
+          calibrated.wheel_wz,
+          Mpu6050.linear_acceleration.x,
+          Mpu6050.linear_acceleration.y,
+          Mpu6050.linear_acceleration.z);
       Robot_Vel.X = calibrated.vx;
       Robot_Vel.Y = calibrated.vy;
       Robot_Vel.Z = calibrated.wheel_wz;
-      Mpu6050.angular_velocity.z = calibrated.gyro_z;
+      Mpu6050.angular_velocity.z = gyro_bias_update.corrected_gyro_z;
+      if (gyro_bias_update.initialized) {
+        RCLCPP_INFO(
+          this->get_logger(),
+          "Stationary gyro bias locked at %.9f rad/s after 3 seconds",
+          gyro_bias_update.bias);
+      }
     } catch (const std::invalid_argument & error) {
       RCLCPP_ERROR(this->get_logger(), "Rejected sensor frame: %s", error.what());
       return false;
@@ -663,6 +679,7 @@ origincar_base::origincar_base()
   this->declare_parameter<double>("yaw_velocity_scale", 1.0);
   this->declare_parameter<double>("gyro_z_scale", 1.0);
   this->declare_parameter<double>("gyro_z_bias", 0.0);
+  this->declare_parameter<bool>("stationary_gyro_bias_enabled", true);
   this->declare_parameter<double>("steering_command_scale", 1.0);
   this->declare_parameter<double>("steering_command_offset_rad", 0.0);
   this->declare_parameter<double>("max_calibrated_steering_command_rad", 0.70);
@@ -708,6 +725,12 @@ origincar_base::origincar_base()
     this->get_parameter("steering_command_offset_rad").as_double();
   sensor_calibration_.max_calibrated_steering_command_rad =
     this->get_parameter("max_calibrated_steering_command_rad").as_double();
+
+  StationaryGyroBiasConfig stationary_gyro_bias_config;
+  stationary_gyro_bias_config.enabled =
+    this->get_parameter("stationary_gyro_bias_enabled").as_bool();
+  stationary_gyro_bias_estimator_ = StationaryGyroBiasEstimator(
+    stationary_gyro_bias_config, sensor_calibration_.gyro_z_bias);
 
   try {
     validate_sensor_calibration(sensor_calibration_);

@@ -1,5 +1,5 @@
-# Simulation-only overlay. This file is layered after smartcar_nav2's resolved
-# base parameters, so the real vehicle never loads the KeepoutFilter plugin.
+# Simulation-only overlay. The real base parameters also load the field
+# KeepoutFilter; this file only overrides simulation-specific tuning.
 # Gazebo's model uses a 0.189 m wheelbase and a 1.00 rad inner-wheel limit.
 # This permits the requested 0.22 m rear-axle radius. The real chain now uses
 # the same conservative lower bound after a measured approximately 0.20 m
@@ -154,9 +154,9 @@ local_costmap:
         # The headless GPU lidar runs at 20 Hz. Retain only the newest scan and mark
         # the buffer stale if two expected frames are missed; this makes a
         # bridge or TF failure visible instead of silently planning through it.
-        observation_persistence: 0.0
-        expected_update_rate: 0.10
         scan:
+          observation_persistence: 0.0
+          expected_update_rate: 0.10
           min_obstacle_height: 0.05
           max_obstacle_height: 0.50
           inf_is_valid: false
@@ -184,9 +184,9 @@ global_costmap:
       inflation_layer:
         inflation_radius: 0.15
       obstacle_layer:
-        observation_persistence: 0.0
-        expected_update_rate: 0.10
         scan:
+          observation_persistence: 0.0
+          expected_update_rate: 0.10
           min_obstacle_height: 0.05
           max_obstacle_height: 0.50
           inf_is_valid: false

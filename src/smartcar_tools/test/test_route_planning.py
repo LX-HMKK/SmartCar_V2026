@@ -123,8 +123,8 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertEqual((core.x_min, core.x_max, core.y_min, core.y_max), (
             1.3,
             2.7,
-            3.15,
-            3.5,
+            3.35,
+            3.70,
         ))
 
     def test_simulation_radius_is_required_and_positive(self) -> None:
@@ -211,10 +211,10 @@ class SharedRoutePlanningTests(unittest.TestCase):
         # This cell lies inside the default C core but in the lane released by
         # the narrower tuned core. The editor and generated PGM must agree.
         self.assertEqual(
-            pgm_value_at(default_pgm, default_descriptor, 1.35, 3.3), 0
+            pgm_value_at(default_pgm, default_descriptor, 1.35, 3.5), 0
         )
         self.assertEqual(
-            pgm_value_at(altered_pgm, altered_descriptor, 1.35, 3.3), 254
+            pgm_value_at(altered_pgm, altered_descriptor, 1.35, 3.5), 254
         )
 
     def test_editor_and_tune_entrypoints_accept_the_same_config_file(self) -> None:
@@ -325,7 +325,7 @@ class SharedRoutePlanningTests(unittest.TestCase):
         # one-cell expansion.
         for actual, expected in zip(
             (c_core.x_min, c_core.x_max, c_core.y_min, c_core.y_max),
-            (1.3, 2.7, 3.15, 3.50),
+            (1.3, 2.7, 3.35, 3.70),
         ):
             self.assertAlmostEqual(actual, expected)
         # The padded 0.33 x 0.19 m body clears this C-core edge while aligned

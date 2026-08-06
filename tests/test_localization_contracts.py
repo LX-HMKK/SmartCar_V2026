@@ -24,7 +24,7 @@ EXPECTED_ODOM_CONFIG = [
     False, False, False,
     False, False, False,
     True, True, False,
-    False, False, False,
+    False, False, True,
     False, False, False,
 ]
 EXPECTED_IMU_CONFIG = [

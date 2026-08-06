@@ -123,6 +123,14 @@ def _task_actions(context):
             "use_sim_time": LaunchConfiguration("use_sim_time"),
             "waypoints_file": LaunchConfiguration("waypoints_file"),
             "autostart_mission": LaunchConfiguration("autostart_mission"),
+            "navigation_test_end_segment_id": LaunchConfiguration(
+                "navigation_test_end_segment_id"),
+            "supervised_p_to_a_only": LaunchConfiguration(
+                "supervised_p_to_a_only"),
+            "supervised_p_to_c1_only": LaunchConfiguration(
+                "supervised_p_to_c1_only"),
+            "qr_handoff_test_mode": LaunchConfiguration(
+                "qr_handoff_test_mode"),
             "use_laser_odometry": LaunchConfiguration("use_laser_odometry"),
             "laser_odometry_calibrated": LaunchConfiguration(
                 "laser_odometry_calibrated"),
@@ -146,6 +154,60 @@ def _validate_configuration(context):
         if required:
             raise RuntimeError(
                 "use_laser_odometry requires: " + ",".join(required))
+    supervised_prefixes = tuple(
+        (parameter_name, segment_id)
+        for parameter_name, segment_id in (
+            ("supervised_p_to_a_only", "p_to_qr"),
+            ("supervised_p_to_c1_only", "qr_to_vlm"),
+        )
+        if _as_bool(context, parameter_name)
+    )
+    if len(supervised_prefixes) > 1:
+        raise RuntimeError("only one supervised navigation prefix may be enabled")
+    if supervised_prefixes:
+        required_true = (
+            "use_base",
+            "use_lidar",
+            "use_safety",
+            "use_nav",
+            "use_task",
+            "safety_emergency_stop_on_start",
+        )
+        required_false = (
+            "use_camera",
+            "use_vision",
+            "autostart_mission",
+        )
+        invalid = [
+            name for name in required_true if not _as_bool(context, name)
+        ]
+        invalid.extend(
+            name for name in required_false if _as_bool(context, name)
+        )
+        if (
+            LaunchConfiguration("navigation_test_end_segment_id").perform(
+                context
+            ).strip()
+            != supervised_prefixes[0][1]
+        ):
+            invalid.append(
+                "navigation_test_end_segment_id=" + supervised_prefixes[0][1]
+            )
+        if invalid:
+            raise RuntimeError(
+                "supervised_p_to_a_only requires: " + ",".join(invalid)
+            )
+    if _as_bool(context, "qr_handoff_test_mode"):
+        required = (
+            "use_nav",
+            "use_task",
+            "use_camera",
+            "use_vision",
+        )
+        missing = [name for name in required if not _as_bool(context, name)]
+        if missing:
+            raise RuntimeError(
+                "qr_handoff_test_mode requires: " + ",".join(missing))
     if not _as_bool(context, "autostart_mission"):
         return []
     required_components = (
@@ -313,6 +375,14 @@ def generate_launch_description():
         DeclareLaunchArgument("use_visualization", default_value="false"),
         DeclareLaunchArgument("use_speech", default_value="false"),
         DeclareLaunchArgument("autostart_mission", default_value="false"),
+        DeclareLaunchArgument(
+            "navigation_test_end_segment_id", default_value=""),
+        DeclareLaunchArgument(
+            "supervised_p_to_a_only", default_value="false"),
+        DeclareLaunchArgument(
+            "supervised_p_to_c1_only", default_value="false"),
+        DeclareLaunchArgument(
+            "qr_handoff_test_mode", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("nav_autostart", default_value="true"),
         DeclareLaunchArgument("safety_require_scan", default_value="true"),
@@ -391,7 +461,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "gyro_z_scale", default_value="1.0"),
         DeclareLaunchArgument(
-            "gyro_z_bias", default_value="0.000614"),
+            "gyro_z_bias", default_value="-0.00036369"),
         DeclareLaunchArgument(
             "steering_command_scale", default_value="1.0"),
         DeclareLaunchArgument(

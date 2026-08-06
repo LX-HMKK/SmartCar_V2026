@@ -12,6 +12,7 @@ LAUNCH = PACKAGE / "launch" / "smartcar_task.launch.py"
 PACKAGE_XML = PACKAGE / "package.xml"
 TASK_CONFIG = PACKAGE / "config" / "task.yaml"
 NAV_TEST = ROOT / "scripts" / "nav_test.sh"
+SYSTEM = ROOT / "src" / "smartcar_bringup" / "launch" / "smartcar_system.launch.py"
 
 
 class TaskLaunchContractTests(unittest.TestCase):
@@ -40,6 +41,9 @@ class TaskLaunchContractTests(unittest.TestCase):
         source = LAUNCH.read_text(encoding="utf-8")
         self.assertIn('"autostart_mission"', source)
         self.assertIn('default_value="false"', source)
+        self.assertIn('"navigation_test_end_segment_id"', source)
+        self.assertIn('"supervised_p_to_a_only"', source)
+        self.assertIn('"supervised_p_to_c1_only"', source)
         self.assertIn('"waypoints_calibrated"', source)
         self.assertIn('FindPackageShare("smartcar_nav2")', source)
         self.assertIn('"default_waypoints.yaml"', source)
@@ -126,20 +130,77 @@ class TaskLaunchContractTests(unittest.TestCase):
             'self._motion_gates["waypoints_calibrated"] = False', source)
         self.assertIn('"motion gates not satisfied: "', source)
 
+    def test_navigation_test_is_limited_to_a_contiguous_route_prefix(self):
+        source = NODE.read_text(encoding="utf-8")
+        self.assertIn('"navigation_test_end_segment_id"', source)
+        self.assertIn("select_segment_prefix(", source)
+
+    def test_supervised_navigation_modes_are_pure_and_prefix_limited(self):
+        source = NODE.read_text(encoding="utf-8")
+        script = NAV_TEST.read_text(encoding="utf-8")
+        self.assertIn('self.declare_parameter("supervised_p_to_a_only", False)', source)
+        self.assertIn('self.declare_parameter("supervised_p_to_c1_only", False)', source)
+        self.assertIn("SUPERVISED_P_TO_A_SEGMENT_ID", source)
+        self.assertIn("SUPERVISED_P_TO_C1_SEGMENT_ID", source)
+        self.assertIn("SUPERVISED_PREFIX_TASKS", source)
+        self.assertIn("--supervised-p-to-a", script)
+        self.assertIn("--supervised-p-to-c1", script)
+        self.assertIn('"$END_SEGMENT_ID" != "p_to_qr"', script)
+        self.assertIn('"$END_SEGMENT_ID" != "qr_to_vlm"', script)
+        self.assertIn("if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then\n  # A watched P-to-A", script)
+        self.assertIn("RESET_ORIGIN=true", script)
+        system_source = SYSTEM.read_text(encoding="utf-8")
+        self.assertIn("supervised_p_to_a_only requires:", system_source)
+        self.assertIn('"safety_emergency_stop_on_start",', system_source)
+        self.assertIn('"use_camera",', system_source)
+        self.assertIn('"use_vision",', system_source)
+
+    def test_qr_handoff_test_mode_is_opt_in_and_requires_camera_and_vision(self):
+        parameters = yaml.safe_load(
+            TASK_CONFIG.read_text(encoding="utf-8")
+        )["task_node"]["ros__parameters"]
+        task_launch = LAUNCH.read_text(encoding="utf-8")
+        system_launch = SYSTEM.read_text(encoding="utf-8")
+        self.assertIs(parameters["qr_handoff_test_mode"], False)
+        self.assertIn('self.declare_parameter("qr_handoff_test_mode", False)', NODE.read_text(encoding="utf-8"))
+        self.assertIn('"qr_handoff_test_mode"', task_launch)
+        self.assertIn('"qr_handoff_test_mode"', system_launch)
+        self.assertIn("qr_handoff_test_mode requires:", system_launch)
+        self.assertIn('"use_camera"', system_launch)
+        self.assertIn('"use_vision"', system_launch)
+
     def test_navigation_test_script_stays_latched_at_startup(self):
         source = NAV_TEST.read_text(encoding="utf-8")
         self.assertNotIn("--autostart", source)
         self.assertIn("autostart_mission:=false", source)
         self.assertIn("safety_emergency_stop_on_start:=true", source)
         self.assertNotIn("safety_emergency_stop_on_start:=false", source)
-        for gate in (
-            "waypoints_calibrated",
-            "extrinsics_calibrated",
-            "steering_calibrated",
-            "emergency_stop_ready",
-            "operator_approved",
-        ):
-            self.assertNotIn(f"{gate}:=true", source)
+        self.assertIn("if $SUPERVISED_P_TO_A", source)
+        self.assertIn("supervised_p_to_a_only:=true", source)
+
+    def test_navigation_test_script_requires_live_obstacle_avoidance(self):
+        source = NAV_TEST.read_text(encoding="utf-8")
+        self.assertIn("verify_obstacle_avoidance", source)
+        self.assertIn("obstacle_layer.enabled", source)
+        self.assertIn("obstacle_layer.observation_sources", source)
+        self.assertIn("obstacle_layer.scan.topic", source)
+        self.assertIn("obstacle_layer.scan.observation_persistence", source)
+        self.assertIn("obstacle_layer.scan.min_obstacle_height", source)
+        self.assertIn("obstacle_layer.scan.max_obstacle_height", source)
+        self.assertIn("obstacle_layer.scan.inf_is_valid", source)
+        self.assertIn("inflation_layer.enabled", source)
+        self.assertIn("ros2 param get --no-daemon", source)
+        self.assertIn("ros2 topic echo --no-daemon", source)
+        self.assertIn("/scan sensor_msgs/msg/LaserScan", source)
+        self.assertIn(
+            "/local_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
+        self.assertIn(
+            "/global_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
+        self.assertIn(
+            "/local_costmap/costmap nav_msgs/msg/OccupancyGrid", source)
+        self.assertIn(
+            "/global_costmap/costmap nav_msgs/msg/OccupancyGrid", source)
+        self.assertIn("避障感知未就绪；急停保持锁存", source)
 
     def test_vision_transport_wait_uses_the_request_deadline(self):
         source = NODE.read_text(encoding="utf-8")

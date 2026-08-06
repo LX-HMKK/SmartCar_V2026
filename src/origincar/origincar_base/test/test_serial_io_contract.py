@@ -65,15 +65,15 @@ class SerialIoContractTests(unittest.TestCase):
             source,
         )
         self.assertIn("sensor_time = pending_sensor_frame_time_;", source)
-        control = source[
-            source.index("void origincar_base::Control()"):
+        serial_tick = source[
+            source.index("void origincar_base::on_serial_tick()"):
             source.index("origincar_base::origincar_base()")
         ]
         self.assertNotIn(
             "const rclcpp::Time sensor_time = rclcpp::Node::now();",
-            control,
+            serial_tick,
         )
-        self.assertIn("Get_Sensor_Data(sensor_time)", control)
+        self.assertIn("Get_Sensor_Data(sensor_time)", serial_tick)
 
     def test_serial_diagnostics_cover_backlog_loss_and_timing(self):
         source = BASE_SOURCE.read_text(encoding="utf-8")
@@ -115,7 +115,7 @@ class SerialIoContractTests(unittest.TestCase):
                 "bool origincar_base::Get_Sensor_Data("
                 "rclcpp::Time & sensor_time)"
             ):
-            source.index("void origincar_base::Control()")
+            source.index("void origincar_base::on_serial_tick()")
         ]
         for exception in (
             "serial::IOException",

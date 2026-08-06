@@ -10,6 +10,12 @@ from smartcar_task.planning_segments import allows_reverse_handoff_through_poses
 VLM_HARD_TIMEOUT_SEC = 8.0
 VLM_FALLBACK_TEXT = "检测到人物立牌"
 TERMINAL_STATES = frozenset({"COMPLETED", "STOPPED", "FAILED"})
+RESETTABLE_STATES = TERMINAL_STATES | frozenset({"IDLE"})
+QR_HANDOFF_TEST_CONTENT = "模拟赛题数据：任务类型为诊疗区人物描述。"
+QR_HANDOFF_TEST_ANNOUNCEMENT = (
+    "下一导航：倒车经由 via_2 前往 c_corner_1 诊疗区，执行人物描述。"
+    "测试到此停止，未执行下一导航段。"
+)
 
 
 class MissionState(str, Enum):
@@ -57,6 +63,7 @@ class MissionConfig:
     qr_timeout_sec: float = 3.0
     qr_retries: int = 1
     qr_retry_delay_sec: float = 0.25
+    qr_handoff_test_mode: bool = False
     vlm_timeout_sec: float = 8.0
     vlm_prompt: str = "请描述图中人物立牌的外观和动作。"
     sleep_quantum_sec: float = 0.05
@@ -82,6 +89,8 @@ class MissionConfig:
             self.qr_retry_delay_sec,
             nonnegative=True,
         )
+        if not isinstance(self.qr_handoff_test_mode, bool):
+            raise ValueError("qr_handoff_test_mode must be a boolean")
         vlm_timeout = _finite(
             "vlm_timeout_sec", self.vlm_timeout_sec, positive=True)
         if vlm_timeout > VLM_HARD_TIMEOUT_SEC:
@@ -190,7 +199,7 @@ class Mission:
     def reset(self):
         with self._lock:
             if (
-                self._state.value not in TERMINAL_STATES
+                self._state.value not in RESETTABLE_STATES
                 or self._reserved
                 or self._running
                 or self._resetting
@@ -234,8 +243,18 @@ class Mission:
         ):
             return self._fail(generation, "navigation_server_unavailable")
 
-        require_qr = any(item.task == "qr" for item in waypoints)
-        require_vlm = any(item.task == "vlm" for item in waypoints)
+        if navigation_segments is None:
+            segments = tuple(self._navigation_segments(waypoints))
+        else:
+            segments = tuple(tuple(segment) for segment in navigation_segments)
+        require_qr = False
+        require_vlm = False
+        for segment in segments:
+            endpoint_task = segment[-1].task
+            require_qr = require_qr or endpoint_task == "qr"
+            require_vlm = require_vlm or endpoint_task == "vlm"
+            if endpoint_task == "qr" and self._config.qr_handoff_test_mode:
+                break
         if (require_qr or require_vlm) and not self._vision.wait_ready(
             require_qr,
             require_vlm,
@@ -245,10 +264,6 @@ class Mission:
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
 
-        if navigation_segments is None:
-            segments = tuple(self._navigation_segments(waypoints))
-        else:
-            segments = tuple(tuple(segment) for segment in navigation_segments)
         for segment in segments:
             invalid_segment = self._navigation_segment_error(segment)
             if invalid_segment is not None:
@@ -265,6 +280,15 @@ class Mission:
                 task_result = OperationResult(True, "ok")
             if not task_result.success:
                 return task_result
+            if endpoint_task == "qr" and self._config.qr_handoff_test_mode:
+                self._publish_value(QR_HANDOFF_TEST_ANNOUNCEMENT)
+                self._set_state(MissionState.COMPLETED, generation)
+                return OperationResult(
+                    True,
+                    "qr_handoff_test_completed",
+                    task_result.text,
+                    task_result.fallback_used,
+                )
 
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
@@ -383,6 +407,14 @@ class Mission:
                 self._config.qr_retry_delay_sec
             ):
                 return self._finish_stopped(generation)
+        if self._config.qr_handoff_test_mode:
+            self._publish_value(QR_HANDOFF_TEST_CONTENT)
+            return OperationResult(
+                True,
+                "qr_handoff_test_simulated",
+                QR_HANDOFF_TEST_CONTENT,
+                True,
+            )
         return self._fail(generation, f"qr_failed:{last_status}")
 
     def _run_vlm(self, generation):

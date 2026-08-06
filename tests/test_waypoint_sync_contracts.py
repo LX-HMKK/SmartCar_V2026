@@ -1,4 +1,4 @@
-"""Keep deployed semantic route geometry identical to the verified sim route."""
+"""Keep semantic and supervised pure-navigation route contracts aligned."""
 from pathlib import Path
 import unittest
 
@@ -16,10 +16,12 @@ def _waypoints_by_id(document):
 
 
 class WaypointSyncContracts(unittest.TestCase):
-    def test_deployment_route_uses_the_verified_simulation_geometry(self):
+    def test_routes_share_topology_and_non_a_geometry(self):
         simulation = yaml.safe_load(SIM_ROUTE.read_text(encoding="utf-8"))
         deployment = yaml.safe_load(DEPLOYMENT_ROUTE.read_text(encoding="utf-8"))
 
+        self.assertFalse(simulation["calibrated"])
+        self.assertFalse(deployment["calibrated"])
         self.assertEqual(
             deployment["planning_segments"], simulation["planning_segments"]
         )
@@ -33,9 +35,6 @@ class WaypointSyncContracts(unittest.TestCase):
                     deployment_point["frame_id"], simulation_point["frame_id"]
                 )
                 self.assertEqual(
-                    deployment_point["pose"], simulation_point["pose"]
-                )
-                self.assertEqual(
                     deployment_point["direction"],
                     simulation_point["direction"],
                 )
@@ -43,8 +42,16 @@ class WaypointSyncContracts(unittest.TestCase):
                     deployment_point["goal_profile"],
                     simulation_point["goal_profile"],
                 )
+                if waypoint_id == "a_task_observe":
+                    self.assertNotEqual(
+                        deployment_point["pose"], simulation_point["pose"]
+                    )
+                    continue
+                self.assertEqual(
+                    deployment_point["pose"], simulation_point["pose"]
+                )
 
-    def test_deployment_route_only_replaces_simulation_media_tasks(self):
+    def test_deployment_route_restores_media_tasks(self):
         simulation = yaml.safe_load(SIM_ROUTE.read_text(encoding="utf-8"))
         deployment = yaml.safe_load(DEPLOYMENT_ROUTE.read_text(encoding="utf-8"))
         simulation_tasks = {

@@ -125,7 +125,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ### 已完成
 
-- ✅ 陀螺仪零偏标定：`gyro_z_bias = 0.000614`（30 分钟稳态复标，参数链路已打通至 `smartcar_system.launch.py` 默认值）。
+- ✅ 陀螺仪零偏标定：2026-08-05 静止 60 秒、1200 样本复标为 `gyro_z_bias = -0.00036369`，参数链路已打通至 `smartcar_system.launch.py` 默认值。
 - ✅ 外参测量（URDF + 微调）：`base_footprint→base_link (0.0841,0,0.03)`、`base_link→laser (-0.05,0,0.23)`、`base_link→camera (0.1205,0,0.11)`。
 - ✅ 轮速标定验证：`longitudinal_velocity_scale = 1.03` 实测通过。
 - ✅ P → 任务发布点导航（旧路线历史实测）：0.15 m/s，5 航点，约 35s 完成，自动锁停。2D LiDAR 避障通过锥桶膨胀补偿（local inflation 0.55 / global 0.65）+ footprint 自过滤可用；这不代表当前 7 点路线已实车通过。
@@ -134,7 +134,7 @@ vendor-only 全量 lint 默认 opt-in：需要时使用 `-DSMARTCAR_ENABLE_VENDO
 
 ### 待完成
 
-- 当前 7 点 Gazebo 路线已同步至 `default_waypoints.yaml`，但仍须按现场坐标复测并完成标定；在此之前保持 `calibrated: false`。
+- `default_waypoints.yaml` 的语义 QR 点与 `nav_only.yaml` 的受看护 P→A 纯导航停点分别维护；二者仅 `a_task_observe` 姿态不同，仍共享 ID、三段拓扑、方向、profile 与其余几何。两份均保持 `calibrated: false`，须按现场坐标分别复测后才可标定。
 - ✅ 转向指令链路 (2026-08-02)：`/ackermann_cmd` 发 `steering_angle=0.7` 时下位机显示 `0.322`/`0.453` 是**固件把 `tx[7:8]` 当角速度 ω 再经自行车模型反算**，非 ROS 丢值。修复：将用户本地 Keil 工程 `HARDWARE/usartx.c` 的 `Vz_to_Akm_Angle` 改为直接透传 `return Vz;`（4 条接收路径 USART1/3/5+CAN 同时生效），实车确认 `Move_Z=0.700`。ROS 默认值已同步为 `steering_command_scale=1.0`、offset `0.0` 和 `0.70 rad` 上限；低角度线性区已核对。详见 `docs/review/steering-command-chain-fix-2026-08-02.md`。
 - ✅ 最小转弯半径：0.7 rad 最大转向画圆卷尺实测 **R_min ≈ 0.2 m**（2026-08-02）。Nav2、路线预检和安全转向链使用保守的 `0.22 m` 下限，不把实测极限直接作为规划值。
 - 车轮离地和 0.30 m/s 分段验证 QR→VLM 实际倒车，以及新 `0.22 m` 运行链的完整赛道验证；当前所有运动门禁仍为 `false`。
@@ -209,7 +209,7 @@ setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
 # 日志: tail -f /tmp/bringup.log
 ```
 
-脚本自动完成：清理旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 开 RViz。它保持软件急停锁存且任务不自动开始，也不授予五项运动门禁；当前 YAML 为 `calibrated: false`，所以 `start` 会被拒绝。完成对应实测、现场标定并显式满足门禁后，才可 reset、解除急停并 start。首次实体复验按 `0.30 m/s` 受看护地分段运行 P→QR、QR→`via_2`→VLM、VLM→`via_1`→`via_3`→P。紧急时先使用物理急停，再运行 `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh`。
+脚本自动完成：清理旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 开 RViz。它保持软件急停锁存且任务不自动开始，也不授予五项运动门禁；当前 YAML 为 `calibrated: false`，所以普通 `start` 会被拒绝。仅显式 `--p-to-a --supervised-p-to-a` 或 `--p-to-c1 --supervised-p-to-c1` 的固定纯导航前缀可在持续人工看护下临时满足门禁；它们仍不解除急停、不自动发车，也不授权完整路线。完成对应实测、现场标定并显式满足门禁后，才可 reset、解除急停并 start。首次实体复验先做 P→A 单段测量并记录误差。紧急时先使用物理急停，再运行 `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh`。
 
 ## 提交规范
 

@@ -370,9 +370,9 @@ class SimulationContractTests(unittest.TestCase):
                 self.assertEqual(
                     parameters["publish_frequency"], expected_publish_frequency)
                 obstacle_layer = parameters["obstacle_layer"]
-                self.assertEqual(obstacle_layer["observation_persistence"], 0.0)
-                self.assertEqual(obstacle_layer["expected_update_rate"], 0.10)
                 scan = obstacle_layer["scan"]
+                self.assertEqual(scan["observation_persistence"], 0.0)
+                self.assertEqual(scan["expected_update_rate"], 0.10)
                 self.assertEqual(scan["min_obstacle_height"], 0.05)
                 self.assertEqual(scan["max_obstacle_height"], 0.50)
                 self.assertIs(scan["inf_is_valid"], False)
@@ -814,7 +814,7 @@ class SimulationContractTests(unittest.TestCase):
         outer_center = visuals["c_ring_outer_center"]
         self.assertEqual(
             [float(value) for value in outer_center.findtext("pose").split()[:2]],
-            [2.0, 3.325],
+            [2.0, 3.525],
         )
         self.assertEqual(
             [
@@ -1015,13 +1015,13 @@ class SimulationContractTests(unittest.TestCase):
             "north exterior": ((0.0, 4.85), 0),
             "B corridor": ((2.0, 2.0), 254),
             "B west wall": ((0.5, 2.0), 0),
-            "C inner": ((2.0, 3.3), 0),
-            "C inner west lane": ((1.1, 3.3), 254),
-            "C inner north lane": ((2.0, 3.6), 254),
-            "C north": ((2.0, 4.4), 0),
-            "C west": ((-0.25, 3.0), 0),
-            "C east": ((4.25, 3.0), 0),
-            "C ring": ((0.7, 4.0), 254),
+            "C inner": ((2.0, 3.5), 0),
+            "C inner west lane": ((1.1, 3.5), 254),
+            "C inner north lane": ((2.0, 3.8), 254),
+            "C north": ((2.0, 4.6), 0),
+            "C west": ((-0.25, 3.2), 0),
+            "C east": ((4.25, 3.2), 0),
+            "C ring": ((0.7, 4.2), 254),
         }
         for label, ((x, y), expected) in samples.items():
             with self.subTest(label=label):

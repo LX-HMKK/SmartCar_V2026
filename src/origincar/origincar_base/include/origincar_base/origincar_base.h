@@ -175,6 +175,7 @@ private:
 	CommandMode command_mode;
 	std::unique_ptr<CommandWatchdog> command_watchdog;
 	SensorCalibration sensor_calibration_;
+	StationaryGyroBiasEstimator stationary_gyro_bias_estimator_;
 	IntegrationClock integration_clock_;
 	XorFrameStreamParser<RECEIVE_DATA_SIZE> sensor_frame_parser_;
 	LatestFrameSelector<RECEIVE_DATA_SIZE> latest_sensor_frame_selector_;

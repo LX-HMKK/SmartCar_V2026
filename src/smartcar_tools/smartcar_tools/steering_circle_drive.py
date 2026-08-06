@@ -9,6 +9,8 @@ import time
 import uuid
 
 from geometry_msgs.msg import Twist
+from lifecycle_msgs.msg import State
+from lifecycle_msgs.srv import GetState
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
@@ -32,6 +34,7 @@ MOTION_FORWARD = 1
 MOTION_REVERSE = 2
 RENEW_PERIOD_SEC = 0.10
 SERVICE_TIMEOUT_SEC = 1.0
+CONTROLLER_STATE_SERVICE = "/controller_server/get_state"
 
 
 def quaternion_yaw(quaternion):
@@ -57,6 +60,8 @@ class SteeringCircleDrive(Node):
         self._cmd_pub = self.create_publisher(Twist, "/cmd_vel_nav", qos)
         self._odom_sub = self.create_subscription(
             Odometry, "/odom", self._on_odom, qos)
+        self._ekf_sub = self.create_subscription(
+            Odometry, "/odom_combined", self._on_ekf, qos)
         self._imu_sub = self.create_subscription(
             Imu, "/imu/data_raw", self._on_imu, qos)
         self._prepare_client = self.create_client(
@@ -67,6 +72,8 @@ class SteeringCircleDrive(Node):
             RenewMotion, "/smartcar/direction_guard/renew")
         self._stop_client = self.create_client(
             StopMotion, "/smartcar/direction_guard/stop")
+        self._controller_state_client = self.create_client(
+            GetState, CONTROLLER_STATE_SERVICE)
 
         self._angle = angle
         self._speed = signed_speed
@@ -75,12 +82,16 @@ class SteeringCircleDrive(Node):
         self._rate = rate
         self._rows = []
         self._last_odom = None
+        self._last_ekf = None
         self._last_imu = None
         self._identity = None
         self._direction = direction
 
     def _on_odom(self, message):
         self._last_odom = message
+
+    def _on_ekf(self, message):
+        self._last_ekf = message
 
     def _on_imu(self, message):
         self._last_imu = message
@@ -103,6 +114,23 @@ class SteeringCircleDrive(Node):
         if response is None:
             raise RuntimeError(f"{name} service returned no response")
         return response
+
+    def _require_controller_inactive(self):
+        """Reject shared command input before a calibration drive begins."""
+
+        if not self._controller_state_client.wait_for_service(
+                timeout_sec=SERVICE_TIMEOUT_SEC):
+            raise RuntimeError("controller lifecycle service is unavailable")
+        future = self._controller_state_client.call_async(GetState.Request())
+        rclpy.spin_until_future_complete(
+            self, future, timeout_sec=SERVICE_TIMEOUT_SEC)
+        if not future.done() or future.result() is None:
+            raise RuntimeError("controller lifecycle state query timed out")
+        state = future.result().current_state
+        if state.id != State.PRIMARY_STATE_INACTIVE:
+            raise RuntimeError(
+                "controller_server must be inactive before calibration "
+                f"(current state: {state.label})")
 
     @staticmethod
     def _new_action_uuid():
@@ -179,6 +207,13 @@ class SteeringCircleDrive(Node):
                 "vx": twist.linear.x,
                 "odom_wz": twist.angular.z,
             })
+        if self._last_ekf is not None:
+            pose = self._last_ekf.pose.pose
+            row.update({
+                "ekf_x": pose.position.x,
+                "ekf_y": pose.position.y,
+                "ekf_yaw": quaternion_yaw(pose.orientation),
+            })
         if self._last_imu is not None:
             row["gyro_wz"] = self._last_imu.angular_velocity.z
         self._rows.append(row)
@@ -209,6 +244,7 @@ class SteeringCircleDrive(Node):
         time.sleep(5.0)
 
         try:
+            self._require_controller_inactive()
             self._prepare_motion()
             started = time.monotonic()
             next_renew = started + RENEW_PERIOD_SEC
@@ -218,9 +254,9 @@ class SteeringCircleDrive(Node):
                 elapsed = now - started
                 if elapsed >= self._duration:
                     break
+                rclpy.spin_once(self, timeout_sec=0.0)
                 self._publish(self._command)
                 self._snapshot(elapsed)
-                rclpy.spin_once(self, timeout_sec=0.0)
                 if now >= next_renew:
                     self._renew_motion()
                     next_renew = now + RENEW_PERIOD_SEC

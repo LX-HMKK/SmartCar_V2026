@@ -41,9 +41,11 @@ TARGET_PIDS=""
 CXX_BINS=(
   # SmartCar
   safety_node_cpp direction_guard_node
+  # Localization
+  ekf_node
   # Nav2
   controller_server planner_server bt_navigator
-  velocity_smoother lifecycle_manager
+  velocity_smoother lifecycle_manager map_server costmap_filter_info_server
   # Sensors / platform
   origincar_base_node
   ydlidar_ros2_driver_node ydlidar_ros2_driver

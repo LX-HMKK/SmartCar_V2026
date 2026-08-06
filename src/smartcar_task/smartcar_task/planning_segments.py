@@ -237,6 +237,26 @@ def load_planning_segments(
     )
 
 
+def select_segment_prefix(
+    segments: Sequence[PlanningSegment], end_segment_id: str = ""
+) -> tuple[PlanningSegment, ...]:
+    """Select a contiguous test prefix without permitting route skips.
+
+    The caller validates the complete route before using this helper.  A field
+    test may stop after a named segment, but it always starts at the route's
+    first segment and keeps every preceding action.
+    """
+    items = tuple(segments)
+    selected_id = str(end_segment_id).strip()
+    if not selected_id:
+        return items
+    for index, segment in enumerate(items):
+        if segment.id == selected_id:
+            return items[:index + 1]
+    raise PlanningSegmentError(
+        f"navigation test segment {selected_id!r} is not in the route")
+
+
 def materialize_route(
     waypoints: Sequence[Any], segments: Sequence[PlanningSegment]
 ) -> tuple[Any, ...]:

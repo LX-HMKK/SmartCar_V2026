@@ -1,6 +1,7 @@
 task_node:
   ros__parameters:
     autostart_mission: false
+    navigation_test_end_segment_id: ""
     waypoints_calibrated: false
     extrinsics_calibrated: false
     steering_calibrated: false
@@ -27,6 +28,7 @@ task_node:
     qr_timeout_sec: 3.0
     qr_retries: 1
     qr_retry_delay_sec: 0.25
+    qr_handoff_test_mode: false
     vlm_timeout_sec: 8.0
     vlm_prompt: "请描述图中人物立牌的外观和动作。"
     reset_timeout_sec: 5.0

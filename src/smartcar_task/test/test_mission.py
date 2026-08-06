@@ -12,6 +12,8 @@ from smartcar_task.mission import (  # noqa: E402
     MissionConfig,
     MissionState,
     OperationResult,
+    QR_HANDOFF_TEST_ANNOUNCEMENT,
+    QR_HANDOFF_TEST_CONTENT,
 )
 from smartcar_task.waypoints import Waypoint  # noqa: E402
 
@@ -303,6 +305,45 @@ class MissionTests(unittest.TestCase):
         self.assertAlmostEqual(sum(self.clock.sleeps), 2.25, places=6)
         self.assertEqual(self.output.text, ["WARD-B"])
 
+    def test_qr_handoff_test_simulates_missing_code_and_stops_at_a(self):
+        vision = FakeVision(qr_results=[
+            OperationResult(False, "qr_timeout"),
+        ])
+        config = MissionConfig(
+            navigation_retry_delay_sec=0.0,
+            qr_settle_sec=0.0,
+            qr_retries=0,
+            qr_handoff_test_mode=True,
+        )
+        mission = self.make_mission(vision=vision, config=config)
+        items = [
+            waypoint("start", 0.0),
+            waypoint("qr", 1.0),
+            waypoint("via", 2.0),
+            waypoint("vlm", 3.0),
+        ]
+
+        result = mission.execute(
+            items,
+            navigation_segments=((items[1],), (items[2], items[3])),
+        )
+
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(result.status, "qr_handoff_test_completed")
+        self.assertTrue(result.fallback_used)
+        self.assertEqual(self.navigator.calls, [(items[1], False)])
+        self.assertEqual(self.navigator.through_calls, [])
+        self.assertEqual(vision.ready_calls, [(True, False)])
+        self.assertEqual(len(vision.qr_calls), 1)
+        self.assertEqual(vision.vlm_calls, [])
+        self.assertEqual(
+            self.output.text,
+            [QR_HANDOFF_TEST_CONTENT, QR_HANDOFF_TEST_ANNOUNCEMENT],
+        )
+        self.assertEqual(self.output.speech, self.output.text)
+        self.assertNotIn(MissionState.RUNNING_VLM.value, self.output.states)
+        self.assertEqual(mission.state, MissionState.COMPLETED)
+
     def test_vlm_fallback_is_published_and_mission_completes(self):
         fallback = "检测到人物立牌"
         vision = FakeVision(vlm_results=[
@@ -366,17 +407,18 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(result.status, "mission_stopped")
         self.assertEqual(self.output.speech, [])
 
-    def test_reset_is_only_allowed_after_terminal_state_and_navigation_stop(self):
+    def test_reset_is_allowed_when_idle_and_after_terminal_state(self):
         mission = self.make_mission()
-        rejected = mission.reset()
-        self.assertFalse(rejected.success)
-        self.assertEqual(self.localization.calls, 0)
+        idle_reset = mission.reset()
+        self.assertTrue(idle_reset.success)
+        self.assertEqual(self.localization.calls, 1)
+        self.assertEqual(mission.state, MissionState.IDLE)
 
         self.assertTrue(mission.execute([waypoint("return")]).success)
         reset = mission.reset()
 
         self.assertTrue(reset.success)
-        self.assertEqual(self.localization.calls, 1)
+        self.assertEqual(self.localization.calls, 2)
         self.assertEqual(mission.state, MissionState.IDLE)
 
     def test_repeated_start_and_reset_while_navigation_active_are_rejected(self):

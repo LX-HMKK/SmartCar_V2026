@@ -32,6 +32,9 @@ class CircleSample:
     x_m: float
     y_m: float
     yaw_rad: float
+    ekf_x_m: Optional[float] = None
+    ekf_y_m: Optional[float] = None
+    ekf_yaw_rad: Optional[float] = None
 
 
 @dataclass(frozen=True)
@@ -55,6 +58,10 @@ class CircleAnalysis:
     circle_radius_m: Optional[float]
     circle_fit_rms_error_m: Optional[float]
     yaw_delta_rad: Optional[float]
+    gyro_yaw_delta_rad: Optional[float]
+    ekf_yaw_delta_rad: Optional[float]
+    gyro_vs_odom_yaw_delta_rad: Optional[float]
+    ekf_vs_odom_yaw_delta_rad: Optional[float]
     vx_sign_flips: int
     gyro_sign_flips: int
     errors: Tuple[str, ...]
@@ -86,6 +93,10 @@ def _empty_analysis(
         circle_radius_m=None,
         circle_fit_rms_error_m=None,
         yaw_delta_rad=None,
+        gyro_yaw_delta_rad=None,
+        ekf_yaw_delta_rad=None,
+        gyro_vs_odom_yaw_delta_rad=None,
+        ekf_vs_odom_yaw_delta_rad=None,
         vx_sign_flips=0,
         gyro_sign_flips=0,
         errors=tuple(errors),
@@ -100,7 +111,22 @@ def _parse_sample(row: dict) -> Optional[CircleSample]:
         return None
     if not all(math.isfinite(value) for value in values):
         return None
-    return CircleSample(*values)
+    ekf_values = []
+    for name in ("ekf_x", "ekf_y", "ekf_yaw"):
+        value = row.get(name)
+        if value in (None, ""):
+            ekf_values.append(None)
+            continue
+        try:
+            value = float(value)
+        except (TypeError, ValueError):
+            return None
+        if not math.isfinite(value):
+            return None
+        ekf_values.append(value)
+    if any(value is None for value in ekf_values):
+        ekf_values = [None, None, None]
+    return CircleSample(*values, *ekf_values)
 
 
 def load_samples(
@@ -292,6 +318,22 @@ def _unwrap_yaw_delta(yaws: Sequence[float]) -> float:
     return total
 
 
+def _integrate_rate(samples: Sequence[CircleSample]) -> float:
+    """Integrate gyro samples with their command-recording timestamps."""
+
+    total = 0.0
+    for previous, current in zip(samples, samples[1:]):
+        elapsed = current.time_sec - previous.time_sec
+        if elapsed <= 0.0:
+            continue
+        total += 0.5 * (previous.gyro_wz_radps + current.gyro_wz_radps) * elapsed
+    return total
+
+
+def _normalized_delta(first: float, second: float) -> float:
+    return math.atan2(math.sin(first - second), math.cos(first - second))
+
+
 def analyze_samples(
     samples: Sequence[CircleSample],
     wheelbase_m: float = 0.189,
@@ -365,6 +407,39 @@ def analyze_samples(
         circle_rms = circle[3]
 
     yaws = [sample.yaw_rad for sample in samples]
+    odom_yaw_delta = _unwrap_yaw_delta(yaws)
+    gyro_yaw_delta = _integrate_rate(samples)
+    ekf_yaws = [sample.ekf_yaw_rad for sample in samples]
+    if all(yaw is not None for yaw in ekf_yaws):
+        ekf_yaw_delta = _unwrap_yaw_delta(ekf_yaws)
+    else:
+        ekf_yaw_delta = None
+        warnings.append(
+            "EKF pose samples are unavailable; cannot verify fused heading"
+        )
+
+    gyro_vs_odom = _normalized_delta(gyro_yaw_delta, odom_yaw_delta)
+    ekf_vs_odom = (
+        _normalized_delta(ekf_yaw_delta, odom_yaw_delta)
+        if ekf_yaw_delta is not None else None
+    )
+    if (
+        abs(gyro_yaw_delta) > 0.10
+        and abs(odom_yaw_delta) > 0.10
+        and gyro_yaw_delta * odom_yaw_delta < 0.0
+    ):
+        warnings.append(
+            "IMU and wheel odometry yaw signs disagree; do not run navigation"
+        )
+    if (
+        ekf_yaw_delta is not None
+        and abs(ekf_yaw_delta) > 0.10
+        and abs(odom_yaw_delta) > 0.10
+        and ekf_yaw_delta * odom_yaw_delta < 0.0
+    ):
+        warnings.append(
+            "EKF and wheel odometry yaw signs disagree; correct localization before navigation"
+        )
     return CircleAnalysis(
         sample_count=len(samples),
         skipped_rows=skipped_rows,
@@ -382,7 +457,11 @@ def analyze_samples(
         circle_center_m=center,
         circle_radius_m=circle_radius,
         circle_fit_rms_error_m=circle_rms,
-        yaw_delta_rad=_unwrap_yaw_delta(yaws),
+        yaw_delta_rad=odom_yaw_delta,
+        gyro_yaw_delta_rad=gyro_yaw_delta,
+        ekf_yaw_delta_rad=ekf_yaw_delta,
+        gyro_vs_odom_yaw_delta_rad=gyro_vs_odom,
+        ekf_vs_odom_yaw_delta_rad=ekf_vs_odom,
         vx_sign_flips=_sign_flips(steady_vx),
         gyro_sign_flips=_sign_flips(steady_gyro),
         errors=(),
@@ -448,6 +527,19 @@ def format_report(analysis: CircleAnalysis) -> str:
         f"total yaw turned: {math.degrees(analysis.yaw_delta_rad):.1f} deg "
         f"({analysis.yaw_delta_rad / (2.0 * math.pi):.2f} revs)"
     )
+    lines.append(
+        "yaw integration: "
+        f"gyro={math.degrees(analysis.gyro_yaw_delta_rad):+.1f} deg "
+        f"wheel={math.degrees(analysis.yaw_delta_rad):+.1f} deg "
+        f"difference={math.degrees(analysis.gyro_vs_odom_yaw_delta_rad):+.1f} deg"
+    )
+    if analysis.ekf_yaw_delta_rad is not None:
+        lines.append(
+            "fused yaw: "
+            f"EKF={math.degrees(analysis.ekf_yaw_delta_rad):+.1f} deg "
+            f"EKF-wheel difference="
+            f"{math.degrees(analysis.ekf_vs_odom_yaw_delta_rad):+.1f} deg"
+        )
     lines.extend(f"WARNING: {warning}" for warning in analysis.warnings)
     return "\n".join(lines)
 

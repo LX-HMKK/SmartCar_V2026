@@ -61,7 +61,7 @@ extrinsics:
 
 calibration:
   longitudinal_velocity_scale: 1.03
-  gyro_z_bias: 0.000614
+  gyro_z_bias: -0.00036369
   gyro_z_scale: 1.0
   steering_command_scale: 1.0
   steering_command_offset_rad: 0.0

@@ -23,7 +23,11 @@ ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=/root/ros2_ws
 
 ```bash
 ros2 run smartcar_tools odom_diag --ros-args -p duration_sec:=30.0
-# 输出 /odom、/odom_combined、/scan 速率和间隔统计，以及 EKF 诊断警告
+# 输出 /odom、/odom_combined、/odom_laser、/scan 的速率、相对位移和 EKF 诊断警告
+
+# 车辆静止或架起时，显式检查三路定位的静止漂移
+ros2 run smartcar_tools odom_diag --ros-args \
+  -p duration_sec:=60.0 -p expect_stationary:=true
 ```
 
 ## 电压监控
@@ -80,6 +84,6 @@ setsid bash /root/nav_test.sh > /tmp/nav_test_output.log 2>&1 &
 # 日志: tail -f /tmp/bringup.log
 ```
 
-脚本自动完成：清理旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 开 RViz。它保持软件急停锁存且任务不自动开始，也不会授予五项运动门禁；当前 YAML 为 `calibrated: false`，因此 `start` 会被拒绝。完成对应实测、现场标定并显式满足门禁后，才可 reset、解除急停并 start。任务运行上限与 Gazebo 同步为 `0.30 m/s`；实体首次复验仍须由现场人员分段监护 P→QR、QR→`via_2`→VLM、VLM→`via_1`→`via_3`→P。上文的 `0.15 m/s` 仅适用于转向圆周标定工具。
+脚本自动完成：清理旧进程 → 构建 → 启动系统（无相机/无视觉）→ 等待 Nav2 生命周期就绪 → 验证两个 costmap 的 KeepoutFilter、规则掩膜与 filter-info 话题 → 开 RViz。任一禁区依赖未就绪时脚本失败并保持急停锁存。任务不会自动开始，也不会授予五项运动门禁；当前 YAML 为 `calibrated: false`，因此 `start` 会被拒绝。完成对应实测、现场标定并显式满足门禁后，才可 reset、解除急停并 start。任务运行上限与 Gazebo 同步为 `0.30 m/s`；实体首次复验仍须由现场人员分段监护 P→QR、QR→`via_2`→VLM、VLM→`via_1`→`via_3`→P。上文的 `0.15 m/s` 仅适用于转向圆周标定工具。
 
 紧急时先使用物理急停；随后运行 `/usr/local/bin/ros_cleanup`（已部署时）或 `/root/ros2_ws/scripts/ros_cleanup.sh`。CLI 可用时再调用软件急停服务。

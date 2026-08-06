@@ -14,6 +14,7 @@ from smartcar_task.planning_segments import (  # noqa: E402
     PlanningSegmentError,
     materialize_mission_route,
     materialize_navigation_segments,
+    select_segment_prefix,
 )
 from smartcar_task.waypoints import Waypoint, load_waypoint_document  # noqa: E402
 from smartcar_task.planning_segments import load_planning_segments  # noqa: E402
@@ -165,6 +166,21 @@ class PlanningSegmentActionTests(unittest.TestCase):
                 ("reverse", ["via_1", "via_3", "p_finish"]),
             ],
         )
+
+    def test_navigation_test_prefix_cannot_skip_earlier_segments(self):
+        document, waypoints = load_waypoint_document(NAV_ONLY_FILE)
+        segments = load_planning_segments(document, waypoints)
+
+        selected = select_segment_prefix(segments, "p_to_qr")
+
+        self.assertEqual([segment.id for segment in selected], ["p_to_qr"])
+        selected = select_segment_prefix(segments, "qr_to_vlm")
+        self.assertEqual(
+            [segment.id for segment in selected],
+            ["p_to_qr", "qr_to_vlm"],
+        )
+        with self.assertRaisesRegex(PlanningSegmentError, "not in the route"):
+            select_segment_prefix(segments, "return_to_p_typo")
 
     def test_deployment_route_uses_the_verified_segments_with_media_tasks(self):
         document, waypoints = load_waypoint_document(DEFAULT_WAYPOINTS_FILE)

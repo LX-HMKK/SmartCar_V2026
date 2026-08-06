@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Generate the simulation-only Nav2 keepout mask from field_geometry.yaml.
+"""Generate the shared Nav2 field keepout mask from field_geometry.yaml.
 
 The generated PGM is consumed by nav2_map_server and then by Nav2's
 KeepoutFilter. It is not a localization map. Its black cells are prohibited
-areas and its white cells are traversable. Keeping this generator tied to the
-same FieldReference used by Gazebo and RViz prevents coordinate drift between
-the three simulation representations.
+areas and its white cells are traversable. The real Nav2 package installs the
+same artifact as a rule constraint, never as a localization map. Keeping this
+generator tied to the same FieldReference used by Gazebo and RViz prevents
+coordinate drift between the representations.
 """
 
 from __future__ import annotations

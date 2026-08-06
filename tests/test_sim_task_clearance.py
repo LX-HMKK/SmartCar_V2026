@@ -20,7 +20,7 @@ ROUTE_PLANNING = ROOT / "src" / "smartcar_tools" / "config" / "routes" / "route_
 FIELD_GEOMETRY = ROOT / "src" / "smartcar_tools" / "config" / "routes" / "field_geometry.yaml"
 
 PROTECTED_IDS = ("p_start", "a_task_observe", "c_corner_1", "p_finish")
-SHARED_ROUTE_IDS = ("p_start", "a_task_observe")
+SHARED_ROUTE_IDS = ("p_start",)
 
 
 def _pose_values(text: str) -> tuple[float, float, float, float, float, float]:
@@ -123,7 +123,7 @@ class SimulationTaskClearanceTests(unittest.TestCase):
         self.keepout_overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
         self.field_geometry = yaml.safe_load(FIELD_GEOMETRY.read_text(encoding="utf-8"))
 
-    def test_shared_initial_poses_match_between_runtime_routes(self) -> None:
+    def test_shared_start_pose_matches_between_runtime_routes(self) -> None:
         self.assertTrue(set(SHARED_ROUTE_IDS).issubset(self.nav_only))
         self.assertTrue(set(SHARED_ROUTE_IDS).issubset(self.default))
         self.assertEqual(self.default["a_task_observe"]["task"], "qr")
@@ -134,6 +134,10 @@ class SimulationTaskClearanceTests(unittest.TestCase):
                     self.nav_only[waypoint_id]["pose"],
                     self.default[waypoint_id]["pose"],
                 )
+        self.assertNotEqual(
+            self.nav_only["a_task_observe"]["pose"],
+            self.default["a_task_observe"]["pose"],
+        )
 
     def test_a_zone_cones_remain_physical_and_clear_all_protected_bodies(self) -> None:
         self.assertEqual(set(self.cones), {f"cone_a{index}" for index in range(1, 7)})
@@ -145,29 +149,35 @@ class SimulationTaskClearanceTests(unittest.TestCase):
         )
         half_width = 0.5 * float(footprint["width_m"]) + float(footprint["padding_m"])
 
-        for waypoint_id in PROTECTED_IDS:
-            pose = self.nav_only[waypoint_id]["pose"]
-            position = pose["position"]
-            vehicle_x = float(position["x"])
-            vehicle_y = float(position["y"])
-            vehicle_yaw = _yaw_from_quaternion(pose["orientation"])
-            for cone_id, cone in self.cones.items():
-                with self.subTest(waypoint=waypoint_id, cone=cone_id):
-                    self.assertAlmostEqual(cone["radius"], 0.05)
-                    clearance = _point_to_oriented_rectangle_distance(
-                        cone["x"],
-                        cone["y"],
-                        vehicle_x,
-                        vehicle_y,
-                        vehicle_yaw,
-                        half_length,
-                        half_width,
-                    )
-                    self.assertGreater(
-                        clearance,
-                        cone["radius"] + 1.0e-6,
-                        "padded protected vehicle footprint overlaps a physical A-zone obstacle",
-                    )
+        for route_name, route in (
+            ("nav_only", self.nav_only),
+            ("default", self.default),
+        ):
+            for waypoint_id in PROTECTED_IDS:
+                pose = route[waypoint_id]["pose"]
+                position = pose["position"]
+                vehicle_x = float(position["x"])
+                vehicle_y = float(position["y"])
+                vehicle_yaw = _yaw_from_quaternion(pose["orientation"])
+                for cone_id, cone in self.cones.items():
+                    with self.subTest(
+                        route=route_name, waypoint=waypoint_id, cone=cone_id
+                    ):
+                        self.assertAlmostEqual(cone["radius"], 0.05)
+                        clearance = _point_to_oriented_rectangle_distance(
+                            cone["x"],
+                            cone["y"],
+                            vehicle_x,
+                            vehicle_y,
+                            vehicle_yaw,
+                            half_length,
+                            half_width,
+                        )
+                        self.assertGreater(
+                            clearance,
+                            cone["radius"] + 1.0e-6,
+                            "padded protected vehicle footprint overlaps a physical A-zone obstacle",
+                        )
 
     def test_a6_stays_inside_a_zone_and_in_startup_scan_range(self) -> None:
         cone = self.cones["cone_a6"]

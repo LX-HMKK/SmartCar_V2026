@@ -29,6 +29,13 @@ class OdomDiagContractTests(unittest.TestCase):
         self.assertIn("while rclpy.ok() and not node.finished", source)
         self.assertEqual(source.count("rclpy.shutdown()"), 1)
 
+    def test_reports_relative_displacements_and_stationary_drift(self):
+        source = SOURCE_FILE.read_text(encoding="utf-8")
+        self.assertIn("Relative odometry displacement", source)
+        self.assertIn("Relative displacement versus odom_combined", source)
+        self.assertIn("expect_stationary", source)
+        self.assertIn("stationary drift exceeds tolerance", source)
+
     def test_manifest_declares_diagnostic_messages(self):
         root = ElementTree.parse(PACKAGE_ROOT / "package.xml").getroot()
         dependencies = {item.text for item in root.findall("exec_depend")}

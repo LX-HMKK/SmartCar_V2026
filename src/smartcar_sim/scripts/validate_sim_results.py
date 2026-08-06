@@ -67,7 +67,7 @@ EXPECTED_ROUTE = (
 )
 EXPECTED_GOAL_CONTRACTS = {
     "a_task_observe": ("precise_goal_checker", (0.08, 0.25), (0.10, 0.30)),
-    "c_corner_1": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_corner_1": ("reverse_goal_checker", (0.08, 0.12), (0.10, 0.15)),
     "p_finish": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
 }
 EXPECTED_BEHAVIOR_TREES = {

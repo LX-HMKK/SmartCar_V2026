@@ -64,6 +64,9 @@ class SystemContractTests(unittest.TestCase):
             "use_visualization": "false",
             "use_speech": "false",
             "autostart_mission": "false",
+            "supervised_p_to_a_only": "false",
+            "supervised_p_to_c1_only": "false",
+            "qr_handoff_test_mode": "false",
             "use_sim_time": "false",
             "nav_autostart": "true",
             "safety_emergency_stop_on_start": "false",
@@ -94,6 +97,13 @@ class SystemContractTests(unittest.TestCase):
             '"autostart_mission": LaunchConfiguration("autostart_mission")',
             source,
         )
+        self.assertIn(
+            '"supervised_p_to_a_only": LaunchConfiguration(', source)
+        self.assertIn(
+            '"supervised_p_to_c1_only": LaunchConfiguration(', source)
+        self.assertIn(
+            '"qr_handoff_test_mode": LaunchConfiguration(', source)
+        self.assertIn('"qr_handoff_test_mode")', source)
         self.assertIn('"use_base": use_base', source)
         self.assertIn('"use_safety_ackermann": "true"', source)
 

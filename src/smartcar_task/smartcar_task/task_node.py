@@ -43,6 +43,7 @@ from smartcar_task.planning_segments import (
     load_planning_segments,
     materialize_mission_route,
     materialize_navigation_segments,
+    select_segment_prefix,
 )
 from smartcar_task.protocols import (
     MotionDirectionProtocol,
@@ -55,6 +56,14 @@ from smartcar_task.protocols import (
 )
 from smartcar_task.route_geometry import RouteGeometryError, materialize_free_yaws
 from smartcar_task.waypoints import is_heading_locked, load_waypoint_document
+
+
+SUPERVISED_P_TO_A_SEGMENT_ID = "p_to_qr"
+SUPERVISED_P_TO_C1_SEGMENT_ID = "qr_to_vlm"
+SUPERVISED_PREFIX_TASKS = {
+    SUPERVISED_P_TO_A_SEGMENT_ID: ("nav",),
+    SUPERVISED_P_TO_C1_SEGMENT_ID: ("nav", "via", "nav"),
+}
 
 
 def _positive_finite(name, value):
@@ -148,7 +157,7 @@ class RosOutput:
 
 
 class RosDirectionGuard:
-    """ROS transport plus an independent odometry stop barrier."""
+    """ROS transport plus a scoped local odometry stop confirmation."""
 
     def __init__(
         self,
@@ -161,6 +170,8 @@ class RosDirectionGuard:
         angular_tolerance,
         odom_stale_timeout_sec,
     ):
+        self._node = node
+        self._callback_group = callback_group
         self._service_timeout_sec = _positive_finite(
             "direction_service_timeout_sec", service_timeout_sec)
         self._stop_timeout_sec = _positive_finite(
@@ -204,13 +215,7 @@ class RosDirectionGuard:
         self._barrier_sequence = 0
         self._zero_since = None
         self._last_zero = None
-        self._odom_subscription = node.create_subscription(
-            Odometry,
-            "/odom",
-            self._on_odom,
-            10,
-            callback_group=callback_group,
-        )
+        self._odom_subscription = None
 
     def wait_ready(self, timeout_sec):
         deadline = time.monotonic() + max(0.0, float(timeout_sec))
@@ -249,23 +254,47 @@ class RosDirectionGuard:
             self._zero_since = None
             self._last_zero = None
 
-    def wait_stopped(self):
-        deadline = time.monotonic() + self._stop_timeout_sec
+    def _start_odom_observation(self):
         with self._odom_condition:
-            while time.monotonic() < deadline:
-                now = time.monotonic()
-                if (
-                    self._zero_since is not None
-                    and self._last_zero is not None
-                    and self._last_zero - self._zero_since
-                    >= self._stop_dwell_sec
-                    and now - self._last_zero
-                    <= self._odom_stale_timeout_sec
-                ):
-                    return OperationResult(True, "stopped")
-                self._odom_condition.wait(
-                    timeout=max(0.0, deadline - now))
-        return OperationResult(False, "odom_stop_timeout")
+            if self._odom_subscription is not None:
+                return
+            self._odom_subscription = self._node.create_subscription(
+                Odometry,
+                "/odom",
+                self._on_odom,
+                10,
+                callback_group=self._callback_group,
+            )
+
+    def _stop_odom_observation(self):
+        with self._odom_condition:
+            subscription = self._odom_subscription
+            self._odom_subscription = None
+        if subscription is not None:
+            self._node.destroy_subscription(subscription)
+
+    def wait_stopped(self):
+        self._start_odom_observation()
+        deadline = time.monotonic() + self._stop_timeout_sec
+        self._start_stop_barrier()
+        try:
+            with self._odom_condition:
+                while time.monotonic() < deadline:
+                    now = time.monotonic()
+                    if (
+                        self._zero_since is not None
+                        and self._last_zero is not None
+                        and self._last_zero - self._zero_since
+                        >= self._stop_dwell_sec
+                        and now - self._last_zero
+                        <= self._odom_stale_timeout_sec
+                    ):
+                        return OperationResult(True, "stopped")
+                    self._odom_condition.wait(
+                        timeout=max(0.0, deadline - now))
+            return OperationResult(False, "odom_stop_timeout")
+        finally:
+            self._stop_odom_observation()
 
     @staticmethod
     def _set_identity(request, lease):
@@ -314,7 +343,6 @@ class RosDirectionGuard:
         return self._call(self._renew_client, request, "renew")[0]
 
     def stop(self, lease):
-        self._start_stop_barrier()
         request = StopMotion.Request()
         self._set_identity(request, lease)
         return self._call(self._stop_client, request, "stop")[0]
@@ -343,18 +371,9 @@ class RosNavigator:
         reverse_return_through_poses_behavior_tree="",
     ):
         self._node = node
-        self._client = ActionClient(
-            node,
-            NavigateToPose,
-            "/navigate_to_pose",
-            callback_group=callback_group,
-        )
-        self._through_client = ActionClient(
-            node,
-            NavigateThroughPoses,
-            "/navigate_through_poses",
-            callback_group=callback_group,
-        )
+        self._callback_group = callback_group
+        self._client = None
+        self._through_client = None
         self._direction_guard = direction_guard
         self._motion_protocol = MotionDirectionProtocol(
             direction_guard,
@@ -426,25 +445,52 @@ class RosNavigator:
             max(0.0, deadline - time.monotonic())
         ):
             return False
-        poll_interval = 0.5
-        clients = [self._client]
-        if (
-            self._through_poses_behavior_tree
-            or self._reverse_through_poses_behavior_tree
-            or self._reverse_locked_through_poses_behavior_tree
-            or self._reverse_return_through_poses_behavior_tree
-        ):
-            clients.append(self._through_client)
-        for client in clients:
-            while True:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
-                    return False
-                if client.wait_for_server(
-                    timeout_sec=min(poll_interval, remaining)
-                ):
-                    break
         return True
+
+    def _action_client(self, through_poses):
+        attribute = "_through_client" if through_poses else "_client"
+        with self._condition:
+            client = getattr(self, attribute)
+            if client is not None:
+                return client
+            if through_poses:
+                client = ActionClient(
+                    self._node,
+                    NavigateThroughPoses,
+                    "/navigate_through_poses",
+                    callback_group=self._callback_group,
+                )
+            else:
+                client = ActionClient(
+                    self._node,
+                    NavigateToPose,
+                    "/navigate_to_pose",
+                    callback_group=self._callback_group,
+                )
+            setattr(self, attribute, client)
+            return client
+
+    def _wait_for_action_server(self, client, timeout_sec):
+        deadline = time.monotonic() + max(0.0, float(timeout_sec))
+        poll_interval = 0.5
+        while True:
+            remaining = deadline - time.monotonic()
+            if remaining <= 0.0:
+                return False
+            if client.wait_for_server(timeout_sec=min(poll_interval, remaining)):
+                return True
+
+    def _release_idle_action_client(self, client):
+        with self._condition:
+            if self._active_locked():
+                return
+            if self._client is client:
+                self._client = None
+            elif self._through_client is client:
+                self._through_client = None
+            else:
+                return
+        client.destroy()
 
     def navigate(self, waypoint, reverse_direction=False):
         try:
@@ -466,7 +512,16 @@ class RosNavigator:
             goal.behavior_tree = behavior_tree
         except (TypeError, ValueError) as error:
             return OperationResult(False, f"navigation_config:{error}")
-        return self._navigate_goal(goal, self._client, reverse_direction)
+        client = self._action_client(through_poses=False)
+        if not self._wait_for_action_server(
+            client, self._goal_response_timeout_sec
+        ):
+            self._release_idle_action_client(client)
+            return OperationResult(False, "navigation_server_unavailable")
+        try:
+            return self._navigate_goal(goal, client, reverse_direction)
+        finally:
+            self._release_idle_action_client(client)
 
     def navigate_through(self, waypoints, reverse_direction=False):
         """Run one constant-direction segment without stopping at through goals."""
@@ -503,7 +558,16 @@ class RosNavigator:
             goal.behavior_tree = behavior_tree
         except (TypeError, ValueError) as error:
             return OperationResult(False, f"navigation_config:{error}")
-        return self._navigate_goal(goal, self._through_client, reverse_direction)
+        client = self._action_client(through_poses=True)
+        if not self._wait_for_action_server(
+            client, self._goal_response_timeout_sec
+        ):
+            self._release_idle_action_client(client)
+            return OperationResult(False, "navigation_server_unavailable")
+        try:
+            return self._navigate_goal(goal, client, reverse_direction)
+        finally:
+            self._release_idle_action_client(client)
 
     def _through_behavior_tree(
         self, reverse_direction, terminal_heading_locked, terminal_is_return=False
@@ -1159,8 +1223,10 @@ class RosLocalization:
         reset_timeout_sec,
         position_tolerance,
         yaw_tolerance,
+        use_laser_odometry=False,
     ):
         self._node = node
+        self._callback_group = callback_group
         self._navigator = navigator
         self._reset_timeout_sec = _positive_finite(
             "reset_timeout_sec", reset_timeout_sec)
@@ -1168,40 +1234,91 @@ class RosLocalization:
             "origin_position_tolerance", position_tolerance)
         self._yaw_tolerance = _nonnegative_finite(
             "origin_yaw_tolerance", yaw_tolerance)
+        self._use_laser_odometry = bool(use_laser_odometry)
         self._set_pose_client = node.create_client(
             SetPose,
             "/set_pose",
             callback_group=callback_group,
         )
+        self._reset_laser_odometry_client = None
+        if self._use_laser_odometry:
+            self._reset_laser_odometry_client = node.create_client(
+                Trigger,
+                "/smartcar/localization/reset_laser_odometry",
+                callback_group=callback_group,
+            )
         self._condition = threading.Condition()
         self._odom_sequence = 0
         self._latest_odom = None
         self._verified_after_sequence = 0
+        self._laser_odom_sequence = 0
+        self._latest_laser_odom = None
+        self._laser_verified_after_sequence = 0
         self._deadline = 0.0
-        node.create_subscription(
-            Odometry,
-            "/odom_combined",
-            self._on_odom,
-            10,
-            callback_group=callback_group,
-        )
+        self._odom_subscription = None
+        self._laser_odom_subscription = None
 
     def reset_origin(self):
-        self._deadline = time.monotonic() + self._reset_timeout_sec
-        if not self._wait_for_reset_services():
-            return OperationResult(False, "reset_service_unavailable")
-        return run_reset_sequence(
-            lambda: not self._navigator.is_active(),
-            self._call_set_pose,
-            self._wait_for_verified_origin,
-        )
+        self._start_odometry_observation()
+        try:
+            self._deadline = time.monotonic() + self._reset_timeout_sec
+            if not self._wait_for_reset_services():
+                return OperationResult(False, "reset_service_unavailable")
+            return run_reset_sequence(
+                lambda: not self._navigator.is_active(),
+                self._call_set_pose,
+                self._wait_for_verified_origin,
+            )
+        finally:
+            self._stop_odometry_observation()
+
+    def _start_odometry_observation(self):
+        with self._condition:
+            if self._odom_subscription is None:
+                self._odom_subscription = self._node.create_subscription(
+                    Odometry,
+                    "/odom_combined",
+                    self._on_odom,
+                    10,
+                    callback_group=self._callback_group,
+                )
+            if (
+                self._use_laser_odometry
+                and self._laser_odom_subscription is None
+            ):
+                self._laser_odom_subscription = self._node.create_subscription(
+                    Odometry,
+                    "/odom_laser",
+                    self._on_laser_odom,
+                    10,
+                    callback_group=self._callback_group,
+                )
+
+    def _stop_odometry_observation(self):
+        with self._condition:
+            odom_subscription = self._odom_subscription
+            laser_odom_subscription = self._laser_odom_subscription
+            self._odom_subscription = None
+            self._laser_odom_subscription = None
+        if odom_subscription is not None:
+            self._node.destroy_subscription(odom_subscription)
+        if laser_odom_subscription is not None:
+            self._node.destroy_subscription(laser_odom_subscription)
 
     def _wait_for_reset_services(self):
         remaining = self._deadline - time.monotonic()
         if remaining <= 0.0:
             return False
-        return self._set_pose_client.wait_for_service(
-            timeout_sec=remaining)
+        if not self._set_pose_client.wait_for_service(timeout_sec=remaining):
+            return False
+        if self._reset_laser_odometry_client is None:
+            return True
+        remaining = self._deadline - time.monotonic()
+        return (
+            remaining > 0.0
+            and self._reset_laser_odometry_client.wait_for_service(
+                timeout_sec=remaining)
+        )
 
     def _call_set_pose(self):
         request = SetPose.Request()
@@ -1224,8 +1341,30 @@ class RosLocalization:
                 False,
                 f"set_pose_error:{type(error).__name__}",
             )
+        laser_reset_result = self._call_reset_laser_odometry()
+        if not laser_reset_result.success:
+            return laser_reset_result
         with self._condition:
             self._verified_after_sequence = self._odom_sequence
+            self._laser_verified_after_sequence = self._laser_odom_sequence
+        return OperationResult(True, "ok")
+
+    def _call_reset_laser_odometry(self):
+        if self._reset_laser_odometry_client is None:
+            return OperationResult(True, "ok")
+        future = self._reset_laser_odometry_client.call_async(Trigger.Request())
+        remaining = self._deadline - time.monotonic()
+        completed, response, error = _wait_future(future, remaining)
+        if not completed:
+            _remove_pending(self._reset_laser_odometry_client, future)
+            return OperationResult(False, "laser_odometry_reset_timeout")
+        if error is not None or response is None:
+            return OperationResult(
+                False,
+                f"laser_odometry_reset_error:{type(error).__name__}",
+            )
+        if not response.success:
+            return OperationResult(False, "laser_odometry_reset_rejected")
         return OperationResult(True, "ok")
 
     def _wait_for_verified_origin(self):
@@ -1239,6 +1378,19 @@ class RosLocalization:
                         position_tolerance=self._position_tolerance,
                         yaw_tolerance=self._yaw_tolerance,
                     )
+                    and (
+                        not self._use_laser_odometry
+                        or (
+                            self._laser_odom_sequence
+                            > self._laser_verified_after_sequence
+                            and self._latest_laser_odom is not None
+                            and odometry_matches_origin(
+                                self._latest_laser_odom,
+                                position_tolerance=self._position_tolerance,
+                                yaw_tolerance=self._yaw_tolerance,
+                            )
+                        )
+                    )
                 ):
                     return OperationResult(True, "ok")
                 self._condition.wait(
@@ -1249,6 +1401,12 @@ class RosLocalization:
         with self._condition:
             self._odom_sequence += 1
             self._latest_odom = message
+            self._condition.notify_all()
+
+    def _on_laser_odom(self, message):
+        with self._condition:
+            self._laser_odom_sequence += 1
+            self._latest_laser_odom = message
             self._condition.notify_all()
 
 
@@ -1264,6 +1422,9 @@ class TaskNode(Node):
         self.declare_parameter("use_laser_odometry", False)
         self.declare_parameter("laser_odometry_calibrated", False)
         self.declare_parameter("autostart_mission", False)
+        self.declare_parameter("navigation_test_end_segment_id", "")
+        self.declare_parameter("supervised_p_to_a_only", False)
+        self.declare_parameter("supervised_p_to_c1_only", False)
         self.declare_parameter("server_wait_timeout_sec", 30.0)
         self.declare_parameter("navigation_timeout_sec", 120.0)
         self.declare_parameter("goal_response_timeout_sec", 2.0)
@@ -1320,6 +1481,7 @@ class TaskNode(Node):
         self.declare_parameter("qr_timeout_sec", 3.0)
         self.declare_parameter("qr_retries", 1)
         self.declare_parameter("qr_retry_delay_sec", 0.25)
+        self.declare_parameter("qr_handoff_test_mode", False)
         self.declare_parameter("vlm_timeout_sec", 8.0)
         self.declare_parameter(
             "vlm_prompt", "请描述图中人物立牌的外观和动作。")
@@ -1356,10 +1518,55 @@ class TaskNode(Node):
                 authored_waypoints,
                 planning_segments,
             )
+            selected_segments = select_segment_prefix(
+                planning_segments,
+                self.get_parameter("navigation_test_end_segment_id").value,
+            )
             self._navigation_segments = tuple(
                 tuple(materialized_by_id[waypoint.id] for waypoint in segment)
-                for segment in authored_navigation_segments
+                for segment in authored_navigation_segments[
+                    :len(selected_segments)
+                ]
             )
+            supervised_prefixes = tuple(
+                segment_id
+                for parameter_name, segment_id in (
+                    ("supervised_p_to_a_only", SUPERVISED_P_TO_A_SEGMENT_ID),
+                    ("supervised_p_to_c1_only", SUPERVISED_P_TO_C1_SEGMENT_ID),
+                )
+                if bool(self.get_parameter(parameter_name).value)
+            )
+            if len(supervised_prefixes) > 1:
+                raise ValueError(
+                    "only one supervised navigation prefix may be enabled"
+                )
+            self._supervised_navigation_test = bool(supervised_prefixes)
+            if self._supervised_navigation_test:
+                expected_segment_id = supervised_prefixes[0]
+                selected_segment_ids = tuple(
+                    segment.id for segment in selected_segments
+                )
+                selected_tasks = tuple(
+                    waypoint.task
+                    for segment in self._navigation_segments
+                    for waypoint in segment
+                )
+                if (
+                    selected_segment_ids
+                    != tuple(
+                        segment.id
+                        for segment in planning_segments[
+                            :len(selected_segments)
+                        ]
+                    )
+                    or selected_segment_ids[-1] != expected_segment_id
+                    or selected_tasks
+                    != SUPERVISED_PREFIX_TASKS[expected_segment_id]
+                ):
+                    raise ValueError(
+                        "supervised navigation test requires the fixed "
+                        "pure-navigation route prefix"
+                    )
         except (PlanningSegmentError, RouteGeometryError, ValueError) as error:
             raise ValueError(f"invalid mission route: {error}") from error
         self._motion_gates = {
@@ -1372,10 +1579,14 @@ class TaskNode(Node):
                 "operator_approved",
             )
         }
-        if not self._waypoint_document_calibrated:
+        if (
+            not self._waypoint_document_calibrated
+            and not self._supervised_navigation_test
+        ):
             # Launch arguments are an operator attestation, while the route
             # document records whether these exact coordinates were approved.
-            # Both must be true before the navigation worker can start.
+            # Both must be true before normal navigation can start.  The sole
+            # exception is the explicit, pure-navigation P-to-A field test.
             self._motion_gates["waypoints_calibrated"] = False
         if bool(self.get_parameter("use_laser_odometry").value):
             self._motion_gates["laser_odometry_calibrated"] = bool(
@@ -1444,6 +1655,8 @@ class TaskNode(Node):
             self.get_parameter("reset_timeout_sec").value,
             self.get_parameter("origin_position_tolerance").value,
             self.get_parameter("origin_yaw_tolerance").value,
+            use_laser_odometry=bool(
+                self.get_parameter("use_laser_odometry").value),
         )
         config = MissionConfig(
             server_wait_timeout_sec=self.get_parameter(
@@ -1457,6 +1670,8 @@ class TaskNode(Node):
             qr_retries=self.get_parameter("qr_retries").value,
             qr_retry_delay_sec=self.get_parameter(
                 "qr_retry_delay_sec").value,
+            qr_handoff_test_mode=self.get_parameter(
+                "qr_handoff_test_mode").value,
             vlm_timeout_sec=self.get_parameter("vlm_timeout_sec").value,
             vlm_prompt=self.get_parameter("vlm_prompt").value,
         )

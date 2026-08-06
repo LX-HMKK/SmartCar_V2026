@@ -23,11 +23,14 @@ from launch.actions import (
     DeclareLaunchArgument,
     GroupAction,
     OpaqueFunction,
+    RegisterEventHandler,
     SetEnvironmentVariable,
     TimerAction,
 )
+from launch.event_handlers import OnProcessStart
 from launch.substitutions import LaunchConfiguration
-from launch_ros.actions import Node
+from launch_ros.actions import LifecycleNode, Node
+from launch_ros.event_handlers import OnStateTransition
 CORE_LIFECYCLE_NODES = (
     'controller_server',
     'planner_server',
@@ -173,6 +176,8 @@ def generate_launch_description():
         'lifecycle_manager_delay_sec')
     nav2_params_file = LaunchConfiguration('nav2_params_file')
     nav2_params_overlay_file = LaunchConfiguration('nav2_params_overlay_file')
+    use_keepout_filter = LaunchConfiguration('use_keepout_filter')
+    keepout_mask_yaml = LaunchConfiguration('keepout_mask_yaml')
     use_respawn = LaunchConfiguration('use_respawn')
     log_level = LaunchConfiguration('log_level')
 
@@ -196,6 +201,19 @@ def generate_launch_description():
         description=(
             'Optional resolved parameter overlay applied after nav2_params_file'
         ),
+    )
+    declare_use_keepout_filter_cmd = DeclareLaunchArgument(
+        'use_keepout_filter',
+        default_value='true',
+        description=(
+            'Start the field keepout-mask stack and wait for it before Nav2. '
+            'Only the self-contained Gazebo launch may disable this.'
+        ),
+    )
+    declare_keepout_mask_yaml_cmd = DeclareLaunchArgument(
+        'keepout_mask_yaml',
+        default_value=os.path.join(pkg_dir, 'maps', 'field_map.yaml'),
+        description='Keepout mask metadata in the odom_combined field frame',
     )
     declare_autostart_cmd = DeclareLaunchArgument(
         'autostart',
@@ -240,15 +258,105 @@ def generate_launch_description():
         },
     )
 
+    nav2_released = False
+
+    def release_nav2_once(context):
+        """Start Nav2 once, after the filter-info server is active."""
+        nonlocal nav2_released
+        if nav2_released:
+            return []
+        nav2_released = True
+        return [load_nodes, lifecycle_manager]
+
+    def keepout_gated_navigation(context):
+        """Make the rule mask a Nav2 startup prerequisite on the real car."""
+        if not _as_bool(context, use_keepout_filter, 'use_keepout_filter'):
+            return [load_nodes, lifecycle_manager]
+
+        mask_yaml = keepout_mask_yaml.perform(context).strip()
+        if not mask_yaml or not os.path.isfile(mask_yaml):
+            raise RuntimeError(
+                'keepout_mask_yaml must name an existing field mask when '
+                'use_keepout_filter is true'
+            )
+        sim_time = _as_bool(context, use_sim_time, 'use_sim_time')
+        keepout_mask_server = Node(
+            package='nav2_map_server',
+            executable='map_server',
+            name='keepout_mask_server',
+            output='screen',
+            parameters=[{
+                'use_sim_time': sim_time,
+                'yaml_filename': mask_yaml,
+                'frame_id': 'odom_combined',
+                'topic_name': '/keepout_filter_mask',
+            }],
+        )
+        keepout_filter_info_server = LifecycleNode(
+            package='nav2_map_server',
+            executable='costmap_filter_info_server',
+            namespace='',
+            name='keepout_filter_info_server',
+            output='screen',
+            parameters=[{
+                'use_sim_time': sim_time,
+                'type': 0,
+                'filter_info_topic': '/keepout_filter_info',
+                'mask_topic': '/keepout_filter_mask',
+                'base': 0.0,
+                'multiplier': 1.0,
+            }],
+        )
+        keepout_lifecycle_manager = Node(
+            package='nav2_lifecycle_manager',
+            executable='lifecycle_manager',
+            name='lifecycle_manager_keepout',
+            output='screen',
+            parameters=[{
+                'use_sim_time': sim_time,
+                'autostart': True,
+                'bond_timeout': 20.0,
+                'node_names': [
+                    'keepout_mask_server',
+                    'keepout_filter_info_server',
+                ],
+            }],
+        )
+        start_keepout_manager = RegisterEventHandler(
+            OnProcessStart(
+                target_action=keepout_filter_info_server,
+                on_start=[TimerAction(
+                    period=2.0,
+                    actions=[keepout_lifecycle_manager],
+                )],
+            )
+        )
+        release_after_keepout = RegisterEventHandler(
+            OnStateTransition(
+                target_lifecycle_node=keepout_filter_info_server,
+                goal_state='active',
+                entities=[OpaqueFunction(function=release_nav2_once)],
+            )
+        )
+        return [
+            start_keepout_manager,
+            release_after_keepout,
+            keepout_mask_server,
+            keepout_filter_info_server,
+        ]
+
+    load_gated_navigation = OpaqueFunction(function=keepout_gated_navigation)
+
     launch_description = LaunchDescription()
     launch_description.add_action(stdout_linebuf_envvar)
     launch_description.add_action(declare_use_sim_time_cmd)
     launch_description.add_action(declare_nav2_params_file_cmd)
     launch_description.add_action(declare_nav2_params_overlay_file_cmd)
+    launch_description.add_action(declare_use_keepout_filter_cmd)
+    launch_description.add_action(declare_keepout_mask_yaml_cmd)
     launch_description.add_action(declare_autostart_cmd)
     launch_description.add_action(declare_lifecycle_manager_delay_cmd)
     launch_description.add_action(declare_use_respawn_cmd)
     launch_description.add_action(declare_log_level_cmd)
-    launch_description.add_action(load_nodes)
-    launch_description.add_action(lifecycle_manager)
+    launch_description.add_action(load_gated_navigation)
     return launch_description

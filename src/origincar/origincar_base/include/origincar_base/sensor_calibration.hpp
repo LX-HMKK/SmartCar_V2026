@@ -47,6 +47,177 @@ struct SensorSample
   double gyro_z;
 };
 
+inline void require_finite_value(const std::string & name, double value)
+{
+  if (!std::isfinite(value)) {
+    throw std::invalid_argument(name + " must be finite");
+  }
+}
+
+inline void require_finite_nonzero_value(const std::string & name, double value)
+{
+  require_finite_value(name, value);
+  if (value == 0.0) {
+    throw std::invalid_argument(name + " must be nonzero");
+  }
+}
+
+struct StationaryGyroBiasConfig
+{
+  StationaryGyroBiasConfig()
+  : enabled(true),
+    linear_speed_threshold(0.015),
+    wheel_yaw_rate_threshold(0.020),
+    gyro_residual_threshold(0.030),
+    gravity_mps2(9.80665),
+    acceleration_tolerance(0.60),
+    initial_samples(60U),
+    adaptation_gain(0.02)
+  {
+  }
+
+  bool enabled;
+  double linear_speed_threshold;
+  double wheel_yaw_rate_threshold;
+  double gyro_residual_threshold;
+  double gravity_mps2;
+  double acceleration_tolerance;
+  std::size_t initial_samples;
+  double adaptation_gain;
+};
+
+struct StationaryGyroBiasUpdate
+{
+  StationaryGyroBiasUpdate(
+    double corrected_gyro_z_value,
+    double bias_value,
+    bool stationary_value,
+    bool initialized_value)
+  : corrected_gyro_z(corrected_gyro_z_value),
+    bias(bias_value),
+    stationary(stationary_value),
+    initialized(initialized_value)
+  {
+  }
+
+  double corrected_gyro_z;
+  double bias;
+  bool stationary;
+  bool initialized;
+};
+
+inline void validate_stationary_gyro_bias_config(
+  const StationaryGyroBiasConfig & config)
+{
+  require_finite_value("stationary gyro linear speed threshold", config.linear_speed_threshold);
+  require_finite_value("stationary gyro wheel yaw threshold", config.wheel_yaw_rate_threshold);
+  require_finite_value("stationary gyro residual threshold", config.gyro_residual_threshold);
+  require_finite_nonzero_value("stationary gyro gravity", config.gravity_mps2);
+  require_finite_value("stationary gyro acceleration tolerance", config.acceleration_tolerance);
+  require_finite_value("stationary gyro adaptation gain", config.adaptation_gain);
+  if (
+    config.linear_speed_threshold < 0.0 ||
+    config.wheel_yaw_rate_threshold < 0.0 ||
+    config.gyro_residual_threshold <= 0.0 ||
+    config.acceleration_tolerance < 0.0 ||
+    config.initial_samples == 0U ||
+    config.adaptation_gain < 0.0 || config.adaptation_gain > 1.0)
+  {
+    throw std::invalid_argument("invalid stationary gyro bias configuration");
+  }
+}
+
+class StationaryGyroBiasEstimator
+{
+public:
+  StationaryGyroBiasEstimator()
+  : config_(),
+    bias_(0.0),
+    sample_sum_(0.0),
+    sample_count_(0U),
+    initialized_(false)
+  {
+  }
+
+  StationaryGyroBiasEstimator(
+    const StationaryGyroBiasConfig & config,
+    double initial_bias)
+  : config_(config),
+    bias_(initial_bias),
+    sample_sum_(0.0),
+    sample_count_(0U),
+    initialized_(false)
+  {
+    validate_stationary_gyro_bias_config(config_);
+    require_finite_value("initial gyro bias", bias_);
+  }
+
+  StationaryGyroBiasUpdate update(
+    double raw_gyro_z,
+    double linear_velocity_x,
+    double wheel_yaw_rate,
+    double acceleration_x,
+    double acceleration_y,
+    double acceleration_z)
+  {
+    require_finite_value("raw gyro z", raw_gyro_z);
+    require_finite_value("linear velocity x", linear_velocity_x);
+    require_finite_value("wheel yaw rate", wheel_yaw_rate);
+    require_finite_value("acceleration x", acceleration_x);
+    require_finite_value("acceleration y", acceleration_y);
+    require_finite_value("acceleration z", acceleration_z);
+
+    if (!config_.enabled) {
+      return StationaryGyroBiasUpdate(
+        raw_gyro_z - bias_, bias_, false, false);
+    }
+
+    const double acceleration_magnitude = std::sqrt(
+      acceleration_x * acceleration_x +
+      acceleration_y * acceleration_y +
+      acceleration_z * acceleration_z);
+    const bool stationary =
+      std::abs(linear_velocity_x) <= config_.linear_speed_threshold &&
+      std::abs(wheel_yaw_rate) <= config_.wheel_yaw_rate_threshold &&
+      std::abs(raw_gyro_z - bias_) <= config_.gyro_residual_threshold &&
+      std::abs(acceleration_magnitude - config_.gravity_mps2) <=
+      config_.acceleration_tolerance;
+
+    bool initialized_now = false;
+    if (stationary) {
+      if (!initialized_) {
+        sample_sum_ += raw_gyro_z;
+        ++sample_count_;
+        if (sample_count_ >= config_.initial_samples) {
+          bias_ = sample_sum_ / static_cast<double>(sample_count_);
+          initialized_ = true;
+          initialized_now = true;
+        }
+      } else {
+        bias_ += config_.adaptation_gain * (raw_gyro_z - bias_);
+      }
+    } else if (!initialized_) {
+      sample_sum_ = 0.0;
+      sample_count_ = 0U;
+    }
+
+    return StationaryGyroBiasUpdate(
+      raw_gyro_z - bias_, bias_, stationary, initialized_now);
+  }
+
+  bool initialized() const
+  {
+    return initialized_;
+  }
+
+private:
+  StationaryGyroBiasConfig config_;
+  double bias_;
+  double sample_sum_;
+  std::size_t sample_count_;
+  bool initialized_;
+};
+
 struct PlanarPose
 {
   PlanarPose(double x_value, double y_value, double yaw_value)
@@ -69,21 +240,6 @@ struct IntegrationDelta
   bool should_integrate;
   double dt_sec;
 };
-
-inline void require_finite_value(const std::string & name, double value)
-{
-  if (!std::isfinite(value)) {
-    throw std::invalid_argument(name + " must be finite");
-  }
-}
-
-inline void require_finite_nonzero_value(const std::string & name, double value)
-{
-  require_finite_value(name, value);
-  if (value == 0.0) {
-    throw std::invalid_argument(name + " must be nonzero");
-  }
-}
 
 inline void validate_sensor_calibration(const SensorCalibration & calibration)
 {

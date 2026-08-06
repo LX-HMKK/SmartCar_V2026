@@ -43,9 +43,14 @@ Visualization Manager:
       Size (m): 0.02
       Style: Points
       Topic:
-        Depth: 5
+        # This display is a live sensor diagnostic; queued frames create a
+        # visible trail when the robot or RViz render loop is delayed.
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
         Value: /scan
-      Decay Time: 0.3
+      Queue Size: 1
+      Decay Time: 0.0
     - Alpha: 0.45
       Class: rviz_default_plugins/Map
       Color Scheme: costmap

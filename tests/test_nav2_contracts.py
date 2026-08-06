@@ -366,9 +366,9 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertAlmostEqual(precise["yaw_goal_tolerance"], 0.15)
         self.assertIs(precise["stateful"], False)
         self.assertAlmostEqual(
-            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.35)
+            controller["reverse_goal_checker"]["xy_goal_tolerance"], 0.12)
         self.assertAlmostEqual(
-            controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.50)
+            controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.15)
         returned = controller["return_goal_checker"]
         self.assertEqual(
             returned["plugin"], "nav2_controller::SimpleGoalChecker")
@@ -645,6 +645,31 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertEqual(local["footprint_padding"], 0.03)
         self.assertEqual(global_costmap["footprint_padding"], 0.03)
 
+    def test_laser_height_window_accepts_the_physical_scan_frame(self):
+        # The static base_footprint -> laser chain places the scanner at about
+        # 0.26 m.  An omitted max_obstacle_height defaults to zero on this
+        # Nav2 build and silently drops every return before inflation.
+        for costmap_name in ("local_costmap", "global_costmap"):
+            with self.subTest(costmap=costmap_name):
+                scan = self.params[costmap_name][costmap_name][
+                    "ros__parameters"
+                ]["obstacle_layer"]["scan"]
+                self.assertAlmostEqual(scan["min_obstacle_height"], 0.05)
+                self.assertAlmostEqual(scan["max_obstacle_height"], 0.50)
+                self.assertLess(scan["min_obstacle_height"], 0.26)
+                self.assertGreater(scan["max_obstacle_height"], 0.26)
+                self.assertIs(scan["inf_is_valid"], False)
+
+    def test_costmap_observation_buffer_keeps_only_the_current_scan(self):
+        # Clearing is handled by the current ray set; retaining older scan
+        # buffers would make a moving obstacle appear to trail behind it.
+        for costmap_name in ("local_costmap", "global_costmap"):
+            with self.subTest(costmap=costmap_name):
+                scan = self.params[costmap_name][costmap_name][
+                    "ros__parameters"
+                ]["obstacle_layer"]["scan"]
+                self.assertEqual(scan["observation_persistence"], 0.0)
+
     def test_reverse_mppi_wrapper_is_built_and_uses_portable_bt_paths(self):
         cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         params_source = PARAMS_FILE.read_text(encoding="utf-8")
@@ -765,6 +790,44 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertNotIn("from launch_ros.descriptions", source)
         self.assertNotIn("ParameterFile(", source)
 
+    def test_real_navigation_requires_the_field_keepout_stack(self):
+        source = NAVIGATION_LAUNCH_FILE.read_text(encoding="utf-8")
+        package = (PACKAGE_ROOT / "package.xml").read_text(encoding="utf-8")
+
+        self.assertIn(
+            "DeclareLaunchArgument(\n        'use_keepout_filter',\n        default_value='true'",
+            source,
+        )
+        self.assertIn("nav2_map_server", package)
+        self.assertIn("costmap_filter_info_server", source)
+        self.assertIn("keepout_filter_info_server", source)
+        self.assertIn("keepout_mask_server", source)
+        self.assertIn("goal_state='active'", source)
+        self.assertIn("release_nav2_once", source)
+        self.assertIn("frame_id': 'odom_combined'", source)
+        self.assertIn("use_keepout_filter is true", source)
+
+        for costmap_name in ("local_costmap", "global_costmap"):
+            parameters = self.params[costmap_name][costmap_name]["ros__parameters"]
+            self.assertEqual(parameters["filters"], ["keepout_filter"])
+            self.assertEqual(
+                parameters["keepout_filter"]["plugin"],
+                "nav2_costmap_2d::KeepoutFilter",
+            )
+            self.assertTrue(parameters["keepout_filter"]["enabled"])
+            self.assertEqual(
+                parameters["keepout_filter"]["filter_info_topic"],
+                "/keepout_filter_info",
+            )
+
+    def test_cleanup_reclaims_keepout_lifecycle_servers(self):
+        cleanup = (ROOT / "scripts" / "ros_cleanup.sh").read_text(
+            encoding="utf-8"
+        )
+
+        self.assertIn("map_server", cleanup)
+        self.assertIn("costmap_filter_info_server", cleanup)
+
     def test_navigation_launch_is_the_single_public_entrypoint(self):
         self.assertFalse(
             (PACKAGE_ROOT / "launch" / "smartcar_nav2.launch.py").exists()
@@ -846,11 +909,11 @@ class TestNav2Contracts(unittest.TestCase):
         quaternion_norm = math.sqrt(sum(value * value for value in orientation.values()))
         self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
 
-    def test_deployment_route_matches_simulation_geometry_and_restores_media_tasks(self):
+    def test_deployment_route_preserves_shared_topology_and_restores_media_tasks(self):
         default = self.default_waypoint_document
         nav_only = self.nav_only_waypoint_document
         self.assertFalse(default["calibrated"])
-        self.assertTrue(nav_only["calibrated"])
+        self.assertFalse(nav_only["calibrated"])
         route_ids = (
             "p_start", "a_task_observe", "via_2", "c_corner_1",
             "via_1", "via_3", "p_finish",
@@ -887,13 +950,14 @@ class TestNav2Contracts(unittest.TestCase):
             ["start", "nav", "via", "nav", "via", "via", "return"],
         )
 
-        # nav_only only suppresses QR/VLM requests. Production keeps every
-        # completed simulation route constraint and restores the media tasks.
+        # The semantic QR target and the supervised P-to-A pure-navigation
+        # stop are independently measured. Every other route constraint must
+        # remain synchronized while the two A poses are calibrated in field.
         for waypoint_id in route_ids:
             with self.subTest(waypoint=waypoint_id):
                 self.assertEqual(
-                    default_by_id[waypoint_id]["pose"]["position"],
-                    nav_by_id[waypoint_id]["pose"]["position"],
+                    default_by_id[waypoint_id]["frame_id"],
+                    nav_by_id[waypoint_id]["frame_id"],
                 )
                 self.assertEqual(
                     default_by_id[waypoint_id]["direction"],
@@ -902,6 +966,24 @@ class TestNav2Contracts(unittest.TestCase):
                 self.assertEqual(
                     default_by_id[waypoint_id].get("goal_profile", "standard"),
                     nav_by_id[waypoint_id].get("goal_profile", "standard"),
+                )
+                if waypoint_id == "a_task_observe":
+                    self.assertNotEqual(
+                        default_by_id[waypoint_id]["pose"],
+                        nav_by_id[waypoint_id]["pose"],
+                    )
+                    self.assertEqual(
+                        effective_heading_mode(default_by_id[waypoint_id]),
+                        "locked",
+                    )
+                    self.assertEqual(
+                        effective_heading_mode(nav_by_id[waypoint_id]),
+                        "locked",
+                    )
+                    continue
+                self.assertEqual(
+                    default_by_id[waypoint_id]["pose"]["position"],
+                    nav_by_id[waypoint_id]["pose"]["position"],
                 )
                 if effective_heading_mode(default_by_id[waypoint_id]) == "locked":
                     self.assertEqual(
@@ -974,16 +1056,15 @@ class TestNav2Contracts(unittest.TestCase):
         c_corner_1 = waypoint_by_id(default, "c_corner_1")
         self.assertEqual(qr["direction"], "forward")
 
-        # Terminal waypoints retain fixed orientation
+        # Each A target has a measured terminal heading rather than a bearing
+        # synthesized from the straight P-to-A vector.
         qr_yaw = planar_yaw(qr["pose"]["orientation"])
-        start = waypoint_by_id(default, "p_start")
-        start_position = start["pose"]["position"]
-        qr_position = qr["pose"]["position"]
-        direct_arrival_yaw = math.atan2(
-            qr_position["y"] - start_position["y"],
-            qr_position["x"] - start_position["x"],
+        self.assertAlmostEqual(qr_yaw, math.radians(10.0), delta=1.0e-6)
+        self.assertAlmostEqual(
+            planar_yaw(nav_by_id["a_task_observe"]["pose"]["orientation"]),
+            math.radians(12.0),
+            delta=1.0e-6,
         )
-        self.assertAlmostEqual(qr_yaw, direct_arrival_yaw, delta=1.0e-6)
         self.assertAlmostEqual(
             planar_yaw(c_corner_1["pose"]["orientation"]),
             math.pi,

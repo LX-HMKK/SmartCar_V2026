@@ -1,9 +1,9 @@
-"""Shared simulation keepout geometry used by route editing preflight.
+"""Shared field keepout geometry used by route preflight and Nav2 masks.
 
 The values deliberately mirror the simulation mask: the central C-zone core
 forces a loop while the outer limits prevent plans from escaping the stadium.
-They are display/planning constraints only and do not enable a map layer on
-the real vehicle.
+The generated PGM is a rule constraint for both Nav2 deployments; it is never
+used to localize the physical vehicle.
 """
 
 from __future__ import annotations

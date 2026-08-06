@@ -74,6 +74,8 @@ class SteeringCalibrationCommandContracts(unittest.TestCase):
         self.assertIn('choices=("forward", "reverse")', source)
         self.assertIn("request.direction = self._direction", source)
         self.assertIn("--yes", source)
+        self.assertIn('"/controller_server/get_state"', source)
+        self.assertIn("controller_server must be inactive", source)
         self.assertIn("finally:\n            self._stop_motion()", source)
         self.assertIn("self._publish_zero()", source)
 
@@ -97,6 +99,7 @@ class SteeringCalibrationCommandContracts(unittest.TestCase):
                 self.assertIn(entry, setup)
         root = ElementTree.parse(MANIFEST).getroot()
         dependencies = {item.text for item in root.findall("exec_depend")}
+        self.assertIn("lifecycle_msgs", dependencies)
         self.assertIn("unique_identifier_msgs", dependencies)
 
 

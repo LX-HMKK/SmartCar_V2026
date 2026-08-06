@@ -5,7 +5,11 @@ source:
   diagrams:
     - ../reference/competition_field_dimensions.png
     - ../reference/competition_field_route_example.png
-  note: P origin and task publication point are estimated from the diagram and require venue measurement.
+  note: >-
+    Dimensioned rule-map geometry. P is the centre of the 0.50 m P marker at
+    (0.50, 0.25) from the west/south edges. The task marker centre is at
+    (4.65, 1.60). QR targets, people, and black obstacles are not dimensioned
+    by the rule diagram and remain venue-survey inputs rather than map facts.
 geometry:
   field_width_m: 5.0
   field_height_m: 5.0
@@ -19,7 +23,10 @@ geometry:
   ring_inner_width_m: 3.0
   ring_inner_height_m: 0.65
   ring_center_x_from_west_m: 2.5
-  ring_center_y_from_south_m: 3.575
+  # The rule diagram dimensions the outer stadium from 2.95 m to 4.60 m above
+  # the south edge. Its centre is 3.775 m; the old 3.575 m estimate displaced
+  # the C ring and its attached B corridor 0.20 m toward zone A.
+  ring_center_y_from_south_m: 3.775
   p_origin_x_from_west_m: 0.5
   p_origin_y_from_south_m: 0.25
   task_point_x_from_west_m: 4.65

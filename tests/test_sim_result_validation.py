@@ -159,6 +159,8 @@ def valid_manifest():
             VALIDATION.EXPECTED_GOAL_CONTRACTS[waypoint_id])
         if checker == "precise_goal_checker":
             xy_tolerance, yaw_tolerance = 0.12, 0.15
+        elif waypoint_id == "c_corner_1":
+            xy_tolerance, yaw_tolerance = 0.12, 0.15
         elif checker == "reverse_goal_checker":
             xy_tolerance, yaw_tolerance = 0.12, 0.25
         else:

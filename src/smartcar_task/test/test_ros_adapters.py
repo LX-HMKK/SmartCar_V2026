@@ -20,6 +20,7 @@ try:
     from rclpy.callback_groups import ReentrantCallbackGroup
     from rclpy.executors import MultiThreadedExecutor
     from robot_localization.srv import SetPose
+    from std_srvs.srv import Trigger
 
 
     from smartcar_task.mission import OperationResult
@@ -598,6 +599,80 @@ class RosAdapterTests(unittest.TestCase):
         self.assertTrue(result.success, result.status)
         self.assertEqual(order[0], "set_pose")
         self.assertIn("odom:1.0", order)
+        self.assertIsNone(localization._odom_subscription)
+        self.assertIsNone(localization._laser_odom_subscription)
+
+    def test_localization_reset_resets_and_verifies_laser_odometry(self):
+        order = []
+        timers = []
+        odom_publisher = self.server_node.create_publisher(
+            Odometry, "/odom_combined", 10)
+        laser_odom_publisher = self.server_node.create_publisher(
+            Odometry, "/odom_laser", 10)
+
+        def publish_odom(publisher, label):
+            message = Odometry()
+            message.header.frame_id = "odom_combined"
+            message.child_frame_id = "base_footprint"
+            message.pose.pose.orientation.w = 1.0
+            publisher.publish(message)
+            order.append(label)
+
+        def set_pose(request, response):
+            order.append("set_pose")
+            self.assertIsInstance(request.pose, PoseWithCovarianceStamped)
+            return response
+
+        def reset_laser(_request, response):
+            order.append("reset_laser")
+            timers.extend((
+                threading.Timer(
+                    0.10,
+                    lambda: publish_odom(odom_publisher, "odom"),
+                ),
+                threading.Timer(
+                    0.15,
+                    lambda: publish_odom(laser_odom_publisher, "laser_odom"),
+                ),
+            ))
+            for timer in timers:
+                timer.start()
+            response.success = True
+            response.message = "reset"
+            return response
+
+        self.server_node.create_service(SetPose, "/set_pose", set_pose)
+        self.server_node.create_service(
+            Trigger,
+            "/smartcar/localization/reset_laser_odometry",
+            reset_laser,
+        )
+
+        class StoppedNavigator:
+            @staticmethod
+            def is_active():
+                return False
+
+        localization = RosLocalization(
+            self.client_node,
+            StoppedNavigator(),
+            ReentrantCallbackGroup(),
+            reset_timeout_sec=2.0,
+            position_tolerance=0.2,
+            yaw_tolerance=0.2,
+            use_laser_odometry=True,
+        )
+
+        result = localization.reset_origin()
+        for timer in timers:
+            timer.join(timeout=1.0)
+
+        self.assertTrue(result.success, result.status)
+        self.assertEqual(order[:2], ["set_pose", "reset_laser"])
+        self.assertIn("odom", order)
+        self.assertIn("laser_odom", order)
+        self.assertIsNone(localization._odom_subscription)
+        self.assertIsNone(localization._laser_odom_subscription)
 
 
 if __name__ == "__main__":

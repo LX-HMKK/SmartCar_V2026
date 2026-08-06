@@ -51,6 +51,33 @@ TEST(SensorCalibrationTest, AppliesAckermannLateralConstraintBeforeCalibration)
   EXPECT_DOUBLE_EQ(constrained_lateral_velocity(-0.4, false), -0.4);
 }
 
+TEST(SensorCalibrationTest, LearnsGyroBiasOnlyFromStationarySamples)
+{
+  StationaryGyroBiasConfig config;
+  config.initial_samples = 3U;
+  config.adaptation_gain = 0.5;
+  StationaryGyroBiasEstimator estimator(config, 0.0023);
+
+  for (int index = 0; index < 2; ++index) {
+    const StationaryGyroBiasUpdate update = estimator.update(
+      -0.00036, 0.0, 0.0, 0.0, 0.0, 9.80665);
+    EXPECT_FALSE(update.initialized);
+  }
+
+  const StationaryGyroBiasUpdate locked = estimator.update(
+    -0.00036, 0.0, 0.0, 0.0, 0.0, 9.80665);
+  EXPECT_TRUE(locked.initialized);
+  EXPECT_TRUE(estimator.initialized());
+  EXPECT_NEAR(locked.bias, -0.00036, 1e-12);
+  EXPECT_NEAR(locked.corrected_gyro_z, 0.0, 1e-12);
+
+  const StationaryGyroBiasUpdate moving = estimator.update(
+    0.10, 0.10, 0.10, 0.0, 0.0, 9.80665);
+  EXPECT_FALSE(moving.stationary);
+  EXPECT_NEAR(moving.bias, locked.bias, 1e-12);
+  EXPECT_NEAR(moving.corrected_gyro_z, 0.10036, 1e-12);
+}
+
 TEST(SensorCalibrationTest, AppliesSteeringAffineCalibration)
 {
   SensorCalibration calibration;
