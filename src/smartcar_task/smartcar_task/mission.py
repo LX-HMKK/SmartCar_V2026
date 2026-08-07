@@ -4,7 +4,10 @@ from enum import Enum
 import math
 import threading
 
-from smartcar_task.planning_segments import allows_reverse_handoff_through_poses
+from smartcar_task.planning_segments import (
+    allows_precise_terminal_through_poses,
+    allows_reverse_handoff_through_poses,
+)
 
 
 VLM_HARD_TIMEOUT_SEC = 8.0
@@ -337,8 +340,8 @@ class Mission:
                 for waypoint in segment
             )
             if nonstandard and not (
-                direction == "reverse"
-                and allows_reverse_handoff_through_poses(segment)
+                allows_reverse_handoff_through_poses(segment)
+                or allows_precise_terminal_through_poses(segment)
             ):
                 return "navigation_segment_nonstandard_goal_profile"
         return None

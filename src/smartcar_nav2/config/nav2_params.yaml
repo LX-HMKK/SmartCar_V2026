@@ -182,21 +182,22 @@ controller_server:
       xy_goal_tolerance: 0.12
       yaw_goal_tolerance: 0.15
       stateful: false
-    # The return-to-P endpoint must not inherit the broad C1 handoff envelope.
-    # This keeps P at least 0.17 m closer than the observed 0.32 m early stop.
+    # P is a position terminal. Once a forward-only Ackermann vehicle is in
+    # this envelope it must stop, rather than driving past P to chase a final
+    # heading that would require an extra loop.
     return_goal_checker:
-      plugin: "nav2_controller::SimpleGoalChecker"
+      plugin: "nav2_controller::PositionGoalChecker"
       xy_goal_tolerance: 0.15
-      yaw_goal_tolerance: 0.15
       stateful: false
     # Non-task route points are position constraints.  Requiring an arrival
     # yaw here makes an Ackermann vehicle overshoot a valid transit point
     # while trying to remove a heading error it was never asked to satisfy.
     transit_goal_checker:
       plugin: "nav2_controller::PositionGoalChecker"
-      # Transit gates are intentionally coarse while route geometry is being
-      # verified. Task poses retain their own precise/yaw-aware checkers.
-      xy_goal_tolerance: 0.50
+      # Transit gates are position-only, but must be tight enough to place the
+      # full vehicle inside a narrow corridor before the next segment starts.
+      # Task poses retain their own precise/yaw-aware checkers.
+      xy_goal_tolerance: 0.20
       stateful: false
     # A recovery path is only 0.15 m, so it cannot share the wide transit
     # tolerance or it would finish before issuing a physical reverse command.

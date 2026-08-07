@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
-# SmartCar 纯导航安全测试（DUBIN 虚拟倒车 + 方向门）
-# 用法: bash /root/nav_test.sh [--no-rviz] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]
+# SmartCar 纯导航安全测试（DUBIN 全正向路线 + 方向门）
+# 用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]
 # ============================================================
 set -uo pipefail
 
@@ -24,6 +24,7 @@ END_SEGMENT_ID=""
 RESET_ORIGIN=false
 SUPERVISED_P_TO_A=false
 SUPERVISED_P_TO_C1=false
+DEPTH_CAMERA=false
 for arg in "$@"; do
   case "$arg" in
     --no-rviz)   NO_RVIZ=true ;;
@@ -32,9 +33,10 @@ for arg in "$@"; do
     --supervised-p-to-a) SUPERVISED_P_TO_A=true ;;
     --supervised-p-to-c1) SUPERVISED_P_TO_C1=true ;;
     --reset-origin) RESET_ORIGIN=true ;;
+    --depth-camera) DEPTH_CAMERA=true ;;
     *)
       echo "未知选项: $arg"
-      echo "用法: bash /root/nav_test.sh [--no-rviz] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]"
+      echo "用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]"
       exit 1
       ;;
   esac
@@ -57,6 +59,10 @@ if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
   # current, manually aligned heading is made the localization origin.
   RESET_ORIGIN=true
 fi
+if $DEPTH_CAMERA && { $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; }; then
+  echo "✗ 深度相机尚未完成外参与障碍物标定，不能用于受看护运动前缀"
+  exit 1
+fi
 
 export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
 
@@ -72,9 +78,15 @@ require_parameter() {
   local attempt
 
   for attempt in 1 2 3; do
-    # ros_cleanup restarts the CLI daemon before launch; querying that cached
-    # graph can return "Node not found" while the lifecycle nodes are active.
-    result=$(timeout 8s ros2 param get --no-daemon "$node" "$parameter" 2>&1) || true
+    # After the parameter service is visible, a persistent CLI daemon keeps
+    # its Fast DDS graph between successive parameter checks.  A fresh
+    # --no-daemon process is retained as a bounded fallback for a stale graph.
+    result=$(timeout 15s ros2 param get "$node" "$parameter" 2>&1) || true
+    if [[ "$result" == *"$expected"* ]]; then
+      echo "  ✓ $node $parameter = $expected"
+      return 0
+    fi
+    result=$(timeout 15s ros2 param get --no-daemon "$node" "$parameter" 2>&1) || true
     if [[ "$result" == *"$expected"* ]]; then
       echo "  ✓ $node $parameter = $expected"
       return 0
@@ -86,6 +98,28 @@ require_parameter() {
 
   echo "  ✗ $node 参数 $parameter 不是 $expected"
   echo "    实际: $result"
+  return 1
+}
+
+wait_for_parameter_service() {
+  local node=$1
+  local service_name="${node}/get_parameters"
+  local services
+  local attempt
+
+  for attempt in 1 2 3 4 5; do
+    services=$(timeout 15s ros2 service list --no-daemon 2>&1) || true
+    if [[ "$services" == *"$service_name"* ]]; then
+      echo "  ✓ 参数服务已发现: $service_name"
+      return 0
+    fi
+    if [ "$attempt" -lt 5 ]; then
+      sleep 2
+    fi
+  done
+
+  echo "  ✗ 未发现参数服务 $service_name"
+  echo "    实际: $services"
   return 1
 }
 
@@ -116,22 +150,58 @@ require_latched_topic_sample() {
   echo "  ✓ 收到锁存话题 $topic"
 }
 
+require_latched_status() {
+  local topic=$1
+  local expected=$2
+  local result
+
+  result=$(timeout 12s ros2 topic echo --no-daemon --once \
+    --qos-reliability reliable --qos-durability transient_local \
+    "$topic" std_msgs/msg/String 2>&1) || true
+  if [[ "$result" != *"data: $expected"* ]]; then
+    echo "  ✗ $topic 状态不是 $expected"
+    echo "    实际: $result"
+    return 1
+  fi
+  echo "  ✓ $topic = $expected"
+}
+
 verify_obstacle_avoidance() {
   banner "避障与禁区验证"
   local costmap
+  local expected_sources="String value is: scan"
+  if $DEPTH_CAMERA; then
+    expected_sources="String value is: scan depth_points"
+  fi
   for costmap in /local_costmap/local_costmap /global_costmap/global_costmap; do
+    wait_for_parameter_service "$costmap" || return 1
     require_parameter "$costmap" "obstacle_layer.enabled" "Boolean value is: True" || return 1
-    require_parameter "$costmap" "obstacle_layer.observation_sources" "String value is: scan" || return 1
+    require_parameter "$costmap" "obstacle_layer.observation_sources" "$expected_sources" || return 1
+    require_parameter "$costmap" "inflation_layer.enabled" "Boolean value is: True" || return 1
+    require_parameter "$costmap" "keepout_filter.enabled" "Boolean value is: True" || return 1
+    require_parameter "$costmap" "keepout_filter.filter_info_topic" "String value is: /keepout_filter_info" || return 1
     require_parameter "$costmap" "obstacle_layer.scan.topic" "String value is: /scan" || return 1
+    require_parameter "$costmap" "obstacle_layer.scan.data_type" "String value is: LaserScan" || return 1
     require_parameter "$costmap" "obstacle_layer.scan.observation_persistence" "Double value is: 0.0" || return 1
     require_parameter "$costmap" "obstacle_layer.scan.min_obstacle_height" "Double value is: 0.05" || return 1
     require_parameter "$costmap" "obstacle_layer.scan.max_obstacle_height" "Double value is: 0.5" || return 1
     require_parameter "$costmap" "obstacle_layer.scan.inf_is_valid" "Boolean value is: False" || return 1
-    require_parameter "$costmap" "inflation_layer.enabled" "Boolean value is: True" || return 1
-    require_parameter "$costmap" "keepout_filter.enabled" "Boolean value is: True" || return 1
-    require_parameter "$costmap" "keepout_filter.filter_info_topic" "String value is: /keepout_filter_info" || return 1
+    if $DEPTH_CAMERA; then
+      require_parameter "$costmap" "obstacle_layer.depth_points.topic" "String value is: /smartcar/depth/points" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_points.data_type" "String value is: PointCloud2" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_points.observation_persistence" "Double value is: 0.0" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_points.marking" "Boolean value is: True" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_points.clearing" "Boolean value is: True" || return 1
+    fi
   done
   require_topic_sample /scan sensor_msgs/msg/LaserScan || return 1
+  if $DEPTH_CAMERA; then
+    require_topic_sample /smartcar/depth/points sensor_msgs/msg/PointCloud2 || return 1
+    require_latched_status /smartcar/depth_obstacles/status depth_points_active || return 1
+    wait_for_parameter_service /safety_node || return 1
+    require_parameter /safety_node "require_depth_points" "Boolean value is: True" || return 1
+    require_parameter /safety_node "depth_points_topic" "String value is: /smartcar/depth/points" || return 1
+  fi
   require_latched_topic_sample /keepout_filter_mask nav_msgs/msg/OccupancyGrid || return 1
   require_latched_topic_sample /keepout_filter_info nav2_msgs/msg/CostmapFilterInfo || return 1
   require_topic_sample /local_costmap/costmap_raw nav2_msgs/msg/Costmap || return 1
@@ -152,7 +222,7 @@ echo "  ✓ 清理完成"
 # ---- 2. 构建 ----
 banner "[2/6] 构建"
 colcon build --symlink-install \
-  --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup \
+  --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8 \
   || die "构建失败"
@@ -172,8 +242,13 @@ else
 fi
 
 # ---- 4. 启动系统 ----
-BANNER_MSG="DUBIN + 强制倒车，急停锁存"
+BANNER_MSG="DUBIN + 全正向路线，急停锁存"
 EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
+CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=usb use_depth_camera:=false"
+if $DEPTH_CAMERA; then
+  BANNER_MSG="DUBIN + Aurora 深度障碍感知，急停锁存"
+  CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true"
+fi
 if [ -n "$END_SEGMENT_ID" ]; then
   EXTRA_ARGS="$EXTRA_ARGS navigation_test_end_segment_id:=$END_SEGMENT_ID"
 fi
@@ -197,8 +272,8 @@ true > "$LOG"
 ros2 launch smartcar_bringup smartcar_system.launch.py \
   use_base:=true use_lidar:=true \
   use_laser_odometry:=false use_safety:=true use_nav:=true \
-  nav_autostart:=true use_camera:=false use_vision:=false \
-  use_task:=true camera_driver:=usb \
+  nav_autostart:=true $CAMERA_ARGS \
+  use_task:=true \
   $EXTRA_ARGS $VISUALIZATION_ARG waypoints_file:="$WP" \
   >> "$LOG" 2>&1 &
 LAUNCH_PID=$!
@@ -228,7 +303,7 @@ verify_obstacle_avoidance || die "避障感知未就绪；急停保持锁存，�
 
 if $RESET_ORIGIN; then
   banner "定位原点复位"
-  RESET_RESULT=$(timeout 12s ros2 service call --no-daemon /smartcar/task/reset \
+  RESET_RESULT=$(timeout 12s ros2 service call /smartcar/task/reset \
     std_srvs/srv/Trigger "{}" 2>&1) || {
       echo "$RESET_RESULT"
       die "定位复位调用失败；急停保持锁存"

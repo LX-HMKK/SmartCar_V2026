@@ -24,6 +24,8 @@ setup(
     entry_points={
         "console_scripts": [
             "vision_node = smartcar_vision.vision_node:main",
+            "depth_pointcloud_relay = "
+            "smartcar_vision.depth_pointcloud_relay:main",
             "volcengine_vlm_cli = "
             "smartcar_vision.volcengine_vlm_cli:main",
         ],

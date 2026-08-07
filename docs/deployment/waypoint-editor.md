@@ -114,7 +114,7 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 ### 5.1 选择分段并设置端点
 
 1. 在右上“路径分段”列表选择要编辑的段。
-2. 使用“正向（前进）”或“倒向（倒车）”确定该段整体行驶方向。
+2. 使用“正向（前进）”确定活动路线的整体行驶方向。界面保留“倒向（倒车）”用于通用反向路线编辑；当前已保存语义路线的每一段均须保持正向，改为倒向还需同步更新路线合同与验收记录。
 3. 通过起点、终点文本框输入已有航点 ID，或点击相邻的“点选”后在场地上选择。
 4. 在“起点朝向”和“终点朝向”输入角度。P 起点朝向固定为 `+X`。
 
@@ -134,11 +134,11 @@ Nav2 的 `/plan` 或 `/local_plan`。点击“几何预检”后显示的是每�
 `via_N` 保存为 `task: via`，且不写 `pose.orientation`。它仍继承所属分段的前进或
 倒车方向；“无朝向”只表示该点不强制终点航向。预检会按前后路线切线推导它的朝向。
 
-当前实车 `default_waypoints.yaml` 与 Gazebo `nav_only.yaml` 都在两段倒车中使用标准 `via` 约束。第二段允许
-`reverse via ... -> c_corner_1` 组成一个连续动作：`c_corner_1` 的
-`reverse_handoff` 必须保持为最后一个、锁定航向的目标，运行时会使用 reverse-locked
-ThroughPoses 行为树。不能把 C1 作为中间点，不能把 `precise` 或其他特殊 profile 放在它前面，
-也不能把该组合改为前进段。
+当前实车 `default_waypoints.yaml` 与 Gazebo `nav_only.yaml` 的四个 planning segment 均为正向；
+A→`via_2` 和 C1→P 使用标准 `via` 约束，A 与 `c_corner_1` 为 `precise` 单目标，`p_finish`
+为 `standard` 终点。将某一分段切为正向时，编辑器会把该段末端残留的
+`reverse_handoff` 自动降级为 `standard`，避免预检只报告泛化的路线定义错误。`reverse_handoff`
+仍是反向专用的末端 profile，不能出现在活动全正向路线中。
 
 不要为掩盖 P→A 控制器横向误差、不可达或规划绕行而增加经过点；只有规则或静态安全边界确实
 要求通过某一位置时，才应添加一个经过点，并重新完成完整仿真验收。
@@ -180,8 +180,8 @@ ThroughPoses 行为树。不能把 C1 作为中间点，不能把 `precise` 或�
 | 字段 | 影响范围 |
 |---|---|
 | `minimum_turning_radius_m` | 编辑器和实车路线预检使用的保守物理半径，当前为 `0.22 m`（实测极限约 `0.20 m`）；仿真调参不会改写实车 `nav2_params.yaml`。 |
-| `simulation_minimum_turning_radius_m` | 仅 Gazebo：仿真 overlay 中的 Smac、正/倒车 controller 与 free-heading 校验，当前授权为 `0.22 m`。 |
-| `runtime_footprint` | 编辑器预检和仿真 costmap 的共享车辆足迹。`length_m`/`width_m` 是整车全长/全宽，当前 `0.27 x 0.13 m`；`base_footprint` 在后轴，`center_x_from_base_footprint_m=0.0841 m`。倒车的虚拟航向要求采用包含前后两个方向的对称包络，因此每侧加 `0.03 m` 后的规划足迹为 `0.4982 x 0.19 m`。同步只写 Gazebo overlay，不改变实车 obstacle layer。 |
+| `simulation_minimum_turning_radius_m` | 仅 Gazebo：仿真 overlay 中的 Smac、controller 与 free-heading 校验，当前为 `0.22 m`。 |
+| `runtime_footprint` | 编辑器预检和仿真 costmap 的共享车辆足迹。`length_m`/`width_m` 是整车全长/全宽，当前 `0.27 x 0.13 m`；`base_footprint` 在后轴，`center_x_from_base_footprint_m=0.0841 m`。保留的反向基础设施要求采用包含前后两个方向的对称包络，因此每侧加 `0.03 m` 后的规划足迹为 `0.4982 x 0.19 m`；当前全正向路线同样按该保守包络预检。同步只写 Gazebo overlay，不改变实车 obstacle layer。 |
 | `c_zone_keepout` | C 区中央禁区的水平/竖直内缩，保留外圈绕行车道。 |
 | `preflight` | 本地预检的网格、采样、终点容差和搜索预算。 |
 | `simulation_keepout.map_resolution_m` | 仿真 keepout PGM 的分辨率。 |

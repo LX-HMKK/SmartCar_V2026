@@ -25,10 +25,10 @@ ALLOWED_GOAL_PROFILES = frozenset({
 })
 ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
 # These are the only mission positions whose physical base-frame heading is
-# authored by the operator.  All transit positions are position constraints;
-# their runtime goal headings are derived from the route tangent immediately
-# before Nav2 receives them.
-HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm", "return"})
+# authored by the operator. The return point is deliberately position-only:
+# a forward-only Ackermann vehicle must stop when it reaches P, rather than
+# driving past P to chase an infeasible final yaw.
+HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm"})
 ORIGIN_TOLERANCE = 1e-9
 QUATERNION_NORM_TOLERANCE = 1e-3
 WAYPOINT_ID_PATTERN = re.compile(r"^[A-Za-z][A-Za-z0-9_-]*$")
@@ -261,22 +261,20 @@ def validate_waypoints(waypoints):
         if tasks.count(task) != 1:
             raise ValueError(f"mission task {task} must occur exactly once")
 
-    # The production route keeps only semantic endpoints and ordinary ``via``
-    # constraints.  Its direction contract is fixed: P to QR forward, then
-    # both VLM-bound and return segments reverse.
+    # The semantic order is independent of travel direction. Explicit
+    # planning segments own the direction used for each runtime action, so
+    # operators can switch the complete route to forward travel without
+    # invalidating an otherwise well-formed QR/VLM mission.
     state = "start"
     for i, task in enumerate(tasks):
-        expected_direction = None
         if state == "start":
             if task != "start":
                 raise ValueError(f"waypoint {i}: expected start, got {task}")
-            expected_direction = "forward"
             state = "before_qr"
         elif state == "before_qr":
             if task == "via":
-                expected_direction = "forward"
+                pass
             elif task in ("qr", "nav"):
-                expected_direction = "forward"
                 state = "before_vlm"
             else:
                 raise ValueError(
@@ -284,9 +282,8 @@ def validate_waypoints(waypoints):
                 )
         elif state == "before_vlm":
             if task == "via":
-                expected_direction = "reverse"
+                pass
             elif task in ("vlm", "nav"):
-                expected_direction = "reverse"
                 state = "before_return"
             else:
                 raise ValueError(
@@ -294,25 +291,19 @@ def validate_waypoints(waypoints):
                 )
         elif state == "before_return":
             if task == "return":
-                expected_direction = "reverse"
                 state = "done"
             elif task == "via":
-                expected_direction = "reverse"
+                pass
             else:
                 raise ValueError(
                     f"waypoint {i}: expected via or return, got {task}"
                 )
         elif state == "done":
             raise ValueError(f"waypoint {i}: unexpected {task} after return")
-        if waypoints[i].direction != expected_direction:
-            raise ValueError(
-                f"waypoint {i}: direction must be {expected_direction}, "
-                f"got {waypoints[i].direction}"
-            )
     if state != "done":
         raise ValueError(
-            "mission order must be start, optional forward via, (qr|nav), "
-            "optional reverse via, (vlm|nav), optional reverse via, return"
+            "mission order must be start, optional via, (qr|nav), optional "
+            "via, (vlm|nav), optional via, return"
         )
     for waypoint in waypoints:
         if (

@@ -37,7 +37,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from rclpy.time import Time
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
@@ -169,6 +169,8 @@ class SimPerceptionMonitor(Node):
         super().__init__("sim_perception_monitor")
 
         self.declare_parameter("scan_topic", "/scan")
+        self.declare_parameter("depth_points_topic", "/smartcar/depth/points")
+        self.declare_parameter("require_depth_points", False)
         self.declare_parameter("odom_topic", "/odom_combined")
         self.declare_parameter(
             "local_costmap_topic", "/local_costmap/costmap_raw")
@@ -223,6 +225,8 @@ class SimPerceptionMonitor(Node):
             "max_tf_odom_yaw_error_rad")
         self._max_odom_interpolation_span = self._positive_parameter(
             "max_odom_interpolation_span_sec")
+        self._require_depth_points = bool(
+            self.get_parameter("require_depth_points").value)
         self._require_landmark_registration = bool(
             self.get_parameter("require_landmark_registration").value)
         self._landmark_match_tolerance = self._positive_parameter(
@@ -279,6 +283,8 @@ class SimPerceptionMonitor(Node):
         )
 
         scan_topic = str(self.get_parameter("scan_topic").value)
+        depth_points_topic = str(
+            self.get_parameter("depth_points_topic").value)
         odom_topic = str(self.get_parameter("odom_topic").value)
         local_topic = str(self.get_parameter("local_costmap_topic").value)
         global_topic = str(self.get_parameter("global_costmap_topic").value)
@@ -286,6 +292,12 @@ class SimPerceptionMonitor(Node):
 
         self._scan_sub = self.create_subscription(
             LaserScan, scan_topic, self._scan_callback, sensor_qos)
+        self._depth_points_sub = self.create_subscription(
+            PointCloud2,
+            depth_points_topic,
+            self._depth_points_callback,
+            sensor_qos,
+        )
         self._odom_sub = self.create_subscription(
             # Odometry uses the same reliable profile as the simulation relay.
             Odometry,
@@ -310,6 +322,8 @@ class SimPerceptionMonitor(Node):
         self._tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
         self._tf_listener = TransformListener(self._tf_buffer, self)
         self._scan: ScanSample | None = None
+        self._depth_points_stamp_ns: int | None = None
+        self._depth_points_count = 0
         self._odom_stamp_ns: int | None = None
         self._odom_history: deque[OdomPoseSample] = deque(maxlen=512)
         self._costmaps: dict[str, Costmap | None] = {
@@ -329,7 +343,7 @@ class SimPerceptionMonitor(Node):
         )
         self.get_logger().info(
             "sim perception monitor: scan/odom/TF -> local+global costmap_raw "
-            "(read-only)"
+            f"(read-only, require_depth_points={self._require_depth_points})"
         )
 
     def _positive_parameter(self, name: str) -> float:
@@ -353,6 +367,22 @@ class SimPerceptionMonitor(Node):
             frame_id=msg.header.frame_id,
             points=points,
         )
+
+    def _depth_points_callback(self, msg: PointCloud2) -> None:
+        point_count = int(msg.width) * int(msg.height)
+        expected_bytes = int(msg.row_step) * int(msg.height)
+        received_stamp_ns = stamp_ns(msg.header.stamp)
+        if (
+            received_stamp_ns <= 0
+            or not str(msg.header.frame_id).strip()
+            or point_count <= 0
+            or msg.point_step <= 0
+            or msg.row_step < msg.width * msg.point_step
+            or len(msg.data) < expected_bytes
+        ):
+            return
+        self._depth_points_stamp_ns = received_stamp_ns
+        self._depth_points_count = point_count
 
     def _odom_callback(self, msg: Odometry) -> None:
         received_stamp_ns = stamp_ns(msg.header.stamp)
@@ -615,6 +645,17 @@ class SimPerceptionMonitor(Node):
             abs(sample.stamp_ns - odom_stamp) / 1e9
             if sample is not None and odom_stamp is not None else None
         )
+        depth_points_age_sec = (
+            (now_ns - self._depth_points_stamp_ns) / 1e9
+            if (
+                self._depth_points_stamp_ns is not None
+                and now_ns >= self._depth_points_stamp_ns
+            ) else None
+        )
+        depth_points_fresh = (
+            depth_points_age_sec is not None
+            and depth_points_age_sec <= self._max_sensor_age
+        )
         checks = {
             "scan": sample is not None
             and len(sample.points) >= self._min_beams
@@ -627,6 +668,10 @@ class SimPerceptionMonitor(Node):
             "a_zone_probe": self._a_zone_probe_passed,
             "landmarks": self._landmark_registration_passed,
         }
+        if self._require_depth_points:
+            checks["depth_points"] = (
+                self._depth_points_count > 0 and depth_points_fresh
+            )
         points: list[tuple[float, float]] = []
         probe_points: list[tuple[float, float]] = []
         landmark_ids: list[str] = []
@@ -760,6 +805,9 @@ class SimPerceptionMonitor(Node):
             "valid_beams": len(sample.points) if sample is not None else 0,
             "clock_stamp_ns": now_ns,
             "scan_stamp_ns": sample.stamp_ns if sample is not None else None,
+            "depth_points_stamp_ns": self._depth_points_stamp_ns,
+            "depth_points_count": self._depth_points_count,
+            "depth_points_age_sec": depth_points_age_sec,
             "odom_stamp_ns": odom_stamp,
             "scan_age_sec": scan_age_sec,
             "odom_age_sec": odom_age_sec,

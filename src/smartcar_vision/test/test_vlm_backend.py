@@ -175,9 +175,12 @@ class VlmBackendTests(unittest.TestCase):
 
 def _process_is_running(pid):
     stat_file = Path(f"/proc/{pid}/stat")
-    if not stat_file.exists():
+    try:
+        fields = stat_file.read_text(encoding="utf-8").split()
+    except OSError:
+        # A process can exit after the existence probe but before procfs opens
+        # its stat file. That is the expected terminal condition here.
         return False
-    fields = stat_file.read_text(encoding="utf-8").split()
     return len(fields) >= 3 and fields[2] != "Z"
 
 

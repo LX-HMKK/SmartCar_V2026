@@ -205,6 +205,9 @@ install(FILES ${SMARTCAR_KEEPOUT_MAP_FILES}
 
 set(SMARTCAR_NAV2_BEHAVIOR_TREE_FILES
   config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_through_poses_return_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_through_poses_transit_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_through_poses_precise_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_through_poses_reverse_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_through_poses_reverse_sim_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml
@@ -217,6 +220,7 @@ set(SMARTCAR_NAV2_BEHAVIOR_TREE_FILES
   config/behavior_trees/navigate_to_pose_reverse_handoff_sim_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_reverse_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_reverse_sim_w_replanning_and_recovery.xml
+  config/behavior_trees/navigate_to_pose_transit_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml
 )
 install(FILES ${SMARTCAR_NAV2_BEHAVIOR_TREE_FILES}
@@ -263,9 +267,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_forward_path_tracking_guard
     test/test_forward_path_tracking_guard.cpp
   )
-  ament_add_gtest(test_forward_path_lateral_profile
-    test/test_forward_path_lateral_profile.cpp
-  )
   ament_add_gtest(test_free_transit_goal_samples
     test/test_free_transit_goal_samples.cpp
   )
@@ -284,9 +285,6 @@ if(BUILD_TESTING)
   ament_add_gtest(test_planner_path_start_contract
     test/test_planner_path_start_contract.cpp
   )
-  ament_add_gtest(test_departure_connector
-    test/test_departure_connector.cpp
-  )
   target_include_directories(test_free_transit_goal_samples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
@@ -302,9 +300,6 @@ if(BUILD_TESTING)
   target_include_directories(test_forward_path_tracking_guard PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
-  target_include_directories(test_forward_path_lateral_profile PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
   target_include_directories(test_ackermann_reverse_retreat_path PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
@@ -312,9 +307,6 @@ if(BUILD_TESTING)
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_include_directories(test_planner_path_start_contract PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
-  target_include_directories(test_departure_connector PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
   target_include_directories(test_reverse_command_filter PRIVATE
@@ -345,10 +337,6 @@ if(BUILD_TESTING)
     geometry_msgs
     nav_msgs
   )
-  ament_target_dependencies(test_forward_path_lateral_profile
-    geometry_msgs
-    nav_msgs
-  )
   ament_target_dependencies(test_ackermann_reverse_retreat_path
     geometry_msgs
     nav2_msgs
@@ -363,13 +351,6 @@ if(BUILD_TESTING)
   ament_target_dependencies(test_planner_path_start_contract
     geometry_msgs
     nav_msgs
-  )
-  ament_target_dependencies(test_departure_connector
-    geometry_msgs
-    nav2_msgs
-    nav_msgs
-    tf2
-    tf2_geometry_msgs
   )
 
   ament_add_pytest_test(reverse_navigation_contracts

@@ -61,6 +61,9 @@ public:
         BT::InputPort<int>(
           "terminal_verification_delay_ms", 0,
           "Delay after FollowPath success before reading the physical terminal pose"),
+        BT::InputPort<int>(
+          "completion_settle_delay_ms", 0,
+          "Minimum zero-command settling time after FollowPath success before the next action"),
         BT::OutputPort<bool>(
           "terminal_recovery_eligible",
           "True only after FollowPath reports success outside the physical terminal envelope"),

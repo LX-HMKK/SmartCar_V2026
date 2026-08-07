@@ -36,8 +36,6 @@ void ForwardOnlyRPPController::readSafetyParameters()
   double max_angular_velocity = 0.0;
   double min_turning_radius = 0.0;
   double forward_path_max_cross_track_error = 0.0;
-  std::string forward_path_lateral_profile;
-  ForwardPathLateralProfileStart forward_path_lateral_profile_start;
   double forward_terminal_lookahead_m = 0.0;
   double forward_terminal_activation_distance_m = 0.0;
   bool forward_path_use_curvature_tracking = false;
@@ -66,23 +64,6 @@ void ForwardOnlyRPPController::readSafetyParameters()
   // still mandatory for every ForwardOnlyRPPController instance.
   nav2_util::declare_parameter_if_not_declared(
     node, prefix + "forward_path_max_cross_track_error", rclcpp::ParameterValue(0.0));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile",
-    rclcpp::ParameterValue(std::string(kForwardPathLateralProfileSymmetric)));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile_frame_id", rclcpp::ParameterValue(std::string("")));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile_start_x_m", rclcpp::ParameterValue(0.0));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile_start_y_m", rclcpp::ParameterValue(0.0));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile_start_yaw_rad", rclcpp::ParameterValue(0.0));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile_start_position_tolerance_m",
-    rclcpp::ParameterValue(0.001));
-  nav2_util::declare_parameter_if_not_declared(
-    node, prefix + "forward_path_lateral_profile_start_yaw_tolerance_rad",
-    rclcpp::ParameterValue(0.001));
   nav2_util::declare_parameter_if_not_declared(
     node, prefix + "forward_terminal_lookahead_m", rclcpp::ParameterValue(0.0));
   nav2_util::declare_parameter_if_not_declared(
@@ -115,26 +96,6 @@ void ForwardOnlyRPPController::readSafetyParameters()
     !node->get_parameter(
       prefix + "forward_path_max_cross_track_error", forward_path_max_cross_track_error) ||
     !node->get_parameter(
-      prefix + "forward_path_lateral_profile", forward_path_lateral_profile) ||
-    !node->get_parameter(
-      prefix + "forward_path_lateral_profile_frame_id",
-      forward_path_lateral_profile_start.frame_id) ||
-    !node->get_parameter(
-      prefix + "forward_path_lateral_profile_start_x_m",
-      forward_path_lateral_profile_start.x_m) ||
-    !node->get_parameter(
-      prefix + "forward_path_lateral_profile_start_y_m",
-      forward_path_lateral_profile_start.y_m) ||
-    !node->get_parameter(
-      prefix + "forward_path_lateral_profile_start_yaw_rad",
-      forward_path_lateral_profile_start.yaw_rad) ||
-    !node->get_parameter(
-      prefix + "forward_path_lateral_profile_start_position_tolerance_m",
-      forward_path_lateral_profile_start.position_tolerance_m) ||
-    !node->get_parameter(
-      prefix + "forward_path_lateral_profile_start_yaw_tolerance_rad",
-      forward_path_lateral_profile_start.yaw_tolerance_rad) ||
-    !node->get_parameter(
       prefix + "forward_terminal_lookahead_m", forward_terminal_lookahead_m) ||
     !node->get_parameter(
       prefix + "forward_terminal_activation_distance_m",
@@ -157,7 +118,8 @@ void ForwardOnlyRPPController::readSafetyParameters()
       forward_path_tight_turn_radius_m) ||
     !node->get_parameter(
       prefix + "forward_path_tight_turn_preview_m",
-      forward_path_tight_turn_preview_m))
+      forward_path_tight_turn_preview_m) ||
+    false)
   {
     throw std::runtime_error(
             "ForwardOnlyRPPController could not read forward Ackermann parameters");
@@ -175,10 +137,6 @@ void ForwardOnlyRPPController::readSafetyParameters()
     allow_reversing || use_rotate_to_heading || !can_track_planner_radius ||
     !finiteForwardValue(forward_path_max_cross_track_error) ||
     forward_path_max_cross_track_error < 0.0 ||
-    !forwardPathLateralProfileStartValid(
-      forward_path_lateral_profile, forward_path_lateral_profile_start) ||
-    !forwardPathLateralProfileConfigurationValid(
-      forward_path_lateral_profile, forward_path_max_cross_track_error, min_turning_radius) ||
     !finiteForwardValue(forward_terminal_lookahead_m) ||
     !finiteForwardValue(forward_terminal_activation_distance_m) ||
     forward_terminal_lookahead_m < 0.0 ||
@@ -199,7 +157,8 @@ void ForwardOnlyRPPController::readSafetyParameters()
     (!forward_path_use_curvature_tracking || forward_path_tight_turn_speed_mps <= 0.0 ||
     forward_path_tight_turn_speed_mps > desired_linear_velocity ||
     forward_path_tight_turn_radius_m < min_turning_radius ||
-    forward_path_tight_turn_preview_m < 0.0)))
+    forward_path_tight_turn_preview_m < 0.0)) ||
+    false)
   {
     throw std::runtime_error(
             "ForwardOnlyRPPController requires forward-only non-rotating "
@@ -216,10 +175,6 @@ void ForwardOnlyRPPController::readSafetyParameters()
   {
     std::lock_guard<std::mutex> lock(path_tracking_mutex_);
     forward_path_max_cross_track_error_ = forward_path_max_cross_track_error;
-    forward_path_lateral_profile_ = forward_path_lateral_profile;
-    forward_path_lateral_profile_start_ = forward_path_lateral_profile_start;
-    confirmed_lateral_profile_ = kForwardPathLateralProfileSymmetric;
-    confirmed_lateral_profile_invalid_ = false;
     forward_terminal_lookahead_m_ = forward_terminal_lookahead_m;
     forward_terminal_activation_distance_m_ = forward_terminal_activation_distance_m;
     forward_path_use_curvature_tracking_ = forward_path_use_curvature_tracking;
@@ -235,28 +190,8 @@ void ForwardOnlyRPPController::readSafetyParameters()
 void ForwardOnlyRPPController::setPlan(const nav_msgs::msg::Path & path)
 {
   nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController::setPlan(path);
-  std::string requested_lateral_profile;
-  ForwardPathLateralProfileStart lateral_profile_start;
-  {
-    std::lock_guard<std::mutex> lock(path_tracking_mutex_);
-    requested_lateral_profile = forward_path_lateral_profile_;
-    lateral_profile_start = forward_path_lateral_profile_start_;
-  }
-  std::string confirmed_lateral_profile = kForwardPathLateralProfileSymmetric;
-  bool lateral_profile_invalid = false;
-  if (requested_lateral_profile == kForwardPathLateralProfilePDepartureSouthV1) {
-    const auto match = forwardPathLateralProfileMatchesPlan(
-      requested_lateral_profile, path, lateral_profile_start);
-    if (match == ForwardPathLateralProfilePathMatch::kMatches) {
-      confirmed_lateral_profile = requested_lateral_profile;
-    } else if (match == ForwardPathLateralProfilePathMatch::kInvalid) {
-      lateral_profile_invalid = true;
-    }
-  }
   std::lock_guard<std::mutex> lock(path_tracking_mutex_);
   confirmed_plan_ = path;
-  confirmed_lateral_profile_ = confirmed_lateral_profile;
-  confirmed_lateral_profile_invalid_ = lateral_profile_invalid;
 }
 
 geometry_msgs::msg::TwistStamped
@@ -390,8 +325,6 @@ geometry_msgs::msg::TwistStamped ForwardOnlyRPPController::computeVelocityComman
 
   nav_msgs::msg::Path confirmed_plan;
   double maximum_cross_track_error = 0.0;
-  std::string confirmed_lateral_profile;
-  bool confirmed_lateral_profile_invalid = false;
   double terminal_lookahead_m = 0.0;
   double terminal_activation_distance_m = 0.0;
   bool use_curvature_tracking = false;
@@ -399,43 +332,30 @@ geometry_msgs::msg::TwistStamped ForwardOnlyRPPController::computeVelocityComman
     std::lock_guard<std::mutex> lock(path_tracking_mutex_);
     confirmed_plan = confirmed_plan_;
     maximum_cross_track_error = forward_path_max_cross_track_error_;
-    confirmed_lateral_profile = confirmed_lateral_profile_;
-    confirmed_lateral_profile_invalid = confirmed_lateral_profile_invalid_;
     terminal_lookahead_m = forward_terminal_lookahead_m_;
     terminal_activation_distance_m = forward_terminal_activation_distance_m_;
     use_curvature_tracking = forward_path_use_curvature_tracking_;
   }
   const auto projection = projectForwardPathTrackingPose(confirmed_plan, robot_pose);
-  if (confirmed_lateral_profile_invalid) {
-    throw nav2_core::PlannerException(
-            "ForwardOnlyRPPController rejected an invalid P-departure lateral-profile plan");
-  }
   if (maximum_cross_track_error > 0.0) {
-    const auto envelope = forwardPathLateralEnvelopeAtStation(
-      confirmed_lateral_profile, projection.station_m, maximum_cross_track_error);
-    const double left_limit = envelope.has_value() ?
-      envelope->left_cross_track_error_m : 0.0;
-    const double right_limit = envelope.has_value() ?
-      envelope->right_cross_track_error_m : 0.0;
-    const bool cross_track_exceeded = !projection.valid || !envelope.has_value() ||
+    const bool cross_track_exceeded = !projection.valid ||
       !finiteForwardValue(projection.signed_cross_track_m) ||
-      projection.signed_cross_track_m > left_limit ||
-      projection.signed_cross_track_m < -right_limit;
+      std::abs(projection.signed_cross_track_m) > maximum_cross_track_error;
     if (cross_track_exceeded) {
       if (clock_) {
         RCLCPP_ERROR_THROTTLE(
           logger_, *clock_, 1000,
-          "Forward-only RPP stopped before leaving accepted path: reason=%s profile=%s "
-          "station=%.3f signed_cross_track=%.3f left_limit=%.3f right_limit=%.3f "
+          "Forward-only RPP stopped before leaving accepted path: reason=%s "
+          "station=%.3f signed_cross_track=%.3f cross_track_limit=%.3f "
           "heading_error=%.3f segment=%zu",
-          projection.reason.c_str(), confirmed_lateral_profile.c_str(), projection.station_m,
-          projection.signed_cross_track_m, left_limit, right_limit, projection.path_heading_error_rad,
+          projection.reason.c_str(), projection.station_m,
+          projection.signed_cross_track_m, maximum_cross_track_error, projection.path_heading_error_rad,
           projection.segment_index);
       } else {
         RCLCPP_ERROR(
           logger_,
-          "Forward-only RPP stopped before leaving accepted path: %s profile=%s",
-          projection.reason.c_str(), confirmed_lateral_profile.c_str());
+          "Forward-only RPP stopped before leaving accepted path: %s",
+          projection.reason.c_str());
       }
       // ControllerServer turns PlannerException into a zero command and the
       // existing BT clear/replan branch owns recovery. Returning a locally

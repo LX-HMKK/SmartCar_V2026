@@ -40,17 +40,20 @@ def launch_default(source, name):
 
 
 class VisionLaunchContractTests(unittest.TestCase):
-    def test_usb_is_default_and_aurora_remains_rgb_only_option(self):
+    def test_usb_is_default_and_aurora_depth_is_explicit_opt_in(self):
         source = LAUNCH_FILE.read_text(encoding="utf-8")
         self.assertEqual(launch_default(source, "camera_driver"), "usb")
+        self.assertEqual(launch_default(source, "aurora_depth_enable"), "false")
+        self.assertEqual(
+            launch_default(source, "aurora_point_cloud_enable"), "false")
         self.assertIn("deptrum-ros-driver-aurora930", source)
         self.assertIn("aurora930_launch.py", source)
         for setting in (
-            '"rgb_enable": "true"',
+            '"rgb_enable": aurora_rgb_enable',
             '"rgb_fps": "15"',
-            '"depth_enable": "false"',
+            '"depth_enable": aurora_depth_enable',
             '"ir_enable": "false"',
-            '"point_cloud_enable": "false"',
+            '"point_cloud_enable": aurora_point_cloud_enable',
             '"rgbd_enable": "false"',
             '"align_mode": "false"',
         ):
@@ -65,6 +68,7 @@ class VisionLaunchContractTests(unittest.TestCase):
         self.assertIn('"mipi": "/image_raw"', source)
         self.assertIn("hobot_usb_cam.launch.py", source)
         self.assertIn("mipi_cam_640x480_bgr8.launch.py", source)
+        self.assertIn("aurora_point_cloud_enable requires aurora_depth_enable", source)
 
         for config_file in (DEFAULT_CONFIG, VOLCENGINE_CONFIG):
             parameters = yaml.safe_load(
@@ -110,6 +114,7 @@ class VisionLaunchContractTests(unittest.TestCase):
             "python3-opencv",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
+        self.assertIn("depth_pointcloud_relay", SETUP_FILE.read_text(encoding="utf-8"))
 
     def test_volcengine_vlm_is_explicit_opt_in_without_stored_credentials(self):
         default = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))

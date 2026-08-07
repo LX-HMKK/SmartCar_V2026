@@ -520,7 +520,7 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(items[4].goal_profile, "standard")
         self.assertEqual(mission.state, MissionState.COMPLETED)
 
-    def test_rejects_precise_multi_goal_navigation_segment(self):
+    def test_allows_precise_multi_goal_navigation_segment(self):
         items = [
             waypoint("start", 0.0),
             Waypoint(
@@ -537,6 +537,7 @@ class MissionTests(unittest.TestCase):
                 "qr",
                 "forward",
                 goal_profile="precise",
+                heading_mode="locked",
             ),
         ]
         mission = self.make_mission(
@@ -545,13 +546,9 @@ class MissionTests(unittest.TestCase):
 
         result = mission.execute(items, navigation_segments=[tuple(items[1:])])
 
-        self.assertFalse(result.success)
-        self.assertEqual(
-            result.status,
-            "navigation_segment_nonstandard_goal_profile",
-        )
+        self.assertTrue(result.success, result.status)
         self.assertEqual(self.navigator.calls, [])
-        self.assertEqual(self.navigator.through_calls, [])
+        self.assertEqual(self.navigator.through_calls, [(tuple(items[1:]), False)])
 
     def test_allows_locked_reverse_handoff_at_multi_goal_terminal(self):
         items = [

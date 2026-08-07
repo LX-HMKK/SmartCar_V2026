@@ -4,6 +4,9 @@ safety_node:
     scan_timeout_sec: 0.35
     odom_timeout_sec: 0.35
     raw_odom_timeout_sec: 0.25
+    # The depth-obstacle mode enables this heartbeat at launch time. Keep it
+    # optional for the normal LiDAR navigation stack.
+    depth_points_timeout_sec: 0.50
     odom_throttle_interval_sec: 0.05
     minimum_voltage: 10.0
     voltage_timeout_sec: 1.0
@@ -12,6 +15,8 @@ safety_node:
     require_scan: true
     require_odom: true
     require_raw_odom: true
+    require_depth_points: false
+    depth_points_topic: /smartcar/depth/points
     # The direct-pass-through firmware and ground-circle test verified the
     # 0.70 rad command. This is intentionally below no untested command range.
     wheelbase: 0.189

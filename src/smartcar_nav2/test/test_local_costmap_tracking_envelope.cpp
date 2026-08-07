@@ -166,38 +166,3 @@ TEST(LocalCostmapTrackingEnvelope, RejectsMalformedFilteredOccupancyGrid)
   EXPECT_FALSE(
     smartcar_nav2::localCostmapTrackingOccupancyGridToCostmap(grid).has_value());
 }
-
-TEST(LocalCostmapTrackingEnvelope, PDepartureProfileLeavesOnlyTheSouthErrorBudgetNarrow)
-{
-  auto south_obstacle = fineCostmap();
-  // At station 0.225 m, a symmetric 0.12 m tube reaches this cell while the
-  // P profile holds its south/right allowance to 7.5 mm. The full left
-  // allowance must remain intact, which is checked below with the reflected
-  // obstacle.
-  setCostAtWorld(south_obstacle, 0.4875, 0.8625, 254U);
-  const auto candidate = path({pose(0.25, 1.0, 0.0), pose(0.75, 1.0, 0.0)});
-  // A short longitudinal body isolates the station-specific side allowance;
-  // the production sweep retains its 0.2491 m padded half-length.
-  const smartcar_nav2::CostmapFootprintSweepOptions short_body{
-    0.01, 0.10, 0.025, 254U};
-  const auto symmetric = smartcar_nav2::localCostmapTrackingEnvelopeSweep(
-    candidate, south_obstacle, short_body, 0.50,
-    smartcar_nav2::kForwardPathLateralProfileSymmetric, 0.12);
-  EXPECT_EQ(
-    symmetric.sweep_result, smartcar_nav2::CostmapFootprintSweepResult::kLethalOverlap);
-
-  const auto p_departure = smartcar_nav2::localCostmapTrackingEnvelopeSweep(
-    candidate, south_obstacle, short_body, 0.50,
-    smartcar_nav2::kForwardPathLateralProfilePDepartureSouthV1, 0.12);
-  EXPECT_EQ(
-    p_departure.sweep_result, smartcar_nav2::CostmapFootprintSweepResult::kClear);
-  EXPECT_TRUE(p_departure.horizon_covered);
-
-  auto north_obstacle = fineCostmap();
-  setCostAtWorld(north_obstacle, 0.4875, 1.1375, 254U);
-  const auto left_side = smartcar_nav2::localCostmapTrackingEnvelopeSweep(
-    candidate, north_obstacle, short_body, 0.50,
-    smartcar_nav2::kForwardPathLateralProfilePDepartureSouthV1, 0.12);
-  EXPECT_EQ(
-    left_side.sweep_result, smartcar_nav2::CostmapFootprintSweepResult::kLethalOverlap);
-}

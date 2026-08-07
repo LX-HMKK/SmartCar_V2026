@@ -5,6 +5,7 @@
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
 #include <sensor_msgs/msg/laser_scan.hpp>
+#include <sensor_msgs/msg/point_cloud2.hpp>
 #include <smartcar_interfaces/srv/hold_steering_calibration.hpp>
 #include <std_msgs/msg/float32.hpp>
 #include <std_msgs/msg/string.hpp>
@@ -20,6 +21,7 @@
 using geometry_msgs::msg::Twist;
 using ackermann_msgs::msg::AckermannDriveStamped;
 using sensor_msgs::msg::LaserScan;
+using sensor_msgs::msg::PointCloud2;
 using nav_msgs::msg::Odometry;
 using smartcar_interfaces::srv::HoldSteeringCalibration;
 using std_msgs::msg::Float32;
@@ -74,6 +76,7 @@ public:
     declare_parameter("scan_timeout_sec", 0.35);
     declare_parameter("odom_timeout_sec", 0.35);
     declare_parameter("raw_odom_timeout_sec", 0.25);
+    declare_parameter("depth_points_timeout_sec", 0.50);
     declare_parameter("odom_throttle_interval_sec", 0.05);
     declare_parameter("minimum_voltage", 0.0);
     declare_parameter("voltage_timeout_sec", 1.0);
@@ -82,6 +85,8 @@ public:
     declare_parameter("require_scan", true);
     declare_parameter("require_odom", true);
     declare_parameter("require_raw_odom", true);
+    declare_parameter("require_depth_points", false);
+    declare_parameter("depth_points_topic", "/smartcar/depth/points");
     declare_parameter("wheelbase", 0.189);
     declare_parameter("max_steering_angle", 0.70);
     declare_parameter("ackermann_frame_id", "odom_combined");
@@ -100,7 +105,9 @@ public:
         get_parameter("max_linear_speed_mps").as_double(),
         get_parameter("require_scan").as_bool(),
         get_parameter("require_odom").as_bool(),
-        get_parameter("require_raw_odom").as_bool());
+        get_parameter("require_raw_odom").as_bool(),
+        get_parameter("depth_points_timeout_sec").as_double(),
+        get_parameter("require_depth_points").as_bool());
 
     if (get_parameter("emergency_stop_on_start").as_bool()) {
       guard_.set_emergency_stop(true);
@@ -155,6 +162,17 @@ public:
     raw_odom_sub_ = create_subscription<Odometry>(
         "/odom", latest_reliable,
         [this](Odometry::SharedPtr /*msg*/) { on_raw_odom(); });
+    if (get_parameter("require_depth_points").as_bool()) {
+      const auto depth_points_topic =
+          get_parameter("depth_points_topic").as_string();
+      if (depth_points_topic.empty()) {
+        throw std::invalid_argument(
+            "depth_points_topic must be non-empty when required");
+      }
+      depth_points_sub_ = create_subscription<PointCloud2>(
+          depth_points_topic, latest_sensor,
+          [this](PointCloud2::SharedPtr /*msg*/) { on_depth_points(); });
+    }
     voltage_sub_ = create_subscription<Float32>(
         "/PowerVoltage", latest_reliable,
         [this](Float32::SharedPtr msg) { on_voltage(msg); });
@@ -247,6 +265,11 @@ private:
     }
     last_raw_odom_processed_at_ = now;
     guard_.mark_raw_odom(now);
+  }
+
+  void on_depth_points() {
+    std::lock_guard<std::mutex> lock(mutex_);
+    guard_.mark_depth_points(now_sec());
   }
 
   void on_voltage(const Float32::SharedPtr msg) {
@@ -420,6 +443,7 @@ private:
   rclcpp::Subscription<LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<Odometry>::SharedPtr raw_odom_sub_;
+  rclcpp::Subscription<PointCloud2>::SharedPtr depth_points_sub_;
   rclcpp::Subscription<Float32>::SharedPtr voltage_sub_;
   rclcpp::Service<SetBool>::SharedPtr emergency_stop_srv_;
   rclcpp::Service<HoldSteeringCalibration>::SharedPtr steering_calibration_srv_;

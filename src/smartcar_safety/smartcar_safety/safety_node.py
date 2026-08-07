@@ -13,7 +13,7 @@ from rclpy.qos import (
     QoSProfile,
     ReliabilityPolicy,
 )
-from sensor_msgs.msg import LaserScan
+from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
 
@@ -72,6 +72,9 @@ class SafetyNode(Node):
         self.declare_parameter("require_odom", True)
         self.declare_parameter("require_raw_odom", True)
         self.declare_parameter("raw_odom_timeout_sec", 0.25)
+        self.declare_parameter("require_depth_points", False)
+        self.declare_parameter("depth_points_timeout_sec", 0.50)
+        self.declare_parameter("depth_points_topic", "/smartcar/depth/points")
         self.declare_parameter("odom_throttle_interval_sec", 0.05)
         self.declare_parameter("wheelbase", 0.189)
         self.declare_parameter("max_steering_angle", 0.70)
@@ -91,6 +94,10 @@ class SafetyNode(Node):
             require_scan=self.get_parameter("require_scan").value,
             require_odom=self.get_parameter("require_odom").value,
             require_raw_odom=self.get_parameter("require_raw_odom").value,
+            depth_points_timeout_sec=self.get_parameter(
+                "depth_points_timeout_sec").value,
+            require_depth_points=self.get_parameter(
+                "require_depth_points").value,
         )
         if bool(self.get_parameter("emergency_stop_on_start").value):
             self.guard.set_emergency_stop(True)
@@ -127,6 +134,19 @@ class SafetyNode(Node):
         self.create_subscription(
             Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS,
             raw=True)
+        if bool(self.get_parameter("require_depth_points").value):
+            depth_points_topic = str(
+                self.get_parameter("depth_points_topic").value).strip()
+            if not depth_points_topic:
+                raise RuntimeError(
+                    "depth_points_topic must be non-empty when required")
+            self.create_subscription(
+                PointCloud2,
+                depth_points_topic,
+                self._on_depth_points,
+                LATEST_SENSOR_QOS,
+                raw=True,
+            )
         self.create_subscription(
             Float32, "/PowerVoltage", self._on_voltage, LATEST_RELIABLE_QOS)
         self.create_service(
@@ -195,6 +215,9 @@ class SafetyNode(Node):
             return
         self._last_raw_odom_processed_at = now
         self.guard.mark_raw_odom(now)
+
+    def _on_depth_points(self, _serialized_message):
+        self.guard.mark_depth_points(self._now_sec())
 
     def _on_voltage(self, message):
         now_sec = self._now_sec()

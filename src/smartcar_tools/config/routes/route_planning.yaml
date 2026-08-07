@@ -60,7 +60,7 @@ simulation_keepout:
   boundary_padding_m: 0.25
   # Cost preference around the simulation-only KeepoutFilter mask. This is
   # separate from the collision footprint: filters own their lethal cells.
-  # A 0.05 m lidar-slice cone with a 0.15 m total inflation radius leaves a
+  # A 0.05 m lidar-slice cone with a 0.30 m total inflation radius leaves a
   # 0.10 m soft preference outside the physical cone. Collision still uses
   # the padded footprint independently of this soft cost preference.
-  costmap_inflation_radius_m: 0.15
+  costmap_inflation_radius_m: 0.30

@@ -23,6 +23,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
+    allows_precise_terminal_through_poses,
     allows_reverse_handoff_through_poses,
     load_planning_segments,
     materialize_mission_route,
@@ -46,9 +47,10 @@ FORWARD_AVOIDANCE_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
 NATIVE_RPP_CONTROLLER = (
     "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
 )
-# Runtime removes ordinary free through-poses goals inside 0.50 m. Keep only
-# the odometry observer margin above that implementation contract.
-THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M = 0.52
+# Forward ThroughPoses preserves its complete explicit goal list. Execution
+# evidence must prove that every configured point reached its 0.20 m transit
+# envelope rather than accepting a path that bypassed a corridor target.
+THROUGH_POSE_PASS_DISTANCE_TOLERANCE_M = 0.20
 # A controller may track a valid Ackermann arc slightly longer than a global
 # plan, but it must not turn a series of short replans into a large circle.
 # This is deliberately looser than the per-plan contract above while still
@@ -65,9 +67,9 @@ MAX_ACCEPTED_PATH_TRACE_POINTS = 64
 MAX_EXECUTION_TRACE_SAMPLES = 128
 EXECUTION_TRACE_SCHEMA_VERSION = 1
 PERCEPTION_READY_TOPIC = "/smartcar/sim_perception_ready"
-# Custom route trees publish an acknowledged controller path. The native P->A
-# tree has no custom FollowPath wrapper, so its route evidence is Nav2's
-# native /plan publication.
+# Every forward route tree publishes an acknowledged controller path through
+# RecordFollowPath, so the result is correlated with the path actually handed
+# to the Ackermann-safe controller rather than an unaccepted planner candidate.
 ACCEPTED_CONTROLLER_PATH_TOPIC = "/smartcar/accepted_global_plan"
 PERCEPTION_REQUIRED_CHECKS = (
     "scan",
@@ -89,12 +91,16 @@ class AutoTrain(Node):
 
         self.declare_parameter("waypoints_file", "")
         self.declare_parameter("forward_behavior_tree", "")
+        self.declare_parameter("transit_behavior_tree", "")
         self.declare_parameter("precise_behavior_tree", "")
         self.declare_parameter("reverse_behavior_tree", "")
         self.declare_parameter("reverse_handoff_behavior_tree", "")
         self.declare_parameter("nav2_params_file", "")
         self.declare_parameter("nav2_params_overlay_file", "")
         self.declare_parameter("through_poses_behavior_tree", "")
+        self.declare_parameter("through_poses_transit_behavior_tree", "")
+        self.declare_parameter("through_poses_precise_behavior_tree", "")
+        self.declare_parameter("through_poses_return_behavior_tree", "")
         self.declare_parameter("through_poses_reverse_behavior_tree", "")
         self.declare_parameter(
             "through_poses_reverse_locked_behavior_tree", "")
@@ -546,16 +552,12 @@ class AutoTrain(Node):
         return mode
 
     @classmethod
-    def _uses_reverse_return_tree(cls, waypoints):
-        """Return whether a ThroughPoses segment ends at the locked P return."""
+    def _uses_return_tree(cls, waypoints):
+        """Return whether a ThroughPoses segment ends at the P position terminal."""
         if not waypoints:
             return False
         terminal = waypoints[-1]
-        return (
-            terminal.get("direction") == "reverse"
-            and terminal.get("task") == "return"
-            and cls._heading_mode(terminal) == "locked"
-        )
+        return terminal.get("task") == "return"
 
     @classmethod
     def _orientation_mapping(cls, pose, heading_mode):
@@ -674,13 +676,17 @@ class AutoTrain(Node):
             if (
                 len(stage["goals"]) > 1
                 and nonstandard_goals
-                and not allows_reverse_handoff_through_poses(stage["goals"])
+                and not (
+                    allows_reverse_handoff_through_poses(stage["goals"])
+                    or allows_precise_terminal_through_poses(stage["goals"])
+                )
             ):
                 raise ValueError(
                     f"Segment {stage['id']!r} combines nonstandard goals "
                     f"({', '.join(nonstandard_goals)}) in NavigateThroughPoses; "
                     "only a terminal locked reverse_handoff in a reverse "
-                    "stage is supported"
+                    "stage or terminal locked precise goal in a forward stage "
+                    "is supported"
                 )
         route = [goal for stage in stages for goal in stage["goals"]]
 
@@ -730,11 +736,13 @@ class AutoTrain(Node):
             return self._required_path("reverse_behavior_tree")
         if waypoint.get("goal_profile") == "precise":
             return self._required_path("precise_behavior_tree")
+        if self._heading_mode(waypoint) == "free":
+            return self._required_path("transit_behavior_tree")
         return self._required_path("forward_behavior_tree")
 
     @classmethod
-    def _goal_checker_for(cls, waypoint, reverse_return=False):
-        if reverse_return:
+    def _goal_checker_for(cls, waypoint, return_terminal=False):
+        if return_terminal:
             return "return_goal_checker"
         if waypoint.get("goal_profile") == "precise":
             return "precise_goal_checker"
@@ -744,10 +752,10 @@ class AutoTrain(Node):
             return "reverse_goal_checker"
         return "goal_checker"
 
-    def _goal_tolerances(self, waypoint, reverse_return=False):
+    def _goal_tolerances(self, waypoint, return_terminal=False):
         document = self._runtime_nav2_params()
         controller = document["controller_server"]["ros__parameters"]
-        checker_name = self._goal_checker_for(waypoint, reverse_return)
+        checker_name = self._goal_checker_for(waypoint, return_terminal)
         checker = controller[checker_name]
         return (
             checker_name,
@@ -779,18 +787,6 @@ class AutoTrain(Node):
         document = self._runtime_nav2_params()
         controller = document["controller_server"]["ros__parameters"]
         smoother = document["velocity_smoother"]["ros__parameters"]
-        if waypoint.get("goal_profile") == "precise":
-            forward = controller["FollowPath"]
-            planner = document["planner_server"]["ros__parameters"]["GridBased"]
-            return {
-                "plugin": str(forward["plugin"]),
-                "vx_max": float(forward["desired_linear_vel"]),
-                "wz_max": abs(float(smoother["max_velocity"][2])),
-                "min_turning_radius": float(planner["minimum_turning_radius"]),
-                "path_max_cross_track_error": None,
-                "scale_velocities": bool(smoother["scale_velocities"]),
-            }
-
         forward = controller["ForwardAvoidance"]
         plugin = str(forward["plugin"])
         if plugin == FORWARD_AVOIDANCE_CONTROLLER:
@@ -922,6 +918,8 @@ class AutoTrain(Node):
             "checks": checks if isinstance(checks, dict) else {},
             "valid_beams": status.get("valid_beams"),
             "scan_stamp_ns": status.get("scan_stamp_ns"),
+            "depth_points_stamp_ns": status.get("depth_points_stamp_ns"),
+            "depth_points_count": status.get("depth_points_count"),
             "odom_stamp_ns": status.get("odom_stamp_ns"),
             "tf_odom_position_error_m": status.get(
                 "tf_odom_position_error_m"),
@@ -967,6 +965,21 @@ class AutoTrain(Node):
             or valid_beams <= 0
         ):
             failures.append("valid_beams")
+        if checks.get("depth_points") is True:
+            depth_points_stamp = evidence["depth_points_stamp_ns"]
+            if (
+                isinstance(depth_points_stamp, bool)
+                or not isinstance(depth_points_stamp, int)
+                or depth_points_stamp <= 0
+            ):
+                failures.append("depth_points_stamp_ns")
+            depth_points_count = evidence["depth_points_count"]
+            if (
+                isinstance(depth_points_count, bool)
+                or not isinstance(depth_points_count, int)
+                or depth_points_count <= 0
+            ):
+                failures.append("depth_points_count")
         for name in (
             "scan_stamp_ns",
             "odom_stamp_ns",
@@ -1334,17 +1347,10 @@ class AutoTrain(Node):
         target_y = float(position["y"])
         executed_travel = self._executed_travel_metrics(
             start_pose, goal_odom_samples, [waypoint])
-        uses_native_precise_path = waypoint.get("goal_profile") == "precise"
-        if uses_native_precise_path:
-            evidence_messages = self._path_messages
-            evidence_metrics = self._path_metrics
-            evidence_traces = self._path_traces
-            evidence_start = path_start
-        else:
-            evidence_messages = self._accepted_path_messages
-            evidence_metrics = self._accepted_path_metrics
-            evidence_traces = self._accepted_path_traces
-            evidence_start = accepted_path_start
+        evidence_messages = self._accepted_path_messages
+        evidence_metrics = self._accepted_path_metrics
+        evidence_traces = self._accepted_path_traces
+        evidence_start = accepted_path_start
         matching_paths = [
             (path_x, path_y, path_yaw)
             for _, path_x, path_y, path_yaw
@@ -1417,15 +1423,11 @@ class AutoTrain(Node):
                 contract_errors.append("forward_velocity_sign")
             if controller_metrics["negative_count"] > 0:
                 contract_errors.append("forward_controller_velocity_sign")
-            expected_forward_controller = (
-                NATIVE_RPP_CONTROLLER
-                if uses_native_precise_path else FORWARD_AVOIDANCE_CONTROLLER
-            )
-            if forward_contract["plugin"] != expected_forward_controller:
+            if forward_contract["plugin"] != FORWARD_AVOIDANCE_CONTROLLER:
                 contract_errors.append("forward_controller_plugin")
             if not forward_contract["scale_velocities"]:
                 contract_errors.append("forward_smoother_scaling")
-            if not uses_native_precise_path and (
+            if (
                 not math.isfinite(forward_contract["path_max_cross_track_error"])
                 or forward_contract["path_max_cross_track_error"] <= 0.0
             ):
@@ -1726,12 +1728,16 @@ class AutoTrain(Node):
         parameters = (
             "waypoints_file",
             "forward_behavior_tree",
+            "transit_behavior_tree",
             "precise_behavior_tree",
             "reverse_behavior_tree",
             "reverse_handoff_behavior_tree",
             "nav2_params_file",
             "nav2_params_overlay_file",
             "through_poses_behavior_tree",
+            "through_poses_transit_behavior_tree",
+            "through_poses_precise_behavior_tree",
+            "through_poses_return_behavior_tree",
             "through_poses_reverse_behavior_tree",
             "through_poses_reverse_locked_behavior_tree",
             "through_poses_reverse_return_behavior_tree",
@@ -1881,7 +1887,7 @@ class AutoTrain(Node):
         # pose behavior in a custom reverse tree.
         odom_slice = self._odom_samples[odom_start:]
         terminal = waypoints[-1]
-        terminal_reverse_return = self._uses_reverse_return_tree(waypoints)
+        terminal_return = self._uses_return_tree(waypoints)
         terminal_reverse_handoff = allows_reverse_handoff_through_poses(
             waypoints)
         handoff_contract = (
@@ -1924,7 +1930,7 @@ class AutoTrain(Node):
                 ),
             )
         goal_checker, xy_tolerance, yaw_tolerance = self._goal_tolerances(
-            terminal, reverse_return=terminal_reverse_return)
+            terminal, return_terminal=terminal_return)
         goal_error = None
         goal_yaw_error = None
         signed_goal_yaw_error = None
@@ -1940,8 +1946,8 @@ class AutoTrain(Node):
                     final_yaw - target_yaw, 2.0 * math.pi)
                 goal_yaw_error = abs(signed_goal_yaw_error)
 
-        # Per-waypoint min-distance check. The free ThroughPoses BT removes
-        # a normal guide inside 0.50 m; retain a 0.02 m observer margin.
+        # Per-waypoint min-distance check. Every forward ThroughPoses guide
+        # remains in the action, so each must reach the transit contract.
         passed = []
         for w in waypoints:
             wx = float(w["pose"]["position"]["x"])
@@ -2228,7 +2234,7 @@ class AutoTrain(Node):
             if direction == "reverse":
                 behavior_tree_param = (
                     "through_poses_reverse_return_behavior_tree"
-                    if self._uses_reverse_return_tree(goals)
+                    if self._uses_return_tree(goals)
                     else (
                         "through_poses_reverse_locked_behavior_tree"
                         if self._heading_mode(goals[-1]) == "locked"
@@ -2236,7 +2242,19 @@ class AutoTrain(Node):
                     )
                 )
             else:
-                behavior_tree_param = "through_poses_behavior_tree"
+                behavior_tree_param = (
+                    "through_poses_return_behavior_tree"
+                    if self._uses_return_tree(goals)
+                    else (
+                        "through_poses_precise_behavior_tree"
+                        if goals[-1].get("goal_profile", "standard") == "precise"
+                        else (
+                        "through_poses_transit_behavior_tree"
+                        if self._heading_mode(goals[-1]) == "free"
+                        else "through_poses_behavior_tree"
+                        )
+                    )
+                )
             if self._through_client.wait_for_server(timeout_sec=10.0):
                 result = self._send_through_poses(
                     goals,

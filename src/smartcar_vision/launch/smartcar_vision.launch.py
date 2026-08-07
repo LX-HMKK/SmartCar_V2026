@@ -31,7 +31,14 @@ def _as_bool(value, name):
     raise RuntimeError(f"{name} must be true or false")
 
 
-def _camera_action(camera_driver, usb_video_device):
+def _camera_action(
+    camera_driver,
+    usb_video_device,
+    *,
+    aurora_rgb_enable,
+    aurora_depth_enable,
+    aurora_point_cloud_enable,
+):
     if camera_driver == "aurora":
         return IncludeLaunchDescription(
             PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -40,12 +47,12 @@ def _camera_action(camera_driver, usb_video_device):
                 "aurora930_launch.py",
             ])),
             launch_arguments={
-                "rgb_enable": "true",
+                "rgb_enable": aurora_rgb_enable,
                 "rgb_fps": "15",
                 "ir_fps": "15",
-                "depth_enable": "false",
+                "depth_enable": aurora_depth_enable,
                 "ir_enable": "false",
-                "point_cloud_enable": "false",
+                "point_cloud_enable": aurora_point_cloud_enable,
                 "rgbd_enable": "false",
                 "align_mode": "false",
                 "depth_correction": "false",
@@ -95,11 +102,24 @@ def _runtime_actions(context):
         LaunchConfiguration("use_zbar").perform(context), "use_zbar")
     use_sim_time = _as_bool(
         LaunchConfiguration("use_sim_time").perform(context), "use_sim_time")
+    aurora_rgb_enable = _as_bool(
+        LaunchConfiguration("aurora_rgb_enable").perform(context),
+        "aurora_rgb_enable")
+    aurora_depth_enable = _as_bool(
+        LaunchConfiguration("aurora_depth_enable").perform(context),
+        "aurora_depth_enable")
+    aurora_point_cloud_enable = _as_bool(
+        LaunchConfiguration("aurora_point_cloud_enable").perform(context),
+        "aurora_point_cloud_enable")
     if camera_driver not in VALID_DRIVERS:
         raise RuntimeError(
             "camera_driver must be one of aurora, usb, mipi, or none")
     if use_camera and camera_driver == "none":
         raise RuntimeError("camera_driver cannot be none when use_camera is true")
+    if (aurora_depth_enable or aurora_point_cloud_enable) and camera_driver != "aurora":
+        raise RuntimeError("Aurora depth and point cloud require camera_driver=aurora")
+    if aurora_point_cloud_enable and not aurora_depth_enable:
+        raise RuntimeError("aurora_point_cloud_enable requires aurora_depth_enable")
     if camera_driver == "none":
         if not configured_topic:
             raise RuntimeError(
@@ -113,6 +133,10 @@ def _runtime_actions(context):
         camera_action = _camera_action(
             camera_driver,
             LaunchConfiguration("usb_video_device").perform(context),
+            aurora_rgb_enable="true" if aurora_rgb_enable else "false",
+            aurora_depth_enable="true" if aurora_depth_enable else "false",
+            aurora_point_cloud_enable=(
+                "true" if aurora_point_cloud_enable else "false"),
         )
         if camera_action is not None:
             actions.append(camera_action)
@@ -185,6 +209,21 @@ def generate_launch_description():
             "usb_video_device",
             default_value="/dev/video0",
             description="USB camera device used by the optional fallback",
+        ),
+        DeclareLaunchArgument(
+            "aurora_rgb_enable",
+            default_value="true",
+            description="Enable Aurora RGB frames when camera_driver=aurora",
+        ),
+        DeclareLaunchArgument(
+            "aurora_depth_enable",
+            default_value="false",
+            description="Enable Aurora depth frames when camera_driver=aurora",
+        ),
+        DeclareLaunchArgument(
+            "aurora_point_cloud_enable",
+            default_value="false",
+            description="Publish Aurora PointCloud2 when depth is enabled",
         ),
         DeclareLaunchArgument(
             "config_file",

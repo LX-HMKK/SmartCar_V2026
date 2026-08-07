@@ -10,6 +10,9 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE_ROOT = ROOT / "src" / "smartcar_nav2"
 PARAMS_FILE = PACKAGE_ROOT / "config" / "nav2_params.yaml"
+DEPTH_OBSTACLE_OVERLAY_FILE = (
+    PACKAGE_ROOT / "config" / "depth_camera_obstacle_overlay.yaml"
+)
 BT_FILE = (
     PACKAGE_ROOT
     / "config"
@@ -21,6 +24,12 @@ BT_THROUGH_POSES_FILE = (
     / "config"
     / "behavior_trees"
     / "navigate_through_poses_w_replanning_and_recovery.xml"
+)
+BT_RETURN_THROUGH_POSES_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_return_w_replanning_and_recovery.xml"
 )
 BT_REVERSE_THROUGH_POSES_FILE = (
     PACKAGE_ROOT
@@ -51,6 +60,24 @@ BT_PRECISE_FILE = (
     / "config"
     / "behavior_trees"
     / "navigate_to_pose_precise_w_replanning_and_recovery.xml"
+)
+BT_TRANSIT_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_to_pose_transit_w_replanning_and_recovery.xml"
+)
+BT_TRANSIT_THROUGH_POSES_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_transit_w_replanning_and_recovery.xml"
+)
+BT_PRECISE_THROUGH_POSES_FILE = (
+    PACKAGE_ROOT
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_precise_w_replanning_and_recovery.xml"
 )
 WAYPOINTS_FILE = (
     PACKAGE_ROOT / "config" / "waypoints" / "default_waypoints.yaml"
@@ -85,7 +112,7 @@ UNSUPPORTED_HUMBLE_RPP_KEYS = {
     "max_angular_vel",
     "max_lateral_accel",
 }
-DEFAULT_HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm", "return"})
+DEFAULT_HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm"})
 
 
 def ros_parameters(config, node_name):
@@ -183,6 +210,9 @@ class TestNav2Contracts(unittest.TestCase):
         for behavior_tree in (
             BT_FILE,
             BT_PRECISE_FILE,
+            BT_TRANSIT_FILE,
+            BT_TRANSIT_THROUGH_POSES_FILE,
+            BT_RETURN_THROUGH_POSES_FILE,
             BT_THROUGH_POSES_FILE,
             BT_REVERSE_FILE,
             BT_REVERSE_HANDOFF_FILE,
@@ -203,34 +233,41 @@ class TestNav2Contracts(unittest.TestCase):
                 for follow_path in root.iter("RecordFollowPath"):
                     self.assertNotIn("allow_reversing", follow_path.attrib)
 
-        through_tags = [
-            element.tag
-            for element in ElementTree.parse(BT_THROUGH_POSES_FILE).getroot().iter()
-        ]
         reverse_through_tags = [
             element.tag
             for element in ElementTree.parse(
                 BT_REVERSE_THROUGH_POSES_FILE
             ).getroot().iter()
         ]
-        self.assertIn("ComputeFreeHeadingPathThroughPoses", through_tags)
         self.assertIn(
             "ComputeReverseFreeHeadingPathThroughPoses", reverse_through_tags
         )
-        self.assertIn("RemovePassedGoals", through_tags)
         for behavior_tree in (
             BT_THROUGH_POSES_FILE,
-            BT_REVERSE_THROUGH_POSES_FILE,
+            BT_TRANSIT_THROUGH_POSES_FILE,
+            BT_RETURN_THROUGH_POSES_FILE,
         ):
-            remove_passed_goals = list(
-                ElementTree.parse(behavior_tree).getroot().iter(
-                    "RemovePassedGoals")
-            )
-            self.assertEqual(len(remove_passed_goals), 1)
-            self.assertEqual(
-                remove_passed_goals[0].attrib.get("robot_base_frame"),
-                "base_footprint",
-            )
+            root = ElementTree.parse(behavior_tree).getroot()
+            self.assertIsNotNone(root.find(".//ComputeFreeHeadingPathThroughPoses"))
+            # An explicit forward via can lie inside the preceding endpoint
+            # tolerance. It must remain a constraint of the new action.
+            self.assertIsNone(root.find(".//RemovePassedGoals"))
+
+        remove_passed_goals = list(
+            ElementTree.parse(BT_REVERSE_THROUGH_POSES_FILE).getroot().iter(
+                "RemovePassedGoals")
+        )
+        self.assertEqual(len(remove_passed_goals), 1)
+        self.assertEqual(
+            remove_passed_goals[0].attrib.get("robot_base_frame"),
+            "base_footprint",
+        )
+        return_follow = ElementTree.parse(
+            BT_RETURN_THROUGH_POSES_FILE).getroot().find(".//RecordFollowPath")
+        self.assertIsNotNone(return_follow)
+        assert return_follow is not None
+        self.assertEqual(
+            return_follow.attrib.get("goal_checker_id"), "return_goal_checker")
 
     def test_record_follow_path_publishes_only_acknowledged_goals(self):
         source = (
@@ -268,6 +305,9 @@ class TestNav2Contracts(unittest.TestCase):
         active_trees = (
             BT_FILE,
             BT_PRECISE_FILE,
+            BT_TRANSIT_FILE,
+            BT_TRANSIT_THROUGH_POSES_FILE,
+            BT_RETURN_THROUGH_POSES_FILE,
             BT_THROUGH_POSES_FILE,
             BT_REVERSE_FILE,
             BT_REVERSE_HANDOFF_FILE,
@@ -371,15 +411,15 @@ class TestNav2Contracts(unittest.TestCase):
             controller["reverse_goal_checker"]["yaw_goal_tolerance"], 0.15)
         returned = controller["return_goal_checker"]
         self.assertEqual(
-            returned["plugin"], "nav2_controller::SimpleGoalChecker")
+            returned["plugin"], "nav2_controller::PositionGoalChecker")
         self.assertAlmostEqual(returned["xy_goal_tolerance"], 0.15)
-        self.assertAlmostEqual(returned["yaw_goal_tolerance"], 0.15)
+        self.assertNotIn("yaw_goal_tolerance", returned)
         self.assertIs(returned["stateful"], False)
         transit = controller["transit_goal_checker"]
         self.assertEqual(
             transit["plugin"], "nav2_controller::PositionGoalChecker"
         )
-        self.assertAlmostEqual(transit["xy_goal_tolerance"], 0.50)
+        self.assertAlmostEqual(transit["xy_goal_tolerance"], 0.20)
         self.assertNotIn("yaw_goal_tolerance", transit)
         self.assertIs(transit["stateful"], False)
         self.assertNotIn("goal_checker_plugin", controller)
@@ -547,7 +587,13 @@ class TestNav2Contracts(unittest.TestCase):
                 follow.attrib["goal_checker_id"], "reverse_goal_checker")
 
     def test_reverse_retreat_is_planner_only_and_single_shot(self):
-        forward_trees = (BT_FILE, BT_PRECISE_FILE, BT_THROUGH_POSES_FILE)
+        forward_trees = (
+            BT_FILE,
+            BT_PRECISE_FILE,
+            BT_TRANSIT_FILE,
+            BT_TRANSIT_THROUGH_POSES_FILE,
+            BT_THROUGH_POSES_FILE,
+        )
         for behavior_tree in forward_trees:
             with self.subTest(behavior_tree=behavior_tree.name):
                 tags = {
@@ -670,6 +716,34 @@ class TestNav2Contracts(unittest.TestCase):
                 ]["obstacle_layer"]["scan"]
                 self.assertEqual(scan["observation_persistence"], 0.0)
 
+    def test_depth_camera_overlay_keeps_scan_and_adds_point_cloud(self):
+        overlay = yaml.safe_load(
+            DEPTH_OBSTACLE_OVERLAY_FILE.read_text(encoding="utf-8"))
+        for costmap_name in ("local_costmap", "global_costmap"):
+            with self.subTest(costmap=costmap_name):
+                base_layer = self.params[costmap_name][costmap_name][
+                    "ros__parameters"]["obstacle_layer"]
+                depth_layer = overlay[costmap_name][costmap_name][
+                    "ros__parameters"]["obstacle_layer"]
+                self.assertEqual(base_layer["observation_sources"], "scan")
+                self.assertEqual(
+                    depth_layer["observation_sources"], "scan depth_points")
+                scan = depth_layer["scan"]
+                self.assertEqual(scan["topic"], "/scan")
+                self.assertEqual(scan["data_type"], "LaserScan")
+                self.assertEqual(scan["observation_persistence"], 0.0)
+                self.assertTrue(scan["clearing"])
+                self.assertTrue(scan["marking"])
+                self.assertAlmostEqual(scan["min_obstacle_height"], 0.05)
+                self.assertAlmostEqual(scan["max_obstacle_height"], 0.50)
+                self.assertIs(scan["inf_is_valid"], False)
+                source = depth_layer["depth_points"]
+                self.assertEqual(source["topic"], "/smartcar/depth/points")
+                self.assertEqual(source["data_type"], "PointCloud2")
+                self.assertTrue(source["clearing"])
+                self.assertTrue(source["marking"])
+                self.assertEqual(source["observation_persistence"], 0.0)
+
     def test_reverse_mppi_wrapper_is_built_and_uses_portable_bt_paths(self):
         cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
         params_source = PARAMS_FILE.read_text(encoding="utf-8")
@@ -784,6 +858,11 @@ class TestNav2Contracts(unittest.TestCase):
 
         self.assertIn("nav2_params_file.perform(context)", source)
         self.assertIn("nav2_params_overlay_file.perform(context)", source)
+        self.assertIn("allow_params_overlay", source)
+        self.assertIn(
+            "nav2_params_overlay_file requires allow_params_overlay=true",
+            source,
+        )
         self.assertIn("nav2_params_fixed.yaml", source)
         self.assertIn("parameters = [nav2_params_file.perform(context)]", source)
         self.assertNotIn("LaunchConfiguration('params_file')", source)
@@ -914,10 +993,7 @@ class TestNav2Contracts(unittest.TestCase):
         nav_only = self.nav_only_waypoint_document
         self.assertFalse(default["calibrated"])
         self.assertFalse(nav_only["calibrated"])
-        route_ids = (
-            "p_start", "a_task_observe", "via_2", "c_corner_1",
-            "via_1", "via_3", "p_finish",
-        )
+        route_ids = ("p_start", "a_task_observe", "c_corner_1", "p_finish")
         default_by_id = {
             waypoint["id"]: waypoint for waypoint in default["waypoints"]
         }
@@ -931,23 +1007,15 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(
             [waypoint["id"] for waypoint in nav_only["waypoints"]],
-            [
-                "p_start",
-                "a_task_observe",
-                "via_2",
-                "c_corner_1",
-                "via_1",
-                "via_3",
-                "p_finish",
-            ],
+            list(route_ids),
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in default["waypoints"]],
-            ["start", "qr", "via", "vlm", "via", "via", "return"],
+            ["start", "qr", "vlm", "return"],
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in nav_only["waypoints"]],
-            ["start", "nav", "via", "nav", "via", "via", "return"],
+            ["start", "nav", "nav", "return"],
         )
 
         # The semantic QR target and the supervised P-to-A pure-navigation
@@ -1006,14 +1074,24 @@ class TestNav2Contracts(unittest.TestCase):
         self.assertEqual(default_by_id["c_corner_1"]["task"], "vlm")
         self.assertEqual(nav_by_id["a_task_observe"]["task"], "nav")
         self.assertEqual(nav_by_id["c_corner_1"]["task"], "nav")
-        self.assertEqual(nav_by_id["c_corner_1"]["direction"], "reverse")
+        self.assertTrue(all(
+            waypoint["direction"] == "forward"
+            for waypoint in default["waypoints"]
+        ))
+        self.assertTrue(all(
+            waypoint["direction"] == "forward"
+            for waypoint in nav_only["waypoints"]
+        ))
+        self.assertTrue(all(
+            segment["direction"] == "forward"
+            for segment in default["planning_segments"]
+        ))
+        self.assertEqual(nav_by_id["c_corner_1"]["direction"], "forward")
         self.assertEqual(
             nav_by_id["c_corner_1"].get("goal_profile", "standard"),
-            "reverse_handoff",
+            "precise",
         )
-        self.assertEqual(nav_by_id["via_1"]["task"], "via")
-        self.assertEqual(nav_by_id["via_1"]["direction"], "reverse")
-        self.assertEqual(nav_by_id["p_finish"]["direction"], "reverse")
+        self.assertEqual(nav_by_id["p_finish"]["direction"], "forward")
         self.assertEqual(
             nav_by_id["p_finish"].get("goal_profile", "standard"),
             "standard",
@@ -1026,7 +1104,7 @@ class TestNav2Contracts(unittest.TestCase):
             nav_by_id["p_finish"]["pose"]["orientation"],
             default_by_id["p_finish"]["pose"]["orientation"],
         )
-        self.assertEqual(default_by_id["p_finish"]["direction"], "reverse")
+        self.assertEqual(default_by_id["p_finish"]["direction"], "forward")
         self.assertEqual(default["planning_segments"], nav_only["planning_segments"])
         self.assertFalse(
             {
@@ -1043,14 +1121,14 @@ class TestNav2Contracts(unittest.TestCase):
             for waypoint in default["waypoints"]
             if waypoint.get("goal_profile", "standard") == "precise"
         ]
-        self.assertEqual(precise_ids, ["a_task_observe"])
+        self.assertEqual(precise_ids, ["a_task_observe", "c_corner_1"])
         reverse_handoff_ids = [
             waypoint["id"]
             for waypoint in default["waypoints"]
             if waypoint.get("goal_profile", "standard")
             == "reverse_handoff"
         ]
-        self.assertEqual(reverse_handoff_ids, ["c_corner_1"])
+        self.assertEqual(reverse_handoff_ids, [])
 
         qr = waypoint_by_id(default, "a_task_observe")
         c_corner_1 = waypoint_by_id(default, "c_corner_1")
@@ -1067,7 +1145,12 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertAlmostEqual(
             planar_yaw(c_corner_1["pose"]["orientation"]),
-            math.pi,
+            1.17,
+            delta=1.0e-6,
+        )
+        self.assertAlmostEqual(
+            planar_yaw(default_by_id["p_finish"]["pose"]["orientation"]),
+            -2.498091544796509,
             delta=1.0e-6,
         )
 

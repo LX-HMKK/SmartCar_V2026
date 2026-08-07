@@ -20,6 +20,10 @@ bt_navigator_navigate_to_pose_rclcpp_node:
 
 controller_server:
   ros__parameters:
+    # Stop before the physical 0.12 m precise-terminal verification limit.
+    # This is a goal acceptance threshold, not a path or steering guide.
+    precise_goal_checker:
+      xy_goal_tolerance: 0.10
     # The local route's P -> A tree uses stock FollowPath.
     controller_plugins: ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"]
     ForwardAvoidance:
@@ -39,6 +43,10 @@ controller_server:
       # obstacle or beginning a new large circle. The controller fails to the
       # BT's existing clear/replan branch outside this swept path band.
       forward_path_max_cross_track_error: 0.12
+      # Retain full collision checking but do not reduce the requested
+      # 0.30 m/s cruise speed just because the path is turning.
+      use_regulated_linear_velocity_scaling: false
+      use_cost_regulated_linear_velocity_scaling: false
     FollowPath:
       # P -> A uses Nav2's stock Regulated Pure Pursuit controller. Keep the
       # only simulation overrides within that controller's native parameters.
@@ -53,7 +61,8 @@ controller_server:
       approach_velocity_scaling_dist: 0.6
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_collision_detection: true
-      use_cost_regulated_linear_velocity_scaling: true
+      use_regulated_linear_velocity_scaling: false
+      use_cost_regulated_linear_velocity_scaling: false
       cost_scaling_dist: 0.25
       cost_scaling_gain: 1.0
       inflation_cost_scaling_factor: 5.0
@@ -117,12 +126,9 @@ planner_server:
 local_costmap:
   local_costmap:
     ros__parameters:
-      # RPP collision projection must use the same grid as the full-footprint
-      # sweep and the static KeepoutFilter mask. At the old
-      # 0.03 m inherited grid, the south boundary was rounded inward by a
-      # whole local cell and rejected an independently swept-clear first arc.
-      # This aligns discretization; it does not shrink the footprint or turn
-      # off controller collision prediction.
+      # Use the same fine grid for RPP collision projection and the full-body
+      # sweep. This aligns discretization without shrinking the footprint or
+      # turning off controller collision prediction.
       resolution: 0.025
       # Publish every internal update in local Gazebo so RViz and the custom
       # full-body path validator do not observe a half-second-old obstacle map.
@@ -135,21 +141,25 @@ local_costmap:
       # overlay without ever changing the real-vehicle costmap parameters.
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
+      # The field PGM stays available as an RViz reference, but it is not a
+      # simulated navigation constraint. Only current Gazebo sensor returns
+      # feed obstacle/inflation cost in this mode.
+      # Nav2 1.1.20 cannot deserialize an empty string-array parameter.
+      # Keep the plugin declared but disabled, which prevents it from
+      # applying the field PGM to this simulation costmap.
       filters: ["keepout_filter"]
       keepout_filter:
-        plugin: "nav2_costmap_2d::KeepoutFilter"
-        enabled: true
-        filter_info_topic: "/keepout_filter_info"
+        enabled: false
       # The official B-zone opening is 1.0 m wide. The vehicle's padded
       # half-width is 0.095 m, so the real-system 0.55 m inflation radius
       # would mark the entire simulated opening impassable. Gazebo's 0.05 m
-      # lidar-slice cone model uses a 0.15 m total inflation radius instead,
+      # lidar-slice cone model uses a 0.30 m total inflation radius instead,
       # without changing the real-vehicle configuration. It is not the robot
-      # collision envelope: KeepoutFilter owns lethal mask cells independently
-      # of this InflationLayer setting.
+      # collision envelope: the footprint sweep owns collision acceptance
+      # independently of this InflationLayer setting.
       # The scalar is synchronized from route_planning.yaml.
       inflation_layer:
-        inflation_radius: 0.15
+        inflation_radius: 0.30
       obstacle_layer:
         # The headless GPU lidar runs at 20 Hz. Retain only the newest scan and mark
         # the buffer stale if two expected frames are missed; this makes a
@@ -176,13 +186,14 @@ global_costmap:
       transform_tolerance: 0.10
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
+      # Keep the static field PGM out of simulated navigation costmaps.
+      # See the local costmap note above: this plugin is present only to
+      # satisfy the non-empty parameter contract and remains disabled.
       filters: ["keepout_filter"]
       keepout_filter:
-        plugin: "nav2_costmap_2d::KeepoutFilter"
-        enabled: true
-        filter_info_topic: "/keepout_filter_info"
+        enabled: false
       inflation_layer:
-        inflation_radius: 0.15
+        inflation_radius: 0.30
       obstacle_layer:
         scan:
           observation_persistence: 0.0

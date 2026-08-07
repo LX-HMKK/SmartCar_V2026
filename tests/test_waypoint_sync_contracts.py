@@ -25,6 +25,10 @@ class WaypointSyncContracts(unittest.TestCase):
         self.assertEqual(
             deployment["planning_segments"], simulation["planning_segments"]
         )
+        self.assertTrue(all(
+            segment["direction"] == "forward"
+            for segment in simulation["planning_segments"]
+        ))
         simulation_points = _waypoints_by_id(simulation)
         deployment_points = _waypoints_by_id(deployment)
         self.assertEqual(set(deployment_points), set(simulation_points))
@@ -38,6 +42,7 @@ class WaypointSyncContracts(unittest.TestCase):
                     deployment_point["direction"],
                     simulation_point["direction"],
                 )
+                self.assertEqual(simulation_point["direction"], "forward")
                 self.assertEqual(
                     deployment_point["goal_profile"],
                     simulation_point["goal_profile"],
@@ -67,6 +72,12 @@ class WaypointSyncContracts(unittest.TestCase):
         self.assertEqual(deployment_tasks["a_task_observe"], "qr")
         self.assertEqual(simulation_tasks["c_corner_1"], "nav")
         self.assertEqual(deployment_tasks["c_corner_1"], "vlm")
+        self.assertEqual(
+            _waypoints_by_id(simulation)["c_corner_1"]["goal_profile"], "precise"
+        )
+        self.assertEqual(
+            _waypoints_by_id(deployment)["c_corner_1"]["goal_profile"], "precise"
+        )
         for waypoint_id in set(simulation_tasks) - {
             "a_task_observe", "c_corner_1"
         }:

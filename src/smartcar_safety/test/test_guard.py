@@ -24,6 +24,8 @@ class SafetyGuardTests(unittest.TestCase):
             "require_scan": True,
             "require_odom": True,
             "require_raw_odom": True,
+            "depth_points_timeout_sec": 0.50,
+            "require_depth_points": False,
         }
         options.update(overrides)
         return SafetyGuard(**options)
@@ -33,6 +35,8 @@ class SafetyGuardTests(unittest.TestCase):
         guard.mark_scan(now)
         guard.mark_odom(now)
         guard.mark_raw_odom(now)
+        if guard.require_depth_points:
+            guard.mark_depth_points(now)
         guard.mark_voltage(voltage, now)
 
     def test_startup_fails_closed(self):
@@ -100,6 +104,37 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertEqual(
             guard.evaluate(10.26),
             {"allowed": False, "reason": "raw_odom_stale"},
+        )
+
+    def test_depth_points_are_fail_closed_when_required(self):
+        guard = self.make_guard(
+            command_timeout_sec=1.0,
+            scan_timeout_sec=1.0,
+            odom_timeout_sec=1.0,
+            raw_odom_timeout_sec=1.0,
+            depth_points_timeout_sec=0.50,
+            require_depth_points=True,
+        )
+        self.make_healthy(guard)
+        self.assertEqual(guard.evaluate(10.20), {"allowed": True, "reason": "ok"})
+
+        guard.mark_command(10.60, 0.0)
+        guard.mark_scan(10.60)
+        guard.mark_odom(10.60)
+        guard.mark_raw_odom(10.60)
+        self.assertEqual(
+            guard.evaluate(10.60),
+            {"allowed": False, "reason": "depth_points_stale"},
+        )
+
+        guard = self.make_guard(require_depth_points=True)
+        self.assertTrue(guard.mark_command(10.0, 0.0))
+        guard.mark_scan(10.0)
+        guard.mark_odom(10.0)
+        guard.mark_raw_odom(10.0)
+        self.assertEqual(
+            guard.evaluate(10.10),
+            {"allowed": False, "reason": "depth_points_missing"},
         )
 
     def test_emergency_stop_latches_until_explicitly_cleared(self):
@@ -198,6 +233,7 @@ class SafetyGuardTests(unittest.TestCase):
             "scan_timeout_sec",
             "odom_timeout_sec",
             "raw_odom_timeout_sec",
+            "depth_points_timeout_sec",
             "voltage_timeout_sec",
         ):
             for timeout in (math.nan, math.inf, -math.inf):
@@ -211,6 +247,7 @@ class SafetyGuardTests(unittest.TestCase):
             "scan_timeout_sec",
             "odom_timeout_sec",
             "raw_odom_timeout_sec",
+            "depth_points_timeout_sec",
             "voltage_timeout_sec",
         ):
             for timeout in (0.0, -0.01):

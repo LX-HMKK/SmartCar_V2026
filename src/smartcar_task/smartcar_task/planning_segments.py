@@ -77,6 +77,34 @@ def allows_reverse_handoff_through_poses(goals: Sequence[Any]) -> bool:
         return False
 
 
+def allows_precise_terminal_through_poses(goals: Sequence[Any]) -> bool:
+    """Return whether a forward ThroughPoses action ends at a precise goal.
+
+    Standard ``via`` goals may constrain the approach to a QR or VLM task
+    point.  The final precise goal remains heading-locked and uses a dedicated
+    tree so Nav2 applies its strict pose/yaw completion check only there.
+    """
+    items = tuple(goals)
+    if len(items) < 2:
+        return False
+    if any(_goal_field(goal, "direction") != "forward" for goal in items):
+        return False
+    if any(
+        _goal_field(goal, "goal_profile", "standard") != "standard"
+        for goal in items[:-1]
+    ):
+        return False
+    terminal = items[-1]
+    if _goal_field(terminal, "goal_profile", "standard") != "precise":
+        return False
+    if isinstance(terminal, Mapping):
+        return _goal_field(terminal, "heading_mode") == "locked"
+    try:
+        return is_heading_locked(terminal)
+    except (TypeError, ValueError):
+        return False
+
+
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
     if not isinstance(value, Mapping):
         raise PlanningSegmentError(f"{label} must be a mapping")
@@ -317,12 +345,16 @@ def materialize_navigation_segments(
         if (
             len(action) > 1
             and nonstandard_goal_ids
-            and not allows_reverse_handoff_through_poses(action)
+            and not (
+                allows_reverse_handoff_through_poses(action)
+                or allows_precise_terminal_through_poses(action)
+            )
         ):
             raise PlanningSegmentError(
                 "NavigateThroughPoses cannot combine nonstandard goal "
                 "profiles except a terminal locked reverse_handoff in a "
-                "reverse action; split into single-goal actions: "
+                "reverse action or a terminal locked precise goal in a "
+                "forward action; split into single-goal actions: "
                 + ", ".join(nonstandard_goal_ids)
             )
     return actions

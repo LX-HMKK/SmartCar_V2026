@@ -494,10 +494,7 @@ class DragEditor:
         except (PlanningSegmentError, ValueError) as error:
             self._route_definition_valid = False
             self._node.get_logger().error(f"Route validation error: {error}")
-            self._set_route_status(
-                "路线定义有误：请确认分段首尾连续、所有航点均被覆盖，"
-                "且 QR/VLM 点是分段终点"
-            )
+            self._set_route_status(f"路线定义有误：{error}")
         else:
             self._route_definition_valid = True
             self._set_route_status(
@@ -541,10 +538,7 @@ class DragEditor:
             self._preflight = None
             self._route_definition_valid = False
             self._node.get_logger().error(f"Route validation error: {error}")
-            self._set_route_status(
-                "路线定义有误：请确认分段首尾连续、所有航点均被覆盖，"
-                "且 QR/VLM 点是分段终点"
-            )
+            self._set_route_status(f"路线定义有误：{error}")
         if redraw:
             self._redraw()
         if rebuild_panel:
@@ -769,6 +763,18 @@ class DragEditor:
             return
         self._push_history()
         self._segments[self._selected_segment] = replace(segment, direction=direction)
+        if direction == "forward":
+            # reverse_handoff is a dedicated reverse-only terminal contract.
+            # A direction toggle must not leave this incompatible profile
+            # behind.
+            for index, waypoint in enumerate(self._waypoints):
+                if (
+                    waypoint.id == segment.end_id
+                    and waypoint.goal_profile == "reverse_handoff"
+                ):
+                    self._waypoints[index] = replace(
+                        waypoint, goal_profile="standard"
+                    )
         self._mark_route_changed(rebuild_panel=True)
 
     def _set_pick_target(self, target):
@@ -1716,7 +1722,7 @@ class DragEditor:
                 )
         except (PlanningSegmentError, ValueError) as error:
             self._node.get_logger().error(f"Save route error: {error}")
-            self._set_route_status("保存已阻止：路线定义有误，请先重新校验")
+            self._set_route_status(f"保存已阻止：路线定义有误：{error}")
             self._build_route_panel()
             return
         self._history.clear()

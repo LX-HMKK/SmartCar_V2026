@@ -10,21 +10,26 @@ SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
                          double odom_timeout, double raw_odom_timeout,
                          double min_voltage, double voltage_timeout,
                          double max_linear_speed_mps, bool require_scan,
-                         bool require_odom, bool require_raw_odom)
+                         bool require_odom, bool require_raw_odom,
+                         double depth_points_timeout,
+                         bool require_depth_points)
     : cmd_timeout_(cmd_timeout),
       scan_timeout_(scan_timeout),
       odom_timeout_(odom_timeout),
       raw_odom_timeout_(raw_odom_timeout),
+      depth_points_timeout_(depth_points_timeout),
       min_voltage_(min_voltage),
       voltage_timeout_(voltage_timeout),
       max_linear_speed_mps_(max_linear_speed_mps),
       require_scan_(require_scan),
       require_odom_(require_odom),
       require_raw_odom_(require_raw_odom),
+      require_depth_points_(require_depth_points),
       cmd_at_(NAN),
       scan_at_(NAN),
       odom_at_(NAN),
       raw_odom_at_(NAN),
+      depth_points_at_(NAN),
       voltage_at_(NAN),
       voltage_(NAN),
       cmd_invalid_(false),
@@ -34,6 +39,7 @@ SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
       scan_at_set_(false),
       odom_at_set_(false),
       raw_odom_at_set_(false),
+      depth_points_at_set_(false),
       voltage_at_set_(false) {
   if (!std::isfinite(cmd_timeout) || cmd_timeout <= 0.0) {
     throw std::invalid_argument("command_timeout_sec must be positive finite");
@@ -47,6 +53,10 @@ SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
   if (!std::isfinite(raw_odom_timeout) || raw_odom_timeout <= 0.0) {
     throw std::invalid_argument(
         "raw_odom_timeout_sec must be positive finite");
+  }
+  if (!std::isfinite(depth_points_timeout) || depth_points_timeout <= 0.0) {
+    throw std::invalid_argument(
+        "depth_points_timeout_sec must be positive finite");
   }
   if (!std::isfinite(min_voltage) || min_voltage < 0.0) {
     throw std::invalid_argument("minimum_voltage must be nonnegative finite");
@@ -97,6 +107,11 @@ void SafetyGuard::mark_odom(double now_sec) {
 void SafetyGuard::mark_raw_odom(double now_sec) {
   raw_odom_at_ = now_sec;
   raw_odom_at_set_ = true;
+}
+
+void SafetyGuard::mark_depth_points(double now_sec) {
+  depth_points_at_ = now_sec;
+  depth_points_at_set_ = true;
 }
 
 void SafetyGuard::mark_voltage(float voltage, double now_sec) {
@@ -159,6 +174,15 @@ SafetyVerdict SafetyGuard::evaluate(double now_sec) const {
     }
     if (!fresh(raw_odom_at_, now_sec, raw_odom_timeout_)) {
       return result(false, "raw_odom_stale");
+    }
+  }
+
+  if (require_depth_points_) {
+    if (!depth_points_at_set_) {
+      return result(false, "depth_points_missing");
+    }
+    if (!fresh(depth_points_at_, now_sec, depth_points_timeout_)) {
+      return result(false, "depth_points_stale");
     }
   }
 

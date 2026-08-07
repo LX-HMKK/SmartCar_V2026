@@ -32,7 +32,9 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             'Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS,',
             source,
         )
-        self.assertEqual(source.count("raw=True"), 3)
+        # Command, scan, both odometry streams, and the optional depth relay
+        # heartbeat must all avoid deserializing payloads in the Python guard.
+        self.assertEqual(source.count("raw=True"), 4)
 
     def test_raw_odom_has_an_independent_required_subscription(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
@@ -57,6 +59,22 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             source,
         )
         self.assertIn("self.guard.mark_raw_odom(", source)
+
+    def test_depth_point_heartbeat_is_opt_in_and_fail_closed(self):
+        source = NODE_SOURCE.read_text(encoding="utf-8")
+        cpp_source = CPP_NODE_SOURCE.read_text(encoding="utf-8")
+        for text in (source, cpp_source):
+            with self.subTest(implementation="python" if text == source else "cpp"):
+                self.assertIn("require_depth_points", text)
+                self.assertIn("depth_points_timeout_sec", text)
+                self.assertIn("depth_points_topic", text)
+                self.assertIn("mark_depth_points", text)
+        self.assertIn("PointCloud2", source)
+        self.assertIn("PointCloud2", cpp_source)
+        self.assertIn(
+            "depth_points_timeout_sec: 0.50",
+            CONFIG_SOURCE.read_text(encoding="utf-8"),
+        )
 
     def test_odom_callbacks_are_lightweight_heartbeats(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")

@@ -22,6 +22,7 @@ def generate_launch_description():
     require_scan = LaunchConfiguration("require_scan")
     require_odom = LaunchConfiguration("require_odom")
     require_raw_odom = LaunchConfiguration("require_raw_odom")
+    require_depth_points = LaunchConfiguration("require_depth_points")
     emergency_stop_on_start = LaunchConfiguration("emergency_stop_on_start")
     use_sim_time = LaunchConfiguration("use_sim_time")
     use_cpp = LaunchConfiguration("use_cpp")
@@ -32,6 +33,7 @@ def generate_launch_description():
             "require_scan": require_scan,
             "require_odom": require_odom,
             "require_raw_odom": require_raw_odom,
+            "require_depth_points": require_depth_points,
             "emergency_stop_on_start": emergency_stop_on_start,
             "use_sim_time": use_sim_time,
         },
@@ -63,6 +65,14 @@ def generate_launch_description():
             "require_raw_odom",
             default_value="true",
             description="Require fresh raw /odom before forwarding velocity",
+        ),
+        DeclareLaunchArgument(
+            "require_depth_points",
+            default_value="false",
+            description=(
+                "Require fresh /smartcar/depth/points before forwarding "
+                "velocity"
+            ),
         ),
         DeclareLaunchArgument(
             "emergency_stop_on_start",

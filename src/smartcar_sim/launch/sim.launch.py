@@ -15,6 +15,7 @@
     headless:=true  + use_rviz:=true : Gazebo 无窗口 + RViz 可视化（推荐开发组合）
 """
 
+import math
 import os
 from pathlib import Path
 import sys
@@ -54,7 +55,28 @@ from launch.substitutions import (
 )
 from launch_ros.actions import LifecycleNode, Node
 from launch_ros.event_handlers import OnStateTransition
+from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
+
+
+def _as_bool(context, name):
+    value = LaunchConfiguration(name).perform(context).strip().lower()
+    if value in ("true", "1"):
+        return True
+    if value in ("false", "0"):
+        return False
+    raise RuntimeError(f"{name} must be true or false")
+
+
+def _nonnegative_float(context, name):
+    value_text = LaunchConfiguration(name).perform(context).strip()
+    try:
+        value = float(value_text)
+    except ValueError as error:
+        raise RuntimeError(f"{name} must be a finite non-negative number") from error
+    if not math.isfinite(value) or value < 0.0:
+        raise RuntimeError(f"{name} must be a finite non-negative number")
+    return value
 
 
 def generate_launch_description():
@@ -70,9 +92,19 @@ def generate_launch_description():
     # ExecuteProcess 的 cmd 参数中可能未正确解析。改用 os.path.join
     # 直接构造字符串路径，与 dds_config 的处理方式保持一致。
     cleanup_script = os.path.join(pkg_sim, "scripts", "sim_cleanup.sh")
+    skip_cleanup = LaunchConfiguration("skip_cleanup", default="false")
     sim_cleanup = ExecuteProcess(
         cmd=["bash", cleanup_script],
         name="sim_cleanup",
+        condition=UnlessCondition(skip_cleanup),
+    )
+    # An existing local editor or diagnostic session owns its Fast DDS shared
+    # memory.  This explicit opt-in path performs no cleanup; callers must
+    # isolate their launch with ROS_DOMAIN_ID and IGN_PARTITION.
+    sim_cleanup_skip = ExecuteProcess(
+        cmd=["bash", cleanup_script, "--skip"],
+        name="sim_cleanup_skip",
+        condition=IfCondition(skip_cleanup),
     )
 
     # ── Launch arguments ──
@@ -84,6 +116,10 @@ def generate_launch_description():
     sensor_preflight_timeout_sec = LaunchConfiguration(
         "sensor_preflight_timeout_sec", default="35.0")
     run_route = LaunchConfiguration("run_route", default="false")
+    route_start_delay_sec = LaunchConfiguration(
+        "route_start_delay_sec", default="8.0")
+    use_depth_obstacles = LaunchConfiguration(
+        "use_depth_obstacles", default="false")
     active_nav2_overlay_file = LaunchConfiguration(
         "sim_active_nav2_overlay_file")
     active_nav2_params_file = LaunchConfiguration(
@@ -246,6 +282,10 @@ def generate_launch_description():
             # Parse the physical A-zone cone collision cylinders from this exact
             # world so scan/costmap agreement cannot hide a shared bad frame.
             "track_world_file": world_path,
+            # The optional depth mode additionally proves the PointCloud2
+            # fixture is fresh before any navigation goal is accepted.
+            "require_depth_points": ParameterValue(
+                use_depth_obstacles, value_type=bool),
         }],
         output="screen",
         condition=IfCondition(enable_perception_monitor),
@@ -331,8 +371,25 @@ def generate_launch_description():
     nav2_keepout_overlay = PathJoinSubstitution([
         pkg_sim, "config", "nav2_keepout_filter.yaml"
     ])
+    nav2_depth_obstacle_overlay = PathJoinSubstitution([
+        pkg_nav2, "config", "depth_camera_obstacle_overlay.yaml"
+    ])
     bt_forward = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_w_replanning_and_recovery.xml"])
+    bt_transit = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
+        "navigate_to_pose_transit_w_replanning_and_recovery.xml"])
+    bt_transit_through_poses = PathJoinSubstitution([
+        pkg_nav2, "config", "behavior_trees",
+        "navigate_through_poses_transit_w_replanning_and_recovery.xml",
+    ])
+    bt_precise_through_poses = PathJoinSubstitution([
+        pkg_nav2, "config", "behavior_trees",
+        "navigate_through_poses_precise_w_replanning_and_recovery.xml",
+    ])
+    bt_forward_return_through_poses = PathJoinSubstitution([
+        pkg_nav2, "config", "behavior_trees",
+        "navigate_through_poses_return_w_replanning_and_recovery.xml",
+    ])
     bt_precise = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"])
     bt_reverse = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
@@ -366,6 +423,13 @@ def generate_launch_description():
 
         keepout_overlay_path = Path(nav2_keepout_overlay.perform(context))
         active_nav2_overlay = keepout_overlay_path
+        overlays = [keepout_overlay_path]
+        if _as_bool(context, "use_depth_obstacles"):
+            # The Gazebo fixture emits PointCloud2 on the same topic as the
+            # Aurora relay. The depth overlay keeps /scan as an independent
+            # obstacle source while exercising PointCloud2 processing.
+            overlays.insert(
+                0, Path(nav2_depth_obstacle_overlay.perform(context)))
         # Use one resolved parameter file for the local simulator. Passing a
         # base file and an overlay as independent ``--params-file`` entries
         # left controller-plugin replacement order implementation-dependent.
@@ -378,7 +442,7 @@ def generate_launch_description():
         )
         active_nav2_params = write_merged_nav2_parameters(
             Path(nav2_fixed_params.perform(context)),
-            active_nav2_overlay,
+            overlays,
             generated_nav2_params,
         )
         return [
@@ -446,6 +510,21 @@ def generate_launch_description():
         }],
         output="screen",
     )
+
+    depth_pointcloud_adapter = Node(
+        package="smartcar_sim",
+        executable="sim_depth_pointcloud_adapter.py",
+        name="sim_depth_pointcloud_adapter",
+        parameters=[{
+            "use_sim_time": True,
+            "input_topic": "/scan",
+            "output_topic": "/smartcar/depth/points",
+            "min_range_m": 0.25,
+            "max_range_m": 3.5,
+        }],
+        output="screen",
+        condition=IfCondition(use_depth_obstacles),
+    )
     # A lifecycle manager can reactivate the filter after a transient startup
     # delay. Launch Nav2 exactly once: repeating this include creates duplicate
     # controller/planner nodes that fight over the same lifecycle services.
@@ -471,11 +550,14 @@ def generate_launch_description():
     def start_after_nav2_lifecycle(event, context):
         """Release the optional route only after verified Nav2 activation."""
         if event.returncode == 0:
+            route_delay = _nonnegative_float(context, "route_start_delay_sec")
             return [
                 LogInfo(msg="[sim] Nav2 lifecycle startup verified"),
-                # Activation returns before both rolling costmaps have their
-                # first obstacle-layer update.
-                TimerAction(period=2.0, actions=[auto_train]),
+                # Activation can return before both rolling costmaps have
+                # received several current depth observations. Keep the
+                # route gate read-only, then give the obstacle layer a bounded
+                # settling window before the first goal is sent.
+                TimerAction(period=route_delay, actions=[auto_train]),
             ]
         return [
             LogInfo(msg=(
@@ -600,6 +682,7 @@ def generate_launch_description():
             "use_sim_time": True,
             "waypoints_file": waypoints_file,
             "forward_behavior_tree": bt_forward,
+            "transit_behavior_tree": bt_transit,
             "precise_behavior_tree": bt_precise,
             "reverse_behavior_tree": bt_reverse,
             "reverse_handoff_behavior_tree": bt_reverse_handoff,
@@ -607,6 +690,10 @@ def generate_launch_description():
                 pkg_nav2, "config", "behavior_trees",
                 "navigate_through_poses_w_replanning_and_recovery.xml",
             ]),
+            "through_poses_transit_behavior_tree": bt_transit_through_poses,
+            "through_poses_precise_behavior_tree": bt_precise_through_poses,
+            "through_poses_return_behavior_tree": (
+                bt_forward_return_through_poses),
             "through_poses_reverse_behavior_tree": bt_reverse_through_poses,
             "through_poses_reverse_locked_behavior_tree": (
                 bt_reverse_locked_through_poses),
@@ -645,6 +732,7 @@ def generate_launch_description():
         gz_server_headless,
         gz_bridge,
         ground_truth_odom_relay,
+        depth_pointcloud_adapter,
         sensor_preflight_exit,
         sensor_tf_preflight_exit,
         sensor_preflight,
@@ -673,6 +761,10 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "sensor_preflight_timeout_sec", default_value="35.0"),
         DeclareLaunchArgument("run_route", default_value="false"),
+        DeclareLaunchArgument("use_depth_obstacles", default_value="false"),
+        DeclareLaunchArgument("skip_cleanup", default_value="false"),
+        DeclareLaunchArgument(
+            "route_start_delay_sec", default_value="8.0"),
         # A trial route can be supplied without modifying the saved editor
         # file. The default remains the one authoritative simulation route.
         DeclareLaunchArgument(
@@ -706,5 +798,12 @@ def generate_launch_description():
                 on_exit=[start_after_cleanup],
             )
         ),
+        RegisterEventHandler(
+            OnProcessExit(
+                target_action=sim_cleanup_skip,
+                on_exit=[start_after_cleanup],
+            )
+        ),
         sim_cleanup,
+        sim_cleanup_skip,
     ])

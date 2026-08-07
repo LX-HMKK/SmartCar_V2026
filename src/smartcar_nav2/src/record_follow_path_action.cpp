@@ -268,37 +268,48 @@ RecordFollowPathAction::TerminalVerificationResult
 RecordFollowPathAction::verifyPhysicalTerminalPose()
 {
   bool verify_terminal_pose = false;
+  int completion_settle_delay_ms = 0;
   if (!getInput("verify_physical_terminal_pose", verify_terminal_pose) ||
-    !verify_terminal_pose)
+    !getInput("completion_settle_delay_ms", completion_settle_delay_ms) ||
+    completion_settle_delay_ms < 0 || completion_settle_delay_ms > 2000)
   {
-    return TerminalVerificationResult::kPassed;
+    RCLCPP_ERROR(node_->get_logger(), "FollowPath terminal-settle ports are invalid");
+    return TerminalVerificationResult::kFailed;
   }
 
   double position_tolerance_m = 0.0;
   double yaw_tolerance_rad = 0.0;
   int verification_delay_ms = 0;
-  setOutput("terminal_recovery_eligible", false);
-  if (!getInput("terminal_position_tolerance_m", position_tolerance_m) ||
-    !getInput("terminal_yaw_tolerance_rad", yaw_tolerance_rad) ||
-    !getInput("terminal_verification_delay_ms", verification_delay_ms) ||
-    !std::isfinite(position_tolerance_m) || !std::isfinite(yaw_tolerance_rad) ||
-    position_tolerance_m <= 0.0 || yaw_tolerance_rad <= 0.0 ||
-    verification_delay_ms < 0 || verification_delay_ms > 2000)
-  {
-    RCLCPP_ERROR(
-      node_->get_logger(), "Physical terminal-pose verification ports are invalid");
-    return TerminalVerificationResult::kFailed;
+  if (verify_terminal_pose) {
+    setOutput("terminal_recovery_eligible", false);
+    if (!getInput("terminal_position_tolerance_m", position_tolerance_m) ||
+      !getInput("terminal_yaw_tolerance_rad", yaw_tolerance_rad) ||
+      !getInput("terminal_verification_delay_ms", verification_delay_ms) ||
+      !std::isfinite(position_tolerance_m) || !std::isfinite(yaw_tolerance_rad) ||
+      position_tolerance_m <= 0.0 || yaw_tolerance_rad <= 0.0 ||
+      verification_delay_ms < 0 || verification_delay_ms > 2000)
+    {
+      RCLCPP_ERROR(
+        node_->get_logger(), "Physical terminal-pose verification ports are invalid");
+      return TerminalVerificationResult::kFailed;
+    }
   }
 
+  const int effective_delay_ms = std::max(
+    completion_settle_delay_ms, verification_delay_ms);
   if (!terminal_verification_pending_) {
     terminal_verification_pending_ = true;
     terminal_verification_deadline_ = std::chrono::steady_clock::now() +
-      std::chrono::milliseconds(verification_delay_ms);
+      std::chrono::milliseconds(effective_delay_ms);
   }
   if (std::chrono::steady_clock::now() < terminal_verification_deadline_) {
     return TerminalVerificationResult::kWaiting;
   }
   terminal_verification_pending_ = false;
+
+  if (!verify_terminal_pose) {
+    return TerminalVerificationResult::kPassed;
+  }
 
   geometry_msgs::msg::PoseStamped target;
   if (!getInput("terminal_goal", target)) {

@@ -3,11 +3,9 @@
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="5" name="NavigateRecovery">
       <PipelineSequence name="NavigateWithReplanning">
-        <!-- Keep the active goal list fresh on every tick. The full route
-             stays latched while FollowPath runs so a long candidate search
-             cannot publish a stale-start path. -->
-        <!-- Transit constraints are pass-through gates, not stop points. -->
-        <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.50" global_frame="odom_combined" robot_base_frame="base_footprint"/>
+        <!-- Keep the complete action goal list. A segment may begin inside
+             the prior terminal tolerance and close to its first via point;
+             RemovePassedGoals would silently discard that explicit gate. -->
         <LatchSuccess name="LatchFreeHeadingPathThroughPoses">
           <RecoveryNode number_of_retries="1" name="ComputeFreeHeadingPathThroughPoses">
             <ComputeFreeHeadingPathThroughPoses

@@ -62,7 +62,7 @@ bash scripts/local_sim.sh --headless --rviz
 资源，并设置模型资源路径。不要额外设置 `FASTRTPS_DEFAULT_PROFILES_FILE`、
 `FASTDDS_DEFAULT_PROFILES_FILE` 或 `CYCLONEDDS_URI`。
 
-本机 Gazebo 仿真固定使用 `0.30 m/s` 线速度上限；前进、倒车交接、短退恢复和
+本机 Gazebo 仿真固定使用 `0.30 m/s` 线速度上限；当前全正向路线和
 `velocity_smoother` 使用同一档位。为保持 `0.22 m` 最小转弯半径，角速度上限为
 `0.30 / 0.22 = 1.363636 rad/s`。`sim_speed_profile` 以及旧的 `0.15`、`0.20`、
 `0.25 m/s` 速度档位已移除。
@@ -118,24 +118,22 @@ bash scripts/local_waypoint_editor.sh
 
 ## 6. 自动路线和调参
 
-当前 `nav_only.yaml` 保留三个语义阶段：P→A 前进、A→`via_2`→C1 倒车、C1→`via_1`→`via_3`→P
-倒车。`via` 是普通无朝向经过点；第二段的 C1 是锁定航向的 `reverse_handoff`，因此它必须是
-该倒车 `NavigateThroughPoses` 动作的最后一个目标，运行时选择
-`navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml`。前序点必须都是普通
-reverse `via`，不能把 `reverse_handoff` 放在中间，也不能把 `precise` 混进该动作。第三段的
-`p_finish` 是锁定航向的 `task: return`，选择
-`navigate_through_poses_reverse_return_sim_w_replanning_and_recovery.xml`，并使用专用
-`return_goal_checker`（`0.15 m / 0.15 rad`）；它不继承 C1 的宽松到达包络。
-反向候选和短退仍经过完整车体扫掠；栅格碰撞使用车辆 OBB 与完整 cell 的精确相交测试，避免
-P 点南侧仅贴近 cell 角落的真实净空被半对角近似误拒绝，同时实际相交仍会 fail-closed。
+当前 `nav_only.yaml` 有四个显式动作，且全部为正向：P→A、A 经
+`a_departure_exit`/`via_2_entry`/`via_2_corridor`→`via_2`、`via_2`→C1、C1 经
+`c_north_1`/`c_north_2`/`via_1`/`via_3`/`return_corridor_exit`/`p_return_approach`→P。
+`via` 是普通无朝向经过约束；A 与 C1 是锁定航向的 `precise` 单目标，`p_finish` 是
+`standard` 终点。两条含经过点的动作使用常规正向
+`navigate_through_poses_w_replanning_and_recovery.xml`；不使用 `reverse_handoff`、反向
+ThroughPoses 树或短退恢复。反向候选、足迹扫掠和 `AckermannReverseRetreat` 仍是通用反向
+基础设施，但当前活动路线不会调用它们。
 
-P→A 使用精确前进树。RPP 碰撞或 controller patience 超时时，`FollowPath` 会直接进入外层
+P→A 与 `via_2`→C1 使用精确前进树。RPP 碰撞或 controller patience 超时时，`FollowPath` 会直接进入外层
 recovery：清 local/global costmap、重新 `ComputePathToPose`，再发送新的控制器路径；不能先清
-local costmap 后重发旧 `{path}`。2026-08-03 的两次定向 P→A 运行均完成，位置误差均为
-`0.102 m`，航向误差为 `0.085 rad` 与 `0.073 rad`；其中一次实际记录了碰撞超时、双 costmap
-清理和新路径后的成功到达。前进段不执行短退，短退只属于反向规划候选穷尽后的受限恢复。
-上述两次定向 P→A 结果本身不等同于三阶段完整路线通过；完整路线已由
-`validate_sim_results.py` 验证通过，但两类 Gazebo 证据均不构成实体车辆验收。
+local costmap 后重发旧 `{path}`。当前全路线已由 `run_20260807_170954_1` 完成校验：四个动作均
+`succeeded`，A/C1/P 的终态误差分别为 `0.053 m / 0.141 rad`、`0.039 m / 0.113 rad`、
+`0.312 m / 0.350 rad`。该证据覆盖本机 Gazebo、感知门禁和正向控制命令；仿真 PGM 仅作 RViz
+参考，不参与 Nav2 costmap 的 KeepoutFilter 约束。任何
+Gazebo 结果均不构成实体车辆验收。
 
 运行路线会让 Gazebo 模型运动：
 
@@ -149,6 +147,17 @@ bash scripts/local_sim.sh --headless --rviz -- run_route:=true
 python3 src/smartcar_sim/scripts/tune_params.py
 bash src/smartcar_sim/scripts/sim_tune.sh --headless --loop 1
 ```
+
+要同时覆盖深度 PointCloud2 障碍层，显式传入
+`--use-depth-obstacles`：
+
+```bash
+bash src/smartcar_sim/scripts/sim_tune.sh --headless --use-depth-obstacles --loop 1
+```
+
+该选项只在 Gazebo 中将模拟 `/scan` 转换为
+`/smartcar/depth/points` 并替换 Nav2 的障碍物观测源；`/scan` 仍保留给传感器
+门禁。它不启用实体深度相机，也不改变实体导航参数。
 
 Gazebo 最小转弯半径由
 `src/smartcar_tools/config/routes/route_planning.yaml` 的

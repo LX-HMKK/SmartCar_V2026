@@ -23,7 +23,6 @@
 
 #include "smartcar_nav2/costmap_footprint_sweep.hpp"
 #include "smartcar_nav2/costmap_sample_guard.hpp"
-#include "smartcar_nav2/departure_connector.hpp"
 #include "smartcar_nav2/footprint_sweep_collision_source.hpp"
 #include "smartcar_nav2/local_costmap_tracking_envelope.hpp"
 #include "smartcar_nav2/reverse_path_utils.hpp"
@@ -105,8 +104,6 @@ private:
     std::string local_tracking_costmap_frame;
     double local_tracking_requested_horizon_m{0.0};
     double local_tracking_covered_horizon_m{0.0};
-    std::string local_tracking_lateral_profile{kForwardPathLateralProfileSymmetric};
-    bool local_tracking_lateral_profile_active{false};
     bool static_keepout_sweep_checked{false};
     bool static_keepout_sweep_clear{true};
     StaticKeepoutMaskSweepResult static_keepout_sweep_result{
@@ -136,9 +133,6 @@ private:
   bool goalsChanged();
   bool prepareTargetCandidates(bool reset_search = true);
   bool prepareLookaheadCandidates();
-  bool readDepartureConnectorOptions();
-  bool prepareDepartureConnectors();
-  BT::NodeStatus advanceDepartureConnector();
   const geometry_msgs::msg::PoseStamped & plannerStartForCandidate() const;
   bool buildCandidateSegment(
     const nav_msgs::msg::Path & planner_segment,
@@ -178,16 +172,21 @@ private:
     std::string & reason) const;
   bool frameHasAlternative(const ThroughSearchFrame & frame) const;
   std::optional<std::size_t> highestRiskThroughFrame() const;
-  PathQuality pathQuality(const nav_msgs::msg::Path & path) const;
+  PathQuality pathQuality(
+    const nav_msgs::msg::Path & path,
+    bool require_local_tracking_envelope) const;
   bool betterPathQuality(const PathQuality & first, const PathQuality & second) const;
   bool hasFreshPlanningCostmaps() const;
   bool hasFreshGlobalCostmap() const;
   bool hasFreshLocalFilteredCostmap() const;
   bool hasStaticKeepoutMask() const;
-  bool pDepartureStaticKeepoutMaskRequired() const;
-  bool hasAcceptableCostmapSample(const PathQuality & quality) const;
+  bool hasAcceptableCostmapSample(
+    const PathQuality & quality,
+    bool require_local_tracking_envelope) const;
   bool staticKeepoutSweepIsInfrastructureFailure(const PathQuality & quality) const;
-  bool localTrackingSweepIsInfrastructureFailure(const PathQuality & quality) const;
+  bool localTrackingSweepIsInfrastructureFailure(
+    const PathQuality & quality,
+    bool require_local_tracking_envelope) const;
   void logFootprintSweepFailure(
     const PathQuality & quality,
     const char * scope,
@@ -284,20 +283,7 @@ private:
   double local_tracking_cross_track_error_m_{0.0};
   double local_tracking_horizon_m_{0.0};
   std::uint8_t local_tracking_lethal_cost_{254U};
-  std::string local_tracking_lateral_profile_{kForwardPathLateralProfileSymmetric};
-  ForwardPathLateralProfileStart local_tracking_lateral_profile_start_;
   ReversePathValidationOptions validation_options_;
-  bool departure_connector_enabled_{false};
-  double departure_connector_start_x_m_{0.0};
-  double departure_connector_start_y_m_{0.0};
-  double departure_connector_start_yaw_rad_{0.0};
-  double departure_connector_start_position_tolerance_m_{0.10};
-  double departure_connector_start_yaw_tolerance_rad_{0.15};
-  double departure_connector_maximum_active_radius_m_{0.0};
-  double departure_connector_terminal_radius_m_{0.0};
-  double departure_connector_high_right_turn_radius_m_{0.0};
-  int departure_connector_heading_bins_{0};
-  DepartureConnectorOptions departure_connector_options_;
 
   geometry_msgs::msg::PoseStamped real_start_;
   geometry_msgs::msg::PoseStamped planning_virtual_start_;
@@ -315,8 +301,6 @@ private:
   std::optional<nav_msgs::msg::Path> best_continuation_;
   std::optional<CandidatePlan> pending_candidate_;
   nav_msgs::msg::Path virtual_path_;
-  std::vector<DepartureConnector> departure_connectors_;
-  std::size_t departure_connector_index_{0};
   std::vector<ThroughSearchFrame> through_search_frames_;
   std::size_t through_candidate_query_count_{0};
   std::optional<nav_msgs::msg::Path> best_through_path_;

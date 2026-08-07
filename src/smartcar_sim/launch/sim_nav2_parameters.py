@@ -35,11 +35,20 @@ def _deep_merge(base: Mapping[str, Any], overlay: Mapping[str, Any]) -> dict[str
 
 def write_merged_nav2_parameters(
     base_params: Path,
-    overlay: Path,
+    overlays: Path | tuple[Path, ...] | list[Path],
     destination: Path,
 ) -> Path:
-    """Write the exact base-plus-local-overlay configuration atomically."""
-    merged = _deep_merge(_load_mapping(base_params), _load_mapping(overlay))
+    """Write the exact base-plus-ordered-overlay configuration atomically."""
+    if isinstance(overlays, Path):
+        overlay_paths = (overlays,)
+    else:
+        overlay_paths = tuple(overlays)
+    if not overlay_paths:
+        raise ValueError("at least one Nav2 overlay is required")
+
+    merged = _load_mapping(base_params)
+    for overlay in overlay_paths:
+        merged = _deep_merge(merged, _load_mapping(overlay))
     rendered = yaml.safe_dump(merged, allow_unicode=False, sort_keys=False)
     destination.parent.mkdir(parents=True, exist_ok=True)
     descriptor, temporary_name = tempfile.mkstemp(

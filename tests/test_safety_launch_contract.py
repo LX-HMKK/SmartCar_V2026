@@ -151,6 +151,34 @@ class SafetyLaunchContractTests(unittest.TestCase):
         source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
         self.assertIn('"require_raw_odom": require_raw_odom', source)
 
+    def test_depth_obstacle_mode_has_a_required_safety_heartbeat(self):
+        safety_tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
+        self.assertEqual(
+            launch_argument_default(safety_tree, "require_depth_points"),
+            "false",
+        )
+        safety_source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
+        self.assertIn(
+            '"require_depth_points": require_depth_points', safety_source)
+
+        bringup_tree = source_tree(SMARTCAR_BRINGUP)
+        self.assertEqual(
+            launch_argument_default(bringup_tree, "safety_require_depth_points"),
+            "false",
+        )
+        bringup_source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
+        self.assertIn(
+            "'require_depth_points': safety_require_depth_points",
+            bringup_source,
+        )
+
+        system_source = SMARTCAR_SYSTEM.read_text(encoding="utf-8")
+        self.assertIn(
+            '"safety_require_depth_points": LaunchConfiguration(\n'
+            '                "use_depth_camera")',
+            system_source,
+        )
+
     def test_safety_launch_exposes_startup_emergency_stop(self):
         tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
         self.assertEqual(

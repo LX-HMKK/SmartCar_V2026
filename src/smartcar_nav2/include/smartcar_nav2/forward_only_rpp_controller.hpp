@@ -16,7 +16,6 @@
 #include "tf2_ros/buffer.h"
 
 #include "smartcar_nav2/forward_command_filter.hpp"
-#include "smartcar_nav2/forward_path_lateral_profile.hpp"
 #include "smartcar_nav2/forward_path_tracking_guard.hpp"
 
 namespace smartcar_nav2
@@ -64,10 +63,6 @@ private:
   mutable std::mutex path_tracking_mutex_;
   nav_msgs::msg::Path confirmed_plan_;
   double forward_path_max_cross_track_error_{0.0};
-  std::string forward_path_lateral_profile_{kForwardPathLateralProfileSymmetric};
-  ForwardPathLateralProfileStart forward_path_lateral_profile_start_;
-  std::string confirmed_lateral_profile_{kForwardPathLateralProfileSymmetric};
-  bool confirmed_lateral_profile_invalid_{false};
   double forward_terminal_lookahead_m_{0.0};
   double forward_terminal_activation_distance_m_{0.0};
   bool forward_path_use_curvature_tracking_{false};

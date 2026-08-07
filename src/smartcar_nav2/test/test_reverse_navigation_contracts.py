@@ -199,9 +199,9 @@ class TestReverseNavigationContracts(unittest.TestCase):
         controller = self.params["controller_server"]["ros__parameters"]
         self.assertIn("return_goal_checker", controller["goal_checker_plugins"])
         returned = controller["return_goal_checker"]
-        self.assertEqual(returned["plugin"], "nav2_controller::SimpleGoalChecker")
+        self.assertEqual(returned["plugin"], "nav2_controller::PositionGoalChecker")
         self.assertAlmostEqual(returned["xy_goal_tolerance"], 0.15)
-        self.assertAlmostEqual(returned["yaw_goal_tolerance"], 0.15)
+        self.assertNotIn("yaw_goal_tolerance", returned)
         self.assertIs(returned["stateful"], False)
 
         root = ElementTree.parse(REVERSE_RETURN_THROUGH_POSES_BT_FILE).getroot()
@@ -220,7 +220,7 @@ class TestReverseNavigationContracts(unittest.TestCase):
             "reverse_planner_unreachable",
         )
 
-    def test_through_poses_removes_passed_goals_on_every_bt_tick(self):
+    def test_through_poses_preserves_forward_goal_gates(self):
         cases = (
             (THROUGH_POSES_BT_FILE, "ComputeFreeHeadingPathThroughPoses"),
             (
@@ -249,23 +249,25 @@ class TestReverseNavigationContracts(unittest.TestCase):
                     ),
                     None,
                 )
-                self.assertIsNotNone(remove_passed_goals)
                 self.assertIsNotNone(latch)
-                self.assertEqual(len(list(root.iter("RemovePassedGoals"))), 1)
-                self.assertEqual(remove_passed_goals.attrib["input_goals"], "{goals}")
-                self.assertEqual(remove_passed_goals.attrib["output_goals"], "{goals}")
-
-                # PipelineSequence re-ticks completed predecessor children while
-                # FollowPath runs. Keep goal removal outside the latch so it
-                # uses the 20 ms BT tick, while the complete free-heading route
-                # is stable until FollowPath fails and recovery resets it.
-                self.assertIn(remove_passed_goals, children)
                 self.assertIn(latch, children)
-                self.assertLess(
-                    children.index(remove_passed_goals),
-                    children.index(latch),
-                )
-                self.assertNotIn(remove_passed_goals, list(latch.iter()))
+                if behavior_tree == THROUGH_POSES_BT_FILE:
+                    # A forward action must retain every configured via. A
+                    # start pose near the first via cannot silently remove it
+                    # before Nav2 plans the complete route.
+                    self.assertIsNone(remove_passed_goals)
+                else:
+                    self.assertIsNotNone(remove_passed_goals)
+                    assert remove_passed_goals is not None
+                    self.assertEqual(len(list(root.iter("RemovePassedGoals"))), 1)
+                    self.assertEqual(remove_passed_goals.attrib["input_goals"], "{goals}")
+                    self.assertEqual(remove_passed_goals.attrib["output_goals"], "{goals}")
+                    self.assertIn(remove_passed_goals, children)
+                    self.assertLess(
+                        children.index(remove_passed_goals),
+                        children.index(latch),
+                    )
+                    self.assertNotIn(remove_passed_goals, list(latch.iter()))
                 self.assertEqual(len(list(latch.iter(compute_tag))), 1)
                 self.assertNotIn("IsPathValid", {element.tag for element in root.iter()})
                 self.assertNotIn("RateController", {element.tag for element in root.iter()})
@@ -602,37 +604,14 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertAlmostEqual(precise["yaw_goal_tolerance"], 0.15)
         self.assertIs(precise["stateful"], False)
 
-    def test_real_precise_tree_disables_the_simulation_departure_connector(self):
+    def test_active_trees_reject_human_authored_path_guidance(self):
         precise = ElementTree.parse(PRECISE_FORWARD_BT_FILE).getroot()
         compute = precise.find(".//ComputeFreeHeadingPathToPose")
         self.assertIsNotNone(compute)
         self.assertEqual(compute.attrib["footprint_lethal_cost"], "254")
         self.assertNotIn("maximum_direction_error", compute.attrib)
-        # At a real-car 0.22 m lower bound, the former radius gate would no
-        # longer suppress this Gazebo-only connector. The shared tree must
-        # keep it explicitly disabled; sim.launch wires a separate copied BT.
-        self.assertEqual(compute.attrib["departure_connector_enabled"], "false")
-        self.assertEqual(
-            compute.attrib["departure_connector_radius_margin_m"], "0.28"
-        )
-        self.assertEqual(
-            compute.attrib["departure_connector_maximum_active_radius_m"],
-            "0.50",
-        )
-        self.assertEqual(
-            compute.attrib["departure_connector_terminal_radius_m"], "0.22"
-        )
-        self.assertNotIn(
-            "departure_connector_high_right_turn_radius_m", compute.attrib
-        )
-        self.assertEqual(compute.attrib["departure_connector_start_x_m"], "0.0")
-        self.assertEqual(compute.attrib["departure_connector_start_y_m"], "0.0")
-        self.assertEqual(
-            compute.attrib["departure_connector_start_yaw_rad"], "0.0"
-        )
-        self.assertEqual(compute.attrib["departure_connector_heading_bins"], "144")
-
         for behavior_tree in (
+            PRECISE_FORWARD_BT_FILE,
             FORWARD_BT_FILE,
             THROUGH_POSES_BT_FILE,
             REVERSE_BT_FILE,
@@ -649,48 +628,14 @@ class TestReverseNavigationContracts(unittest.TestCase):
                     or "ComputeReverseFreeHeadingPath" in element.tag
                 ]
                 self.assertEqual(len(computes), 1)
-                self.assertNotIn(
-                    "departure_connector_enabled", computes[0].attrib
+                self.assertFalse(
+                    any(key.startswith("departure_connector_")
+                        for key in computes[0].attrib)
                 )
-
-        real_radius = self.params["bt_navigator"]["ros__parameters"][
-            "free_heading_minimum_turning_radius"
-        ]
-        self.assertAlmostEqual(real_radius, 0.22)
-        self.assertLessEqual(real_radius + 0.28, 0.50)
         source = (
             PACKAGE_ROOT / "src" / "compute_free_heading_path_action.cpp"
         ).read_text(encoding="utf-8")
-        self.assertIn("departureConnectorRadiusWithinMaximum", source)
-        self.assertIn("departureConnectorTerminalRadiusWithinEnvelope", source)
-        self.assertIn("departureConnectorHighRightTurnRadiusWithinEnvelope", source)
-        self.assertIn("simulation-only terminal radius", source)
-        self.assertIn("departure_connector_terminal_radius_m_", source)
-        self.assertIn("departure_connector_high_right_turn_radius_m_", source)
-        read_departure_options = source.split(
-            "bool ComputeFreeHeadingPathAction::readDepartureConnectorOptions()"
-        )[1].split("bool ComputeFreeHeadingPathAction::goalsChanged()", 1)[0]
-        self.assertLess(
-            read_departure_options.index(
-                "if (!departureConnectorRadiusWithinMaximum("
-            ),
-            read_departure_options.index(
-                "if (!departureConnectorHighRightTurnRadiusWithinEnvelope("
-            ),
-        )
-        self.assertLess(
-            read_departure_options.index(
-                "if (!departureConnectorHighRightTurnRadiusWithinEnvelope("
-            ),
-            read_departure_options.index(
-                "return departureConnectorTerminalRadiusWithinEnvelope("
-            ),
-        )
-        self.assertIn("p_terminal_rsl_unavailable", source)
-        self.assertIn("active radius %.3f exceeds its %.3f m gate", source)
-        self.assertIn("Rejected P connector lattice handoff", source)
-        self.assertIn("kJoinPositionTolerance", source)
-        self.assertNotIn("snapPlannerPathStartToRequestedPose(", source)
+        self.assertNotIn("departure_connector", source)
 
     def test_forward_trees_use_positive_ackermann_tracking(self):
         controller = self.params["controller_server"]["ros__parameters"]
@@ -1222,6 +1167,36 @@ class TestReverseNavigationContracts(unittest.TestCase):
         self.assertIn("kMaximumThroughCandidateQueries = 64U", source)
         self.assertIn("through_candidate_query_count_", source)
         self.assertIn("if (target_index_ == real_goals_.size()) {", source)
+
+    def test_through_poses_only_use_the_local_envelope_for_the_real_prefix(self):
+        source = (
+            PACKAGE_ROOT / "src" / "compute_free_heading_path_action.cpp"
+        ).read_text(encoding="utf-8")
+        candidate_body = source.split(
+            "ComputeFreeHeadingPathAction::completeCandidate", 1
+        )[1].split("ComputeFreeHeadingPathAction::completeLookahead", 1)[0]
+        self.assertIn(
+            "!through_poses_ || target_index_ == 0U",
+            candidate_body,
+        )
+        self.assertIn(
+            "pathQuality(\n    candidate_segment, require_local_tracking_envelope)",
+            candidate_body,
+        )
+        self.assertIn(
+            "hasAcceptableCostmapSample(\n      candidate_quality, require_local_tracking_envelope)",
+            candidate_body,
+        )
+        self.assertIn(
+            "staticKeepoutSweepIsInfrastructureFailure(candidate_quality)",
+            candidate_body,
+        )
+
+        complete_body = source.split(
+            "ComputeFreeHeadingPathAction::completeThroughPath", 1
+        )[1].split("ComputeFreeHeadingPathAction::finishPath", 1)[0]
+        self.assertIn("pathQuality(virtual_path_, true)", complete_body)
+        self.assertIn("hasAcceptableCostmapSample(quality, true)", complete_body)
 
     def test_free_heading_rejects_a_lethal_footprint_sweep_before_commit(self):
         source = (

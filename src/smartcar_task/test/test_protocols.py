@@ -76,6 +76,15 @@ class ProtocolTests(unittest.TestCase):
             navigation_behavior_tree(
                 False,
                 "ignored.xml",
+                forward_transit_behavior_tree="transit.xml",
+                heading_locked=False,
+            ),
+            "transit.xml",
+        )
+        self.assertEqual(
+            navigation_behavior_tree(
+                False,
+                "ignored.xml",
                 goal_profile="precise",
                 precise_forward_behavior_tree="precise.xml",
             ),

@@ -44,6 +44,8 @@ def navigation_behavior_tree(
     goal_profile="standard",
     precise_forward_behavior_tree="",
     reverse_handoff_behavior_tree="",
+    forward_transit_behavior_tree="",
+    heading_locked=True,
 ):
     profile = str(goal_profile).strip()
     if profile not in {"standard", "precise", "reverse_handoff"}:
@@ -70,6 +72,11 @@ def navigation_behavior_tree(
         if not value:
             raise ValueError(
                 "precise_forward_behavior_tree must not be empty")
+        return value
+    if not bool(heading_locked):
+        value = str(forward_transit_behavior_tree).strip()
+        if not value:
+            raise ValueError("forward_transit_behavior_tree must not be empty")
         return value
     return ""
 

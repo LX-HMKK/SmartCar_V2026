@@ -72,10 +72,9 @@ nav_msgs::msg::OccupancyGrid pFinishSouthBoundaryMask()
   result.info.origin.position.y = -0.50;
   result.info.origin.orientation.w = 1.0;
   result.data.assign(10000U, 0);
-  // The top row of the P-side exterior ring ends at y=-0.25. Its cell centre
-  // is (-0.1125, -0.2625), where the p_finish 45-degree terminal pose has a
-  // real 6.7 mm clearance.
-  result.data[9U * 100U + 25U] = 100;
+  // The P-side exterior ring beside the configured forward terminal heading.
+  // It must remain clear at p_finish and be found if the body advances past P.
+  result.data[9U * 100U + 21U] = 100;
   return result;
 }
 
@@ -89,7 +88,7 @@ nav2_msgs::msg::Costmap pFinishSouthBoundaryCostmap()
   result.metadata.origin.position.y = -0.50;
   result.metadata.origin.orientation.w = 1.0;
   result.data.assign(10000U, 0U);
-  result.data[9U * 100U + 25U] = 254U;
+  result.data[9U * 100U + 21U] = 254U;
   return result;
 }
 
@@ -219,7 +218,7 @@ TEST(CostmapFootprintSweep, SweepsStaticKeepoutMaskAsAFullBodyConstraint)
 
 TEST(CostmapFootprintSweep, PreservesExactPFinishClearanceAtSouthBoundary)
 {
-  constexpr double kPFinishYaw = 0.78539816339744830962;
+  constexpr double kPFinishYaw = -2.4980915447965089;
   auto mask = pFinishSouthBoundaryMask();
   auto raw_costmap = pFinishSouthBoundaryCostmap();
 
@@ -233,15 +232,15 @@ TEST(CostmapFootprintSweep, PreservesExactPFinishClearanceAtSouthBoundary)
       &mask, "odom_combined", path({pose(0.0, 0.0, kPFinishYaw)}), kOptions),
     smartcar_nav2::StaticKeepoutMaskSweepResult::kClear);
 
-  // Crossing the true exterior edge by less than one centimetre remains
-  // blocked in both raw and static-mask sweeps.
+  // Advancing past P along the configured forward terminal heading reaches
+  // the exterior-ring cell and remains blocked in both raw and static sweeps.
   EXPECT_EQ(
     smartcar_nav2::costmapFootprintPathSweep(
-      path({pose(0.0, -0.007, kPFinishYaw)}), raw_costmap, kOptions),
+      path({pose(-0.070, -0.053, kPFinishYaw)}), raw_costmap, kOptions),
     smartcar_nav2::CostmapFootprintSweepResult::kLethalOverlap);
   EXPECT_EQ(
     smartcar_nav2::staticKeepoutMaskFootprintPathSweep(
-      &mask, "odom_combined", path({pose(0.0, -0.007, kPFinishYaw)}), kOptions),
+      &mask, "odom_combined", path({pose(-0.070, -0.053, kPFinishYaw)}), kOptions),
     smartcar_nav2::StaticKeepoutMaskSweepResult::kOccupiedOrUnknown);
 }
 

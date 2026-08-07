@@ -15,6 +15,10 @@ VENDOR = ROOT / "src" / "origincar" / "origincar_base" / "launch" / "origincar_b
 NAV = ROOT / "src" / "smartcar_nav2" / "launch" / "navigation_launch.py"
 VISION = ROOT / "src" / "smartcar_vision" / "launch" / "smartcar_vision.launch.py"
 TASK_NODE = ROOT / "src" / "smartcar_task" / "smartcar_task" / "task_node.py"
+DEPTH_OVERLAY = (
+    ROOT / "src" / "smartcar_nav2" / "config"
+    / "depth_camera_obstacle_overlay.yaml"
+)
 
 
 def launch_default(path, name):
@@ -60,6 +64,7 @@ class SystemContractTests(unittest.TestCase):
             "use_nav": "true",
             "use_camera": "true",
             "use_vision": "true",
+            "use_depth_camera": "false",
             "use_task": "true",
             "use_visualization": "false",
             "use_speech": "false",
@@ -91,7 +96,8 @@ class SystemContractTests(unittest.TestCase):
             '"waypoints_file": LaunchConfiguration("waypoints_file")',
             source,
         )
-        self.assertIn('"autostart": nav_autostart', source)
+        self.assertIn(
+            '"autostart": LaunchConfiguration("nav_autostart")', source)
         self.assertNotIn('"use_waypoint_follower"', source)
         self.assertIn(
             '"autostart_mission": LaunchConfiguration("autostart_mission")',
@@ -115,6 +121,44 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn("def _resolve_camera_source(context):", source)
         self.assertIn('"barcode_reader_image_topic": image_topic', source)
         self.assertIn("OpaqueFunction(function=_task_actions)", source)
+
+    def test_depth_camera_is_opt_in_and_keeps_nav2_scan_observations(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertEqual(launch_default(SYSTEM, "use_depth_camera"), "false")
+        self.assertEqual(
+            launch_default(SYSTEM, "depth_camera_calibrated"), "false")
+        self.assertIn('"use_depth_camera requires use_lidar=true', source)
+        self.assertIn('executable="depth_pointcloud_relay"', source)
+        self.assertIn('"depth_camera_calibrated"', source)
+        self.assertIn('"safety_require_depth_points": LaunchConfiguration(', source)
+        self.assertIn('"use_depth_camera")', source)
+
+        config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
+        self.assertIs(config["toggles"]["use_depth_camera"], False)
+        depth = config["extrinsics"]["link_to_depth_camera"]
+        self.assertIs(depth["measured"], False)
+        self.assertEqual(depth["child"], "depth_camera_link_1")
+        self.assertIs(config["motion_gates"]["depth_camera_calibrated"], False)
+
+        overlay = yaml.safe_load(DEPTH_OVERLAY.read_text(encoding="utf-8"))
+        for costmap in ("local_costmap", "global_costmap"):
+            layer = overlay[costmap][costmap]["ros__parameters"][
+                "obstacle_layer"]
+            self.assertEqual(layer["observation_sources"], "scan depth_points")
+            self.assertEqual(layer["scan"]["topic"], "/scan")
+            self.assertEqual(layer["scan"]["data_type"], "LaserScan")
+            self.assertEqual(layer["scan"]["observation_persistence"], 0.0)
+            self.assertEqual(layer["depth_points"]["topic"], "/smartcar/depth/points")
+            self.assertEqual(layer["depth_points"]["data_type"], "PointCloud2")
+
+    def test_system_rejects_external_nav2_overlays(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        self.assertIn("requested_overlay", source)
+        self.assertIn(
+            "smartcar_system does not accept external Nav2 parameter overlays",
+            source,
+        )
+        self.assertIn('"allow_params_overlay": allow_params_overlay', source)
 
     def test_base_switch_only_gates_vendor_chassis_include(self):
         source = BRINGUP.read_text(encoding="utf-8")
@@ -274,6 +318,7 @@ class SystemContractTests(unittest.TestCase):
             "emergency_stop_ready",
             "operator_approved",
             "laser_odometry_calibrated",
+            "depth_camera_calibrated",
         ):
             self.assertIs(gates[name], False)
 

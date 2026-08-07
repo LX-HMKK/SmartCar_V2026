@@ -1,4 +1,7 @@
 """Compose the complete competition stack with explicit motion gates."""
+import os
+
+from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (
     DeclareLaunchArgument,
@@ -23,6 +26,11 @@ CAMERA_TOPICS = {
     "mipi": "/image_raw",
 }
 EXTERNAL_IMAGE_TOPIC = "/smartcar/vision/image"
+DEPTH_CAMERA_DRIVER = "aurora"
+DEPTH_POINT_CLOUD_INPUT_TOPIC = "/aurora/points2"
+DEPTH_POINT_CLOUD_TOPIC = "/smartcar/depth/points"
+DEPTH_CAMERA_INPUT_FRAME = "depth_camera_link_1"
+DEPTH_CAMERA_FRAME = "depth_camera_link_1"
 VALID_CAMERA_DRIVERS = tuple(CAMERA_FRAMES)
 MOTION_GATES = (
     "waypoints_calibrated",
@@ -58,11 +66,24 @@ def _resolve_camera_source(context):
 def _vision_and_camera_actions(context):
     use_camera = _as_bool(context, "use_camera")
     use_vision = _as_bool(context, "use_vision")
-    if not use_camera and not use_vision:
+    use_depth_camera = _as_bool(context, "use_depth_camera")
+    if not use_camera and not use_vision and not use_depth_camera:
         return []
 
     selected_driver, selected_topic = _resolve_camera_source(context)
+    if use_depth_camera:
+        if use_camera and selected_driver != DEPTH_CAMERA_DRIVER:
+            raise RuntimeError(
+                "use_depth_camera requires camera_driver=aurora when RGB "
+                "camera streaming is also enabled")
+        selected_driver = DEPTH_CAMERA_DRIVER
+        selected_topic = (
+            LaunchConfiguration("image_topic").perform(context).strip()
+            or CAMERA_TOPICS[selected_driver]
+        )
 
+    start_camera_driver = use_camera or use_depth_camera
+    aurora_rgb_enable = use_camera or use_vision
     actions = [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("smartcar_vision"),
@@ -74,7 +95,7 @@ def _vision_and_camera_actions(context):
             "image_topic": selected_topic,
             "usb_video_device": LaunchConfiguration(
                 "usb_video_device").perform(context),
-            "use_camera": "true" if use_camera else "false",
+            "use_camera": "true" if start_camera_driver else "false",
             "use_services": "true" if use_vision else "false",
             # QR scanning is task-driven: barcode_reader is NOT launched at
             # system start; task_node starts it on demand at QR waypoints.
@@ -83,10 +104,14 @@ def _vision_and_camera_actions(context):
                 "vision_config_file").perform(context),
             "use_sim_time": LaunchConfiguration(
                 "use_sim_time").perform(context),
+            "aurora_rgb_enable": "true" if aurora_rgb_enable else "false",
+            "aurora_depth_enable": "true" if use_depth_camera else "false",
+            "aurora_point_cloud_enable": (
+                "true" if use_depth_camera else "false"),
         }.items(),
     )]
 
-    if use_camera:
+    if use_camera or (use_vision and use_depth_camera):
         frame_override = LaunchConfiguration(
             "camera_frame").perform(context).strip()
         camera_frame = frame_override or CAMERA_FRAMES[selected_driver]
@@ -105,7 +130,76 @@ def _vision_and_camera_actions(context):
                 "--child-frame-id", camera_frame,
             ],
         ))
+    if use_depth_camera:
+        actions.append(Node(
+            package="tf2_ros",
+            executable="static_transform_publisher",
+            name="link_to_depth_camera_sensor",
+            arguments=[
+                "--x", LaunchConfiguration("depth_camera_x").perform(context),
+                "--y", LaunchConfiguration("depth_camera_y").perform(context),
+                "--z", LaunchConfiguration("depth_camera_z").perform(context),
+                "--roll", LaunchConfiguration(
+                    "depth_camera_roll").perform(context),
+                "--pitch", LaunchConfiguration(
+                    "depth_camera_pitch").perform(context),
+                "--yaw", LaunchConfiguration("depth_camera_yaw").perform(context),
+                "--frame-id", "base_link",
+                "--child-frame-id", LaunchConfiguration(
+                    "depth_camera_frame").perform(context),
+            ],
+        ))
+        actions.append(Node(
+            package="smartcar_vision",
+            executable="depth_pointcloud_relay",
+            name="depth_pointcloud_relay",
+            output="screen",
+            parameters=[{
+                "input_topic": LaunchConfiguration(
+                    "depth_point_cloud_input_topic").perform(context),
+                "output_topic": LaunchConfiguration(
+                    "depth_point_cloud_topic").perform(context),
+                "expected_frame": LaunchConfiguration(
+                    "depth_camera_input_frame").perform(context),
+                "output_frame": LaunchConfiguration(
+                    "depth_camera_frame").perform(context),
+                "stale_timeout_sec": 0.50,
+                "use_sim_time": _as_bool(context, "use_sim_time"),
+            }],
+        ))
     return actions
+
+
+def _navigation_actions(context):
+    if not _as_bool(context, "use_nav"):
+        return []
+    requested_overlay = LaunchConfiguration("nav2_params_overlay_file").perform(
+        context).strip()
+    if requested_overlay:
+        raise RuntimeError(
+            "smartcar_system does not accept external Nav2 parameter overlays")
+    overlay = ""
+    allow_params_overlay = "false"
+    if _as_bool(context, "use_depth_camera"):
+        overlay = os.path.join(
+            get_package_share_directory("smartcar_nav2"),
+            "config",
+            "depth_camera_obstacle_overlay.yaml",
+        )
+        allow_params_overlay = "true"
+    return [IncludeLaunchDescription(
+        PythonLaunchDescriptionSource(PathJoinSubstitution([
+            FindPackageShare("smartcar_nav2"),
+            "launch",
+            "navigation_launch.py",
+        ])),
+        launch_arguments={
+            "use_sim_time": LaunchConfiguration("use_sim_time"),
+            "autostart": LaunchConfiguration("nav_autostart"),
+            "nav2_params_overlay_file": overlay,
+            "allow_params_overlay": allow_params_overlay,
+        }.items(),
+    )]
 
 
 def _task_actions(context):
@@ -113,6 +207,14 @@ def _task_actions(context):
         return []
 
     _, image_topic = _resolve_camera_source(context)
+    if (
+        _as_bool(context, "use_depth_camera")
+        and _as_bool(context, "use_vision")
+    ):
+        image_topic = (
+            LaunchConfiguration("image_topic").perform(context).strip()
+            or CAMERA_TOPICS[DEPTH_CAMERA_DRIVER]
+        )
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("smartcar_task"),
@@ -134,6 +236,9 @@ def _task_actions(context):
             "use_laser_odometry": LaunchConfiguration("use_laser_odometry"),
             "laser_odometry_calibrated": LaunchConfiguration(
                 "laser_odometry_calibrated"),
+            "use_depth_camera": LaunchConfiguration("use_depth_camera"),
+            "depth_camera_calibrated": LaunchConfiguration(
+                "depth_camera_calibrated"),
             "barcode_reader_image_topic": image_topic,
             **{
                 name: LaunchConfiguration(name)
@@ -146,6 +251,10 @@ def _task_actions(context):
 def _validate_configuration(context):
     if _as_bool(context, "use_base") and not _as_bool(context, "use_safety"):
         raise RuntimeError("use_base requires use_safety")
+    if _as_bool(context, "use_depth_camera") and not _as_bool(
+        context, "use_lidar"
+    ):
+        raise RuntimeError("use_depth_camera requires use_lidar=true")
     if _as_bool(context, "use_laser_odometry"):
         required = [
             name for name in ("use_base", "use_lidar")
@@ -176,6 +285,7 @@ def _validate_configuration(context):
         required_false = (
             "use_camera",
             "use_vision",
+            "use_depth_camera",
             "autostart_mission",
         )
         invalid = [
@@ -230,6 +340,11 @@ def _validate_configuration(context):
         and not _as_bool(context, "laser_odometry_calibrated")
     ):
         missing.append("laser_odometry_calibrated")
+    if (
+        _as_bool(context, "use_depth_camera")
+        and not _as_bool(context, "depth_camera_calibrated")
+    ):
+        missing.append("depth_camera_calibrated")
     if missing:
         raise RuntimeError(
             "autostart_mission requires: " + ",".join(missing))
@@ -303,6 +418,8 @@ def generate_launch_description():
                 "safety_require_odom"),
             "safety_require_raw_odom": LaunchConfiguration(
                 "safety_require_raw_odom"),
+            "safety_require_depth_points": LaunchConfiguration(
+                "use_depth_camera"),
             "safety_emergency_stop_on_start": LaunchConfiguration(
                 "safety_emergency_stop_on_start"),
             "use_safety_cpp": LaunchConfiguration("use_safety_cpp"),
@@ -333,18 +450,7 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(use_visualization),
     )
-    navigation = IncludeLaunchDescription(
-        PythonLaunchDescriptionSource(PathJoinSubstitution([
-            FindPackageShare("smartcar_nav2"),
-            "launch",
-            "navigation_launch.py",
-        ])),
-        launch_arguments={
-            "use_sim_time": use_sim_time,
-            "autostart": nav_autostart,
-        }.items(),
-        condition=IfCondition(use_nav),
-    )
+    navigation = OpaqueFunction(function=_navigation_actions)
     speech = IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("smartcar_speech"),
@@ -371,6 +477,7 @@ def generate_launch_description():
         DeclareLaunchArgument("use_nav", default_value="true"),
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_vision", default_value="true"),
+        DeclareLaunchArgument("use_depth_camera", default_value="false"),
         DeclareLaunchArgument("use_task", default_value="true"),
         DeclareLaunchArgument("use_visualization", default_value="false"),
         DeclareLaunchArgument("use_speech", default_value="false"),
@@ -420,6 +527,19 @@ def generate_launch_description():
             ]),
         ),
         DeclareLaunchArgument("camera_driver", default_value="usb"),
+        DeclareLaunchArgument(
+            "depth_point_cloud_input_topic",
+            default_value=DEPTH_POINT_CLOUD_INPUT_TOPIC,
+        ),
+        DeclareLaunchArgument(
+            "depth_point_cloud_topic",
+            default_value=DEPTH_POINT_CLOUD_TOPIC,
+        ),
+        DeclareLaunchArgument(
+            "depth_camera_frame", default_value=DEPTH_CAMERA_FRAME),
+        DeclareLaunchArgument(
+            "depth_camera_input_frame", default_value=DEPTH_CAMERA_INPUT_FRAME),
+        DeclareLaunchArgument("nav2_params_overlay_file", default_value=""),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument(
             "vision_config_file",
@@ -453,6 +573,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "laser_odometry_calibrated", default_value="false"),
         DeclareLaunchArgument(
+            "depth_camera_calibrated", default_value="false"),
+        DeclareLaunchArgument(
             "longitudinal_velocity_scale", default_value="1.03"),
         DeclareLaunchArgument(
             "lateral_velocity_scale", default_value="1.125"),
@@ -481,6 +603,17 @@ def generate_launch_description():
         for name in (
             "camera_x", "camera_y", "camera_z",
             "camera_roll", "camera_pitch", "camera_yaw",
+        )
+    )
+    declarations.extend(
+        DeclareLaunchArgument(
+            name,
+            default_value=camera_extrinsic_defaults.get(
+                name.removeprefix("depth_"), "0.0"),
+        )
+        for name in (
+            "depth_camera_x", "depth_camera_y", "depth_camera_z",
+            "depth_camera_roll", "depth_camera_pitch", "depth_camera_yaw",
         )
     )
     return LaunchDescription(declarations + [

@@ -43,6 +43,8 @@ def generate_launch_description():
     safety_require_scan = LaunchConfiguration('safety_require_scan')
     safety_require_odom = LaunchConfiguration('safety_require_odom')
     safety_require_raw_odom = LaunchConfiguration('safety_require_raw_odom')
+    safety_require_depth_points = LaunchConfiguration(
+        'safety_require_depth_points')
     safety_emergency_stop_on_start = LaunchConfiguration(
         'safety_emergency_stop_on_start')
     use_safety_ackermann = LaunchConfiguration('use_safety_ackermann')
@@ -132,6 +134,7 @@ def generate_launch_description():
             'require_scan': safety_require_scan,
             'require_odom': safety_require_odom,
             'require_raw_odom': safety_require_raw_odom,
+            'require_depth_points': safety_require_depth_points,
             'emergency_stop_on_start': safety_emergency_stop_on_start,
             'use_sim_time': use_sim_time,
             'use_cpp': use_safety_cpp,
@@ -163,6 +166,8 @@ def generate_launch_description():
         DeclareLaunchArgument('safety_require_odom', default_value='true'),
         DeclareLaunchArgument(
             'safety_require_raw_odom', default_value='true'),
+        DeclareLaunchArgument(
+            'safety_require_depth_points', default_value='false'),
         DeclareLaunchArgument(
             'safety_emergency_stop_on_start', default_value='false'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),

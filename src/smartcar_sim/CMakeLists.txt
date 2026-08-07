@@ -31,6 +31,7 @@ install(
     scripts/ackermann_arc_probe.py
     scripts/sim_sensor_preflight.py
     scripts/sim_perception_monitor.py
+    scripts/sim_depth_pointcloud_adapter.py
     scripts/nav2_lifecycle_startup.py
     scripts/auto_train.py
   DESTINATION lib/${PROJECT_NAME}

@@ -1,28 +1,52 @@
-<!-- Gazebo P-to-A navigation: native Nav2 planning and RPP only. -->
+<!-- Gazebo precise forward navigation: free-heading planning with the
+     Ackermann-safe forward controller.  The planner owns the terminal
+     tangent so the controller never has to force an infeasible corner. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="1" name="NavigatePreciseSimRecovery">
       <PipelineSequence name="NavigatePreciseSimWithReplanning">
-        <RateController hz="1.0">
-          <RecoveryNode number_of_retries="1" name="ComputePreciseSimPath">
-            <ComputePathToPose
-                goal="{goal}"
-                path="{path}"
-                planner_id="GridBased"/>
-            <ClearEntireCostmap
-                name="ClearGlobalCostmap-PreciseSimContext"
-                service_name="global_costmap/clear_entirely_global_costmap"/>
-          </RecoveryNode>
-        </RateController>
-        <!-- A collision must reach the outer recovery immediately. Retrying
-             FollowPath after only a local clear re-sends the stale {path}
-             and consumes the controller patience window before GridBased can
-             produce a fresh route. The outer branch clears both costmaps and
-             re-enters this PipelineSequence at ComputePathToPose. -->
-        <FollowPath
+        <LatchSuccess name="LatchPreciseSimFreeHeadingPathToPose">
+          <RateController hz="0.5">
+            <RecoveryNode number_of_retries="1" name="ComputePreciseSimFreeHeadingPathToPose">
+              <!-- Keep the accepted path endpoint much closer to the
+                   semantic task heading than the runtime arrival tolerance.
+                   Otherwise the planner and controller can each consume the
+                   full yaw budget independently. -->
+              <ComputeFreeHeadingPathToPose
+                  goal="{goal}"
+                  path="{path}"
+                  planner_id="GridBased"
+                  heading_samples="12"
+                  candidate_timeout_ms="3500"
+                  max_start_drift_m="0.10"
+                  footprint_half_length_m="0.2491"
+                  footprint_half_width_m="0.095"
+                  footprint_sweep_step_m="0.025"
+                  footprint_lethal_cost="254"
+                  goal_yaw_tolerance="0.02"
+                  local_tracking_cross_track_error_m="0.12"
+                  local_tracking_horizon_m="0.50"
+                  local_tracking_lethal_cost="254"
+                  />
+              <ClearEntireCostmap
+                  name="ClearGlobalCostmap-PreciseSimContext"
+                  service_name="global_costmap/clear_entirely_global_costmap"/>
+            </RecoveryNode>
+          </RateController>
+        </LatchSuccess>
+        <!-- A tracking or collision failure reaches the outer recovery. The
+             outer branch clears both costmaps before requesting a fresh
+             swept, curvature-valid path. -->
+        <RecordFollowPath
             path="{path}"
-            controller_id="FollowPath"
-            goal_checker_id="precise_goal_checker"/>
+            controller_id="ForwardAvoidance"
+            goal_checker_id="precise_goal_checker"
+            verify_physical_terminal_pose="true"
+            terminal_goal="{goal}"
+            terminal_position_tolerance_m="0.12"
+            terminal_yaw_tolerance_rad="0.15"
+            terminal_verification_delay_ms="600"
+            completion_settle_delay_ms="600"/>
       </PipelineSequence>
       <Sequence name="ClearPreciseSimCostmapsRecovery">
         <ClearEntireCostmap

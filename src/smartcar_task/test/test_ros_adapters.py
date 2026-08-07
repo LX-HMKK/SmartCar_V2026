@@ -143,6 +143,7 @@ class RosAdapterTests(unittest.TestCase):
             reverse_behavior_tree="/tmp/reverse.xml",
             reverse_handoff_behavior_tree="/tmp/reverse-handoff.xml",
             precise_forward_behavior_tree="/tmp/precise-forward.xml",
+            forward_transit_behavior_tree="/tmp/forward-transit.xml",
             navigation_timeout_sec=3.0,
             goal_response_timeout_sec=1.0,
             cancel_timeout_sec=2.0,
@@ -355,6 +356,7 @@ class RosAdapterTests(unittest.TestCase):
             reverse_behavior_tree="/tmp/reverse.xml",
             reverse_handoff_behavior_tree="/tmp/reverse-handoff.xml",
             precise_forward_behavior_tree="/tmp/precise-forward.xml",
+            forward_transit_behavior_tree="/tmp/forward-transit.xml",
             navigation_timeout_sec=3.0,
             goal_response_timeout_sec=1.0,
             cancel_timeout_sec=2.0,
@@ -362,6 +364,12 @@ class RosAdapterTests(unittest.TestCase):
             direction_prepare_timeout_sec=0.5,
             direction_prepare_retry_period_sec=0.01,
             through_poses_behavior_tree="/tmp/through.xml",
+            forward_transit_through_poses_behavior_tree=(
+                "/tmp/transit-through.xml"),
+            forward_precise_through_poses_behavior_tree=(
+                "/tmp/precise-through.xml"),
+            forward_return_through_poses_behavior_tree=(
+                "/tmp/forward-return-through.xml"),
             reverse_through_poses_behavior_tree="/tmp/reverse-through.xml",
             reverse_locked_through_poses_behavior_tree=(
                 "/tmp/reverse-locked-through.xml"),
@@ -482,6 +490,55 @@ class RosAdapterTests(unittest.TestCase):
                 terminal_is_return=True,
             ),
             "/tmp/reverse-through.xml",
+        )
+        self.assertEqual(
+            navigator._through_behavior_tree(
+                reverse_direction=False,
+                terminal_heading_locked=False,
+                terminal_is_return=False,
+            ),
+            "/tmp/transit-through.xml",
+        )
+        self.assertEqual(
+            navigator._through_behavior_tree(
+                reverse_direction=False,
+                terminal_heading_locked=True,
+                terminal_is_return=True,
+            ),
+            "/tmp/forward-return-through.xml",
+        )
+
+        precise_goals = (
+            Waypoint(
+                frame_id="odom_combined",
+                position=(4.5, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="via",
+                direction="forward",
+                id="precise_via",
+            ),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(5.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="nav",
+                direction="forward",
+                id="precise_terminal",
+                goal_profile="precise",
+                heading_mode="locked",
+            ),
+        )
+        precise = navigator.navigate_through(precise_goals)
+        self.assertTrue(precise.success, precise.status)
+        self.assertEqual(
+            received_goals[3][:2], ([4.5, 5.0], "/tmp/precise-through.xml"))
+        self.assertEqual(
+            navigator._through_behavior_tree(
+                reverse_direction=False,
+                terminal_heading_locked=True,
+                terminal_goal_profile="precise",
+            ),
+            "/tmp/precise-through.xml",
         )
 
         nonterminal_handoff = navigator.navigate_through(

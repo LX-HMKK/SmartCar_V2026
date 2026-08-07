@@ -47,7 +47,7 @@ def waypoint(
 
 
 class RouteGeometryTests(unittest.TestCase):
-    def test_only_p_qr_vlm_positions_keep_authored_headings(self):
+    def test_only_start_qr_and_vlm_positions_keep_authored_headings(self):
         route = (
             waypoint("p_start", "start", 0.0, 0.0, 0.0),
             waypoint("qr", "qr", 1.0, 0.0, 0.31),
@@ -63,11 +63,11 @@ class RouteGeometryTests(unittest.TestCase):
 
         self.assertEqual(
             HEADING_LOCKED_TASKS,
-            frozenset({"start", "qr", "vlm", "return"}),
+            frozenset({"start", "qr", "vlm"}),
         )
-        for index in (0, 1, 6, 7):
+        for index in (0, 1, 6):
             self.assertEqual(normalized[index].orientation, route[index].orientation)
-        for index in (2, 3, 4, 5):
+        for index in (2, 3, 4, 5, 7):
             self.assertEqual(normalized[index].orientation, ZERO_QUATERNION)
             self.assertTrue(is_zero_quaternion(normalized[index].orientation))
 
@@ -84,7 +84,7 @@ class RouteGeometryTests(unittest.TestCase):
         self.assertEqual(normalized[1].orientation, ZERO_QUATERNION)
         self.assertEqual(normalized[2].orientation, ZERO_QUATERNION)
         self.assertEqual(normalized[0].orientation, route[0].orientation)
-        self.assertEqual(normalized[3].orientation, route[3].orientation)
+        self.assertEqual(normalized[3].orientation, ZERO_QUATERNION)
 
     def test_nav_can_explicitly_keep_an_authored_heading(self):
         nav = waypoint(

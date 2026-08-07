@@ -6,18 +6,19 @@ planning_segments:
   end_id: a_task_observe
   through_ids: []
 - id: qr_to_vlm
-  direction: reverse
+  direction: forward
   start_id: a_task_observe
   end_id: c_corner_1
   through_ids:
+  - via_1
   - via_2
 - id: return_to_p
-  direction: reverse
+  direction: forward
   start_id: c_corner_1
   end_id: p_finish
   through_ids:
-  - via_1
   - via_3
+  - via_4
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -38,63 +39,73 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 2.898403475881205
-      y: 0.9659945286391132
+      x: 3.0972695512028343
+      y: 0.6968450655301868
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.10452846326765347
-      w: 0.9945218953682733
+      z: 0.23344536385590536
+      w: 0.9723699203976766
   task: nav
   direction: forward
   goal_profile: precise
-  heading_mode: locked
-- id: via_2
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 0.7304189792471045
-      y: 2.818009974259976
-      z: 0.0
-  task: via
-  direction: reverse
-  goal_profile: standard
-- id: c_corner_1
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 0.9330276705276708
-      y: 3.8337068653474913
-      z: 0.0
-    orientation:
-      x: 0.0
-      y: 0.0
-      z: -1.0
-      w: -1.6081226496766364e-16
-  task: nav
-  direction: reverse
-  goal_profile: reverse_handoff
   heading_mode: locked
 - id: via_1
   frame_id: odom_combined
   pose:
     position:
-      x: 3.4019935069572593
-      y: 3.5638138712833114
+      x: 0.46593084719977007
+      y: 2.9811053515205774
       z: 0.0
   task: via
-  direction: reverse
+  direction: forward
   goal_profile: standard
+- id: via_2
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.5224319850157872
+      y: 4.078841743374617
+      z: 0.0
+  task: via
+  direction: forward
+  goal_profile: standard
+- id: c_corner_1
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.2344866001845904
+      y: 4.054626970024895
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  task: nav
+  direction: forward
+  goal_profile: precise
+  heading_mode: locked
 - id: via_3
   frame_id: odom_combined
   pose:
     position:
-      x: 1.9780821492448313
-      y: 2.125441223786812
+      x: 3.290987738000606
+      y: 2.908461031471413
       z: 0.0
   task: via
-  direction: reverse
+  direction: forward
+  goal_profile: standard
+- id: via_4
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 2.080249070514534
+      y: 2.811601938072527
+      z: 0.0
+  task: via
+  direction: forward
   goal_profile: standard
 - id: p_finish
   frame_id: odom_combined
@@ -103,11 +114,7 @@ waypoints:
       x: 0.0
       y: 0.0
       z: 0.0
-    orientation:
-      x: 0.0
-      y: 0.0
-      z: 0.3826834323650898
-      w: 0.9238795325112867
   task: return
-  direction: reverse
+  direction: forward
   goal_profile: standard
+  heading_mode: free

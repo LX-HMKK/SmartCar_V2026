@@ -198,7 +198,11 @@ class TestSystemSmoke(unittest.TestCase):
             String,
             "/smartcar/safety/status",
             lambda message: statuses.append(message.data),
-            10,
+            QoSProfile(
+                depth=1,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.TRANSIENT_LOCAL,
+            ),
         )
         deadline = time.monotonic() + 20.0
         try:

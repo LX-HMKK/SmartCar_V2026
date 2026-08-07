@@ -9,11 +9,19 @@
 set -u
 
 kill_processes=false
+skip_cleanup=false
 if [ "${1:-}" = "--kill-processes" ]; then
     kill_processes=true
+elif [ "${1:-}" = "--skip" ]; then
+    skip_cleanup=true
 fi
 
 echo "[cleanup] Starting simulation cleanup..."
+
+if [ "$skip_cleanup" = true ]; then
+    echo "[cleanup] Skipped: preserving an existing local ROS/Gazebo session"
+    exit 0
+fi
 
 if [ "$kill_processes" = true ]; then
     protected_pids="$$"

@@ -1,0 +1,40 @@
+<!-- Forward ThroughPoses tree for standard via goals ending at a precise task goal. -->
+<!-- The terminal target retains its authored heading and strict pose/yaw check. -->
+<root main_tree_to_execute="MainTree">
+  <BehaviorTree ID="MainTree">
+    <RecoveryNode number_of_retries="5" name="NavigatePreciseRecovery">
+      <PipelineSequence name="NavigatePreciseWithReplanning">
+        <LatchSuccess name="LatchPreciseHeadingPathThroughPoses">
+          <RecoveryNode number_of_retries="1" name="ComputePreciseHeadingPathThroughPoses">
+            <ComputeFreeHeadingPathThroughPoses
+                goals="{goals}"
+                path="{path}"
+                planner_id="GridBased"
+                heading_samples="12"
+                candidate_timeout_ms="1000"
+                search_budget_ms="2400"
+                through_search_budget_ms="12000"
+                through_solution_limit="4"
+                max_start_drift_m="0.10"
+                footprint_half_length_m="0.2491"
+                footprint_half_width_m="0.095"
+                footprint_sweep_step_m="0.025"
+                footprint_lethal_cost="253"
+                local_tracking_cross_track_error_m="0.10"
+                local_tracking_horizon_m="0.50"
+                local_tracking_lethal_cost="254"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-PreciseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </LatchSuccess>
+        <RecoveryNode number_of_retries="1" name="FollowPrecisePath">
+          <RecordFollowPath path="{path}" controller_id="ForwardAvoidance" goal_checker_id="precise_goal_checker" completion_settle_delay_ms="600"/>
+          <ClearEntireCostmap name="ClearLocalCostmap-PreciseContext" service_name="local_costmap/clear_entirely_local_costmap"/>
+        </RecoveryNode>
+      </PipelineSequence>
+      <Sequence name="ClearPreciseCostmapsRecovery">
+        <ClearEntireCostmap name="ClearLocalCostmap-PreciseSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+      </Sequence>
+    </RecoveryNode>
+  </BehaviorTree>
+</root>

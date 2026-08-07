@@ -9,6 +9,7 @@ source_root="${workspace}/src"
 log_dir=${SMARTCAR_TUNE_LOG_DIR:-${workspace}/tune_logs}
 headless=false
 loop_count=1
+use_depth_obstacles=false
 sim_pid=""
 
 usage() {
@@ -21,6 +22,8 @@ SMARTCAR_WS when this script is invoked from another workspace.
 Options:
   --headless                 Run Gazebo without RViz.
   --loop COUNT               Run the complete route COUNT times.
+  --use-depth-obstacles      Feed the simulated depth PointCloud2 into Nav2
+                             obstacle layers (simulation only).
   -h, --help                 Show this help text.
 EOF
 }
@@ -34,6 +37,10 @@ while [ "$#" -gt 0 ]; do
         --loop)
             loop_count=${2:?--loop requires a count}
             shift 2
+            ;;
+        --use-depth-obstacles)
+            use_depth_obstacles=true
+            shift
             ;;
         -h|--help)
             usage
@@ -83,6 +90,7 @@ source /opt/ros/humble/setup.bash
 
 echo "[tune] Local source: ${source_root}"
 echo "[tune] Runtime nav_only.yaml: ${waypoints_file}"
+echo "[tune] Depth obstacle mode: ${use_depth_obstacles}"
 echo "[tune] Runtime nav_only.yaml SHA256: $(file_sha256 "$waypoints_file")"
 echo "[tune] Regenerating simulation keepout map from shared route_planning.yaml..."
 PYTHONPATH="${source_root}/smartcar_tools${PYTHONPATH:+:${PYTHONPATH}}" \
@@ -160,6 +168,7 @@ for run_index in $(seq 1 "$loop_count"); do
     ros2 launch smartcar_sim sim.launch.py \
         headless:="$gazebo_headless" \
         use_rviz:="$use_rviz" \
+        use_depth_obstacles:="$use_depth_obstacles" \
         run_route:=true \
         waypoints_file:="$snapshot_dir/nav_only.yaml" \
         results_file:="$result_file" \

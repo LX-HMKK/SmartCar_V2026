@@ -39,6 +39,7 @@ from smartcar_task.mission import (
 )
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
+    allows_precise_terminal_through_poses,
     allows_reverse_handoff_through_poses,
     load_planning_segments,
     materialize_mission_route,
@@ -62,7 +63,9 @@ SUPERVISED_P_TO_A_SEGMENT_ID = "p_to_qr"
 SUPERVISED_P_TO_C1_SEGMENT_ID = "qr_to_vlm"
 SUPERVISED_PREFIX_TASKS = {
     SUPERVISED_P_TO_A_SEGMENT_ID: ("nav",),
-    SUPERVISED_P_TO_C1_SEGMENT_ID: ("nav", "via", "nav"),
+    SUPERVISED_P_TO_C1_SEGMENT_ID: (
+        "nav", "via", "via", "via", "via", "nav",
+    ),
 }
 
 
@@ -369,6 +372,10 @@ class RosNavigator:
         reverse_through_poses_behavior_tree="",
         reverse_locked_through_poses_behavior_tree="",
         reverse_return_through_poses_behavior_tree="",
+        forward_transit_behavior_tree="",
+        forward_transit_through_poses_behavior_tree="",
+        forward_precise_through_poses_behavior_tree="",
+        forward_return_through_poses_behavior_tree="",
     ):
         self._node = node
         self._callback_group = callback_group
@@ -400,6 +407,20 @@ class RosNavigator:
             goal_profile="precise",
             precise_forward_behavior_tree=self._precise_forward_behavior_tree,
         )
+        self._forward_transit_behavior_tree = str(
+            forward_transit_behavior_tree).strip()
+        navigation_behavior_tree(
+            False,
+            self._reverse_behavior_tree,
+            forward_transit_behavior_tree=self._forward_transit_behavior_tree,
+            heading_locked=False,
+        )
+        self._forward_transit_through_poses_behavior_tree = str(
+            forward_transit_through_poses_behavior_tree).strip()
+        self._forward_precise_through_poses_behavior_tree = str(
+            forward_precise_through_poses_behavior_tree).strip()
+        self._forward_return_through_poses_behavior_tree = str(
+            forward_return_through_poses_behavior_tree).strip()
         self._through_poses_behavior_tree = str(
             through_poses_behavior_tree).strip()
         self._reverse_through_poses_behavior_tree = str(
@@ -481,16 +502,16 @@ class RosNavigator:
                 return True
 
     def _release_idle_action_client(self, client):
+        """Keep action clients alive while executor callbacks can be queued.
+
+        Destroying an ``ActionClient`` immediately after a terminal result can
+        invalidate its wait-set entry on another executor thread. The owning
+        ROS node tears down these clients during shutdown, so there is no
+        benefit to recreating them between consecutive navigation segments.
+        """
         with self._condition:
             if self._active_locked():
                 return
-            if self._client is client:
-                self._client = None
-            elif self._through_client is client:
-                self._through_client = None
-            else:
-                return
-        client.destroy()
 
     def navigate(self, waypoint, reverse_direction=False):
         try:
@@ -502,6 +523,9 @@ class RosNavigator:
                     self._precise_forward_behavior_tree),
                 reverse_handoff_behavior_tree=(
                     self._reverse_handoff_behavior_tree),
+                forward_transit_behavior_tree=(
+                    self._forward_transit_behavior_tree),
+                heading_locked=is_heading_locked(waypoint),
             )
         except ValueError as error:
             return OperationResult(False, f"navigation_config:{error}")
@@ -539,8 +563,8 @@ class RosNavigator:
             if waypoint.goal_profile != "standard"
         ]
         if nonstandard and not (
-            reverse_direction
-            and allows_reverse_handoff_through_poses(goals)
+            allows_reverse_handoff_through_poses(goals)
+            or allows_precise_terminal_through_poses(goals)
         ):
             return OperationResult(
                 False,
@@ -552,6 +576,7 @@ class RosNavigator:
                 reverse_direction,
                 is_heading_locked(goals[-1]),
                 goals[-1].task == "return",
+                goals[-1].goal_profile,
             )
             goal = NavigateThroughPoses.Goal()
             goal.poses = [self._pose_stamped(waypoint) for waypoint in goals]
@@ -570,9 +595,16 @@ class RosNavigator:
             self._release_idle_action_client(client)
 
     def _through_behavior_tree(
-        self, reverse_direction, terminal_heading_locked, terminal_is_return=False
+        self, reverse_direction, terminal_heading_locked, terminal_is_return=False,
+        terminal_goal_profile="standard",
     ):
-        if reverse_direction and terminal_heading_locked and terminal_is_return:
+        if not reverse_direction and terminal_goal_profile == "precise":
+            behavior_tree = self._forward_precise_through_poses_behavior_tree
+            direction = "forward_precise"
+        elif not reverse_direction and terminal_is_return:
+            behavior_tree = self._forward_return_through_poses_behavior_tree
+            direction = "forward_return"
+        elif reverse_direction and terminal_heading_locked and terminal_is_return:
             behavior_tree = self._reverse_return_through_poses_behavior_tree
             direction = "reverse_return"
         elif reverse_direction and terminal_heading_locked:
@@ -581,6 +613,9 @@ class RosNavigator:
         elif reverse_direction:
             behavior_tree = self._reverse_through_poses_behavior_tree
             direction = "reverse"
+        elif not terminal_heading_locked:
+            behavior_tree = self._forward_transit_through_poses_behavior_tree
+            direction = "forward_transit"
         else:
             behavior_tree = self._through_poses_behavior_tree
             direction = "forward"
@@ -936,18 +971,24 @@ class RosNavigator:
         revoked = self._revoke_motion(generation)
         if not revoked.success:
             return revoked
+        settled = self._motion_protocol.settle()
+        if not settled.success:
+            with self._condition:
+                if generation == self._goal_generation:
+                    self._poisoned = True
+            return settled
         with self._guard_call_lock:
             with self._condition:
                 if generation != self._goal_generation:
                     return OperationResult(False, "direction_stale_generation")
                 if self._guard_stopped_generation == generation:
-                    return OperationResult(True, "stopped")
+                    return settled
                 # Stop revokes the direction lease and makes the command gate
                 # output zero immediately. EKF velocity is not a reliable
                 # terminal condition for the next navigation action.
                 self._guard_stopped_generation = generation
                 self._condition.notify_all()
-        return OperationResult(True, "stopped")
+        return settled
 
     def _stop_motion(self, generation):
         revoked = self._revoke_motion(generation)
@@ -1421,6 +1462,8 @@ class TaskNode(Node):
         self.declare_parameter("operator_approved", False)
         self.declare_parameter("use_laser_odometry", False)
         self.declare_parameter("laser_odometry_calibrated", False)
+        self.declare_parameter("use_depth_camera", False)
+        self.declare_parameter("depth_camera_calibrated", False)
         self.declare_parameter("autostart_mission", False)
         self.declare_parameter("navigation_test_end_segment_id", "")
         self.declare_parameter("supervised_p_to_a_only", False)
@@ -1446,9 +1489,29 @@ class TaskNode(Node):
                 "navigate_to_pose_precise_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
+            "forward_transit_behavior_tree",
+            _nav2_behavior_tree_path(
+                "navigate_to_pose_transit_w_replanning_and_recovery.xml"),
+        )
+        self.declare_parameter(
             "through_poses_behavior_tree",
             _nav2_behavior_tree_path(
                 "navigate_through_poses_w_replanning_and_recovery.xml"),
+        )
+        self.declare_parameter(
+            "forward_transit_through_poses_behavior_tree",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_transit_w_replanning_and_recovery.xml"),
+        )
+        self.declare_parameter(
+            "forward_precise_through_poses_behavior_tree",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_precise_w_replanning_and_recovery.xml"),
+        )
+        self.declare_parameter(
+            "forward_return_through_poses_behavior_tree",
+            _nav2_behavior_tree_path(
+                "navigate_through_poses_return_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
             "reverse_through_poses_behavior_tree",
@@ -1591,6 +1654,9 @@ class TaskNode(Node):
         if bool(self.get_parameter("use_laser_odometry").value):
             self._motion_gates["laser_odometry_calibrated"] = bool(
                 self.get_parameter("laser_odometry_calibrated").value)
+        if bool(self.get_parameter("use_depth_camera").value):
+            self._motion_gates["depth_camera_calibrated"] = bool(
+                self.get_parameter("depth_camera_calibrated").value)
         self._stop_timeout_sec = _positive_finite(
             "stop_timeout_sec",
             self.get_parameter("stop_timeout_sec").value,
@@ -1646,6 +1712,14 @@ class TaskNode(Node):
                 "reverse_locked_through_poses_behavior_tree").value,
             self.get_parameter(
                 "reverse_return_through_poses_behavior_tree").value,
+            forward_transit_behavior_tree=self.get_parameter(
+                "forward_transit_behavior_tree").value,
+            forward_transit_through_poses_behavior_tree=self.get_parameter(
+                "forward_transit_through_poses_behavior_tree").value,
+            forward_precise_through_poses_behavior_tree=self.get_parameter(
+                "forward_precise_through_poses_behavior_tree").value,
+            forward_return_through_poses_behavior_tree=self.get_parameter(
+                "forward_return_through_poses_behavior_tree").value,
         )
         self._vision = RosVision(self, self._io_group)
         self._localization = RosLocalization(

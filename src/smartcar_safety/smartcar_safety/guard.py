@@ -42,6 +42,8 @@ class SafetyGuard:
         require_odom=True,
         raw_odom_timeout_sec=0.25,
         require_raw_odom=True,
+        depth_points_timeout_sec=0.50,
+        require_depth_points=False,
     ):
         self.command_timeout_sec = require_positive_finite(
             "command_timeout_sec", command_timeout_sec)
@@ -51,6 +53,8 @@ class SafetyGuard:
             "odom_timeout_sec", odom_timeout_sec)
         self.raw_odom_timeout_sec = require_positive_finite(
             "raw_odom_timeout_sec", raw_odom_timeout_sec)
+        self.depth_points_timeout_sec = require_positive_finite(
+            "depth_points_timeout_sec", depth_points_timeout_sec)
         self.minimum_voltage = require_nonnegative_finite(
             "minimum_voltage", minimum_voltage)
         self.voltage_timeout_sec = require_positive_finite(
@@ -60,6 +64,7 @@ class SafetyGuard:
         self.require_scan = bool(require_scan)
         self.require_odom = bool(require_odom)
         self.require_raw_odom = bool(require_raw_odom)
+        self.require_depth_points = bool(require_depth_points)
 
         self.command_received_at = None
         self.command_invalid = False
@@ -67,6 +72,7 @@ class SafetyGuard:
         self.scan_received_at = None
         self.odom_received_at = None
         self.raw_odom_received_at = None
+        self.depth_points_received_at = None
         self.voltage_received_at = None
         self.voltage = None
         self.emergency_stop = False
@@ -102,6 +108,9 @@ class SafetyGuard:
 
     def mark_raw_odom(self, receipt_time_sec):
         self.raw_odom_received_at = float(receipt_time_sec)
+
+    def mark_depth_points(self, receipt_time_sec):
+        self.depth_points_received_at = float(receipt_time_sec)
 
     def mark_voltage(self, voltage, receipt_time_sec):
         self.voltage = float(voltage)
@@ -164,6 +173,16 @@ class SafetyGuard:
                 self.raw_odom_received_at, now_sec, self.raw_odom_timeout_sec
             ):
                 return self._result(False, "raw_odom_stale")
+
+        if self.require_depth_points:
+            if self.depth_points_received_at is None:
+                return self._result(False, "depth_points_missing")
+            if not self._fresh(
+                self.depth_points_received_at,
+                now_sec,
+                self.depth_points_timeout_sec,
+            ):
+                return self._result(False, "depth_points_stale")
 
         if self.minimum_voltage > 0.0:
             if self.voltage is None:

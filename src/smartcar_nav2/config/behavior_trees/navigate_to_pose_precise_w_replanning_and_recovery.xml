@@ -26,16 +26,7 @@
                     local_tracking_cross_track_error_m="0.10"
                     local_tracking_horizon_m="0.50"
                     local_tracking_lethal_cost="254"
-                    departure_connector_enabled="false"
-                    departure_connector_radius_margin_m="0.28"
-                    departure_connector_maximum_active_radius_m="0.50"
-                    departure_connector_terminal_radius_m="0.22"
-                    departure_connector_start_x_m="0.0"
-                    departure_connector_start_y_m="0.0"
-                    departure_connector_start_yaw_rad="0.0"
-                    departure_connector_start_position_tolerance_m="0.10"
-                    departure_connector_start_yaw_tolerance_rad="0.15"
-                    departure_connector_heading_bins="144"/>
+                    />
                 <ClearEntireCostmap name="ClearGlobalCostmap-PreciseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
               </RecoveryNode>
             </RateController>

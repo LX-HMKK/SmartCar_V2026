@@ -1,5 +1,26 @@
 # 变更日志
 
+## 2026-08-07 - 全正向路线 Gazebo 全链复验
+
+- 当前 `default_waypoints.yaml` 与 `nav_only.yaml` 收敛为四个显式 planning segment、14 个航点
+  约束，且每个动作及其物化航点均为 `forward`。A/C1 使用 `precise` profile，P 终点使用
+  `standard` profile；保留 `calibrated: false` 和所有实体运动门禁。
+- 精确仿真树收紧 C1 规划末端航向，并以 `RecordFollowPath` 在控制完成后复核物理终态；Gazebo
+  overlay 为锁定终点启用 `0.05 m` 末端 lookahead，不放宽 keepout、costmap 或碰撞阈值。
+- 本机 `sim_tune.sh --headless --loop 1` 产生的 `run_20260807_170954_1` 已通过
+  `validate_sim_results.py`：P→A `0.053 m / 0.141 rad`，`via_2`→C1
+  `0.039 m / 0.113 rad`，回 P `0.312 m / 0.350 rad`；四个动作均成功，全部控制命令保持正向。
+- 根目录合同测试 `python3 -m unittest discover -s tests -v`：`232` 项通过。该结果只证明本机
+  Gazebo 软件链，不构成 RDK、实体底盘、相机、媒体服务或现场障碍验收。
+
+## 2026-08-06 - 全正向路线与离线几何预检
+
+- `default_waypoints.yaml` 与 `nav_only.yaml` 的 P→A、A→`via_2`→C1、C1→`via_1`→`via_3`→P
+  全部改为 `forward`；C1 和 P 终点改为 `standard` profile，编辑器切换为正向时会自动清除末端
+  `reverse_handoff`。
+- 两份当前 YAML 均通过离线几何预检，仍保持 `calibrated: false`。没有启动 RDK、Gazebo 或实体
+  运动；历史倒车仿真和现场记录不构成当前全正向路线的验收。
+
 ## 2026-08-05 - 受看护 P→A 复验与未标定路线门禁
 
 ### 实现
@@ -16,7 +37,7 @@
 - 后续先执行受看护 P→A 单段测量，并以记录的定位误差修正坐标或里程计；不得放宽终点
   容差掩盖偏差。
 
-## 2026-08-03 - 纯导航实车全路线验证与反向运行链收敛
+## 2026-08-03 - 纯导航实车全路线验证与反向运行链收敛（历史路线）
 
 ### 实现
 
@@ -39,9 +60,9 @@
 
 ### 边界
 
-- 结果仅覆盖无相机、无二维码、无 VLM 的纯导航；实测通过的 `nav_only.yaml` 已设为
-  `calibrated: true`。正式语义路线 `default_waypoints.yaml` 仍为 `calibrated: false`，默认运动门禁
-  未改；QR/VLM、语音和完整五子任务仍待实体验收。
+- 结果仅覆盖无相机、无二维码、无 VLM 的当时纯导航路线；当时实测通过的 `nav_only.yaml` 曾设为
+  `calibrated: true`。该 YAML 随后已恢复为 `calibrated: false`，且当前全正向路线不继承这项现场
+  验收；QR/VLM、语音和完整五子任务仍待实体验收。
 
 ## 2026-08-02 - 运行入口、仿真遗留产物与视觉图像源收敛
 

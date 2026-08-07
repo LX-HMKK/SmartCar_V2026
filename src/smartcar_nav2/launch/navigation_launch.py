@@ -94,6 +94,7 @@ def _navigation_node_actions(
     use_sim_time,
     nav2_params_file,
     nav2_params_overlay_file,
+    allow_params_overlay,
     use_respawn,
     log_level,
 ):
@@ -109,6 +110,11 @@ def _navigation_node_actions(
     parameters = [nav2_params_file.perform(context)]
     overlay_path = nav2_params_overlay_file.perform(context).strip()
     if overlay_path:
+        if not _as_bool(
+            context, allow_params_overlay, "allow_params_overlay"
+        ):
+            raise RuntimeError(
+                "nav2_params_overlay_file requires allow_params_overlay=true")
         parameters.append(overlay_path)
     parameters.append({
         "use_sim_time": _as_bool(context, use_sim_time, "use_sim_time"),
@@ -176,6 +182,7 @@ def generate_launch_description():
         'lifecycle_manager_delay_sec')
     nav2_params_file = LaunchConfiguration('nav2_params_file')
     nav2_params_overlay_file = LaunchConfiguration('nav2_params_overlay_file')
+    allow_params_overlay = LaunchConfiguration('allow_params_overlay')
     use_keepout_filter = LaunchConfiguration('use_keepout_filter')
     keepout_mask_yaml = LaunchConfiguration('keepout_mask_yaml')
     use_respawn = LaunchConfiguration('use_respawn')
@@ -200,6 +207,14 @@ def generate_launch_description():
         default_value='',
         description=(
             'Optional resolved parameter overlay applied after nav2_params_file'
+        ),
+    )
+    declare_allow_params_overlay_cmd = DeclareLaunchArgument(
+        'allow_params_overlay',
+        default_value='false',
+        description=(
+            'Allow a caller-provided Nav2 parameter overlay. Only controlled '
+            'simulation and the fixed depth obstacle overlay should enable it.'
         ),
     )
     declare_use_keepout_filter_cmd = DeclareLaunchArgument(
@@ -243,6 +258,7 @@ def generate_launch_description():
             'use_sim_time': use_sim_time,
             'nav2_params_file': nav2_params_file,
             'nav2_params_overlay_file': nav2_params_overlay_file,
+            'allow_params_overlay': allow_params_overlay,
             'use_respawn': use_respawn,
             'log_level': log_level,
         },
@@ -352,6 +368,7 @@ def generate_launch_description():
     launch_description.add_action(declare_use_sim_time_cmd)
     launch_description.add_action(declare_nav2_params_file_cmd)
     launch_description.add_action(declare_nav2_params_overlay_file_cmd)
+    launch_description.add_action(declare_allow_params_overlay_cmd)
     launch_description.add_action(declare_use_keepout_filter_cmd)
     launch_description.add_action(declare_keepout_mask_yaml_cmd)
     launch_description.add_action(declare_autostart_cmd)

@@ -96,7 +96,11 @@ class TaskLaunchContractTests(unittest.TestCase):
             "navigate_to_pose_reverse_w_replanning_and_recovery.xml",
             "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
             "navigate_to_pose_precise_w_replanning_and_recovery.xml",
+            "navigate_to_pose_transit_w_replanning_and_recovery.xml",
             "navigate_through_poses_w_replanning_and_recovery.xml",
+            "navigate_through_poses_return_w_replanning_and_recovery.xml",
+            "navigate_through_poses_transit_w_replanning_and_recovery.xml",
+            "navigate_through_poses_precise_w_replanning_and_recovery.xml",
             "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
             "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
             "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
@@ -143,6 +147,10 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("SUPERVISED_P_TO_A_SEGMENT_ID", source)
         self.assertIn("SUPERVISED_P_TO_C1_SEGMENT_ID", source)
         self.assertIn("SUPERVISED_PREFIX_TASKS", source)
+        self.assertIn(
+            '"nav", "via", "via", "via", "via", "nav",',
+            source.replace("\n", " "),
+        )
         self.assertIn("--supervised-p-to-a", script)
         self.assertIn("--supervised-p-to-c1", script)
         self.assertIn('"$END_SEGMENT_ID" != "p_to_qr"', script)
@@ -183,11 +191,15 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("verify_obstacle_avoidance", source)
         self.assertIn("obstacle_layer.enabled", source)
         self.assertIn("obstacle_layer.observation_sources", source)
+        self.assertIn(
+            'expected_sources="String value is: scan depth_points"', source)
+        self.assertIn("if $DEPTH_CAMERA; then", source)
         self.assertIn("obstacle_layer.scan.topic", source)
         self.assertIn("obstacle_layer.scan.observation_persistence", source)
         self.assertIn("obstacle_layer.scan.min_obstacle_height", source)
         self.assertIn("obstacle_layer.scan.max_obstacle_height", source)
         self.assertIn("obstacle_layer.scan.inf_is_valid", source)
+        self.assertIn("obstacle_layer.depth_points.topic", source)
         self.assertIn("inflation_layer.enabled", source)
         self.assertIn("ros2 param get --no-daemon", source)
         self.assertIn("ros2 topic echo --no-daemon", source)

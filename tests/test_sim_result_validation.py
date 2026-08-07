@@ -78,12 +78,9 @@ def forward_ackermann_fields(direction, goal_profile="standard"):
         "forward_min_turning_radius_m": (
             VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
         "forward_path_max_cross_track_error_m": (
-            None if goal_profile == "precise"
-            else VALIDATION.SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M),
+            VALIDATION.SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M),
         "forward_controller_plugin": (
-            VALIDATION.NATIVE_RPP_CONTROLLER
-            if goal_profile == "precise"
-            else VALIDATION.FORWARD_AVOIDANCE_CONTROLLER
+            VALIDATION.FORWARD_AVOIDANCE_CONTROLLER
         ),
         "forward_velocity_smoother_scale_velocities": True,
     }
@@ -117,6 +114,14 @@ def valid_perception():
         "received_monotonic_sec": 100.0,
         "status_age_sec": 0.2,
     }
+
+
+def valid_depth_perception():
+    perception = valid_perception()
+    perception["checks"]["depth_points"] = True
+    perception["depth_points_stamp_ns"] = 104_900_000_000
+    perception["depth_points_count"] = 69
+    return perception
 
 
 def valid_tracking_trace():
@@ -159,8 +164,10 @@ def valid_manifest():
             VALIDATION.EXPECTED_GOAL_CONTRACTS[waypoint_id])
         if checker == "precise_goal_checker":
             xy_tolerance, yaw_tolerance = 0.12, 0.15
-        elif waypoint_id == "c_corner_1":
-            xy_tolerance, yaw_tolerance = 0.12, 0.15
+        elif checker == "return_goal_checker":
+            xy_tolerance, yaw_tolerance = 0.15, None
+        elif checker == "goal_checker":
+            xy_tolerance, yaw_tolerance = 0.35, 0.50
         elif checker == "reverse_goal_checker":
             xy_tolerance, yaw_tolerance = 0.12, 0.25
         else:
@@ -175,14 +182,16 @@ def valid_manifest():
             "status": VALIDATION.SUCCEEDED_STATUS,
             "duration_sec": 1.0,
             "goal_error_m": 0.01,
-            "goal_yaw_error_rad": 0.01,
+            "goal_yaw_error_rad": (
+                None if yaw_tolerance is None else 0.01),
             "goal_checker": checker,
             "xy_goal_tolerance_m": xy_tolerance,
             "yaw_goal_tolerance_rad": yaw_tolerance,
             "position_observer_margin_m": (
                 VALIDATION.POSITION_OBSERVER_MARGIN_M),
             "yaw_observer_margin_rad": VALIDATION.YAW_OBSERVER_MARGIN_RAD,
-            "signed_plan_goal_yaw_error_rad": 0.0,
+            "signed_plan_goal_yaw_error_rad": (
+                None if yaw_tolerance is None else 0.0),
             "xy_tolerance_entry_yaw_error_rad": entry_yaw_error,
             "post_xy_elapsed_sec": 5.0,
             "post_xy_max_goal_error_m": 0.20,
@@ -411,18 +420,21 @@ def _single_goal_result(goal):
     else:
         minimum, maximum = 0.02, 0.10
     if heading_mode == "free":
-        xy_tolerance, yaw_tolerance = 0.35, None
+        xy_tolerance, yaw_tolerance = (
+            VALIDATION.MAX_TRANSIT_XY_GOAL_TOLERANCE_M,
+            None,
+        )
     elif goal_profile == "precise":
         xy_tolerance, yaw_tolerance = 0.12, 0.15
     else:
-        xy_tolerance, yaw_tolerance = 0.12, 0.25
+        xy_tolerance, yaw_tolerance = 0.35, 0.50
     return {
         "id": goal["id"],
         "direction": direction,
         "goal_profile": goal_profile,
         "heading_mode": heading_mode,
         "behavior_tree": VALIDATION._goal_behavior_tree(
-            direction, goal_profile),
+            direction, goal_profile, heading_mode),
         "outcome": "succeeded",
         "status": VALIDATION.SUCCEEDED_STATUS,
         "goal_checker": VALIDATION._goal_checker(
@@ -471,8 +483,9 @@ def _through_poses_result(stage):
     segment_id, direction, goals = stage
     heading_mode = goals[-1]["heading_mode"]
     terminal_task = goals[-1]["task"]
-    reverse_return = VALIDATION._is_reverse_return_terminal(
-        direction, heading_mode, terminal_task)
+    terminal_goal_profile = goals[-1]["goal_profile"]
+    return_terminal = VALIDATION._is_return_terminal(
+        heading_mode, terminal_task)
     minimum, maximum = (-0.10, -0.02) if direction == "reverse" else (0.02, 0.10)
     return {
         "id": "through_poses[{}]".format(
@@ -484,19 +497,25 @@ def _through_poses_result(stage):
         "goal_ids": [goal["id"] for goal in goals],
         "goal_profiles": [goal["goal_profile"] for goal in goals],
         "behavior_tree": VALIDATION._through_poses_behavior_tree(
-            direction, heading_mode, terminal_task),
+            direction, heading_mode, terminal_task, terminal_goal_profile),
         "waypoint_count": len(goals),
         "outcome": "succeeded",
         "status": VALIDATION.SUCCEEDED_STATUS,
         "goal_checker": VALIDATION._goal_checker(
-            direction, "standard", heading_mode, reverse_return
+            direction, terminal_goal_profile, heading_mode, return_terminal
         ),
         "xy_goal_tolerance_m": (
-            0.15 if reverse_return else (
-                0.35 if heading_mode == "free" else 0.12)),
+            0.15 if return_terminal else (
+                VALIDATION.MAX_TRANSIT_XY_GOAL_TOLERANCE_M
+                if heading_mode == "free" else (
+                    0.12 if terminal_goal_profile == "precise" else (
+                    0.35 if direction == "forward" else 0.12)))),
         "yaw_goal_tolerance_rad": (
-            0.15 if reverse_return else (
-                None if heading_mode == "free" else 0.25)),
+            None if return_terminal and heading_mode == "free" else (
+            0.15 if return_terminal else (
+                None if heading_mode == "free" else (
+                    0.15 if terminal_goal_profile == "precise" else (
+                    0.50 if direction == "forward" else 0.25))))),
         "position_observer_margin_m": (
             VALIDATION.POSITION_OBSERVER_MARGIN_M),
         "yaw_observer_margin_rad": VALIDATION.YAW_OBSERVER_MARGIN_RAD,
@@ -509,7 +528,7 @@ def _through_poses_result(stage):
         "path_messages": 1,
         **planned_path_fields(),
         **executed_travel_fields(),
-        **forward_ackermann_fields(direction, "standard"),
+        **forward_ackermann_fields(direction, terminal_goal_profile),
         "controller_cmd_linear_min": minimum,
         "controller_cmd_linear_max": maximum,
         "controller_cmd_angular_abs_max": 0.10,
@@ -526,6 +545,11 @@ def _through_poses_result(stage):
             {"id": goal["id"], "min_distance_m": 0.10}
             for goal in goals
         ],
+        "tracking_trace": (
+            valid_tracking_trace()
+            if direction == "forward" and terminal_goal_profile == "precise"
+            else None
+        ),
         "contract_errors": [],
     }
 
@@ -608,10 +632,10 @@ class SimResultValidationTests(unittest.TestCase):
         ))
 
         precise["tracking_trace"] = valid_tracking_trace()
-        precise["forward_path_max_cross_track_error_m"] = 0.12
+        precise["forward_path_max_cross_track_error_m"] = None
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any(
-            "must not use a custom path guard" in error for error in errors
+            "forward path tracking threshold" in error for error in errors
         ))
 
     def test_saved_dynamic_segments_and_through_poses_are_accepted(self):
@@ -655,42 +679,71 @@ class SimResultValidationTests(unittest.TestCase):
         manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
 
         self.assertEqual(
-            [stage[0] for stage in stages],
             [
-                "action_1_a_task_observe_to_a_task_observe",
-                "action_2_via_2_to_c_corner_1",
-                "action_3_via_1_to_p_finish",
+                (stage_id, direction, [goal["id"] for goal in goals])
+                for stage_id, direction, goals in stages
+            ],
+            [
+                (
+                    "action_1_a_task_observe_to_a_task_observe",
+                    "forward",
+                    ["a_task_observe"],
+                ),
+                (
+                    "action_2_via_1_to_c_corner_1",
+                    "forward",
+                    ["via_1", "via_2", "c_corner_1"],
+                ),
+                (
+                    "action_3_via_3_to_p_finish",
+                    "forward",
+                    ["via_3", "via_4", "p_finish"],
+                ),
             ],
         )
         self.assertEqual(
             VALIDATION.validate_manifest(
                 manifest, 199.0, NAV_ONLY_WAYPOINTS), [])
 
+        self.assertEqual(len(manifest["route"]["segments"]), 3)
+        self.assertEqual(len(manifest["results"]), 3)
+        self.assertTrue(all(stage[1] == "forward" for stage in stages))
+        transit_goal_ids = [
+            goal["id"]
+            for _stage_id, _direction, goals in stages
+            for goal in goals
+            if goal["heading_mode"] == "free"
+        ]
         self.assertEqual(
-            manifest["results"][1]["behavior_tree"],
-            "navigate_through_poses_reverse_locked_sim_"
-            "w_replanning_and_recovery.xml",
-        )
-        returned = manifest["results"][2]
+            transit_goal_ids, ["via_1", "via_2", "via_3", "via_4", "p_finish"])
+        c1_result = manifest["results"][1]
+        self.assertEqual(c1_result["mode"], "through_poses")
+        self.assertEqual(c1_result["goal_ids"], ["via_1", "via_2", "c_corner_1"])
+        self.assertEqual(c1_result["behavior_tree"], (
+            "navigate_through_poses_precise_w_replanning_and_recovery.xml"))
+        self.assertEqual(c1_result["goal_checker"], "precise_goal_checker")
+        self.assertEqual(c1_result["xy_goal_tolerance_m"], 0.12)
+        self.assertEqual(c1_result["yaw_goal_tolerance_rad"], 0.15)
+
+        returned = manifest["results"][-1]
         self.assertEqual(
             returned["behavior_tree"],
-            "navigate_through_poses_reverse_return_sim_"
-            "w_replanning_and_recovery.xml",
+            "navigate_through_poses_return_w_replanning_and_recovery.xml",
         )
         self.assertEqual(returned["goal_checker"], "return_goal_checker")
         self.assertEqual(returned["xy_goal_tolerance_m"], 0.15)
-        self.assertEqual(returned["yaw_goal_tolerance_rad"], 0.15)
+        self.assertIsNone(returned["yaw_goal_tolerance_rad"])
 
         returned["goal_checker"] = "reverse_goal_checker"
-        returned["xy_goal_tolerance_m"] = 0.35
-        returned["yaw_goal_tolerance_rad"] = 0.50
+        returned["xy_goal_tolerance_m"] = 0.36
+        returned["yaw_goal_tolerance_rad"] = 0.51
         errors = VALIDATION.validate_manifest(manifest, 199.0, NAV_ONLY_WAYPOINTS)
         self.assertTrue(any("goal_checker" in error for error in errors))
         self.assertTrue(any("xy_goal_tolerance_m" in error for error in errors))
         self.assertTrue(any("yaw_goal_tolerance_rad" in error for error in errors))
         returned["goal_checker"] = "return_goal_checker"
         returned["xy_goal_tolerance_m"] = 0.15
-        returned["yaw_goal_tolerance_rad"] = 0.15
+        returned["yaw_goal_tolerance_rad"] = None
 
         manifest["inputs"]["waypoints_file"]["sha256"] = "b" * 64
         hash_errors = VALIDATION.validate_manifest(
@@ -715,31 +768,33 @@ class SimResultValidationTests(unittest.TestCase):
 
     def test_waypoint_snapshot_requires_locked_semantic_quaternions(self):
         manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
-        reverse_stage = stages[1]
-        self.assertEqual(len(reverse_stage[2]), 2)
+        c1_stage = stages[1]
+        self.assertEqual(
+            [goal["id"] for goal in c1_stage[2]],
+            ["via_1", "via_2", "c_corner_1"],
+        )
         source = yaml.safe_load(NAV_ONLY_WAYPOINTS.read_text(encoding="utf-8"))
         source_goal = next(
             waypoint for waypoint in source["waypoints"]
             if waypoint["id"] == "c_corner_1")
         self.assertIn("orientation", source_goal["pose"])
-        first_reverse_goal = manifest["route"]["segments"][1]["goals"][-1]
-        self.assertEqual(first_reverse_goal["id"], "c_corner_1")
-        self.assertEqual(first_reverse_goal["heading_mode"], "locked")
+        c1_goal = manifest["route"]["segments"][1]["goals"][-1]
+        self.assertEqual(c1_goal["id"], "c_corner_1")
+        self.assertEqual(c1_goal["goal_profile"], "precise")
+        self.assertEqual(c1_goal["heading_mode"], "locked")
         self.assertEqual(
-            first_reverse_goal["pose"]["orientation"],
+            c1_goal["pose"]["orientation"],
             source_goal["pose"]["orientation"],
         )
         finish_goal = manifest["route"]["segments"][-1]["goals"][-1]
         self.assertEqual(finish_goal["id"], "p_finish")
-        self.assertAlmostEqual(
-            sum(
-                component * component
-                for component in finish_goal["pose"]["orientation"].values()
-            ),
-            1.0,
+        self.assertEqual(finish_goal["heading_mode"], "free")
+        self.assertEqual(
+            finish_goal["pose"]["orientation"],
+            {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
         )
 
-        first_reverse_goal["pose"]["orientation"] = {
+        c1_goal["pose"]["orientation"] = {
             "x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0,
         }
         errors = VALIDATION.validate_manifest(
@@ -763,8 +818,10 @@ class SimResultValidationTests(unittest.TestCase):
         }
         free_result = manifest["results"][0]
         free_result["heading_mode"] = "free"
+        free_result["behavior_tree"] = (
+            "navigate_to_pose_transit_w_replanning_and_recovery.xml")
         free_result["goal_checker"] = "transit_goal_checker"
-        free_result["xy_goal_tolerance_m"] = 0.35
+        free_result["xy_goal_tolerance_m"] = 0.20
         free_result["yaw_goal_tolerance_rad"] = None
         free_result["target_yaw_rad"] = None
         free_result["goal_yaw_error_rad"] = None
@@ -779,17 +836,17 @@ class SimResultValidationTests(unittest.TestCase):
                 manifest, 199.0), []
         )
 
-        free_result["xy_goal_tolerance_m"] = 0.50
+        free_result["xy_goal_tolerance_m"] = 0.20
         self.assertEqual(VALIDATION.validate_manifest(manifest, 199.0), [])
 
-        free_result["xy_goal_tolerance_m"] = 0.501
+        free_result["xy_goal_tolerance_m"] = 0.201
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any(
             "xy_goal_tolerance_m exceeds its safe contract" in error
             for error in errors
         ))
 
-        free_result["xy_goal_tolerance_m"] = 0.35
+        free_result["xy_goal_tolerance_m"] = 0.20
         free_result["yaw_goal_tolerance_rad"] = 0.25
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(any(
@@ -834,6 +891,50 @@ class SimResultValidationTests(unittest.TestCase):
             "w_replanning_and_recovery.xml" in error
             for error in errors
         ))
+
+    def test_dynamic_through_poses_accepts_terminal_locked_precise_goal(self):
+        manifest = dynamic_manifest()
+        manifest["route"]["segments"][1]["direction"] = "forward"
+        goals = manifest["route"]["segments"][1]["goals"]
+        goals[0].update({"direction": "forward", "task": "via"})
+        goals[1].update({
+            "direction": "forward",
+            "task": "nav",
+            "goal_profile": "precise",
+            "heading_mode": "locked",
+        })
+        result = manifest["results"][1]
+        result.update({
+            "id": "through_poses[reverse_a, reverse_b]",
+            "direction": "forward",
+            "goal_profiles": ["standard", "precise"],
+            "behavior_tree": (
+                "navigate_through_poses_precise_w_replanning_and_recovery.xml"),
+            "goal_checker": "precise_goal_checker",
+            "xy_goal_tolerance_m": 0.12,
+            "yaw_goal_tolerance_rad": 0.15,
+            "controller_cmd_linear_min": 0.02,
+            "controller_cmd_linear_max": 0.10,
+            "controller_cmd_angular_abs_max": 0.10,
+            "controller_cmd_min_turning_radius_m": (
+                VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+            "controller_cmd_kinematic_violation_count": 0,
+            "cmd_linear_min": 0.02,
+            "cmd_linear_max": 0.10,
+            "cmd_angular_abs_max": 0.10,
+            "cmd_min_turning_radius_m": (
+                VALIDATION.SIMULATION_MINIMUM_TURNING_RADIUS_M),
+            "cmd_kinematic_violation_count": 0,
+            "tracking_trace": valid_tracking_trace(),
+        })
+        result.update(forward_ackermann_fields("forward", "precise"))
+
+        self.assertEqual(VALIDATION.validate_manifest(manifest, 199.0), [])
+
+        result["behavior_tree"] = (
+            "navigate_through_poses_w_replanning_and_recovery.xml")
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("behavior_tree" in error for error in errors))
 
     def test_dynamic_through_poses_rejects_nonterminal_or_unlocked_handoff(self):
         manifest = dynamic_manifest()
@@ -901,6 +1002,17 @@ class SimResultValidationTests(unittest.TestCase):
         self.assertTrue(any(
             "global_costmap_stamp_ns" in error for error in errors))
 
+    def test_depth_pointcloud_evidence_requires_a_fresh_nonempty_snapshot(self):
+        manifest = dynamic_manifest()
+        manifest["perception"] = valid_depth_perception()
+        self.assertEqual(VALIDATION.validate_manifest(manifest, 199.0), [])
+
+        manifest["perception"]["depth_points_stamp_ns"] = 0
+        manifest["perception"]["depth_points_count"] = 0
+        errors = VALIDATION.validate_manifest(manifest, 199.0)
+        self.assertTrue(any("depth_points_stamp_ns" in error for error in errors))
+        self.assertTrue(any("depth_points_count" in error for error in errors))
+
     def test_perception_rejects_scan_odom_skew_above_simulator_limit(self):
         manifest = dynamic_manifest()
         manifest["perception"]["odom_stamp_ns"] = 104_976_000_000
@@ -926,21 +1038,28 @@ class SimResultValidationTests(unittest.TestCase):
 
     def test_velocity_sign_is_checked_per_direction(self):
         manifest = valid_manifest()
-        manifest["results"][1]["cmd_linear_max"] = 0.05
         manifest["results"][0]["cmd_linear_min"] = -0.05
-        manifest["results"][1]["controller_cmd_linear_max"] = 0.05
+        manifest["results"][1]["cmd_linear_min"] = -0.05
         manifest["results"][0]["controller_cmd_linear_min"] = -0.05
-        manifest["results"][2]["controller_cmd_linear_max"] = 0.05
+        manifest["results"][1]["controller_cmd_linear_min"] = -0.05
 
         errors = VALIDATION.validate_manifest(manifest, 199.0)
         self.assertTrue(
-            any("contains a forward command" in error for error in errors))
-        self.assertTrue(
             any("contains a reverse command" in error for error in errors))
         self.assertTrue(
-            any("controller contains a forward command" in error for error in errors))
-        self.assertTrue(
             any("controller contains a reverse command" in error for error in errors))
+
+        with reverse_handoff_manifest() as reverse_manifest:
+            reverse = reverse_manifest["results"][0]
+            reverse["cmd_linear_max"] = 0.05
+            reverse["controller_cmd_linear_max"] = 0.05
+            reverse_errors = VALIDATION.validate_manifest(reverse_manifest, 199.0)
+        self.assertTrue(
+            any("contains a forward command" in error for error in reverse_errors))
+        self.assertTrue(any(
+            "controller contains a forward command" in error
+            for error in reverse_errors
+        ))
 
     def test_forward_command_layers_must_remain_in_ackermann_envelope(self):
         manifest = valid_manifest()
@@ -962,7 +1081,7 @@ class SimResultValidationTests(unittest.TestCase):
     def test_pose_tolerances_and_planned_yaw_are_strict(self):
         manifest = valid_manifest()
         manifest["results"][0]["goal_yaw_error_rad"] = 0.31
-        manifest["results"][1]["goal_error_m"] = 0.20
+        manifest["results"][1]["goal_error_m"] = 0.40
         manifest["results"][1]["signed_plan_goal_yaw_error_rad"] = 0.20
         manifest["results"][1]["yaw_goal_tolerance_rad"] = 0.51
         manifest["results"][2]["position_observer_margin_m"] = 0.05

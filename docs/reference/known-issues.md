@@ -27,26 +27,27 @@
 
 ## 导航与运动
 
-- **Ackermann 终点兜圈**：无法原地旋转。第三段回 P 使用专用
-  `return_goal_checker`（`xy_goal_tolerance=0.15`、`yaw_goal_tolerance=0.15`），
-  避免在 P 点外 0.32 m 提前完成；C1 保持原倒车到达包络。
+- **Ackermann 终点兜圈**：无法原地旋转。当前全正向路线的 A 与 C1 使用精确终点树
+  （`0.12 m / 0.15 rad`），回 P 使用常规 `goal_checker`（`0.35 m / 0.50 rad`）。本机 Gazebo
+  已复核 C1 终态 `0.039 m / 0.113 rad`；这些配置尚未完成当前路线的实体到达验收。
 - **P→A 前进碰撞恢复（2026-08-03）**：历史上 RPP 在高位紧右弯触及右侧
   `50 mm` 保护包络后，精确仿真树的内层 `FollowPath` recovery 只清 local costmap 并重发
   旧路径，导致控制器反复碰撞而没有及时取得新路径。现已移除该旧路径重试：碰撞或 patience
   超时会直接进入外层 recovery，依次清 local/global costmap、重新 `ComputePathToPose`，再
   重新跟随。两次定向 P→A Gazebo 运行均成功，末端位置误差均为 `0.102 m`，航向误差分别为
   `0.085 rad`、`0.073 rad`；第二次明确记录了碰撞超时、双 costmap 清理和新路径后成功到达。
-  前进段不执行短退。后续完整三阶段 Gazebo 路线已完成；该证据仍不覆盖实体传感器、方向门或底盘运动。
+  前进段不执行短退。后续完整三阶段 Gazebo 路线对应先前含倒车段的 YAML；该证据不覆盖当前全正向路线、实体传感器、方向门或底盘运动。
 - **0.30 m/s 实体复验待完成**：运行配置已同步为 `0.30 m/s`，但尚无新的实体运行验收记录。原始日志表明 EKF 最严重的更新超期发生在路线启动前；`odom0_config` 也不融合原始 pose，因此旧版"IntegrationClock 导致 EKF pose/速度冲突"的推断已撤回，详见 `docs/review/odometry-speed-analysis.md`。
-- **倒车导航实现 (2026-08-03)**：QR→VLM 段必须倒车。QR 方向切换点使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），Smac 近似终点 `tolerance=0.0`。普通 reverse 与锁定 yaw 的 `reverse_handoff` 都使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证；零 yaw transit 做有界候选搜索，锁定 handoff 只保留其 authored yaw。倒车多目标允许普通 `via` 后接一个作为末端、锁定航向的 `reverse_handoff`，并使用 reverse-locked ThroughPoses 树；不再使用旧的 `1.60` 人工 edge-detour 筛选，路径可行性由 Nav2 的代价地图和阿克曼约束决定。`allow_reversing=true` 是 RPP controller 参数，只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。方向门倒车 `angular.z` 翻转是用户现场 A/B 确认有效的执行器链补偿；实测 `R_min ≈ 0.20 m` 后，运行链同步使用保守的 `minimum_turning_radius=0.22 m, curvature_tolerance=0.20`。完整路线已完成 Gazebo 验证，实体倒车仍需分段复测。
-- **方向门倒车转向翻转 (2026-07-24)**：用户在实体车上观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为记录当前执行器链的实测约定，不再归因于通用 RPP 公式。
+- **当前全正向路线 (2026-08-07)**：`default_waypoints.yaml` 与 `nav_only.yaml` 以四个 explicit planning segment 串联 14 个全正向航点约束；A/C1 使用 `precise` profile，P 使用 `standard` profile。离线几何预检及本机 Gazebo `run_20260807_170954_1` 均已通过，RDK 与实体车辆验收仍未完成，且 YAML 仍为 `calibrated: false`。
+- **历史倒车导航实现 (2026-08-03，未激活)**：旧 QR→VLM 倒车路线使用 `navigate_to_pose_precise_w_replanning_and_recovery.xml`（`0.12 m / 0.15 rad` 精确 goal checker），普通 reverse 与锁定 yaw 的 `reverse_handoff` 使用 `ComputeReverseFreeHeadingPath*`：虚拟 yaw 加 π 调用唯一 DUBIN planner，恢复后严格验证。倒车多目标允许普通 `via` 后接一个作为末端、锁定航向的 `reverse_handoff`，并使用 reverse-locked ThroughPoses 树。`allow_reversing=true` 只允许沿既有反向路径输出负速度，不作为 `FollowPath` BT 端口；不会把 planner 改成 Reeds-Shepp，cusp 也会被拒绝。该链路及其 Gazebo 记录不验证当前全正向路线或实体运动。
+- **方向门倒车转向翻转 (2026-07-24，未激活)**：历史实体链曾观察到倒车转向打反；`direction_guard` 的 `on_candidate()` 和 `evaluate()` 在 `MotionDirection::Reverse` 时翻转 `candidate[5]`（angular.z）后，同一首个倒车 goal 转向正确并成功。该行为是保留的反向执行器约定，不适用于当前全正向路线。
 
 ## Nav2 配置与行为树
 
 - **Nav2 参数链路 (2026-07-23 修复)**：Nav2 1.1.20 (TROS Humble) 的 `RewrittenYaml` chain 存在 bug——`ParameterFile` 输出被 YDLIDAR 驱动参数覆盖，导致 `controller_server` 加载默认 DWB 而非 RPP。修复方案：`CMakeLists.txt` 自动生成 `nav2_params_fixed.yaml`（BT 路径硬编码），`navigation_launch.py` 直接使用该文件。任何对 `nav2_params.yaml` 的修改会在 `colcon build` 时自动同步到 fixed 文件。不可手动创建/编辑 `nav2_params_fixed.yaml`。
 - **Nav2 启动入口收敛**：`navigation_launch.py` 直接启动 Nav2 节点，默认使用构建生成的 `nav2_params_fixed.yaml`。航点由任务节点加载；旧的 `use_waypoint_follower`、BT XML 覆盖和 Nav2 航点文件入口均不存在。需要仿真覆盖时仅传入已解析的 `params_overlay_file`。
-- **行为树已移除 backup/wait recovery (2026-07-23)**：前进树不包含 `BackUp`、`Wait`、Spin
-  或直接倒退恢复；前进碰撞经 local/global `ClearEntireCostmap` 后重新规划。仅反向规划候选在
+- **行为树已移除 backup/wait recovery (2026-07-23)**：活动前进树不包含 `BackUp`、`Wait`、Spin
+  或直接倒退恢复；前进碰撞经 local/global `ClearEntireCostmap` 后重新规划。仅未激活的反向规划候选在
   清图后仍穷尽时，才可在完整足迹检查通过后执行一次受限的 `AckermannReverseRetreat`。
 
 ## ROS2 生命周期与运维
@@ -67,7 +68,7 @@ grep allow_reversing /root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/con
 grep current_goal_checker /root/ros2_ws/install/smartcar_nav2/share/smartcar_nav2/config/nav2_params_fixed.yaml
 ```
 
-期望：`DUBIN`、`true`、`"goal_checker"`，且 `min_velocity` 含负值（倒车）。
+期望：`DUBIN`、`true`、`"goal_checker"`。负 `min_velocity` 和 `allow_reversing=true` 为保留的反向基础设施配置，当前活动路线不使用它们。
 
 ### 发车前检查
 

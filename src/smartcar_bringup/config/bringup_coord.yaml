@@ -17,6 +17,7 @@ topics:
   cmd_vel_safe: /cmd_vel_safe
   ackermann_cmd: /ackermann_cmd
   image: /image
+  depth_points: /smartcar/depth/points
 
 toggles:
   use_base: true
@@ -29,6 +30,7 @@ toggles:
   use_nav: true
   use_camera: true
   use_vision: true
+  use_depth_camera: false
   use_task: true
   use_visualization: false
   use_speech: false
@@ -58,6 +60,14 @@ extrinsics:
       mipi: default_cam
     xyz: [0.1205, 0.0, 0.11]
     rpy: [0.0, 0.0, 0.0]
+  link_to_depth_camera:
+    # Aurora 930 publishes depth points in depth_camera_link_1.  The mounting
+    # transform is only an installation placeholder until measured on-car.
+    measured: false
+    parent: base_link
+    child: depth_camera_link_1
+    xyz: [0.1205, 0.0, 0.11]
+    rpy: [0.0, 0.0, 0.0]
 
 calibration:
   longitudinal_velocity_scale: 1.03
@@ -76,6 +86,7 @@ motion_gates:
   emergency_stop_ready: false
   operator_approved: false
   laser_odometry_calibrated: false
+  depth_camera_calibrated: false
 
 hardware:
   chassis_serial: /dev/ttyACM0

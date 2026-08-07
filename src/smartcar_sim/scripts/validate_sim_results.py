@@ -36,9 +36,9 @@ SIMULATION_HANDOFF_SPEED_CAP_MPS = SIMULATION_SPEED_CAP_MPS
 SIMULATION_HANDOFF_WZ_CAP_RADPS = (
     SIMULATION_HANDOFF_SPEED_CAP_MPS / SIMULATION_MINIMUM_TURNING_RADIUS_M
 )
-# The free ThroughPoses BT removes a normal waypoint at 0.50 m. Keep only the
-# odometry observer margin beyond that runtime contract.
-THROUGH_POSE_DISTANCE_TOLERANCE_M = 0.52
+# Forward ThroughPoses keeps each explicit waypoint. Simulation evidence must
+# retain the 0.20 m transit bound for every configured corridor constraint.
+THROUGH_POSE_DISTANCE_TOLERANCE_M = 0.20
 MAX_EXECUTED_TRAVEL_DETOUR_RATIO = 2.00
 MAX_EXECUTED_TRAVEL_DETOUR_ALLOWANCE_M = 0.80
 MAX_EXECUTION_TRACE_SAMPLES = 128
@@ -62,30 +62,34 @@ MAX_PERCEPTION_TF_ODOM_YAW_ERROR_RAD = 0.05
 MIN_PERCEPTION_LANDMARK_IDS = 3
 EXPECTED_ROUTE = (
     ("a_task_observe", "forward", "precise"),
-    ("c_corner_1", "reverse", "reverse_handoff"),
-    ("p_finish", "reverse", "standard"),
+    ("c_corner_1", "forward", "precise"),
+    ("p_finish", "forward", "standard"),
 )
 EXPECTED_GOAL_CONTRACTS = {
     "a_task_observe": ("precise_goal_checker", (0.08, 0.25), (0.10, 0.30)),
-    "c_corner_1": ("reverse_goal_checker", (0.08, 0.12), (0.10, 0.15)),
-    "p_finish": ("reverse_goal_checker", (0.08, 0.35), (0.10, 0.50)),
+    "c_corner_1": ("precise_goal_checker", (0.08, 0.25), (0.10, 0.30)),
+    "p_finish": ("return_goal_checker", (0.08, 0.15), None),
 }
 EXPECTED_BEHAVIOR_TREES = {
     "a_task_observe": (
         "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"),
     "c_corner_1": (
-        "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"),
+        "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"),
     "p_finish": (
-        "navigate_to_pose_reverse_sim_w_replanning_and_recovery.xml"),
+        "navigate_to_pose_w_replanning_and_recovery.xml"),
 }
 REQUIRED_INPUTS = (
     "waypoints_file",
     "forward_behavior_tree",
+    "transit_behavior_tree",
     "precise_behavior_tree",
     "reverse_behavior_tree",
     "reverse_handoff_behavior_tree",
     "nav2_params_file",
     "through_poses_behavior_tree",
+    "through_poses_transit_behavior_tree",
+    "through_poses_precise_behavior_tree",
+    "through_poses_return_behavior_tree",
     "through_poses_reverse_behavior_tree",
     "through_poses_reverse_locked_behavior_tree",
     "through_poses_reverse_return_behavior_tree",
@@ -100,19 +104,19 @@ ALLOWED_TASKS = frozenset({
 })
 ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
 MAX_DYNAMIC_GOAL_TOLERANCES = {
-    ("forward", "standard"): (0.25, 0.50),
+    ("forward", "standard"): (0.35, 0.50),
     ("forward", "precise"): (0.25, 0.30),
     ("reverse", "standard"): (0.35, 0.50),
     ("reverse", "reverse_handoff"): (0.20, 0.30),
 }
-RETURN_DYNAMIC_GOAL_TOLERANCES = (0.15, 0.15)
-# Position-only transit gates may use the temporary 0.50 m verification
-# envelope. Semantic task poses use their dedicated tighter checkers.
-MAX_TRANSIT_XY_GOAL_TOLERANCE_M = 0.50
+RETURN_DYNAMIC_GOAL_TOLERANCES = (0.15, None)
+# Position-only transit gates must place the vehicle inside a corridor before
+# the next segment begins. Semantic task poses use their dedicated checkers.
+MAX_TRANSIT_XY_GOAL_TOLERANCE_M = 0.20
 POSE_POSITION_FIELDS = ("x", "y", "z")
 POSE_ORIENTATION_FIELDS = ("x", "y", "z", "w")
 QUATERNION_NORM_TOLERANCE = 1.0e-3
-HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm", "return"})
+HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm"})
 
 
 def _finite_number(value):
@@ -257,13 +261,15 @@ def _dynamic_route_stages(data):
     return tuple(stages), errors
 
 
-def _goal_behavior_tree(direction, goal_profile):
+def _goal_behavior_tree(direction, goal_profile, heading_mode="locked"):
     if goal_profile == "reverse_handoff":
         return "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"
     if direction == "reverse":
         return "navigate_to_pose_reverse_w_replanning_and_recovery.xml"
     if goal_profile == "precise":
         return "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"
+    if heading_mode == "free":
+        return "navigate_to_pose_transit_w_replanning_and_recovery.xml"
     return "navigate_to_pose_w_replanning_and_recovery.xml"
 
 
@@ -288,16 +294,37 @@ def _allows_terminal_reverse_handoff_through_poses(direction, goals):
     )
 
 
+def _allows_terminal_precise_through_poses(direction, goals):
+    """Return whether forward vias end at a locked precise task goal."""
+    if direction != "forward" or len(goals) < 2:
+        return False
+    _terminal_id, goal_direction, goal_profile, heading_mode, _task = goals[-1]
+    if (goal_direction, goal_profile, heading_mode) != (
+        "forward", "precise", "locked"
+    ):
+        return False
+    return all(
+        goal_direction == "forward" and goal_profile == "standard"
+        for _goal_id, goal_direction, goal_profile, _heading_mode, _task
+        in goals[:-1]
+    )
+
+
+def _is_return_terminal(heading_mode, task):
+    del heading_mode
+    return task == "return"
+
+
 def _is_reverse_return_terminal(direction, heading_mode, task):
     return (
         direction == "reverse"
-        and task == "return"
-        and heading_mode == "locked"
+        and _is_return_terminal(heading_mode, task)
     )
 
 
 def _through_poses_behavior_tree(
-    direction, terminal_heading_mode, terminal_task=None
+    direction, terminal_heading_mode, terminal_task=None,
+    terminal_goal_profile="standard",
 ):
     """Return the simulation BT selected by auto_train for a through action."""
     if direction == "reverse":
@@ -314,11 +341,19 @@ def _through_poses_behavior_tree(
                 "w_replanning_and_recovery.xml"
             )
         return "navigate_through_poses_reverse_w_replanning_and_recovery.xml"
+    if _is_return_terminal(terminal_heading_mode, terminal_task):
+        return "navigate_through_poses_return_w_replanning_and_recovery.xml"
+    if terminal_heading_mode == "free":
+        return (
+            "navigate_through_poses_transit_w_replanning_and_recovery.xml"
+        )
+    if terminal_goal_profile == "precise":
+        return "navigate_through_poses_precise_w_replanning_and_recovery.xml"
     return "navigate_through_poses_w_replanning_and_recovery.xml"
 
 
-def _goal_checker(direction, goal_profile, heading_mode, reverse_return=False):
-    if reverse_return:
+def _goal_checker(direction, goal_profile, heading_mode, return_terminal=False):
+    if return_terminal:
         return "return_goal_checker"
     if goal_profile == "precise":
         return "precise_goal_checker"
@@ -330,10 +365,10 @@ def _goal_checker(direction, goal_profile, heading_mode, reverse_return=False):
 
 
 def _goal_tolerance_limits(
-    direction, goal_profile, heading_mode, reverse_return=False
+    direction, goal_profile, heading_mode, return_terminal=False
 ):
     """Return the maximum accepted execution tolerance for one goal."""
-    if reverse_return:
+    if return_terminal:
         return RETURN_DYNAMIC_GOAL_TOLERANCES
     if goal_profile == "precise":
         return MAX_DYNAMIC_GOAL_TOLERANCES[(direction, goal_profile)]
@@ -349,11 +384,11 @@ def _validate_goal_completion(
     heading_mode,
     label,
     errors,
-    reverse_return=False,
+    return_terminal=False,
 ):
     """Check observed terminal pose against the goal checker recorded at run time."""
     expected_checker = _goal_checker(
-        direction, goal_profile, heading_mode, reverse_return)
+        direction, goal_profile, heading_mode, return_terminal)
     if result.get("goal_checker") != expected_checker:
         errors.append(
             f"{label} goal_checker does not match its direction/profile/heading"
@@ -364,7 +399,7 @@ def _validate_goal_completion(
         errors.append(f"{label} xy_goal_tolerance_m must be finite")
         return
     max_xy, max_yaw = _goal_tolerance_limits(
-        direction, goal_profile, heading_mode, reverse_return)
+        direction, goal_profile, heading_mode, return_terminal)
     if float(xy_tolerance) <= 0.0 or float(xy_tolerance) > max_xy:
         errors.append(f"{label} xy_goal_tolerance_m exceeds its safe contract")
     if max_yaw is None:
@@ -446,11 +481,11 @@ def _validate_forward_ackermann_contract(
     turning_radius = result.get("forward_min_turning_radius_m")
     path_max_cross_track_error = result.get(
         "forward_path_max_cross_track_error_m")
-    expected_controller = (
-        NATIVE_RPP_CONTROLLER
-        if goal_profile == "precise"
-        else FORWARD_AVOIDANCE_CONTROLLER
-    )
+    # Every forward simulation tree, including the precise P-to-A tree, now
+    # routes commands through the Ackermann-safe wrapper.  Keeping this
+    # expectation identical to auto_train prevents a stale native-RPP result
+    # from being accepted after the terminal-loop fix.
+    expected_controller = FORWARD_AVOIDANCE_CONTROLLER
     if result.get("forward_controller_plugin") != expected_controller:
         errors.append(f"{label} forward controller does not match its Nav2 tree")
     if result.get("forward_velocity_smoother_scale_velocities") is not True:
@@ -475,10 +510,7 @@ def _validate_forward_ackermann_contract(
         errors.append(
             f"{label} forward turning radius must be "
             f"{SIMULATION_MINIMUM_TURNING_RADIUS_M:.2f}")
-    if goal_profile == "precise":
-        if path_max_cross_track_error is not None:
-            errors.append(f"{label} native P-to-A RPP must not use a custom path guard")
-    elif (
+    if (
         not _finite_number(path_max_cross_track_error)
         or abs(
             float(path_max_cross_track_error) -
@@ -722,6 +754,19 @@ def _validate_perception(data, errors):
         for name in PERCEPTION_REQUIRED_CHECKS:
             if checks.get(name) is not True:
                 errors.append(f"perception check {name} must be true")
+        if checks.get("depth_points") is True:
+            depth_stamp = perception.get("depth_points_stamp_ns")
+            if not _positive_int(depth_stamp):
+                errors.append(
+                    "perception depth_points_stamp_ns must be a positive integer")
+            depth_count = perception.get("depth_points_count")
+            if (
+                isinstance(depth_count, bool)
+                or not isinstance(depth_count, int)
+                or depth_count <= 0
+            ):
+                errors.append(
+                    "perception depth_points_count must be positive")
     valid_beams = perception.get("valid_beams")
     if (
         isinstance(valid_beams, bool)
@@ -821,7 +866,7 @@ def _validate_dynamic_single_goal(result, expected, label, errors):
         errors.append(f"{label} status must be {SUCCEEDED_STATUS}")
     if result.get("contract_errors") != []:
         errors.append(f"{label} contract_errors must be empty")
-    expected_tree = _goal_behavior_tree(direction, goal_profile)
+    expected_tree = _goal_behavior_tree(direction, goal_profile, heading_mode)
     if result.get("behavior_tree") != expected_tree:
         errors.append(f"{label} behavior_tree must be {expected_tree}")
     _validate_goal_completion(
@@ -849,8 +894,9 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     expected_profiles = [goal[2] for goal in goals]
     terminal_heading_mode = goals[-1][3]
     terminal_task = goals[-1][4]
-    reverse_return = _is_reverse_return_terminal(
-        direction, terminal_heading_mode, terminal_task)
+    terminal_goal_profile = goals[-1][2]
+    return_terminal = _is_return_terminal(
+        terminal_heading_mode, terminal_task)
     if not isinstance(result, dict):
         errors.append(f"{label} must be an object")
         return
@@ -858,7 +904,10 @@ def _validate_dynamic_through_result(result, stage, label, errors):
         errors.append(f"{label} uses ThroughPoses for a one-goal segment")
     if (
         any(profile != "standard" for profile in expected_profiles)
-        and not _allows_terminal_reverse_handoff_through_poses(direction, goals)
+        and not (
+            _allows_terminal_reverse_handoff_through_poses(direction, goals)
+            or _allows_terminal_precise_through_poses(direction, goals)
+        )
     ):
         errors.append(
             f"{label} uses ThroughPoses for a nonstandard goal profile")
@@ -873,7 +922,7 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     if result.get("waypoint_count") != len(goals):
         errors.append(f"{label} waypoint_count must be {len(goals)}")
     expected_tree = _through_poses_behavior_tree(
-        direction, terminal_heading_mode, terminal_task)
+        direction, terminal_heading_mode, terminal_task, terminal_goal_profile)
     if result.get("behavior_tree") != expected_tree:
         errors.append(f"{label} behavior_tree must be {expected_tree}")
     if result.get("outcome") != "succeeded":
@@ -885,15 +934,22 @@ def _validate_dynamic_through_result(result, stage, label, errors):
     _validate_goal_completion(
         result,
         direction,
-        "standard",
+        terminal_goal_profile,
         terminal_heading_mode,
         label,
         errors,
-        reverse_return=reverse_return,
+        return_terminal=return_terminal,
     )
     _validate_command_direction(result, direction, label, errors)
     _validate_forward_ackermann_contract(
-        result, direction, "standard", label, errors
+        result, direction, terminal_goal_profile, label, errors
+    )
+    _validate_tracking_trace(
+        result,
+        label,
+        errors,
+        require_linked_evidence=(
+            direction == "forward" and terminal_goal_profile == "precise"),
     )
     path_messages = result.get("path_messages")
     if isinstance(path_messages, bool) or not isinstance(path_messages, int) or path_messages <= 0:
@@ -1333,7 +1389,11 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
         ):
             errors.append(
                 f"{label} xy_goal_tolerance_m must be within {xy_range}")
-        if (
+        if yaw_range is None:
+            if reported_yaw_tolerance is not None:
+                errors.append(
+                    f"{label} yaw_goal_tolerance_rad must be absent")
+        elif (
             not _finite_number(reported_yaw_tolerance)
             or not yaw_range[0] <= float(reported_yaw_tolerance) <= yaw_range[1]
         ):
@@ -1346,7 +1406,7 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
         )
         yaw_tolerance = (
             float(reported_yaw_tolerance)
-            if _finite_number(reported_yaw_tolerance) else yaw_range[1]
+            if _finite_number(reported_yaw_tolerance) else None
         )
 
         if result.get("position_observer_margin_m") != POSITION_OBSERVER_MARGIN_M:
@@ -1367,14 +1427,17 @@ def validate_manifest(data, started_after=None, waypoint_snapshot=None):
         ):
             errors.append(
                 f"{label} goal_error_m exceeds {xy_tolerance}")
-        if (
+        if yaw_tolerance is not None and (
             not _finite_number(yaw_error)
             or float(yaw_error) > yaw_tolerance + YAW_OBSERVER_MARGIN_RAD
         ):
             errors.append(
                 f"{label} goal_yaw_error_rad exceeds {yaw_tolerance}")
         plan_yaw_error = result.get("signed_plan_goal_yaw_error_rad")
-        if (
+        if yaw_tolerance is None:
+            if plan_yaw_error is not None:
+                errors.append(f"{label} free terminal must not report planned yaw")
+        elif (
             not _finite_number(plan_yaw_error)
             or abs(float(plan_yaw_error))
             > 0.15 + CONFIG_TOLERANCE_EPSILON

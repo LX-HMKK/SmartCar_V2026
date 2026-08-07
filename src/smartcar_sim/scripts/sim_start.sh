@@ -12,6 +12,7 @@ workspace=${SMARTCAR_WS:-${default_workspace}}
 headless=true
 use_rviz=true
 clean_processes=true
+skip_cleanup=false
 launch_args=()
 
 while [ "$#" -gt 0 ]; do
@@ -20,7 +21,10 @@ while [ "$#" -gt 0 ]; do
         --headless) headless=true ;;
         --rviz) use_rviz=true ;;
         --no-rviz) use_rviz=false ;;
-        --no-clean) clean_processes=false ;;
+        # A caller preserving an existing local ROS/Gazebo session must skip
+        # both this wrapper's process cleanup and sim.launch.py's shared-memory
+        # cleanup. The launch still requires the caller to isolate DDS/Gazebo.
+        --no-clean) clean_processes=false; skip_cleanup=true ;;
         --) shift; launch_args+=("$@"); break ;;
         *) launch_args+=("$1") ;;
     esac
@@ -34,6 +38,10 @@ set -u
 
 if [ "$clean_processes" = true ]; then
     bash "${script_dir}/sim_cleanup.sh" --kill-processes
+fi
+
+if [ "$skip_cleanup" = true ]; then
+    launch_args+=("skip_cleanup:=true")
 fi
 
 echo "[sim] RMW=${RMW_IMPLEMENTATION}, localhost=${ROS_LOCALHOST_ONLY}"

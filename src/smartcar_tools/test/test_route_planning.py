@@ -116,7 +116,7 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertAlmostEqual(footprint.padded_half_length_m, 0.2491)
         self.assertAlmostEqual(footprint.padded_half_width_m, 0.095)
         self.assertEqual(
-            config.simulation_keepout.costmap_inflation_radius_m, 0.15
+            config.simulation_keepout.costmap_inflation_radius_m, 0.30
         )
         self.assertEqual(config.c_zone_keepout.horizontal_inset_m, 0.80)
         self.assertEqual(config.c_zone_keepout.vertical_inset_m, 0.15)

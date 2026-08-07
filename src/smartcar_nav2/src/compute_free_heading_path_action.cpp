@@ -214,50 +214,8 @@ BT::PortsList ComputeFreeHeadingPathAction::providedPorts()
       "local_tracking_lethal_cost", 254,
       "Filtered local cost at or above which the tracking envelope rejects a path"),
     BT::InputPort<std::string>(
-      "local_tracking_lateral_profile", kForwardPathLateralProfileSymmetric,
-      "Forward tracking-tube profile; the P departure profile is Gazebo-only"),
-    BT::InputPort<double>(
-      "local_tracking_profile_start_position_tolerance_m", 0.001,
-      "Strict P-start tolerance required before activating a P lateral profile"),
-    BT::InputPort<double>(
-      "local_tracking_profile_start_yaw_tolerance_rad", 0.001,
-      "Strict P-start yaw tolerance required before activating a P lateral profile"),
-    BT::InputPort<bool>(
-      "departure_connector_enabled", false,
-      "Enable P-only internal safe departure connectors before the first planner query"),
-    BT::InputPort<double>(
-      "departure_connector_radius_margin_m", 0.08,
-      "Positive margin added to the active kinematic radius for a P departure arc"),
-    BT::InputPort<double>(
-      "departure_connector_maximum_active_radius_m", 0.0,
-      "Maximum active kinematic radius; larger real-vehicle radii skip the P connector"),
-    BT::InputPort<double>(
-      "departure_connector_terminal_radius_m", 0.0,
-      "P-only RSL terminal radius, constrained to the active simulator connector envelope"),
-    BT::InputPort<double>(
-      "departure_connector_high_right_turn_radius_m", 0.0,
-      "P-only high right-turn radius, constrained to the active simulator connector envelope"),
-    BT::InputPort<double>(
-      "departure_connector_start_x_m", 0.0,
-      "Configured P-start x coordinate required before injecting a connector"),
-    BT::InputPort<double>(
-      "departure_connector_start_y_m", 0.0,
-      "Configured P-start y coordinate required before injecting a connector"),
-    BT::InputPort<double>(
-      "departure_connector_start_yaw_rad", 0.0,
-      "Configured P-start yaw required before injecting a connector"),
-    BT::InputPort<double>(
-      "departure_connector_start_position_tolerance_m", 0.10,
-      "Maximum P-start position error allowed to inject a connector"),
-    BT::InputPort<double>(
-      "departure_connector_start_yaw_tolerance_rad", 0.15,
-      "Maximum P-start yaw error allowed to inject a connector"),
-    BT::InputPort<int>(
-      "departure_connector_heading_bins", 0,
-      "Smac heading-bin count required for an exact P-connector lattice handoff"),
-    BT::InputPort<std::string>(
-      "static_keepout_mask_topic", "/keepout_filter_mask",
-      "Optional static KeepoutFilter mask swept as a hard body and field-boundary constraint"),
+      "static_keepout_mask_topic", "",
+      "Optional static KeepoutFilter mask swept as a hard body constraint; empty uses raw costmaps only"),
     BT::InputPort<double>(
       "minimum_turning_radius", 0.0,
       "Optional per-tree minimum radius; zero follows the navigator kinematic radius"),
@@ -304,8 +262,6 @@ BT::NodeStatus ComputeFreeHeadingPathAction::onStart()
   best_trial_path_.reset();
   best_continuation_.reset();
   pending_candidate_.reset();
-  departure_connectors_.clear();
-  departure_connector_index_ = 0U;
   through_search_frames_.clear();
   through_candidate_query_count_ = 0U;
   best_through_path_.reset();
@@ -529,8 +485,6 @@ void ComputeFreeHeadingPathAction::onHalted()
   candidate_goals_.clear();
   lookahead_candidates_.clear();
   pending_candidate_.reset();
-  departure_connectors_.clear();
-  departure_connector_index_ = 0U;
   best_trial_path_.reset();
   best_continuation_.reset();
   through_search_frames_.clear();
@@ -636,9 +590,13 @@ bool ComputeFreeHeadingPathAction::loadInputs()
     return false;
   }
   std::string static_keepout_mask_topic;
-  if (!getInput("static_keepout_mask_topic", static_keepout_mask_topic) ||
-    !configureKeepoutMaskSubscription(static_keepout_mask_topic))
-  {
+  // The static mask is optional. BehaviorTree.CPP reports an empty default
+  // as an unset input port, so treat that case as the explicit raw-costmap
+  // navigation mode rather than failing the action.
+  if (!getInput("static_keepout_mask_topic", static_keepout_mask_topic)) {
+    static_keepout_mask_topic.clear();
+  }
+  if (!configureKeepoutMaskSubscription(static_keepout_mask_topic)) {
     RCLCPP_ERROR(node_->get_logger(), "Free-heading keepout-mask diagnostic port is invalid");
     return false;
   }
@@ -650,10 +608,6 @@ bool ComputeFreeHeadingPathAction::loadInputs()
   }
   if (!readValidationOptions()) {
     RCLCPP_ERROR(node_->get_logger(), "Free-heading planner validation ports are invalid");
-    return false;
-  }
-  if (!readDepartureConnectorOptions()) {
-    RCLCPP_ERROR(node_->get_logger(), "Free-heading departure connector ports are invalid");
     return false;
   }
 
@@ -695,7 +649,7 @@ bool ComputeFreeHeadingPathAction::beginCandidateSearch()
     through_search_deadline_ =
       std::chrono::steady_clock::now() + through_search_budget_;
   }
-  return prepareDepartureConnectors() && prepareTargetCandidates() && startCandidateQuery();
+  return prepareTargetCandidates() && startCandidateQuery();
 }
 
 bool ComputeFreeHeadingPathAction::readValidationOptions()
@@ -755,114 +709,16 @@ bool ComputeFreeHeadingPathAction::readLocalTrackingEnvelopeOptions()
       "local_tracking_cross_track_error_m", local_tracking_cross_track_error_m_) ||
     !getInput("local_tracking_horizon_m", local_tracking_horizon_m_) ||
     !getInput("local_tracking_lethal_cost", lethal_cost) ||
-    !getInput("local_tracking_lateral_profile", local_tracking_lateral_profile_) ||
     !finite(local_tracking_cross_track_error_m_) ||
     !finite(local_tracking_horizon_m_) ||
     local_tracking_cross_track_error_m_ < 0.0 ||
-    local_tracking_horizon_m_ < 0.0 || lethal_cost < 1 || lethal_cost > 254 ||
-    !forwardPathLateralProfileKnown(local_tracking_lateral_profile_))
+    local_tracking_horizon_m_ < 0.0 || lethal_cost < 1 || lethal_cost > 254)
   {
     return false;
   }
   local_tracking_lethal_cost_ = static_cast<std::uint8_t>(lethal_cost);
   local_tracking_envelope_enabled_ = !reverse_ && local_tracking_cross_track_error_m_ > 0.0;
   return !local_tracking_envelope_enabled_ || local_tracking_horizon_m_ > 0.0;
-}
-
-bool ComputeFreeHeadingPathAction::readDepartureConnectorOptions()
-{
-  double radius_margin_m = 0.0;
-  if (!getInput("departure_connector_enabled", departure_connector_enabled_) ||
-    !getInput("departure_connector_radius_margin_m", radius_margin_m) ||
-    !getInput(
-      "departure_connector_maximum_active_radius_m",
-      departure_connector_maximum_active_radius_m_) ||
-    !getInput("departure_connector_start_x_m", departure_connector_start_x_m_) ||
-    !getInput("departure_connector_start_y_m", departure_connector_start_y_m_) ||
-    !getInput("departure_connector_start_yaw_rad", departure_connector_start_yaw_rad_) ||
-    !getInput(
-      "departure_connector_start_position_tolerance_m",
-      departure_connector_start_position_tolerance_m_) ||
-    !getInput(
-      "departure_connector_start_yaw_tolerance_rad",
-      departure_connector_start_yaw_tolerance_rad_) ||
-    !getInput(
-      "local_tracking_profile_start_position_tolerance_m",
-      local_tracking_lateral_profile_start_.position_tolerance_m) ||
-    !getInput(
-      "local_tracking_profile_start_yaw_tolerance_rad",
-      local_tracking_lateral_profile_start_.yaw_tolerance_rad) ||
-    !getInput(
-      "departure_connector_terminal_radius_m",
-      departure_connector_terminal_radius_m_) ||
-    !getInput(
-      "departure_connector_high_right_turn_radius_m",
-      departure_connector_high_right_turn_radius_m_) ||
-    !getInput("departure_connector_heading_bins", departure_connector_heading_bins_))
-  {
-    return false;
-  }
-  local_tracking_lateral_profile_start_.frame_id = global_frame_;
-  local_tracking_lateral_profile_start_.x_m = departure_connector_start_x_m_;
-  local_tracking_lateral_profile_start_.y_m = departure_connector_start_y_m_;
-  local_tracking_lateral_profile_start_.yaw_rad = departure_connector_start_yaw_rad_;
-  if (!departure_connector_enabled_) {
-    return local_tracking_lateral_profile_ == kForwardPathLateralProfileSymmetric;
-  }
-  if (reverse_ || through_poses_ || !finite(departure_connector_start_x_m_) ||
-    !finite(departure_connector_start_y_m_) ||
-    !finite(departure_connector_start_yaw_rad_) ||
-    !finite(departure_connector_start_position_tolerance_m_) ||
-    !finite(departure_connector_start_yaw_tolerance_rad_) ||
-    !finite(departure_connector_maximum_active_radius_m_) ||
-    !finite(departure_connector_terminal_radius_m_) ||
-    !finite(departure_connector_high_right_turn_radius_m_) ||
-    departure_connector_start_position_tolerance_m_ <= 0.0 ||
-    departure_connector_start_yaw_tolerance_rad_ <= 0.0 ||
-    departure_connector_maximum_active_radius_m_ <= 0.0 ||
-    departure_connector_heading_bins_ < 4 || departure_connector_heading_bins_ > 720 ||
-    !forwardPathLateralProfileStartValid(
-      local_tracking_lateral_profile_, local_tracking_lateral_profile_start_) ||
-    !forwardPathLateralProfileConfigurationValid(
-      local_tracking_lateral_profile_, local_tracking_cross_track_error_m_,
-      validation_options_.minimum_turning_radius) ||
-    (local_tracking_lateral_profile_ == kForwardPathLateralProfilePDepartureSouthV1 &&
-    static_keepout_mask_topic_.empty()))
-  {
-    return false;
-  }
-  departure_connector_options_.minimum_turning_radius_m =
-    validation_options_.minimum_turning_radius;
-  departure_connector_options_.radius_margin_m = radius_margin_m;
-  departure_connector_options_.sample_spacing_m = footprint_sweep_options_.sample_spacing_m;
-  departure_connector_options_.curvature_tolerance = validation_options_.curvature_tolerance;
-  departure_connector_options_.maximum_direction_error =
-    validation_options_.maximum_direction_error;
-  departure_connector_options_.minimum_segment_length =
-    validation_options_.minimum_segment_length;
-  if (!departureConnectorOptionsValid(departure_connector_options_)) {
-    return false;
-  }
-
-  // This tree is shared with the real vehicle, but the P connector is only
-  // admitted inside its explicit simulator envelope. Check that gate before
-  // validating the simulation-only terminal radius: a real-car run must
-  // continue with normal Smac planning rather than rejecting a 0.22 m
-  // connector it will never inject.
-  if (!departureConnectorRadiusWithinMaximum(
-      departure_connector_options_, departure_connector_maximum_active_radius_m_))
-  {
-    return true;
-  }
-  if (!departureConnectorHighRightTurnRadiusWithinEnvelope(
-      departure_connector_options_, departure_connector_high_right_turn_radius_m_,
-      departure_connector_maximum_active_radius_m_))
-  {
-    return false;
-  }
-  return departureConnectorTerminalRadiusWithinEnvelope(
-    departure_connector_options_, departure_connector_terminal_radius_m_,
-    departure_connector_maximum_active_radius_m_);
 }
 
 bool ComputeFreeHeadingPathAction::goalsChanged()
@@ -902,143 +758,9 @@ bool ComputeFreeHeadingPathAction::prepareTargetCandidates(bool reset_search)
   return !candidate_goals_.empty();
 }
 
-bool ComputeFreeHeadingPathAction::prepareDepartureConnectors()
-{
-  departure_connectors_.clear();
-  departure_connector_index_ = 0U;
-  if (!departure_connector_enabled_) {
-    return true;
-  }
-  if (reverse_ || through_poses_ || target_index_ != 0U || !virtual_path_.poses.empty()) {
-    RCLCPP_ERROR(
-      node_->get_logger(),
-      "P departure connectors are only valid for the first forward NavigateToPose edge");
-    planner_query_failed_ = true;
-    return false;
-  }
-  if (!departureConnectorRadiusWithinMaximum(
-      departure_connector_options_, departure_connector_maximum_active_radius_m_))
-  {
-    RCLCPP_DEBUG(
-      node_->get_logger(),
-      "Skipping P departure connector because active radius %.3f exceeds its %.3f m gate",
-      departure_connector_options_.minimum_turning_radius_m +
-      departure_connector_options_.radius_margin_m,
-      departure_connector_maximum_active_radius_m_);
-    return true;
-  }
-  const double start_distance = std::hypot(
-    virtual_start_.pose.position.x - departure_connector_start_x_m_,
-    virtual_start_.pose.position.y - departure_connector_start_y_m_);
-  const double start_yaw_error = angularDistance(
-    quaternionYaw(virtual_start_.pose.orientation), departure_connector_start_yaw_rad_);
-  if (start_distance > departure_connector_start_position_tolerance_m_ ||
-    start_yaw_error > departure_connector_start_yaw_tolerance_rad_)
-  {
-    // A recovery replan after the vehicle has left P must use its actual pose;
-    // do not replay a P-specific connector from a stale coordinate.
-    RCLCPP_DEBUG(
-      node_->get_logger(),
-      "Skipping P departure connector for non-P start distance=%.3f yaw_error=%.3f",
-      start_distance, start_yaw_error);
-    return true;
-  }
-  if (!hasFreshPlanningCostmaps()) {
-    planner_query_failed_ = true;
-    return false;
-  }
-
-  nav2_msgs::msg::Costmap::SharedPtr costmap;
-  {
-    std::lock_guard<std::mutex> lock(global_costmap_mutex_);
-    costmap = global_costmap_;
-  }
-  if (!costmap || costmap->header.frame_id != global_frame_ ||
-    costmap->metadata.resolution <= 0.0F || costmap->metadata.size_x == 0U ||
-    costmap->metadata.size_y == 0U ||
-    !isUnitQuaternion(costmap->metadata.origin.orientation) ||
-    angularDistance(quaternionYaw(costmap->metadata.origin.orientation), 0.0) >
-    kJoinYawTolerance)
-  {
-    // The lattice helper deliberately has no hidden field coordinate. It
-    // needs an axis-aligned, live raw-costmap grid, and rejects ambiguity
-    // rather than manufacturing a P departure in a rotated frame.
-    RCLCPP_ERROR(
-      node_->get_logger(),
-      "P departure lattice connector requires a fresh axis-aligned global raw costmap");
-    planner_query_failed_ = true;
-    return false;
-  }
-
-  const auto generated = buildPDepartureEscapeLatticeConnectors(
-    virtual_start_, costmap->metadata.origin.position.x,
-    costmap->metadata.origin.position.y,
-    static_cast<double>(costmap->metadata.resolution),
-    static_cast<std::size_t>(departure_connector_heading_bins_),
-    departure_connector_high_right_turn_radius_m_,
-    departure_connector_options_);
-  for (const auto & connector : generated) {
-    if (!connector.lattice_aligned) {
-      RCLCPP_ERROR(
-        node_->get_logger(), "Refusing a P departure connector without an exact lattice endpoint");
-      continue;
-    }
-    const auto kinematic = validateForwardConnectorPath(
-      connector.path, virtual_start_, departure_connector_options_);
-    if (!kinematic.valid) {
-      RCLCPP_ERROR(
-        node_->get_logger(),
-        "Rejected internally generated P departure connector: %s", kinematic.reason.c_str());
-      continue;
-    }
-    const PathQuality quality = pathQuality(connector.path);
-    if (staticKeepoutSweepIsInfrastructureFailure(quality)) {
-      logStaticKeepoutSweepFailure(quality, "departure_connector", 0U, 1U);
-      planner_query_failed_ = true;
-      return false;
-    }
-    if (localTrackingSweepIsInfrastructureFailure(quality)) {
-      logLocalTrackingSweepFailure(quality, "departure_connector", 0U, 1U);
-      planner_query_failed_ = true;
-      return false;
-    }
-    if (!hasAcceptableCostmapSample(quality)) {
-      logFootprintSweepFailure(quality, "departure_connector", 0U, 1U);
-      logStaticKeepoutSweepFailure(quality, "departure_connector", 0U, 1U);
-      logLocalTrackingSweepFailure(quality, "departure_connector", 0U, 1U);
-      continue;
-    }
-    RCLCPP_INFO(
-      node_->get_logger(),
-      "Accepted lattice-aligned P departure connector radius=%.3f high_right_radius=%.3f "
-      "arc_deg=%.1f "
-      "straight_m=%.3f end=(%.4f,%.4f,%.4f) length=%.3f max_curvature=%.3f",
-      connector.radius_m, connector.high_right_turn_radius_m,
-      connector.arc_angle_rad * 180.0 / kPi,
-      connector.straight_length_m,
-      connector.path.poses.back().pose.position.x,
-      connector.path.poses.back().pose.position.y,
-      quaternionYaw(connector.path.poses.back().pose.orientation),
-      kinematic.length_m, kinematic.maximum_curvature);
-    departure_connectors_.push_back(connector);
-  }
-  if (departure_connectors_.empty()) {
-    RCLCPP_ERROR(
-      node_->get_logger(),
-      "No P departure connector satisfies the fresh raw-costmap and full-footprint contract");
-    return false;
-  }
-  return true;
-}
-
 const geometry_msgs::msg::PoseStamped &
 ComputeFreeHeadingPathAction::plannerStartForCandidate() const
 {
-  if (departure_connector_index_ < departure_connectors_.size() &&
-    !departure_connectors_[departure_connector_index_].path.poses.empty())
-  {
-    return departure_connectors_[departure_connector_index_].path.poses.back();
-  }
   return virtual_start_;
 }
 
@@ -1047,39 +769,6 @@ bool ComputeFreeHeadingPathAction::buildCandidateSegment(
   nav_msgs::msg::Path & candidate_segment,
   std::string & reason) const
 {
-  candidate_segment = nav_msgs::msg::Path();
-  if (departure_connector_index_ < departure_connectors_.size()) {
-    const auto & departure = departure_connectors_[departure_connector_index_].path;
-    if (!appendSegmentChecked(candidate_segment, departure, reason)) {
-      return false;
-    }
-    if (target_index_ >= real_goals_.size() || departure.poses.empty() ||
-      isZeroQuaternion(real_goals_[target_index_].pose.orientation) ||
-      planarDistance(active_virtual_goal_, real_goals_[target_index_]) > kPositionEpsilon ||
-      angularDistance(
-        quaternionYaw(active_virtual_goal_.pose.orientation),
-        quaternionYaw(real_goals_[target_index_].pose.orientation)) > kPositionEpsilon)
-    {
-      reason = "p_terminal_goal_not_exact_locked_task_pose";
-      return false;
-    }
-
-    // Smac's heading lattice can return a pose quaternion that falls within
-    // the task tolerance while its final XY tangent still points elsewhere.
-    // The P escape prefix is already swept and tangent-continuous; finish it
-    // with a deterministic RSL curve to the authored task pose instead of
-    // publishing that quantized final segment to the controller.
-    nav_msgs::msg::Path terminal_connector;
-    if (!buildPDepartureRslTerminalConnector(
-        departure.poses.back(), real_goals_[target_index_],
-        departure_connector_terminal_radius_m_,
-        departure_connector_options_, terminal_connector))
-    {
-      reason = "p_terminal_rsl_unavailable";
-      return false;
-    }
-    return appendSegmentChecked(candidate_segment, terminal_connector, reason);
-  }
   return appendSegmentChecked(candidate_segment, planner_segment, reason);
 }
 
@@ -1112,18 +801,6 @@ ComputeFreeHeadingPathAction::goalCandidatesForTarget(
   if (!isZeroQuaternion(real_goal.pose.orientation)) {
     const double authored_virtual_yaw = referenceYawForGoal(
       real_goal, target_index, start);
-    if (!reverse_ && !through_poses_ && target_index == 0U &&
-      departure_connector_index_ < departure_connectors_.size())
-    {
-      // The P-specific RSL terminal connector is exact by construction. Do
-      // not let a tolerated heading sample cause an XY/tangent mismatch at
-      // the locked semantic task pose.
-      GoalCandidate candidate;
-      candidate.pose = real_goal;
-      candidate.pose.pose.orientation = quaternionFromYaw(authored_virtual_yaw);
-      candidates.push_back(std::move(candidate));
-      return candidates;
-    }
     // Keep the task position and semantic yaw fixed.  Only the planner's
     // terminal heading bin is varied inside the existing authored tolerance;
     // endpointMatchesCandidateAndRealGoal() below rejects any result that
@@ -1356,32 +1033,10 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
     return advanceCandidate();
   }
 
-  const bool has_departure_connector =
-    departure_connector_index_ < departure_connectors_.size();
-  // A generated P connector is only physically continuous when Smac starts
-  // at its exact lattice endpoint.  Unlike an ordinary explicit start, its
-  // permissible grid quantization cannot be charged as a virtual join: doing
-  // so would require editing the first planner sample and can change a legal
-  // tangent into an infeasible turn.
   const auto start_continuity = validatePlannerPathStartContinuity(
     *candidate_path, plannerStartForCandidate(),
-    has_departure_connector ? kJoinPositionTolerance : kPlannerPathStartPositionToleranceM,
-    has_departure_connector ? kJoinYawTolerance : kPlannerPathStartYawToleranceRad);
+    kPlannerPathStartPositionToleranceM, kPlannerPathStartYawToleranceRad);
   if (!start_continuity.valid) {
-    if (has_departure_connector) {
-      const auto & requested_start = plannerStartForCandidate();
-      const auto & returned_start = candidate_path->poses.front();
-      RCLCPP_WARN(
-        node_->get_logger(),
-        "Rejected P connector lattice handoff for candidate %zu goal %zu: %s "
-        "requested_start=(%.4f,%.4f,%.4f) returned_start=(%.4f,%.4f,%.4f)",
-        candidate_index_ + 1, target_index_ + 1, start_continuity.reason.c_str(),
-        requested_start.pose.position.x, requested_start.pose.position.y,
-        quaternionYaw(requested_start.pose.orientation),
-        returned_start.pose.position.x, returned_start.pose.position.y,
-        quaternionYaw(returned_start.pose.orientation));
-      return advanceCandidate();
-    }
     RCLCPP_ERROR(
       node_->get_logger(),
       "Free-heading planner candidate %zu for goal %zu violates the requested start contract: %s",
@@ -1395,40 +1050,15 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
   }
 
   nav_msgs::msg::Path candidate_segment;
-  std::string connector_reason;
-  if (!buildCandidateSegment(*candidate_path, candidate_segment, connector_reason)) {
+  std::string segment_reason;
+  if (!buildCandidateSegment(*candidate_path, candidate_segment, segment_reason)) {
     RCLCPP_WARN(
       node_->get_logger(),
-      "Rejected free-heading candidate %zu for goal %zu at P connector handoff: %s",
-      candidate_index_ + 1, target_index_ + 1, connector_reason.c_str());
+      "Rejected free-heading candidate %zu for goal %zu: %s",
+      candidate_index_ + 1, target_index_ + 1, segment_reason.c_str());
     return advanceCandidate();
   }
-  double length = planner_length;
-  if (departure_connector_index_ < departure_connectors_.size()) {
-    const auto kinematic = validateForwardConnectorPath(
-      candidate_segment, virtual_start_, departure_connector_options_);
-    if (!kinematic.valid) {
-      const auto & connector_end = plannerStartForCandidate();
-      const auto & raw_planner_start = candidate_path->poses.front();
-      const auto & raw_planner_next = candidate_path->poses.size() > 1U ?
-        candidate_path->poses[1U] : raw_planner_start;
-      RCLCPP_WARN(
-        node_->get_logger(),
-        "Rejected free-heading candidate %zu for goal %zu after P connector: %s "
-        "connector_end=(%.4f,%.4f,%.4f) raw_start=(%.4f,%.4f,%.4f) "
-        "raw_next=(%.4f,%.4f,%.4f) quantization_gap=(%.4f,%.4f)",
-        candidate_index_ + 1, target_index_ + 1, kinematic.reason.c_str(),
-        connector_end.pose.position.x, connector_end.pose.position.y,
-        quaternionYaw(connector_end.pose.orientation),
-        raw_planner_start.pose.position.x, raw_planner_start.pose.position.y,
-        quaternionYaw(raw_planner_start.pose.orientation),
-        raw_planner_next.pose.position.x, raw_planner_next.pose.position.y,
-        quaternionYaw(raw_planner_next.pose.orientation),
-        start_continuity.join_gap_m, start_continuity.yaw_error_rad);
-      return advanceCandidate();
-    }
-    length = kinematic.length_m;
-  }
+  const double length = planner_length;
 
   const auto & endpoint = candidate_segment.poses.back();
   const bool heading_matches = isUnitQuaternion(endpoint.pose.orientation) &&
@@ -1446,18 +1076,32 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
   if (!hasFreshPlanningCostmaps()) {
     return failPlannerQuery("required costmap became stale during candidate search", false);
   }
-  const PathQuality candidate_quality = pathQuality(candidate_segment);
+  // A rolling local costmap describes the vehicle's immediate surroundings.
+  // Future ThroughPoses edges start from virtual waypoints that the vehicle
+  // has not reached yet, so their local-envelope result would only report
+  // that the future edge lies outside today's rolling window. Every edge
+  // still undergoes the global raw-costmap and static-keepout full-footprint
+  // sweeps below; completeThroughPath() rechecks the actual chain prefix
+  // against the local envelope before publishing it.
+  const bool require_local_tracking_envelope =
+    !through_poses_ || target_index_ == 0U;
+  const PathQuality candidate_quality = pathQuality(
+    candidate_segment, require_local_tracking_envelope);
   if (staticKeepoutSweepIsInfrastructureFailure(candidate_quality)) {
     logStaticKeepoutSweepFailure(
       candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
     return failPlannerQuery("static keepout mask is unavailable or malformed", false);
   }
-  if (localTrackingSweepIsInfrastructureFailure(candidate_quality)) {
+  if (localTrackingSweepIsInfrastructureFailure(
+      candidate_quality, require_local_tracking_envelope))
+  {
     logLocalTrackingSweepFailure(
       candidate_quality, "candidate", candidate_index_ + 1, target_index_ + 1);
     return failPlannerQuery("filtered local tracking envelope is unavailable or malformed", false);
   }
-  if (!hasAcceptableCostmapSample(candidate_quality)) {
+  if (!hasAcceptableCostmapSample(
+      candidate_quality, require_local_tracking_envelope))
+  {
     // This check is deliberately independent of Smac's internal collision
     // checker.  Keep failures visible at the default simulator log level: a
     // silent disagreement would otherwise look like an unreachable goal and
@@ -1482,7 +1126,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeCandidate(
         candidate_quality.footprint_sweep_checked || candidate_quality.footprint_sweep_clear) &&
       (!candidate_quality.static_keepout_sweep_checked ||
       candidate_quality.static_keepout_sweep_clear) &&
-      (!local_tracking_envelope_enabled_ ||
+      (!require_local_tracking_envelope || !local_tracking_envelope_enabled_ ||
       (candidate_quality.local_tracking_sweep_checked &&
       candidate_quality.local_tracking_sweep_clear)))
     {
@@ -1578,28 +1222,28 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
       validation_options_.goal_yaw_tolerance &&
       endpointMatchesCandidateAndRealGoal(
       endpoint, active_lookahead_goal_, real_goals_[target_index_ + 1]);
-    const PathQuality continuation_quality = pathQuality(*candidate_path);
+    const PathQuality continuation_quality = pathQuality(*candidate_path, true);
     if (staticKeepoutSweepIsInfrastructureFailure(continuation_quality)) {
       logStaticKeepoutSweepFailure(
         continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
         target_index_ + 2);
       return failPlannerQuery("static keepout mask is unavailable or malformed", true);
     }
-    if (localTrackingSweepIsInfrastructureFailure(continuation_quality)) {
+    if (localTrackingSweepIsInfrastructureFailure(continuation_quality, true)) {
       logLocalTrackingSweepFailure(
         continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
         target_index_ + 2);
       return failPlannerQuery(
         "filtered local tracking envelope is unavailable or malformed", true);
     }
-    if (!hasAcceptableCostmapSample(continuation_quality) &&
+    if (!hasAcceptableCostmapSample(continuation_quality, true) &&
       continuation_quality.footprint_sweep_checked &&
       !continuation_quality.footprint_sweep_clear)
     {
       logFootprintSweepFailure(
         continuation_quality, "lookahead", lookahead_candidate_index_ + 1, target_index_ + 2);
     }
-    if (!hasAcceptableCostmapSample(continuation_quality) &&
+    if (!hasAcceptableCostmapSample(continuation_quality, true) &&
       continuation_quality.static_keepout_sweep_checked &&
       !continuation_quality.static_keepout_sweep_clear)
     {
@@ -1607,7 +1251,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
         continuation_quality, "lookahead", lookahead_candidate_index_ + 1,
         target_index_ + 2);
     }
-    if (!hasAcceptableCostmapSample(continuation_quality) &&
+    if (!hasAcceptableCostmapSample(continuation_quality, true) &&
       continuation_quality.local_tracking_sweep_checked &&
       !continuation_quality.local_tracking_sweep_clear)
     {
@@ -1616,7 +1260,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeLookahead(
         target_index_ + 2);
     }
     continuation_is_valid = continuation_is_valid &&
-      hasAcceptableCostmapSample(continuation_quality);
+      hasAcceptableCostmapSample(continuation_quality, true);
   }
 
   nav_msgs::msg::Path trial;
@@ -1661,7 +1305,10 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughCandidate(
   frame.selected_candidate_index = candidate_index_;
   frame.path_before = virtual_path_;
   frame.start_before = virtual_start_;
-  frame.edge_quality = pathQuality(candidate_path);
+  // Later ThroughPoses edges are evaluated from virtual starts. Their raw
+  // global and static sweeps remain mandatory, while only the current local
+  // tracking envelope belongs to the first, real-start edge.
+  frame.edge_quality = pathQuality(candidate_path, target_index_ == 0U);
   frame.edge_quality.length_m = edge_length_m;
   through_search_frames_.push_back(std::move(frame));
 
@@ -1704,21 +1351,23 @@ BT::NodeStatus ComputeFreeHeadingPathAction::completeThroughPath()
   if (!finite(chain_length)) {
     return failPlannerQuery("planner through-poses path has an invalid start-joined length", false);
   }
-  PathQuality quality = pathQuality(virtual_path_);
+  // The complete chain begins at the captured real pose, so this is the
+  // authoritative planning-time check of the controller's immediate prefix.
+  PathQuality quality = pathQuality(virtual_path_, true);
   quality.length_m = chain_length;
   if (staticKeepoutSweepIsInfrastructureFailure(quality)) {
     logStaticKeepoutSweepFailure(
       quality, "through_chain", through_complete_path_count_ + 1, real_goals_.size());
     return failPlannerQuery("static keepout mask is unavailable or malformed", false);
   }
-  if (localTrackingSweepIsInfrastructureFailure(quality)) {
+  if (localTrackingSweepIsInfrastructureFailure(quality, true)) {
     logLocalTrackingSweepFailure(
       quality, "through_chain", through_complete_path_count_ + 1, real_goals_.size());
     return failPlannerQuery("filtered local tracking envelope is unavailable or malformed", false);
   }
   ++through_complete_path_count_;
   std::string validation_reason;
-  const bool chain_is_valid = hasAcceptableCostmapSample(quality) &&
+  const bool chain_is_valid = hasAcceptableCostmapSample(quality, true) &&
     validateReverseTrial(virtual_path_, validation_reason);
   if (!chain_is_valid) {
     if (quality.footprint_sweep_checked && !quality.footprint_sweep_clear) {
@@ -1819,28 +1468,7 @@ BT::NodeStatus ComputeFreeHeadingPathAction::advanceCandidate()
     }
     return BT::NodeStatus::RUNNING;
   }
-  if (!through_poses_ &&
-    departure_connector_index_ + 1U < departure_connectors_.size())
-  {
-    return advanceDepartureConnector();
-  }
   return commitBestCandidate();
-}
-
-BT::NodeStatus ComputeFreeHeadingPathAction::advanceDepartureConnector()
-{
-  if (departure_connector_index_ + 1U >= departure_connectors_.size()) {
-    return commitBestCandidate();
-  }
-  ++departure_connector_index_;
-  if (!prepareTargetCandidates(false) || !startCandidateQuery()) {
-    if (std::chrono::steady_clock::now() >= search_deadline_) {
-      return commitBestCandidate();
-    }
-    planner_query_failed_ = true;
-    return BT::NodeStatus::FAILURE;
-  }
-  return BT::NodeStatus::RUNNING;
 }
 
 BT::NodeStatus ComputeFreeHeadingPathAction::advanceThroughCandidate()
@@ -1946,7 +1574,9 @@ std::optional<std::size_t> ComputeFreeHeadingPathAction::highestRiskThroughFrame
 }
 
 ComputeFreeHeadingPathAction::PathQuality
-ComputeFreeHeadingPathAction::pathQuality(const nav_msgs::msg::Path & path) const
+ComputeFreeHeadingPathAction::pathQuality(
+  const nav_msgs::msg::Path & path,
+  bool require_local_tracking_envelope) const
 {
   PathQuality quality;
   quality.length_m = pathLength(path);
@@ -2052,40 +1682,17 @@ ComputeFreeHeadingPathAction::pathQuality(const nav_msgs::msg::Path & path) cons
     quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kNoMask ||
     quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kClear;
 
-  if (local_tracking_envelope_enabled_) {
+  if (require_local_tracking_envelope && local_tracking_envelope_enabled_) {
     if (!quality.local_tracking_costmap_fresh) {
       return quality;
     }
-    std::string active_lateral_profile = kForwardPathLateralProfileSymmetric;
-    if (local_tracking_lateral_profile_ ==
-      kForwardPathLateralProfilePDepartureSouthV1 && departure_connector_enabled_)
-    {
-      // prepareDepartureConnectors() validates a generated connector before
-      // adding it to departure_connectors_. The strict path matcher below is
-      // the authority for this P-only profile; requiring a stored connector
-      // here would incorrectly force that first validation back to symmetric.
-      const auto match = forwardPathLateralProfileMatchesPlan(
-        local_tracking_lateral_profile_, path, local_tracking_lateral_profile_start_);
-      if (match == ForwardPathLateralProfilePathMatch::kInvalid) {
-        quality.local_tracking_lateral_profile = local_tracking_lateral_profile_;
-        quality.local_tracking_lateral_profile_active = true;
-        quality.local_tracking_sweep_checked = true;
-        quality.local_tracking_sweep_result = CostmapFootprintSweepResult::kInvalidInput;
-        return quality;
-      }
-      if (match == ForwardPathLateralProfilePathMatch::kMatches) {
-        active_lateral_profile = local_tracking_lateral_profile_;
-        quality.local_tracking_lateral_profile_active = true;
-      }
-    }
-    quality.local_tracking_lateral_profile = active_lateral_profile;
     CostmapFootprintSweepOptions local_options = footprint_sweep_options_;
     local_options.lethal_cost_threshold = local_tracking_lethal_cost_;
+    local_options.half_width_m += local_tracking_cross_track_error_m_;
     const double local_horizon = std::min(
       local_tracking_horizon_m_, std::max(0.0, quality.length_m));
     const auto local_result = localCostmapTrackingEnvelopeSweep(
-      path, *local_tracking_costmap, local_options, local_horizon,
-      active_lateral_profile, local_tracking_cross_track_error_m_);
+      path, *local_tracking_costmap, local_options, local_horizon);
     quality.local_tracking_sweep_checked = true;
     quality.local_tracking_sweep_result = local_result.sweep_result;
     quality.local_tracking_sweep_diagnostic = local_result.diagnostic;
@@ -2354,27 +1961,20 @@ bool ComputeFreeHeadingPathAction::hasStaticKeepoutMask() const
   return static_keepout_mask_ != nullptr;
 }
 
-bool ComputeFreeHeadingPathAction::pDepartureStaticKeepoutMaskRequired() const
-{
-  return departure_connector_enabled_ &&
-         local_tracking_lateral_profile_ == kForwardPathLateralProfilePDepartureSouthV1;
-}
-
 bool ComputeFreeHeadingPathAction::hasFreshPlanningCostmaps() const
 {
   return hasFreshGlobalCostmap() &&
-         (!local_tracking_envelope_enabled_ || hasFreshLocalFilteredCostmap()) &&
-         (!pDepartureStaticKeepoutMaskRequired() || hasStaticKeepoutMask());
+         (!local_tracking_envelope_enabled_ || hasFreshLocalFilteredCostmap());
 }
 
 bool ComputeFreeHeadingPathAction::hasAcceptableCostmapSample(
-  const PathQuality & quality) const
+  const PathQuality & quality,
+  bool require_local_tracking_envelope) const
 {
   return quality.has_costmap_sample && quality.footprint_sweep_checked &&
          quality.footprint_sweep_clear &&
          quality.static_keepout_sweep_clear &&
-         (!pDepartureStaticKeepoutMaskRequired() || quality.static_keepout_sweep_checked) &&
-         (!local_tracking_envelope_enabled_ ||
+         (!require_local_tracking_envelope || !local_tracking_envelope_enabled_ ||
          (quality.local_tracking_costmap_fresh && quality.local_tracking_sweep_checked &&
          quality.local_tracking_sweep_clear)) &&
          quality.maximum_cost <= maximum_path_cost_;
@@ -2384,15 +1984,14 @@ bool ComputeFreeHeadingPathAction::staticKeepoutSweepIsInfrastructureFailure(
   const PathQuality & quality) const
 {
   return quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kWrongFrame ||
-         quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kMalformed ||
-         (pDepartureStaticKeepoutMaskRequired() &&
-         quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kNoMask);
+         quality.static_keepout_sweep_result == StaticKeepoutMaskSweepResult::kMalformed;
 }
 
 bool ComputeFreeHeadingPathAction::localTrackingSweepIsInfrastructureFailure(
-  const PathQuality & quality) const
+  const PathQuality & quality,
+  bool require_local_tracking_envelope) const
 {
-  return local_tracking_envelope_enabled_ &&
+  return require_local_tracking_envelope && local_tracking_envelope_enabled_ &&
          (!quality.local_tracking_costmap_fresh ||
          (quality.local_tracking_sweep_checked &&
          quality.local_tracking_sweep_result == CostmapFootprintSweepResult::kInvalidInput));
@@ -2562,15 +2161,13 @@ void ComputeFreeHeadingPathAction::logLocalTrackingSweepFailure(
     RCLCPP_WARN(
       node_->get_logger(),
       "Free-heading filtered-local tracking envelope rejection scope=%s id=%zu goal=%zu "
-      "result=%s lateral_profile=%s lateral_profile_active=%s "
+      "result=%s "
       "costmap_topic=/local_costmap/costmap frame=%s stamp_ns=%lld sequence=%llu "
       "resolution_m=%.4f cross_track_envelope_m=%.3f horizon_m=%.3f covered_m=%.3f "
       "sample_pose=(%.4f,%.4f,%.4f) path_segment=%zu->%zu interpolation=%zu/%zu "
       "fraction=%.6f blocking_cell=(%zu,%zu) blocking_cell_world=(%.4f,%.4f) cost=%u",
       scope, identifier, goal_index,
       costmapFootprintSweepResultName(quality.local_tracking_sweep_result),
-      quality.local_tracking_lateral_profile.c_str(),
-      quality.local_tracking_lateral_profile_active ? "true" : "false",
       quality.local_tracking_costmap_frame.c_str(),
       static_cast<long long>(quality.local_tracking_costmap_stamp_ns),
       static_cast<unsigned long long>(quality.local_tracking_costmap_sequence),
@@ -2588,14 +2185,12 @@ void ComputeFreeHeadingPathAction::logLocalTrackingSweepFailure(
   RCLCPP_WARN(
     node_->get_logger(),
     "Free-heading filtered-local tracking envelope rejection scope=%s id=%zu goal=%zu "
-    "result=%s lateral_profile=%s lateral_profile_active=%s "
+    "result=%s "
     "costmap_topic=/local_costmap/costmap frame=%s stamp_ns=%lld sequence=%llu "
     "resolution_m=%.4f cross_track_envelope_m=%.3f horizon_m=%.3f covered_m=%.3f "
     "sample_pose=(%.4f,%.4f,%.4f)",
     scope, identifier, goal_index,
     costmapFootprintSweepResultName(quality.local_tracking_sweep_result),
-    quality.local_tracking_lateral_profile.c_str(),
-    quality.local_tracking_lateral_profile_active ? "true" : "false",
     quality.local_tracking_costmap_frame.c_str(),
     static_cast<long long>(quality.local_tracking_costmap_stamp_ns),
     static_cast<unsigned long long>(quality.local_tracking_costmap_sequence),

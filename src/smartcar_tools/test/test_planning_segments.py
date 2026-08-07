@@ -74,11 +74,11 @@ def mission_waypoints():
     return (
         waypoint("p_start", "start", 0.0, 0.0),
         waypoint("qr", "qr", 1.0, 0.0),
-        waypoint("via_to_vlm", "via", 1.5, 1.0, "reverse"),
-        waypoint("vlm", "vlm", 2.0, 1.0, "reverse"),
-        waypoint("via_return_1", "via", 2.5, 3.9, "reverse"),
-        waypoint("via_return_2", "via", 1.5, 1.5, "reverse"),
-        waypoint("p_finish", "return", 0.0, 0.0, "reverse"),
+        waypoint("via_to_vlm", "via", 1.5, 1.0),
+        waypoint("vlm", "vlm", 2.0, 1.0),
+        waypoint("via_return_1", "via", 2.5, 3.9),
+        waypoint("via_return_2", "via", 1.5, 1.5),
+        waypoint("p_finish", "return", 0.0, 0.0),
     )
 
 
@@ -86,8 +86,19 @@ class DragEditorDeletionTests(unittest.TestCase):
     def test_deleting_a_through_point_removes_its_model_and_keeps_route_valid(self):
         document, loaded = load_waypoint_document(NAV_ONLY_FILE)
         editor = DragEditor.__new__(DragEditor)
-        editor._waypoints = list(loaded)
-        editor._segments = list(load_planning_segments(document, loaded))
+        keep_ids = {
+            "p_start", "a_task_observe", "c_corner_1", "via_1", "via_3",
+            "p_finish",
+        }
+        editor._waypoints = [item for item in loaded if item.id in keep_ids]
+        editor._segments = [
+            PlanningSegment("p_to_qr", "forward", "p_start", "a_task_observe"),
+            PlanningSegment("qr_to_vlm", "forward", "a_task_observe", "c_corner_1"),
+            PlanningSegment(
+                "return_to_p", "forward", "c_corner_1", "p_finish",
+                ("via_1", "via_3"),
+            ),
+        ]
         editor._history = []
         editor._selected_segment = 2
         editor._selected_through = 1
@@ -119,6 +130,43 @@ class DragEditorDeletionTests(unittest.TestCase):
         editor._publish_markers.assert_called_once_with()
 
 
+class DragEditorDirectionTests(unittest.TestCase):
+    def test_forward_toggle_downgrades_a_reverse_handoff_terminal_profile(self):
+        editor = DragEditor.__new__(DragEditor)
+        editor._waypoints = [
+            waypoint("p_start", "start", 0.0, 0.0),
+            waypoint("via", "via", 1.0, 0.0, "reverse"),
+            Waypoint(
+                frame_id="odom_combined",
+                position=(2.0, 0.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
+                task="nav",
+                direction="reverse",
+                id="c_corner_1",
+                goal_profile="reverse_handoff",
+                heading_mode="locked",
+            ),
+        ]
+        editor._segments = [
+            PlanningSegment(
+                "to_c1", "reverse", "p_start", "c_corner_1", ("via",)
+            ),
+        ]
+        editor._selected_segment = 0
+        editor._history = []
+        editor._mark_route_changed = mock.Mock()
+
+        editor._on_direction_selected("正向（前进）")
+
+        self.assertEqual(editor._segments[0].direction, "forward")
+        handoff = next(
+            item for item in editor._waypoints if item.id == "c_corner_1"
+        )
+        self.assertEqual(handoff.goal_profile, "standard")
+        self.assertEqual(len(editor._history), 1)
+        editor._mark_route_changed.assert_called_once_with(rebuild_panel=True)
+
+
 class PlanningSegmentTests(unittest.TestCase):
     def assert_position_only_orientation_contract(self, route):
         for item in route:
@@ -135,10 +183,10 @@ class PlanningSegmentTests(unittest.TestCase):
         segments = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
             PlanningSegment(
-                "reverse_to_vlm", "reverse", "qr", "vlm", ("via_to_vlm",)
+                "to_vlm", "forward", "qr", "vlm", ("via_to_vlm",)
             ),
             PlanningSegment(
-                "return", "reverse", "vlm", "p_finish",
+                "return", "forward", "vlm", "p_finish",
                 ("via_return_1", "via_return_2"),
             ),
         )
@@ -156,8 +204,8 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(
             [item.direction for item in route],
             [
-                "forward", "forward", "reverse", "reverse", "reverse",
-                "reverse", "reverse",
+                "forward", "forward", "forward", "forward", "forward",
+                "forward", "forward",
             ],
         )
         self.assertEqual(validate_waypoints(route), route)
@@ -169,17 +217,17 @@ class PlanningSegmentTests(unittest.TestCase):
         source = mission_waypoints()
         incomplete = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
-            PlanningSegment("to_vlm", "reverse", "qr", "vlm"),
-            PlanningSegment("return", "reverse", "vlm", "p_finish"),
+            PlanningSegment("to_vlm", "forward", "qr", "vlm"),
+            PlanningSegment("return", "forward", "vlm", "p_finish"),
         )
         with self.assertRaisesRegex(PlanningSegmentError, "cover every waypoint"):
             validate_planning_segments(incomplete, source)
 
         discontinuous = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
-            PlanningSegment("bad", "reverse", "via_to_vlm", "vlm"),
+            PlanningSegment("bad", "forward", "via_to_vlm", "vlm"),
             PlanningSegment(
-                "return", "reverse", "vlm", "p_finish",
+                "return", "forward", "vlm", "p_finish",
                 ("via_return_1", "via_return_2"),
             ),
         )
@@ -195,10 +243,10 @@ class PlanningSegmentTests(unittest.TestCase):
 
         explicit = (
             PlanningSegment("to_qr", "forward", "p_start", "qr"),
-            PlanningSegment("to_vlm", "reverse", "qr", "vlm", ("via_to_vlm",)),
+            PlanningSegment("to_vlm", "forward", "qr", "vlm", ("via_to_vlm",)),
             PlanningSegment(
                 "return",
-                "reverse",
+                "forward",
                 "vlm",
                 "p_finish",
                 ("via_return_1", "via_return_2"),
@@ -208,8 +256,8 @@ class PlanningSegmentTests(unittest.TestCase):
             [(item.start_id, item.end_id, item.direction) for item in explicit],
             [
                 ("p_start", "qr", "forward"),
-                ("qr", "vlm", "reverse"),
-                ("vlm", "p_finish", "reverse"),
+                ("qr", "vlm", "forward"),
+                ("vlm", "p_finish", "forward"),
             ],
         )
         root = planning_segments_document({"calibrated": False}, explicit)
@@ -237,7 +285,7 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertGreater(len(points), 2)
         self.assertGreater(expanded, 0)
 
-        blocked = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(2.0, 3.3, 0.0))
+        blocked = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(2.0, 3.5, 0.0))
         self.assertIsNone(blocked)
 
     def test_transit_heading_remains_free_in_preflight(self):
@@ -404,13 +452,13 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(report.segments[1].legs[0].start_id, "middle")
         self.assertIn("navigation action", report.segments[0].message)
 
-    def test_simulation_segment_baseline_uses_only_semantic_replanning_boundaries(self):
+    def test_simulation_segment_baseline_preserves_the_precise_c1_boundary(self):
         document, source = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, source)
         runtime_actions = route_preflight_module._runtime_navigation_actions(
             source, segments
         )
-        self.assertEqual(len(runtime_actions), 3)
+        self.assertEqual(len(runtime_actions), 4)
         self.assertEqual(
             [
                 (
@@ -424,13 +472,23 @@ class PlanningSegmentTests(unittest.TestCase):
                 ("p_start", ("p_to_qr",), ("a_task_observe",)),
                 (
                     "a_task_observe",
+                    ("qr_to_via_2",),
+                    (
+                        "a_departure_exit", "via_2_entry", "via_2_corridor", "via_2",
+                    ),
+                ),
+                (
+                    "via_2",
                     ("qr_to_vlm",),
-                    ("via_2", "c_corner_1"),
+                    ("c_corner_1",),
                 ),
                 (
                     "c_corner_1",
                     ("return_to_p",),
-                    ("via_1", "via_3", "p_finish"),
+                    (
+                        "c_north_1", "c_north_2", "via_1", "via_3",
+                        "return_corridor_exit", "p_return_approach", "p_finish",
+                    ),
                 ),
             ],
         )
@@ -460,18 +518,19 @@ class PlanningSegmentTests(unittest.TestCase):
             )
 
         self.assertTrue(report.feasible)
-        self.assertEqual(plan_segment.call_count, 3)
+        self.assertEqual(plan_segment.call_count, 4)
         self.assertEqual(
             [item.segment_id for item in report.segments],
             [
                 "p_to_qr",
+                "qr_to_via_2",
                 "qr_to_vlm",
                 "return_to_p",
             ],
         )
         expected_warnings = tuple(
             f"{waypoint.id}: position-only; preflight leaves heading free"
-            for waypoint in source
+            for waypoint in materialize_route(source, segments)
             if not is_heading_locked(waypoint)
         )
         self.assertEqual(report.warnings, expected_warnings)
@@ -479,16 +538,26 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assert_position_only_orientation_contract(
             materialize_free_yaws(materialize_route(source, segments))
         )
+        qr_to_via_2 = next(
+            item for item in report.segments if item.segment_id == "qr_to_via_2"
+        )
+        self.assertTrue(qr_to_via_2.feasible)
+        self.assertEqual(
+            [(leg.start_id, leg.end_id) for leg in qr_to_via_2.legs],
+            [
+                ("a_task_observe", "a_departure_exit"),
+                ("a_departure_exit", "via_2_entry"),
+                ("via_2_entry", "via_2_corridor"),
+                ("via_2_corridor", "via_2"),
+            ],
+        )
         qr_to_vlm = next(
             item for item in report.segments if item.segment_id == "qr_to_vlm"
         )
         self.assertTrue(qr_to_vlm.feasible)
         self.assertEqual(
             [(leg.start_id, leg.end_id) for leg in qr_to_vlm.legs],
-            [
-                ("a_task_observe", "via_2"),
-                ("via_2", "c_corner_1"),
-            ],
+            [("via_2", "c_corner_1")],
         )
         return_to_p = next(
             item for item in report.segments if item.segment_id == "return_to_p"
@@ -497,9 +566,13 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(
             [(leg.start_id, leg.end_id) for leg in return_to_p.legs],
             [
-                ("c_corner_1", "via_1"),
+                ("c_corner_1", "c_north_1"),
+                ("c_north_1", "c_north_2"),
+                ("c_north_2", "via_1"),
                 ("via_1", "via_3"),
-                ("via_3", "p_finish"),
+                ("via_3", "return_corridor_exit"),
+                ("return_corridor_exit", "p_return_approach"),
+                ("p_return_approach", "p_finish"),
             ],
         )
 
@@ -507,24 +580,32 @@ class PlanningSegmentTests(unittest.TestCase):
         document, source = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, source)
 
+        self.assertTrue(all(segment.direction == "forward" for segment in segments))
+        self.assertTrue(all(waypoint.direction == "forward" for waypoint in source))
+
         report = preflight_route(
             load_field_reference(GEOMETRY_FILE), source, segments
         )
 
         self.assertTrue(report.feasible)
-        direct_return = next(
-            item for item in report.segments if item.segment_id == "return_to_p"
+        return_to_p = next(
+            item for item in report.segments
+            if item.segment_id == "return_to_p"
         )
-        self.assertTrue(direct_return.feasible)
+        self.assertTrue(return_to_p.feasible)
         self.assertEqual(
-            [(leg.start_id, leg.end_id) for leg in direct_return.legs],
+            [(leg.start_id, leg.end_id) for leg in return_to_p.legs],
             [
-                ("c_corner_1", "via_1"),
+                ("c_corner_1", "c_north_1"),
+                ("c_north_1", "c_north_2"),
+                ("c_north_2", "via_1"),
                 ("via_1", "via_3"),
-                ("via_3", "p_finish"),
+                ("via_3", "return_corridor_exit"),
+                ("return_corridor_exit", "p_return_approach"),
+                ("p_return_approach", "p_finish"),
             ],
         )
-        direct_leg = direct_return.legs[0]
+        direct_leg = return_to_p.legs[-1]
         start = next(item for item in source if item.id == direct_leg.start_id)
         end = next(item for item in source if item.id == direct_leg.end_id)
         chord = math.hypot(

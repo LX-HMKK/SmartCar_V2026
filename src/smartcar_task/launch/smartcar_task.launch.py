@@ -96,6 +96,16 @@ def generate_launch_description():
             description="Confirm RF2O timing, covariance, and fallback tests",
         ),
         DeclareLaunchArgument(
+            "use_depth_camera",
+            default_value="false",
+            description="Require calibrated Aurora depth obstacles for motion",
+        ),
+        DeclareLaunchArgument(
+            "depth_camera_calibrated",
+            default_value="false",
+            description="Confirm depth-camera frame, timing, and obstacle tests",
+        ),
+        DeclareLaunchArgument(
             "use_sim_time",
             default_value="false",
             description="Use the ROS simulation clock",
@@ -128,6 +138,10 @@ def generate_launch_description():
                         "use_laser_odometry"),
                     "laser_odometry_calibrated": LaunchConfiguration(
                         "laser_odometry_calibrated"),
+                    "use_depth_camera": LaunchConfiguration(
+                        "use_depth_camera"),
+                    "depth_camera_calibrated": LaunchConfiguration(
+                        "depth_camera_calibrated"),
                     "autostart_mission": LaunchConfiguration(
                         "autostart_mission"),
                     "navigation_test_end_segment_id": LaunchConfiguration(

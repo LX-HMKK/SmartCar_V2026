@@ -54,4 +54,23 @@ TEST(SafetyGuardTest, RejectsBothSpeedDirectionsUntilExplicitlyCleared) {
   }
 }
 
+TEST(SafetyGuardTest, RequiresFreshDepthPointsWhenConfigured) {
+  SafetyGuard guard(1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.30, true, true,
+                    true, 0.50, true);
+  ASSERT_TRUE(guard.mark_command(10.0, 0.0));
+  guard.mark_scan(10.0);
+  guard.mark_odom(10.0);
+  guard.mark_raw_odom(10.0);
+  EXPECT_EQ(guard.evaluate(10.10).reason, "depth_points_missing");
+
+  guard.mark_depth_points(10.0);
+  EXPECT_TRUE(guard.evaluate(10.20).allowed);
+
+  ASSERT_TRUE(guard.mark_command(10.60, 0.0));
+  guard.mark_scan(10.60);
+  guard.mark_odom(10.60);
+  guard.mark_raw_odom(10.60);
+  EXPECT_EQ(guard.evaluate(10.60).reason, "depth_points_stale");
+}
+
 }  // namespace smartcar_safety

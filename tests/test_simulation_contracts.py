@@ -127,6 +127,14 @@ SIM_REVERSE_BT_FILES = (
     / "behavior_trees"
     / "navigate_through_poses_reverse_return_sim_w_replanning_and_recovery.xml",
 )
+SIM_TRANSIT_THROUGH_POSES_BT = (
+    ROOT
+    / "src"
+    / "smartcar_nav2"
+    / "config"
+    / "behavior_trees"
+    / "navigate_through_poses_transit_w_replanning_and_recovery.xml"
+)
 PACKAGE_XML = SIM / "package.xml"
 
 
@@ -279,6 +287,13 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("OnProcessExit", launch)
         self.assertIn("target_action=sim_cleanup", launch)
         self.assertIn("on_exit=[start_after_cleanup]", launch)
+        self.assertIn('DeclareLaunchArgument("skip_cleanup"', launch)
+        self.assertIn("target_action=sim_cleanup_skip", launch)
+        self.assertIn('cmd=["bash", cleanup_script, "--skip"]', launch)
+
+        cleanup = SIM_CLEANUP.read_text(encoding="utf-8")
+        self.assertIn('elif [ "${1:-}" = "--skip" ]', cleanup)
+        self.assertIn("preserving an existing local ROS/Gazebo session", cleanup)
 
     def test_cleanup_reclaims_stale_keepout_stack(self) -> None:
         cleanup = SIM_CLEANUP.read_text(encoding="utf-8")
@@ -387,6 +402,34 @@ class SimulationContractTests(unittest.TestCase):
                 self.assertEqual(base_layer["observation_sources"], "scan")
                 self.assertEqual(base_layer["scan"]["topic"], "/scan")
                 self.assertEqual(base_layer["scan"]["data_type"], "LaserScan")
+
+    def test_optional_depth_obstacle_mode_keeps_scan_and_depth_sources(self) -> None:
+        launch = LAUNCH.read_text(encoding="utf-8")
+        adapter = (SIM / "scripts" / "sim_depth_pointcloud_adapter.py").read_text(
+            encoding="utf-8")
+        depth_overlay = yaml.safe_load((
+            ROOT / "src" / "smartcar_nav2" / "config"
+            / "depth_camera_obstacle_overlay.yaml"
+        ).read_text(encoding="utf-8"))
+
+        self.assertIn('"use_depth_obstacles"', launch)
+        self.assertIn('executable="sim_depth_pointcloud_adapter.py"', launch)
+        self.assertIn('"require_depth_points"', launch)
+        self.assertIn("nav2_depth_obstacle_overlay", launch)
+        self.assertIn("overlays.insert(", launch)
+        self.assertIn('"route_start_delay_sec"', launch)
+        self.assertIn("_nonnegative_float", launch)
+        self.assertIn("TimerAction(period=route_delay", launch)
+        self.assertIn("PointCloud2", adapter)
+        self.assertIn('"/smartcar/depth/points"', adapter)
+        self.assertIn("ExternalShutdownException", adapter)
+        for costmap in ("local_costmap", "global_costmap"):
+            layer = depth_overlay[costmap][costmap]["ros__parameters"][
+                "obstacle_layer"]
+            self.assertEqual(layer["observation_sources"], "scan depth_points")
+            self.assertEqual(layer["scan"]["topic"], "/scan")
+            self.assertEqual(layer["scan"]["data_type"], "LaserScan")
+            self.assertEqual(layer["scan"]["observation_persistence"], 0.0)
 
     def test_ackermann_model_can_execute_simulation_turning_radius(self) -> None:
         model = ET.parse(ROBOT_MODEL).getroot()
@@ -597,6 +640,9 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("parse_track_landmarks", source)
         self.assertIn("point_to_landmark_boundary_distance", source)
         self.assertIn("tf_odom_alignment", source)
+        self.assertIn("PointCloud2", source)
+        self.assertIn("require_depth_points", source)
+        self.assertIn('"depth_points_stamp_ns"', source)
         self.assertIn("track_world_file", source)
         self.assertIn("from std_msgs.msg import String", source)
         self.assertIn('"schema_version": 2', source)
@@ -935,6 +981,9 @@ class SimulationContractTests(unittest.TestCase):
 
         self.assertIn("native Ubuntu", source)
         self.assertIn("sim_cleanup.sh", source)
+        self.assertIn(
+            "--no-clean) clean_processes=false; skip_cleanup=true ;;", source)
+        self.assertIn('launch_args+=("skip_cleanup:=true")', source)
         self.assertNotIn("loopback0", source)
         self.assertNotIn("networkingMode", source)
         self.assertNotIn("wsl.exe", source)
@@ -1043,7 +1092,7 @@ class SimulationContractTests(unittest.TestCase):
         self.assertIn("keepout_bounds", source)
         self.assertNotIn("WALLS = [", source)
 
-    def test_keepout_filter_is_scoped_to_simulation_and_ready_before_nav2(self) -> None:
+    def test_simulation_costmaps_do_not_apply_the_field_keepout_filter(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
         overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
         planner = overlay["planner_server"]["ros__parameters"]["GridBased"]
@@ -1071,6 +1120,8 @@ class SimulationContractTests(unittest.TestCase):
             controller["ForwardAvoidance"]["forward_min_turning_radius"],
             planner["minimum_turning_radius"],
         )
+        self.assertEqual(
+            controller["precise_goal_checker"]["xy_goal_tolerance"], 0.10)
         self.assertAlmostEqual(
             controller["ForwardAvoidance"]["forward_max_angular_velocity"],
             0.30 / planner["minimum_turning_radius"],
@@ -1117,11 +1168,8 @@ class SimulationContractTests(unittest.TestCase):
         for costmap_name in ("local_costmap", "global_costmap"):
             parameters = overlay[costmap_name][costmap_name]["ros__parameters"]
             self.assertEqual(parameters["filters"], ["keepout_filter"])
-            keepout = parameters["keepout_filter"]
-            self.assertEqual(keepout["plugin"], "nav2_costmap_2d::KeepoutFilter")
-            self.assertIs(keepout["enabled"], True)
-            self.assertEqual(keepout["filter_info_topic"], "/keepout_filter_info")
-            self.assertEqual(parameters["inflation_layer"]["inflation_radius"], 0.15)
+            self.assertIs(parameters["keepout_filter"]["enabled"], False)
+            self.assertEqual(parameters["inflation_layer"]["inflation_radius"], 0.30)
 
         self.assertIn('executable="costmap_filter_info_server"', launch)
         self.assertIn('"topic_name": "/keepout_filter_mask"', launch)
@@ -1215,9 +1263,11 @@ class SimulationContractTests(unittest.TestCase):
         for parameter in (
             '"waypoints_file"',
             '"forward_behavior_tree"',
+            '"transit_behavior_tree"',
             '"precise_behavior_tree"',
             '"reverse_behavior_tree"',
             '"reverse_handoff_behavior_tree"',
+            '"through_poses_transit_behavior_tree"',
             '"nav2_params_file"',
         ):
             self.assertIn(parameter, launch)
@@ -1278,26 +1328,25 @@ class SimulationContractTests(unittest.TestCase):
             ],
             [
                 ("p_to_qr", "forward", "p_start", "a_task_observe"),
-                ("qr_to_vlm", "reverse", "a_task_observe", "c_corner_1"),
-                ("return_to_p", "reverse", "c_corner_1", "p_finish"),
+                ("qr_to_vlm", "forward", "a_task_observe", "c_corner_1"),
+                ("return_to_p", "forward", "c_corner_1", "p_finish"),
             ],
         )
         self.assertEqual(
             [segment["through_ids"] for segment in nav_only["planning_segments"]],
-            [[], ["via_2"], ["via_1", "via_3"]],
+            [[], ["via_1", "via_2"], ["via_3", "via_4"]],
         )
         self.assertEqual(
             [waypoint["id"] for waypoint in nav_only["waypoints"]],
             [
-                "p_start",
-                "a_task_observe",
-                "via_2",
-                "c_corner_1",
-                "via_1",
-                "via_3",
-                "p_finish",
+                "p_start", "a_task_observe", "via_1", "via_2",
+                "c_corner_1", "via_3", "via_4", "p_finish",
             ],
         )
+        self.assertTrue(all(
+            waypoint["direction"] == "forward"
+            for waypoint in nav_only["waypoints"]
+        ))
         waypoint_ids = {waypoint["id"] for waypoint in nav_only["waypoints"]}
         self.assertFalse(
             {
@@ -1313,52 +1362,123 @@ class SimulationContractTests(unittest.TestCase):
             if waypoint["id"] == "c_corner_1"
         )
         self.assertEqual(c_corner_1["task"], "nav")
-        self.assertEqual(c_corner_1["direction"], "reverse")
+        self.assertEqual(c_corner_1["direction"], "forward")
         self.assertEqual(c_corner_1["heading_mode"], "locked")
-        self.assertEqual(c_corner_1["goal_profile"], "reverse_handoff")
-        self.assertIn("orientation", c_corner_1["pose"])
-        via_1 = next(
-            waypoint for waypoint in nav_only["waypoints"]
-            if waypoint["id"] == "via_1"
+        self.assertEqual(c_corner_1["goal_profile"], "precise")
+        self.assertEqual(
+            c_corner_1["pose"]["orientation"],
+            {
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "w": 1.0,
+            },
         )
-        self.assertEqual(via_1["task"], "via")
-        self.assertEqual(via_1["direction"], "reverse")
-        self.assertEqual(via_1["goal_profile"], "standard")
-        self.assertNotIn("orientation", via_1["pose"])
         direct_return = next(
             waypoint for waypoint in nav_only["waypoints"]
             if waypoint["id"] == "p_finish"
         )
         self.assertEqual(direct_return["task"], "return")
-        self.assertEqual(direct_return["direction"], "reverse")
+        self.assertEqual(direct_return["direction"], "forward")
         self.assertEqual(
             direct_return["pose"]["orientation"],
             {
                 "x": 0.0,
                 "y": 0.0,
-                "z": 0.3826834323650898,
-                "w": 0.9238795325112867,
+                "z": -0.9486832980505138,
+                "w": 0.31622776601683794,
             },
         )
         self.assertIn("orientation", direct_return["pose"])
 
-    def test_sim_precise_tree_uses_native_smac_and_rpp(self) -> None:
+    def test_sim_precise_tree_uses_forward_avoidance_controller(self) -> None:
         real_compute = ET.parse(REAL_PRECISE_BT).find(
             ".//ComputeFreeHeadingPathToPose")
+        sim_overlay = yaml.safe_load(KEEPOUT_OVERLAY.read_text(encoding="utf-8"))
+        real_params = yaml.safe_load(NAV2_PARAMS.read_text(encoding="utf-8"))
         root = ET.parse(SIM_PRECISE_BT).getroot()
         tags = [element.tag for element in root.iter()]
-        sim_compute = root.find(".//ComputePathToPose")
-        sim_follow = root.find(".//FollowPath")
+        sim_compute = root.find(".//ComputeFreeHeadingPathToPose")
+        sim_follow = root.find(".//RecordFollowPath")
+        sim_latch = root.find(
+            './/LatchSuccess[@name="LatchPreciseSimFreeHeadingPathToPose"]')
 
         self.assertIsNotNone(real_compute)
         self.assertIsNotNone(sim_compute)
         self.assertIsNotNone(sim_follow)
+        self.assertIsNotNone(sim_latch)
         self.assertEqual(sim_compute.attrib["planner_id"], "GridBased")
-        self.assertEqual(sim_follow.attrib["controller_id"], "FollowPath")
+        # The accepted path must reject the same lethal cells that
+        # ForwardAvoidance's collision projection treats as blocked.
+        self.assertEqual(sim_compute.attrib["footprint_lethal_cost"], "254")
+        # Do not stack the planner's permitted locked-goal yaw error with the
+        # controller's arrival tolerance.  One 144-bin heading lattice cell
+        # remains available for quantization, while the semantic terminal is
+        # independently verified after FollowPath succeeds.
+        self.assertEqual(sim_compute.attrib["goal_yaw_tolerance"], "0.02")
+        self.assertNotIn("local_tracking_lateral_profile", sim_compute.attrib)
+        self.assertNotIn("static_keepout_mask_topic", sim_compute.attrib)
+        self.assertFalse(any(
+            key.startswith("departure_connector_")
+            for key in sim_compute.attrib
+        ))
+        compute_source = (ROOT / "src" / "smartcar_nav2" / "src" /
+                          "compute_free_heading_path_action.cpp").read_text(
+                              encoding="utf-8")
+        self.assertIn('"static_keepout_mask_topic", "",', compute_source)
+        self.assertIn(
+            'static_keepout_mask_topic.clear();', compute_source)
+        sim_forward = sim_overlay["controller_server"]["ros__parameters"][
+            "ForwardAvoidance"
+        ]
+        for forbidden in (
+            "forward_path_lateral_profile",
+            "forward_path_use_curvature_tracking",
+            "forward_path_p_departure_speed_cap_mps",
+            "forward_path_p_departure_right_correction_gain",
+            "forward_terminal_lookahead_m",
+            "forward_terminal_activation_distance_m",
+        ):
+            self.assertNotIn(forbidden, sim_forward)
+        self.assertIs(sim_forward["use_regulated_linear_velocity_scaling"], False)
+        self.assertIs(
+            sim_forward["use_cost_regulated_linear_velocity_scaling"], False)
+        real_forward = real_params["controller_server"]["ros__parameters"][
+            "ForwardAvoidance"
+        ]
+        for forbidden in (
+            "forward_path_lateral_profile",
+            "forward_path_use_curvature_tracking",
+            "forward_path_p_departure_speed_cap_mps",
+            "forward_path_p_departure_right_correction_gain",
+            "forward_terminal_lookahead_m",
+            "forward_terminal_activation_distance_m",
+        ):
+            self.assertNotIn(forbidden, real_forward)
+        self.assertEqual(
+            sim_follow.attrib["controller_id"], "ForwardAvoidance")
         self.assertEqual(sim_follow.attrib["goal_checker_id"], "precise_goal_checker")
+        self.assertEqual(
+            sim_follow.attrib["verify_physical_terminal_pose"], "true")
+        self.assertEqual(sim_follow.attrib["terminal_goal"], "{goal}")
+        self.assertEqual(
+            sim_follow.attrib["terminal_position_tolerance_m"], "0.12")
+        self.assertEqual(
+            sim_follow.attrib["terminal_yaw_tolerance_rad"], "0.15")
+        self.assertEqual(
+            sim_follow.attrib["terminal_verification_delay_ms"], "600")
+        self.assertEqual(
+            sim_follow.attrib["completion_settle_delay_ms"], "600")
+        self.assertIs(
+            sim_latch.find(".//ComputeFreeHeadingPathToPose"), sim_compute)
+        self.assertEqual(
+            len(list(sim_latch.iter("ComputeFreeHeadingPathToPose"))), 1)
+        self.assertNotIn(
+            "RecordFollowPath", {element.tag for element in sim_latch.iter()})
         # A controller collision must escape directly to the outer recovery,
-        # which clears both costmaps before ComputePathToPose is ticked again.
-        # Retrying FollowPath after only a local clear would send the old
+        # which clears both costmaps before ComputeFreeHeadingPathToPose is
+        # ticked again.
+        # Retrying RecordFollowPath after only a local clear would send the old
         # blackboard path back to RPP and exhaust controller patience first.
         self.assertIsNone(
             root.find('.//RecoveryNode[@name="FollowPreciseSimPath"]')
@@ -1379,12 +1499,11 @@ class SimulationContractTests(unittest.TestCase):
             ],
         )
         for custom_tag in (
-            "ComputeFreeHeadingPathToPose",
-            "RecordFollowPath",
             "OdomDistanceBudget",
-            "LatchSuccess",
         ):
             self.assertNotIn(custom_tag, tags)
+        self.assertIsNone(root.find(".//ComputePathToPose"))
+        self.assertIsNone(root.find(".//FollowPath"))
         for forbidden_tag in ("Spin", "BackUp", "Wait", "DriveOnHeading"):
             self.assertNotIn(forbidden_tag, tags)
 
@@ -1525,6 +1644,14 @@ class SimulationContractTests(unittest.TestCase):
                 self.assertEqual(signature(sim_root), signature(real_root))
 
         launch = LAUNCH.read_text(encoding="utf-8")
+        self.assertIn(
+            '"navigate_through_poses_transit_w_replanning_and_recovery.xml"',
+            launch,
+        )
+        self.assertIn(
+            '"through_poses_transit_behavior_tree": bt_transit_through_poses',
+            launch,
+        )
         for behavior_tree in SIM_REVERSE_BT_FILES:
             self.assertIn(f'"{behavior_tree.name}"', launch)
         self.assertIn('"reverse_behavior_tree": bt_reverse', launch)
@@ -1548,6 +1675,26 @@ class SimulationContractTests(unittest.TestCase):
             encoding="utf-8")
         for behavior_tree in SIM_REVERSE_BT_FILES:
             self.assertIn(behavior_tree.name, cmake)
+        self.assertIn(SIM_TRANSIT_THROUGH_POSES_BT.name, cmake)
+
+    def test_sim_transit_through_tree_uses_position_only_terminal_checker(self):
+        root = ET.parse(SIM_TRANSIT_THROUGH_POSES_BT).getroot()
+        follow = root.find(".//RecordFollowPath")
+        self.assertIsNotNone(follow)
+        assert follow is not None
+        self.assertEqual(follow.attrib["controller_id"], "ForwardAvoidance")
+        self.assertEqual(follow.attrib["goal_checker_id"], "transit_goal_checker")
+        self.assertIsNotNone(root.find(".//ComputeFreeHeadingPathThroughPoses"))
+        self.assertIsNone(root.find(".//RemovePassedGoals"))
+        tags = {element.tag for element in root.iter()}
+        for forbidden in (
+            "AckermannReverseRetreat",
+            "Spin",
+            "BackUp",
+            "Wait",
+            "DriveOnHeading",
+        ):
+            self.assertNotIn(forbidden, tags)
 
     def test_route_results_preserve_planning_and_execution_yaw_evidence(self) -> None:
         runner = AUTO_TRAIN.read_text(encoding="utf-8")
@@ -1629,6 +1776,10 @@ class SimulationContractTests(unittest.TestCase):
 
         self.assertIn("--packages-up-to smartcar_sim", runner)
         self.assertIn("run_route:=true", runner)
+        self.assertIn("--use-depth-obstacles", runner)
+        self.assertIn("use_depth_obstacles=true", runner)
+        self.assertIn('use_depth_obstacles:="$use_depth_obstacles"', runner)
+        self.assertIn("Depth obstacle mode:", runner)
         self.assertIn('for run_index in $(seq 1 "$loop_count")', runner)
         self.assertIn("precise_goal_checker.yaw_goal_tolerance", tuner)
         self.assertIn("precise_goal_checker.xy_goal_tolerance", tuner)

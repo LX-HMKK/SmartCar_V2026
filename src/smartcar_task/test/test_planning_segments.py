@@ -57,33 +57,27 @@ def waypoint(
 
 
 class PlanningSegmentActionTests(unittest.TestCase):
-    def test_strict_route_rejects_forward_reverse_handoff_and_return(self):
+    def test_strict_route_rejects_forward_reverse_handoff(self):
         document, waypoints = load_waypoint_document(NAV_ONLY_FILE)
         segments = list(load_planning_segments(document, waypoints))
-        reverse_handoff_segments = list(segments)
-        reverse_handoff_segments[1] = replace(
-            reverse_handoff_segments[1], direction="forward")
         semantic_waypoints = list(waypoints)
-        semantic_waypoints[2] = replace(
-            semantic_waypoints[2], goal_profile="standard")
+        handoff_index = next(
+            index
+            for index, waypoint in enumerate(semantic_waypoints)
+            if waypoint.id == "c_corner_1"
+        )
+        semantic_waypoints[handoff_index] = replace(
+            semantic_waypoints[handoff_index], goal_profile="reverse_handoff")
 
         with self.assertRaisesRegex(
             ValueError, "reverse_handoff goals must be reverse"
         ):
-            materialize_mission_route(
-                semantic_waypoints, reverse_handoff_segments)
+            materialize_mission_route(semantic_waypoints, segments)
 
-        direct_return_segments = list(segments)
-        direct_return_segments[2] = replace(
-            direct_return_segments[2], direction="reverse")
-        reverse_route = materialize_mission_route(
-            waypoints, direct_return_segments)
-        self.assertEqual(reverse_route[-1].direction, "reverse")
-
-        direct_return_segments[2] = replace(
-            direct_return_segments[2], direction="forward")
-        with self.assertRaisesRegex(ValueError, "direction must be reverse"):
-            materialize_mission_route(waypoints, direct_return_segments)
+        forward_route = materialize_mission_route(waypoints, segments)
+        self.assertTrue(all(
+            waypoint.direction == "forward" for waypoint in forward_route
+        ))
 
     def test_strict_route_rejects_reordered_qr_and_vlm_waypoints(self):
         _document, waypoints = load_waypoint_document(DEFAULT_WAYPOINTS_FILE)
@@ -94,11 +88,10 @@ class PlanningSegmentActionTests(unittest.TestCase):
         )
         segments = (
             PlanningSegment(
-                "to_vlm", "forward", "p_start", "c_corner_1", ("via_2",)
+                "to_vlm", "forward", "p_start", "c_corner_1",
             ),
             PlanningSegment(
                 "to_qr", "forward", "c_corner_1", "a_task_observe",
-                ("via_1", "via_3"),
             ),
             PlanningSegment(
                 "return", "forward", "a_task_observe", "p_finish",
@@ -149,12 +142,19 @@ class PlanningSegmentActionTests(unittest.TestCase):
             [["qr"], ["via", "vlm"], ["p_finish"]],
         )
 
-    def test_nav_only_route_uses_three_semantic_navigation_actions(self):
+    def test_nav_only_route_uses_safe_forward_actions_with_precise_c1(self):
         document, waypoints = load_waypoint_document(NAV_ONLY_FILE)
         segments = load_planning_segments(document, waypoints)
 
         actions = materialize_navigation_segments(waypoints, segments)
 
+        self.assertEqual(len(actions), 3)
+        self.assertEqual([len(action) for action in actions], [1, 1, 1])
+        self.assertTrue(all(
+            waypoint.direction == "forward"
+            for action in actions
+            for waypoint in action
+        ))
         self.assertEqual(
             [
                 (action[0].direction, [waypoint.id for waypoint in action])
@@ -162,8 +162,8 @@ class PlanningSegmentActionTests(unittest.TestCase):
             ],
             [
                 ("forward", ["a_task_observe"]),
-                ("reverse", ["via_2", "c_corner_1"]),
-                ("reverse", ["via_1", "via_3", "p_finish"]),
+                ("forward", ["c_corner_1"]),
+                ("forward", ["p_finish"]),
             ],
         )
 
@@ -196,16 +196,16 @@ class PlanningSegmentActionTests(unittest.TestCase):
             ],
             [
                 ("forward", ["a_task_observe"]),
-                ("reverse", ["via_2", "c_corner_1"]),
-                ("reverse", ["via_1", "via_3", "p_finish"]),
+                ("forward", ["c_corner_1"]),
+                ("forward", ["p_finish"]),
             ],
         )
         self.assertEqual(
             [waypoint.task for waypoint in waypoints],
-            ["start", "qr", "via", "vlm", "via", "via", "return"],
+            ["start", "qr", "vlm", "return"],
         )
 
-    def test_rejects_nonstandard_goal_in_multi_goal_action(self):
+    def test_allows_standard_vias_before_terminal_precise_goal(self):
         waypoints = (
             waypoint("p_start", "start", 0.0),
             waypoint("via", "via", 1.0),
@@ -217,11 +217,41 @@ class PlanningSegmentActionTests(unittest.TestCase):
             PlanningSegment("return", "forward", "qr", "p_finish"),
         )
 
-        with self.assertRaisesRegex(
-            PlanningSegmentError,
-            "NavigateThroughPoses cannot combine nonstandard goal profiles",
-        ):
-            materialize_navigation_segments(waypoints, segments)
+        actions = materialize_navigation_segments(waypoints, segments)
+
+        self.assertEqual(
+            [[item.id for item in action] for action in actions],
+            [["via", "qr"], ["p_finish"]],
+        )
+
+    def test_rejects_invalid_terminal_precise_through_poses_shapes(self):
+        precise = waypoint(
+            "precise", "qr", 2.0, goal_profile="precise", heading_mode="locked")
+        cases = (
+            (
+                "precise_is_not_terminal",
+                (
+                    waypoint("p_start", "start", 0.0), precise,
+                    waypoint("via", "via", 3.0),
+                    waypoint("p_finish", "return", 4.0),
+                ),
+                (PlanningSegment("to_finish", "forward", "p_start", "p_finish", ("precise", "via")),),
+            ),
+            (
+                "precise_is_reverse",
+                (
+                    waypoint("p_start", "start", 0.0),
+                    waypoint("via", "via", 1.0, "reverse"),
+                    waypoint("precise", "qr", 2.0, "reverse", "precise", "locked"),
+                    waypoint("p_finish", "return", 3.0, "reverse"),
+                ),
+                (PlanningSegment("to_precise", "reverse", "p_start", "precise", ("via",)),),
+            ),
+        )
+        for label, points, segments in cases:
+            with self.subTest(label=label):
+                with self.assertRaises(PlanningSegmentError):
+                    materialize_navigation_segments(points, segments)
 
     def test_allows_terminal_locked_reverse_handoff_in_reverse_through_poses(self):
         waypoints = (
