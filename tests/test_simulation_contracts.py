@@ -403,7 +403,7 @@ class SimulationContractTests(unittest.TestCase):
                 self.assertEqual(base_layer["scan"]["topic"], "/scan")
                 self.assertEqual(base_layer["scan"]["data_type"], "LaserScan")
 
-    def test_optional_depth_obstacle_mode_keeps_scan_and_depth_sources(self) -> None:
+    def test_optional_depth_obstacle_mode_uses_only_depth_points(self) -> None:
         launch = LAUNCH.read_text(encoding="utf-8")
         adapter = (SIM / "scripts" / "sim_depth_pointcloud_adapter.py").read_text(
             encoding="utf-8")
@@ -426,10 +426,8 @@ class SimulationContractTests(unittest.TestCase):
         for costmap in ("local_costmap", "global_costmap"):
             layer = depth_overlay[costmap][costmap]["ros__parameters"][
                 "obstacle_layer"]
-            self.assertEqual(layer["observation_sources"], "scan depth_points")
-            self.assertEqual(layer["scan"]["topic"], "/scan")
-            self.assertEqual(layer["scan"]["data_type"], "LaserScan")
-            self.assertEqual(layer["scan"]["observation_persistence"], 0.0)
+            self.assertEqual(layer["observation_sources"], "depth_points")
+            self.assertNotIn("scan", layer)
 
     def test_ackermann_model_can_execute_simulation_turning_radius(self) -> None:
         model = ET.parse(ROBOT_MODEL).getroot()

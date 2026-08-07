@@ -38,6 +38,9 @@ def _camera_action(
     aurora_rgb_enable,
     aurora_depth_enable,
     aurora_point_cloud_enable,
+    aurora_rgb_fps,
+    aurora_ir_fps,
+    aurora_heart_enable,
 ):
     if camera_driver == "aurora":
         return IncludeLaunchDescription(
@@ -48,14 +51,18 @@ def _camera_action(
             ])),
             launch_arguments={
                 "rgb_enable": aurora_rgb_enable,
-                "rgb_fps": "15",
-                "ir_fps": "15",
+                "rgb_fps": aurora_rgb_fps,
+                "ir_fps": aurora_ir_fps,
                 "depth_enable": aurora_depth_enable,
                 "ir_enable": "false",
                 "point_cloud_enable": aurora_point_cloud_enable,
                 "rgbd_enable": "false",
                 "align_mode": "false",
                 "depth_correction": "false",
+                # Aurora 930 firmware 1.7.2 rejects the SDK heartbeat despite
+                # maintaining a healthy depth stream. Depth freshness is
+                # instead enforced fail-closed by smartcar_safety.
+                "heart_enable": aurora_heart_enable,
             }.items(),
         )
     if camera_driver == "usb":
@@ -111,6 +118,11 @@ def _runtime_actions(context):
     aurora_point_cloud_enable = _as_bool(
         LaunchConfiguration("aurora_point_cloud_enable").perform(context),
         "aurora_point_cloud_enable")
+    aurora_heart_enable = _as_bool(
+        LaunchConfiguration("aurora_heart_enable").perform(context),
+        "aurora_heart_enable")
+    aurora_rgb_fps = LaunchConfiguration("aurora_rgb_fps").perform(context)
+    aurora_ir_fps = LaunchConfiguration("aurora_ir_fps").perform(context)
     if camera_driver not in VALID_DRIVERS:
         raise RuntimeError(
             "camera_driver must be one of aurora, usb, mipi, or none")
@@ -137,6 +149,9 @@ def _runtime_actions(context):
             aurora_depth_enable="true" if aurora_depth_enable else "false",
             aurora_point_cloud_enable=(
                 "true" if aurora_point_cloud_enable else "false"),
+            aurora_rgb_fps=aurora_rgb_fps,
+            aurora_ir_fps=aurora_ir_fps,
+            aurora_heart_enable="true" if aurora_heart_enable else "false",
         )
         if camera_action is not None:
             actions.append(camera_action)
@@ -224,6 +239,21 @@ def generate_launch_description():
             "aurora_point_cloud_enable",
             default_value="false",
             description="Publish Aurora PointCloud2 when depth is enabled",
+        ),
+        DeclareLaunchArgument(
+            "aurora_rgb_fps",
+            default_value="10",
+            description="Aurora RGB frame rate",
+        ),
+        DeclareLaunchArgument(
+            "aurora_ir_fps",
+            default_value="10",
+            description="Aurora IR/depth frame rate",
+        ),
+        DeclareLaunchArgument(
+            "aurora_heart_enable",
+            default_value="false",
+            description="Enable the Aurora SDK heartbeat",
         ),
         DeclareLaunchArgument(
             "config_file",

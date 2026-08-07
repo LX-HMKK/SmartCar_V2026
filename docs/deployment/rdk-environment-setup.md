@@ -336,7 +336,9 @@ ros2 service call /smartcar/safety/emergency_stop \
   std_srvs/srv/SetBool "{data: false}"
 ```
 
-`/smartcar/task/stop` 不等于急停。串口断线、无新鲜 `/scan`、无新鲜原始/融合里程计或非法速度都会让安全门 fail-closed。底盘进程关闭时会复用当前串口发送一次零命令；仍必须准备人工可触达的物理急停。
+`/smartcar/task/stop` 不等于急停。串口断线、当前避障源（普通模式 `/scan`、深度模式
+`/smartcar/depth/points`）不新鲜、无新鲜原始/融合里程计或非法速度都会让安全门 fail-closed。
+底盘进程关闭时会复用当前串口发送一次零命令；仍必须准备人工可触达的物理急停。
 
 ## 9. 视觉、火山 VLM 与语音合成
 
@@ -350,13 +352,15 @@ Aurora 930 可作为唯一的 Nav2 动态障碍物来源，但必须显式开启
 bash /root/nav_test.sh --depth-camera
 ```
 
-该入口使 Aurora 发布深度点云，并通过 `depth_pointcloud_relay` 验证 frame、点云布局和有限浮点
-XYZ 样本、以本地接收时间重标时间戳后发布 `/smartcar/depth/points`。深度模式选择
+该入口关闭 LiDAR/RF2O，使 Aurora 发布深度点云，并通过 `depth_pointcloud_relay` 验证 frame、
+点云布局和有限浮点 XYZ 样本。Aurora 930 1.7.2 的源时间戳乘以 `1000` 后与 ROS 时钟对齐，再发布
+`/smartcar/depth/points`。深度模式选择
 `depth_camera_obstacle_overlay.yaml`，两个 costmap 的 `observation_sources` 均为
-`depth_points`，不包含 `/scan`。LiDAR 保留为 safety 的独立 scan 心跳，而不是 Nav2 的避障
-输入。脚本在急停保持锁存时检查点云、两张 costmap 和 KeepoutFilter；`depth_camera_calibrated`
-与全部运动门禁仍默认 `false`，所以该步骤不允许发车。完成 Aurora 外参、frame、量程、清障和
-实车避障验收后，才可按既有门禁流程进行受看护运动测试。
+`depth_points`，不包含 `/scan`；safety 同样以该点云作为唯一避障心跳。深度相机安装在前轴正上方、
+离地 `0.15 m`，其相对 `base_link` 的位置为 `(0.1049, 0, 0.12)`；点云朝向和障碍覆盖范围尚未
+实测。脚本在急停保持锁存时检查点云、两张 costmap 和 KeepoutFilter；
+`depth_camera_calibrated` 与全部运动门禁仍默认 `false`，所以该步骤不允许发车。完成 Aurora 外参、
+frame、量程、清障和实车避障验收后，才可按既有门禁流程进行受看护运动测试。
 
 `vision.yaml` 默认 `vlm_backend_mode: disabled`，因此未选择后端时 DescribeScene 返回兜底文案。`vision_volcengine.yaml` 是显式启用的火山 Ark 配置：它使用 Python 3 标准库调用 OpenAI-compatible HTTPS 接口，不需要安装 Ark SDK，且仍由外层无 shell 命令后端强制终止。整个请求包含图像等待、JPEG 编码和后端推理，共享硬上限 8 秒；公网响应过慢时按既有合同返回“检测到人物立牌”。
 

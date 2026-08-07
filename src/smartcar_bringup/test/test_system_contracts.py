@@ -19,6 +19,7 @@ DEPTH_OVERLAY = (
     ROOT / "src" / "smartcar_nav2" / "config"
     / "depth_camera_obstacle_overlay.yaml"
 )
+UDEV_RULES = ROOT / "config" / "udev" / "99-smartcar-aurora-usb-power.rules"
 
 
 def launch_default(path, name):
@@ -122,34 +123,48 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('"barcode_reader_image_topic": image_topic', source)
         self.assertIn("OpaqueFunction(function=_task_actions)", source)
 
-    def test_depth_camera_is_opt_in_and_keeps_nav2_scan_observations(self):
+    def test_depth_camera_can_be_the_only_obstacle_source(self):
         source = SYSTEM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(SYSTEM, "use_depth_camera"), "false")
         self.assertEqual(
             launch_default(SYSTEM, "depth_camera_calibrated"), "false")
-        self.assertIn('"use_depth_camera requires use_lidar=true', source)
+        self.assertIn(
+            'use_nav requires use_lidar=true or use_depth_camera=true', source)
         self.assertIn('executable="depth_pointcloud_relay"', source)
         self.assertIn('"depth_camera_calibrated"', source)
         self.assertIn('"safety_require_depth_points": LaunchConfiguration(', source)
         self.assertIn('"use_depth_camera")', source)
+        self.assertIn('"safety_require_scan": use_lidar', source)
+        self.assertEqual(launch_default(SYSTEM, "aurora_ir_fps"), "10")
+        self.assertEqual(launch_default(SYSTEM, "aurora_heart_enable"), "false")
+        self.assertEqual(launch_default(VISION, "aurora_ir_fps"), "10")
+        self.assertEqual(launch_default(VISION, "aurora_heart_enable"), "false")
+        vision_source = VISION.read_text(encoding="utf-8")
+        self.assertIn('"heart_enable": aurora_heart_enable', vision_source)
 
         config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
-        self.assertIs(config["toggles"]["use_depth_camera"], False)
+        self.assertIs(config["toggles"]["use_lidar"], False)
+        self.assertIs(config["toggles"]["use_depth_camera"], True)
         depth = config["extrinsics"]["link_to_depth_camera"]
         self.assertIs(depth["measured"], False)
         self.assertEqual(depth["child"], "depth_camera_link_1")
+        self.assertEqual(depth["xyz"], [0.1049, 0.0, 0.12])
         self.assertIs(config["motion_gates"]["depth_camera_calibrated"], False)
 
         overlay = yaml.safe_load(DEPTH_OVERLAY.read_text(encoding="utf-8"))
         for costmap in ("local_costmap", "global_costmap"):
             layer = overlay[costmap][costmap]["ros__parameters"][
                 "obstacle_layer"]
-            self.assertEqual(layer["observation_sources"], "scan depth_points")
-            self.assertEqual(layer["scan"]["topic"], "/scan")
-            self.assertEqual(layer["scan"]["data_type"], "LaserScan")
-            self.assertEqual(layer["scan"]["observation_persistence"], 0.0)
+            self.assertEqual(layer["observation_sources"], "depth_points")
+            self.assertNotIn("scan", layer)
             self.assertEqual(layer["depth_points"]["topic"], "/smartcar/depth/points")
             self.assertEqual(layer["depth_points"]["data_type"], "PointCloud2")
+            self.assertEqual(layer["depth_points"]["expected_update_rate"], 0.20)
+
+        rules = UDEV_RULES.read_text(encoding="utf-8")
+        self.assertIn('ATTR{idVendor}=="05e3", ATTR{idProduct}=="0610"', rules)
+        self.assertIn('ATTR{idVendor}=="3251", ATTR{idProduct}=="1930"', rules)
+        self.assertEqual(rules.count('ATTR{power/control}="on"'), 2)
 
     def test_system_rejects_external_nav2_overlays(self):
         source = SYSTEM.read_text(encoding="utf-8")

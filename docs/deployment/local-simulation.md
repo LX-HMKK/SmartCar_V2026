@@ -156,8 +156,8 @@ bash src/smartcar_sim/scripts/sim_tune.sh --headless --use-depth-obstacles --loo
 ```
 
 该选项只在 Gazebo 中将模拟 `/scan` 转换为
-`/smartcar/depth/points` 并替换 Nav2 的障碍物观测源；`/scan` 仍保留给传感器
-门禁。它不启用实体深度相机，也不改变实体导航参数。
+`/smartcar/depth/points` 并替换 Nav2 的障碍物观测源。它不启用实体深度相机，也不改变实体
+导航参数。
 
 Gazebo 最小转弯半径由
 `src/smartcar_tools/config/routes/route_planning.yaml` 的

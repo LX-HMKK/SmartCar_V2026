@@ -5,6 +5,7 @@ import math
 import struct
 import time
 
+from builtin_interfaces.msg import Time
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
@@ -26,6 +27,7 @@ _FLOAT_FIELD_FORMATS = {
     PointField.FLOAT64: ("d", 8),
 }
 _XYZ_SAMPLE_LIMIT = 128
+_NANOSECONDS_PER_SECOND = 1_000_000_000
 
 
 def _xyz_field_layout(message: PointCloud2) -> tuple[tuple[int, str], ...]:
@@ -77,18 +79,68 @@ def _has_finite_xyz_sample(message: PointCloud2) -> bool:
     return False
 
 
+def _stamp_to_nanoseconds(stamp: Time) -> int:
+    if stamp.sec < 0 or not 0 <= stamp.nanosec < _NANOSECONDS_PER_SECOND:
+        raise ValueError("point cloud timestamp is invalid")
+    return stamp.sec * _NANOSECONDS_PER_SECOND + stamp.nanosec
+
+
+def _stamp_from_nanoseconds(nanoseconds: int) -> Time:
+    if nanoseconds < 0:
+        raise ValueError("point cloud timestamp is before the ROS epoch")
+    stamp = Time()
+    stamp.sec, stamp.nanosec = divmod(
+        nanoseconds, _NANOSECONDS_PER_SECOND)
+    return stamp
+
+
+def correct_aurora_timestamp(stamp: Time, source_timestamp_scale: int) -> Time:
+    """Convert Aurora 930 firmware 1.7.2's millisecond-scale ROS stamp.
+
+    The driver serializes a nanosecond value that is exactly 1/1000 of the
+    camera's acquisition timestamp. Scaling restores the ROS clock domain;
+    it must not be replaced with callback receipt time, which breaks TF when
+    the vehicle is moving.
+    """
+    if isinstance(source_timestamp_scale, bool) or (
+        not isinstance(source_timestamp_scale, int)
+        or source_timestamp_scale <= 0
+    ):
+        raise ValueError("source_timestamp_scale must be a positive integer")
+    return _stamp_from_nanoseconds(
+        _stamp_to_nanoseconds(stamp) * source_timestamp_scale)
+
+
+def validate_capture_timestamp(
+    capture_stamp: Time,
+    receipt_stamp: Time,
+    *,
+    max_capture_age_sec: float,
+    max_future_skew_sec: float,
+) -> None:
+    """Reject delayed or future clouds without conflating them with frame rate."""
+    if (
+        not math.isfinite(max_capture_age_sec)
+        or max_capture_age_sec <= 0.0
+        or not math.isfinite(max_future_skew_sec)
+        or max_future_skew_sec < 0.0
+    ):
+        raise ValueError("capture timestamp tolerances are invalid")
+    age_ns = _stamp_to_nanoseconds(receipt_stamp) - _stamp_to_nanoseconds(
+        capture_stamp)
+    if age_ns < -int(max_future_skew_sec * _NANOSECONDS_PER_SECOND):
+        raise ValueError("point cloud capture timestamp is too far in the future")
+    if age_ns > int(max_capture_age_sec * _NANOSECONDS_PER_SECOND):
+        raise ValueError("point cloud capture timestamp is too old")
+
+
 def retime_point_cloud(
     message: PointCloud2,
     stamp,
     expected_frame: str,
     output_frame: str = "",
 ) -> PointCloud2:
-    """Copy a valid cloud with the local receipt timestamp and same frame.
-
-    Aurora 930 firmware 1.7.2 publishes point-cloud seconds in the wrong
-    unit. Nav2 rejects that cloud against TF's time cache, so receipt time is
-    used after validating the transport and source frame.
-    """
+    """Copy a valid cloud with its corrected acquisition time and same frame."""
     frame_id = message.header.frame_id.strip()
     if not frame_id:
         raise ValueError("point cloud frame_id is empty")
@@ -133,6 +185,9 @@ class DepthPointCloudRelay(Node):
         self.declare_parameter("expected_frame", "depth_camera_link_1")
         self.declare_parameter("output_frame", "")
         self.declare_parameter("stale_timeout_sec", 0.50)
+        self.declare_parameter("source_timestamp_scale", 1000)
+        self.declare_parameter("max_capture_age_sec", 0.10)
+        self.declare_parameter("max_future_skew_sec", 0.05)
 
         input_topic = str(self.get_parameter("input_topic").value).strip()
         output_topic = str(self.get_parameter("output_topic").value).strip()
@@ -142,6 +197,12 @@ class DepthPointCloudRelay(Node):
             self.get_parameter("output_frame").value).strip()
         stale_timeout = float(
             self.get_parameter("stale_timeout_sec").value)
+        source_timestamp_scale = self.get_parameter(
+            "source_timestamp_scale").value
+        max_capture_age_sec = float(self.get_parameter(
+            "max_capture_age_sec").value)
+        max_future_skew_sec = float(self.get_parameter(
+            "max_future_skew_sec").value)
         if not input_topic or not output_topic:
             raise ValueError("input_topic and output_topic must be non-empty")
         if (
@@ -154,8 +215,24 @@ class DepthPointCloudRelay(Node):
                 "the relay does not transform coordinates")
         if not math.isfinite(stale_timeout) or stale_timeout <= 0.0:
             raise ValueError("stale_timeout_sec must be positive and finite")
+        if (
+            isinstance(source_timestamp_scale, bool)
+            or not isinstance(source_timestamp_scale, int)
+            or source_timestamp_scale <= 0
+        ):
+            raise ValueError("source_timestamp_scale must be a positive integer")
+        if (
+            not math.isfinite(max_capture_age_sec)
+            or max_capture_age_sec <= 0.0
+            or not math.isfinite(max_future_skew_sec)
+            or max_future_skew_sec < 0.0
+        ):
+            raise ValueError("capture timestamp tolerances are invalid")
 
         self._stale_timeout = stale_timeout
+        self._source_timestamp_scale = source_timestamp_scale
+        self._max_capture_age_sec = max_capture_age_sec
+        self._max_future_skew_sec = max_future_skew_sec
         self._last_received_at: float | None = None
         self._status = ""
         self._publisher = self.create_publisher(
@@ -176,9 +253,18 @@ class DepthPointCloudRelay(Node):
 
     def _on_point_cloud(self, message: PointCloud2) -> None:
         try:
+            receipt_stamp = self.get_clock().now().to_msg()
+            capture_stamp = correct_aurora_timestamp(
+                message.header.stamp, self._source_timestamp_scale)
+            validate_capture_timestamp(
+                capture_stamp,
+                receipt_stamp,
+                max_capture_age_sec=self._max_capture_age_sec,
+                max_future_skew_sec=self._max_future_skew_sec,
+            )
             relayed = retime_point_cloud(
                 message,
-                self.get_clock().now().to_msg(),
+                capture_stamp,
                 self._expected_frame,
                 self._output_frame,
             )

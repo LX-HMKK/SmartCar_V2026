@@ -108,6 +108,9 @@ def _vision_and_camera_actions(context):
             "aurora_depth_enable": "true" if use_depth_camera else "false",
             "aurora_point_cloud_enable": (
                 "true" if use_depth_camera else "false"),
+            "aurora_rgb_fps": LaunchConfiguration("aurora_rgb_fps"),
+            "aurora_ir_fps": LaunchConfiguration("aurora_ir_fps"),
+            "aurora_heart_enable": LaunchConfiguration("aurora_heart_enable"),
         }.items(),
     )]
 
@@ -251,10 +254,13 @@ def _task_actions(context):
 def _validate_configuration(context):
     if _as_bool(context, "use_base") and not _as_bool(context, "use_safety"):
         raise RuntimeError("use_base requires use_safety")
-    if _as_bool(context, "use_depth_camera") and not _as_bool(
-        context, "use_lidar"
+    use_lidar = _as_bool(context, "use_lidar")
+    use_depth_camera = _as_bool(context, "use_depth_camera")
+    if _as_bool(context, "use_nav") and not (
+        use_lidar or use_depth_camera
     ):
-        raise RuntimeError("use_depth_camera requires use_lidar=true")
+        raise RuntimeError(
+            "use_nav requires use_lidar=true or use_depth_camera=true")
     if _as_bool(context, "use_laser_odometry"):
         required = [
             name for name in ("use_base", "use_lidar")
@@ -382,6 +388,12 @@ def generate_launch_description():
         "camera_x": "0.1205",
         "camera_z": "0.11",
     }
+    # The base_footprint origin is the rear axle. The reported installation is
+    # directly above the front axle (wheelbase 0.189 m), 0.15 m above ground.
+    depth_camera_extrinsic_defaults = {
+        "depth_camera_x": "0.1049",
+        "depth_camera_z": "0.1200",
+    }
     sensor_calib_names = (
         "longitudinal_velocity_scale",
         "lateral_velocity_scale",
@@ -412,8 +424,9 @@ def generate_launch_description():
             "use_safety": use_safety,
             "use_safety_ackermann": "true",
             "use_sim_time": use_sim_time,
-            "safety_require_scan": LaunchConfiguration(
-                "safety_require_scan"),
+            # A depth-only build has no /scan producer. The active obstacle
+            # sensor must be safety's corresponding freshness heartbeat.
+            "safety_require_scan": use_lidar,
             "safety_require_odom": LaunchConfiguration(
                 "safety_require_odom"),
             "safety_require_raw_odom": LaunchConfiguration(
@@ -527,6 +540,9 @@ def generate_launch_description():
             ]),
         ),
         DeclareLaunchArgument("camera_driver", default_value="usb"),
+        DeclareLaunchArgument("aurora_rgb_fps", default_value="10"),
+        DeclareLaunchArgument("aurora_ir_fps", default_value="10"),
+        DeclareLaunchArgument("aurora_heart_enable", default_value="false"),
         DeclareLaunchArgument(
             "depth_point_cloud_input_topic",
             default_value=DEPTH_POINT_CLOUD_INPUT_TOPIC,
@@ -608,8 +624,7 @@ def generate_launch_description():
     declarations.extend(
         DeclareLaunchArgument(
             name,
-            default_value=camera_extrinsic_defaults.get(
-                name.removeprefix("depth_"), "0.0"),
+            default_value=depth_camera_extrinsic_defaults.get(name, "0.0"),
         )
         for name in (
             "depth_camera_x", "depth_camera_y", "depth_camera_z",

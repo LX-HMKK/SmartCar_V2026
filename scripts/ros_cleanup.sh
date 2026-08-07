@@ -48,6 +48,7 @@ CXX_BINS=(
   velocity_smoother lifecycle_manager map_server costmap_filter_info_server
   # Sensors / platform
   origincar_base_node
+  aurora930_node
   ydlidar_ros2_driver_node ydlidar_ros2_driver
   obstacle_extractor_node
   # RF2O laser odometry
@@ -153,6 +154,6 @@ sleep 1
 
 # ---- 8. 验证 ----
 COUNT_CMD="ps aux | grep -v grep | grep -ciE"
-REMAINING=$($COUNT_CMD "ekf_node|safety_node|controller_server|planner_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager|task_node|origincar_base|ydlidar|static_transform|rviz2|field_ref|waypoint_viz|direction_guard" 2>/dev/null || printf "0")
+REMAINING=$($COUNT_CMD "ekf_node|safety_node|controller_server|planner_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager|task_node|origincar_base|aurora930|ydlidar|static_transform|rviz2|field_ref|waypoint_viz|direction_guard" 2>/dev/null || printf "0")
 echo "Remaining ROS processes: ${REMAINING:-0} (expect 0)"
 echo "=== Done ==="

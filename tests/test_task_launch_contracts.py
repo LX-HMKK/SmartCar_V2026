@@ -192,7 +192,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("obstacle_layer.enabled", source)
         self.assertIn("obstacle_layer.observation_sources", source)
         self.assertIn(
-            'expected_sources="String value is: scan depth_points"', source)
+            'expected_sources="String value is: depth_points"', source)
         self.assertIn("if $DEPTH_CAMERA; then", source)
         self.assertIn("obstacle_layer.scan.topic", source)
         self.assertIn("obstacle_layer.scan.observation_persistence", source)
@@ -200,10 +200,10 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("obstacle_layer.scan.max_obstacle_height", source)
         self.assertIn("obstacle_layer.scan.inf_is_valid", source)
         self.assertIn("obstacle_layer.depth_points.topic", source)
+        self.assertIn('LIDAR_ARGS="use_lidar:=false"', source)
         self.assertIn("inflation_layer.enabled", source)
         self.assertIn("ros2 param get --no-daemon", source)
         self.assertIn("ros2 topic echo --no-daemon", source)
-        self.assertIn("/scan sensor_msgs/msg/LaserScan", source)
         self.assertIn(
             "/local_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
         self.assertIn(

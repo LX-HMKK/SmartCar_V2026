@@ -716,7 +716,7 @@ class TestNav2Contracts(unittest.TestCase):
                 ]["obstacle_layer"]["scan"]
                 self.assertEqual(scan["observation_persistence"], 0.0)
 
-    def test_depth_camera_overlay_keeps_scan_and_adds_point_cloud(self):
+    def test_depth_camera_overlay_replaces_scan_with_point_cloud(self):
         overlay = yaml.safe_load(
             DEPTH_OBSTACLE_OVERLAY_FILE.read_text(encoding="utf-8"))
         for costmap_name in ("local_costmap", "global_costmap"):
@@ -727,22 +727,15 @@ class TestNav2Contracts(unittest.TestCase):
                     "ros__parameters"]["obstacle_layer"]
                 self.assertEqual(base_layer["observation_sources"], "scan")
                 self.assertEqual(
-                    depth_layer["observation_sources"], "scan depth_points")
-                scan = depth_layer["scan"]
-                self.assertEqual(scan["topic"], "/scan")
-                self.assertEqual(scan["data_type"], "LaserScan")
-                self.assertEqual(scan["observation_persistence"], 0.0)
-                self.assertTrue(scan["clearing"])
-                self.assertTrue(scan["marking"])
-                self.assertAlmostEqual(scan["min_obstacle_height"], 0.05)
-                self.assertAlmostEqual(scan["max_obstacle_height"], 0.50)
-                self.assertIs(scan["inf_is_valid"], False)
+                    depth_layer["observation_sources"], "depth_points")
+                self.assertNotIn("scan", depth_layer)
                 source = depth_layer["depth_points"]
                 self.assertEqual(source["topic"], "/smartcar/depth/points")
                 self.assertEqual(source["data_type"], "PointCloud2")
                 self.assertTrue(source["clearing"])
                 self.assertTrue(source["marking"])
                 self.assertEqual(source["observation_persistence"], 0.0)
+                self.assertEqual(source["expected_update_rate"], 0.20)
 
     def test_reverse_mppi_wrapper_is_built_and_uses_portable_bt_paths(self):
         cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
@@ -906,6 +899,7 @@ class TestNav2Contracts(unittest.TestCase):
 
         self.assertIn("map_server", cleanup)
         self.assertIn("costmap_filter_info_server", cleanup)
+        self.assertIn("aurora930_node", cleanup)
 
     def test_navigation_launch_is_the_single_public_entrypoint(self):
         self.assertFalse(

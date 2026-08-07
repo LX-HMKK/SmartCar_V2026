@@ -171,7 +171,7 @@ verify_obstacle_avoidance() {
   local costmap
   local expected_sources="String value is: scan"
   if $DEPTH_CAMERA; then
-    expected_sources="String value is: scan depth_points"
+    expected_sources="String value is: depth_points"
   fi
   for costmap in /local_costmap/local_costmap /global_costmap/global_costmap; do
     wait_for_parameter_service "$costmap" || return 1
@@ -180,27 +180,30 @@ verify_obstacle_avoidance() {
     require_parameter "$costmap" "inflation_layer.enabled" "Boolean value is: True" || return 1
     require_parameter "$costmap" "keepout_filter.enabled" "Boolean value is: True" || return 1
     require_parameter "$costmap" "keepout_filter.filter_info_topic" "String value is: /keepout_filter_info" || return 1
-    require_parameter "$costmap" "obstacle_layer.scan.topic" "String value is: /scan" || return 1
-    require_parameter "$costmap" "obstacle_layer.scan.data_type" "String value is: LaserScan" || return 1
-    require_parameter "$costmap" "obstacle_layer.scan.observation_persistence" "Double value is: 0.0" || return 1
-    require_parameter "$costmap" "obstacle_layer.scan.min_obstacle_height" "Double value is: 0.05" || return 1
-    require_parameter "$costmap" "obstacle_layer.scan.max_obstacle_height" "Double value is: 0.5" || return 1
-    require_parameter "$costmap" "obstacle_layer.scan.inf_is_valid" "Boolean value is: False" || return 1
     if $DEPTH_CAMERA; then
       require_parameter "$costmap" "obstacle_layer.depth_points.topic" "String value is: /smartcar/depth/points" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.data_type" "String value is: PointCloud2" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.observation_persistence" "Double value is: 0.0" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.marking" "Boolean value is: True" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.clearing" "Boolean value is: True" || return 1
+    else
+      require_parameter "$costmap" "obstacle_layer.scan.topic" "String value is: /scan" || return 1
+      require_parameter "$costmap" "obstacle_layer.scan.data_type" "String value is: LaserScan" || return 1
+      require_parameter "$costmap" "obstacle_layer.scan.observation_persistence" "Double value is: 0.0" || return 1
+      require_parameter "$costmap" "obstacle_layer.scan.min_obstacle_height" "Double value is: 0.05" || return 1
+      require_parameter "$costmap" "obstacle_layer.scan.max_obstacle_height" "Double value is: 0.5" || return 1
+      require_parameter "$costmap" "obstacle_layer.scan.inf_is_valid" "Boolean value is: False" || return 1
     fi
   done
-  require_topic_sample /scan sensor_msgs/msg/LaserScan || return 1
   if $DEPTH_CAMERA; then
     require_topic_sample /smartcar/depth/points sensor_msgs/msg/PointCloud2 || return 1
     require_latched_status /smartcar/depth_obstacles/status depth_points_active || return 1
     wait_for_parameter_service /safety_node || return 1
     require_parameter /safety_node "require_depth_points" "Boolean value is: True" || return 1
+    require_parameter /safety_node "require_scan" "Boolean value is: False" || return 1
     require_parameter /safety_node "depth_points_topic" "String value is: /smartcar/depth/points" || return 1
+  else
+    require_topic_sample /scan sensor_msgs/msg/LaserScan || return 1
   fi
   require_latched_topic_sample /keepout_filter_mask nav_msgs/msg/OccupancyGrid || return 1
   require_latched_topic_sample /keepout_filter_info nav2_msgs/msg/CostmapFilterInfo || return 1
@@ -245,9 +248,11 @@ fi
 BANNER_MSG="DUBIN + 全正向路线，急停锁存"
 EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
 CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=usb use_depth_camera:=false"
+LIDAR_ARGS="use_lidar:=true"
 if $DEPTH_CAMERA; then
   BANNER_MSG="DUBIN + Aurora 深度障碍感知，急停锁存"
   CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true"
+  LIDAR_ARGS="use_lidar:=false"
 fi
 if [ -n "$END_SEGMENT_ID" ]; then
   EXTRA_ARGS="$EXTRA_ARGS navigation_test_end_segment_id:=$END_SEGMENT_ID"
@@ -270,7 +275,7 @@ fi
 banner "[4/6] 启动系统 ($BANNER_MSG)"
 true > "$LOG"
 ros2 launch smartcar_bringup smartcar_system.launch.py \
-  use_base:=true use_lidar:=true \
+  use_base:=true $LIDAR_ARGS \
   use_laser_odometry:=false use_safety:=true use_nav:=true \
   nav_autostart:=true $CAMERA_ARGS \
   use_task:=true \

@@ -21,7 +21,7 @@ topics:
 
 toggles:
   use_base: true
-  use_lidar: true
+  use_lidar: false
   use_laser_odometry: false
   use_imu_filter: false
   use_robot_description: false
@@ -30,7 +30,7 @@ toggles:
   use_nav: true
   use_camera: true
   use_vision: true
-  use_depth_camera: false
+  use_depth_camera: true
   use_task: true
   use_visualization: false
   use_speech: false
@@ -61,12 +61,14 @@ extrinsics:
     xyz: [0.1205, 0.0, 0.11]
     rpy: [0.0, 0.0, 0.0]
   link_to_depth_camera:
-    # Aurora 930 publishes depth points in depth_camera_link_1.  The mounting
-    # transform is only an installation placeholder until measured on-car.
+    # Aurora 930 is mounted directly over the front axle. Its reported height
+    # is 0.15 m above ground, so this transform is relative to base_link
+    # (base_link is 0.03 m above base_footprint). Point-cloud orientation and
+    # obstacle coverage still require static validation before motion.
     measured: false
     parent: base_link
     child: depth_camera_link_1
-    xyz: [0.1205, 0.0, 0.11]
+    xyz: [0.1049, 0.0, 0.12]
     rpy: [0.0, 0.0, 0.0]
 
 calibration:
@@ -91,4 +93,4 @@ motion_gates:
 hardware:
   chassis_serial: /dev/ttyACM0
   lidar_serial: /dev/ttyUSB0
-  camera_driver: usb
+  camera_driver: aurora

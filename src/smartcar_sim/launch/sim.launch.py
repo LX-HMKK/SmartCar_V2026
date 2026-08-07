@@ -426,8 +426,8 @@ def generate_launch_description():
         overlays = [keepout_overlay_path]
         if _as_bool(context, "use_depth_obstacles"):
             # The Gazebo fixture emits PointCloud2 on the same topic as the
-            # Aurora relay. The depth overlay keeps /scan as an independent
-            # obstacle source while exercising PointCloud2 processing.
+            # Aurora relay. The depth overlay replaces /scan so the fixture
+            # exercises the same PointCloud2-only obstacle contract as RDK.
             overlays.insert(
                 0, Path(nav2_depth_obstacle_overlay.perform(context)))
         # Use one resolved parameter file for the local simulator. Passing a

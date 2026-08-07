@@ -1,0 +1,4 @@
+# Aurora 930 is connected through the onboard Genesys USB2 hub. Keep both
+# devices awake so USB autosuspend cannot interrupt the depth obstacle stream.
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="05e3", ATTR{idProduct}=="0610", TEST=="power/control", ATTR{power/control}="on"
+ACTION=="add", SUBSYSTEM=="usb", ATTR{idVendor}=="3251", ATTR{idProduct}=="1930", TEST=="power/control", ATTR{power/control}="on"

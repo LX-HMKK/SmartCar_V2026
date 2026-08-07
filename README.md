@@ -168,13 +168,12 @@ Aurora 930 深度避障使用独立的显式入口：
 bash /root/nav_test.sh --depth-camera
 ```
 
-该模式启动 Aurora 深度与点云。中继会校验 source frame、点云布局和有限的浮点 XYZ 样本后才发布
-`/smartcar/depth/points`；两个 Nav2 costmap
-只订阅该点云作为动态障碍物来源，`/scan` 不参与 Nav2 避障。LiDAR 仍为
-`smartcar_safety` 提供独立心跳，不能因此停止安全节点或关闭其看门狗。脚本会在保持急停锁存
-的状态下验证点云、两个 costmap 参数和 KeepoutFilter。`depth_camera_calibrated` 默认仍为
-`false`：必须完成实车外参、点云 frame、清障和障碍物避让验收，才可打开该门禁；不要用软件
-配置替代标定或现场运动验证。
+该模式关闭 YDLIDAR 与 RF2O，仅保留轮式里程计和 IMU EKF 导航。中继会校验 source frame、
+点云布局、有限的浮点 XYZ 样本和采集时间；Aurora 930 1.7.2 的时间戳会乘以 `1000` 后再供 TF
+查询。两个 Nav2 costmap 与 safety 看门狗只订阅 `/smartcar/depth/points`，不依赖 `/scan`。
+脚本在保持急停锁存的状态下验证点云、两个 costmap 参数和 KeepoutFilter。
+`depth_camera_calibrated` 默认仍为 `false`：必须完成实车外参、点云 frame、清障和障碍物避让验收，
+才可打开该门禁；不要用软件配置替代标定或现场运动验证。
 
 ## 任务控制与急停
 

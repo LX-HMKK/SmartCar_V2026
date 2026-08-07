@@ -21,7 +21,9 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 from smartcar_vision.depth_pointcloud_relay import (  # noqa: E402
     STATUS_QOS,
     DepthPointCloudRelay,
+    correct_aurora_timestamp,
     retime_point_cloud,
+    validate_capture_timestamp,
 )
 import smartcar_vision.depth_pointcloud_relay as relay_module  # noqa: E402
 
@@ -59,6 +61,30 @@ class DepthPointCloudRelayTests(unittest.TestCase):
         self.assertEqual(output.point_step, 12)
         self.assertEqual(output.row_step, 12)
         self.assertEqual(bytes(output.data), bytes(input_cloud.data))
+
+    def test_corrects_the_aurora_930_timestamp_scale(self):
+        source = Time(sec=1786109, nanosec=159675000)
+
+        corrected = correct_aurora_timestamp(source, 1000)
+
+        self.assertEqual(corrected.sec, 1786109159)
+        self.assertEqual(corrected.nanosec, 675000000)
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            correct_aurora_timestamp(source, 0)
+
+    def test_rejects_capture_times_outside_the_transport_window(self):
+        capture = Time(sec=100, nanosec=0)
+        validate_capture_timestamp(
+            capture, Time(sec=100, nanosec=80000000),
+            max_capture_age_sec=0.10, max_future_skew_sec=0.05)
+        with self.assertRaisesRegex(ValueError, "too old"):
+            validate_capture_timestamp(
+                capture, Time(sec=100, nanosec=101000000),
+                max_capture_age_sec=0.10, max_future_skew_sec=0.05)
+        with self.assertRaisesRegex(ValueError, "future"):
+            validate_capture_timestamp(
+                Time(sec=100, nanosec=51000000), Time(sec=100),
+                max_capture_age_sec=0.10, max_future_skew_sec=0.05)
 
     def test_rejects_reframing_without_a_coordinate_transform(self):
         with self.assertRaisesRegex(ValueError, "does not transform coordinates"):
@@ -164,8 +190,9 @@ class DepthPointCloudRelayGraphTests(unittest.TestCase):
 
     def test_relay_publishes_fresh_cloud_and_active_status(self):
         source = point_cloud()
-        source.header.stamp.sec = 1
-        source.header.stamp.nanosec = 2
+        source_timestamp_ns = self.relay.get_clock().now().nanoseconds // 1000
+        source.header.stamp.sec = source_timestamp_ns // 1_000_000_000
+        source.header.stamp.nanosec = source_timestamp_ns % 1_000_000_000
 
         self.assertTrue(self._spin_until(
             lambda: self.input_publisher.get_subscription_count() > 0
@@ -177,7 +204,11 @@ class DepthPointCloudRelayGraphTests(unittest.TestCase):
         ))
         relayed = self.outputs[-1]
         self.assertEqual(relayed.header.frame_id, "depth_camera_link_1")
-        self.assertNotEqual(relayed.header.stamp.sec, source.header.stamp.sec)
+        self.assertEqual(
+            relayed.header.stamp.sec * 1_000_000_000
+            + relayed.header.stamp.nanosec,
+            source_timestamp_ns * 1000,
+        )
         self.assertEqual(relayed.point_step, source.point_step)
         self.assertEqual(bytes(relayed.data), bytes(source.data))
 
