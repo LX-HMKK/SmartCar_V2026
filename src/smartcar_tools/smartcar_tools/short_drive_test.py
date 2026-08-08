@@ -1,5 +1,6 @@
 """Bounded, supervised forward drive through the production Nav2 chain."""
 
+import argparse
 import math
 import sys
 import time
@@ -16,12 +17,40 @@ from std_msgs.msg import String
 from std_srvs.srv import SetBool, Trigger
 
 
+MAX_TEST_SPEED_MPS = 0.30
+MAX_TEST_DISTANCE_M = 3.0
+MAX_TEST_TIMEOUT_SEC = 120.0
+
+
+def validate_test_limits(distance_m, speed_mps, timeout_sec):
+    """Reject unsafe test bounds before any command can be sent."""
+    values = {
+        "distance_m": float(distance_m),
+        "speed_mps": float(speed_mps),
+        "timeout_sec": float(timeout_sec),
+    }
+    for name, value in values.items():
+        if not math.isfinite(value) or value <= 0.0:
+            raise ValueError(f"{name} must be finite and positive")
+    if values["speed_mps"] > MAX_TEST_SPEED_MPS:
+        raise ValueError(
+            f"speed_mps exceeds bounded test cap {MAX_TEST_SPEED_MPS:.2f}")
+    if values["distance_m"] > MAX_TEST_DISTANCE_M:
+        raise ValueError(
+            f"distance_m exceeds bounded test cap {MAX_TEST_DISTANCE_M:.1f}")
+    if values["timeout_sec"] > MAX_TEST_TIMEOUT_SEC:
+        raise ValueError(
+            f"timeout_sec exceeds bounded test cap {MAX_TEST_TIMEOUT_SEC:.0f}")
+    return values
+
+
 class ShortDrive(Node):
     def __init__(self, distance_m=0.25, speed_mps=0.05, timeout_sec=10.0):
         super().__init__("short_drive_test")
-        self.distance_m = float(distance_m)
-        self.speed_mps = float(speed_mps)
-        self.timeout_sec = float(timeout_sec)
+        limits = validate_test_limits(distance_m, speed_mps, timeout_sec)
+        self.distance_m = limits["distance_m"]
+        self.speed_mps = limits["speed_mps"]
+        self.timeout_sec = limits["timeout_sec"]
         self.start_pose = None
         self.latest_odom = None
         self.last_odom_at = None
@@ -204,9 +233,24 @@ class ShortDrive(Node):
 
 
 def main(argv=None):
-    del argv
-    rclpy.init(args=sys.argv)
-    node = ShortDrive()
+    parser = argparse.ArgumentParser(
+        description="Run a bounded supervised forward Nav2 drive test.")
+    parser.add_argument(
+        "--distance-m", type=float, default=0.25,
+        help="maximum forward odometry distance (default: 0.25)")
+    parser.add_argument(
+        "--speed-mps", type=float, default=0.05,
+        help="forward speed cap, at most 0.30 m/s (default: 0.05)")
+    parser.add_argument(
+        "--timeout-sec", type=float, default=10.0,
+        help="maximum run time, at most 120 s (default: 10)")
+    args = parser.parse_args(argv)
+    rclpy.init(args=[])
+    node = ShortDrive(
+        distance_m=args.distance_m,
+        speed_mps=args.speed_mps,
+        timeout_sec=args.timeout_sec,
+    )
     try:
         node.run()
     except Exception as error:
