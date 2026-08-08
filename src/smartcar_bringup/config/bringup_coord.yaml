@@ -69,7 +69,10 @@ extrinsics:
     parent: base_link
     child: depth_camera_link_1
     xyz: [0.1049, 0.0, 0.12]
-    rpy: [0.0, 0.0, 0.0]
+    # Aurora optical frame: x right, y down, z forward. This maps into
+    # base_link (x forward, y left, z up); measured remains false until the
+    # floor and known obstacle checks pass.
+    rpy: [-1.5708, 0.0, -1.5708]
 
 calibration:
   longitudinal_velocity_scale: 1.03
