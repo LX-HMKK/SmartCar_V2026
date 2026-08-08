@@ -50,6 +50,7 @@ setup(
             "steering_circle_analyze = smartcar_tools.steering_circle_analyze:main",
             "steering_circle_drive = smartcar_tools.steering_circle_drive:main",
             "steering_hold = smartcar_tools.steering_hold:main",
+            "short_drive_test = smartcar_tools.short_drive_test:main",
         ],
     },
 )

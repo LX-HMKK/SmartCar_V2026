@@ -271,6 +271,7 @@ def _validate_configuration(context):
         if required:
             raise RuntimeError(
                 "use_laser_odometry requires: " + ",".join(required))
+    short_drive_test = _as_bool(context, "short_drive_test")
     supervised_prefixes = tuple(
         (parameter_name, segment_id)
         for parameter_name, segment_id in (
@@ -284,18 +285,22 @@ def _validate_configuration(context):
     if supervised_prefixes:
         required_true = (
             "use_base",
-            "use_lidar",
             "use_safety",
             "use_nav",
             "use_task",
             "safety_emergency_stop_on_start",
         )
+        if short_drive_test:
+            required_true += ("use_depth_camera",)
+        else:
+            required_true += ("use_lidar",)
         required_false = (
             "use_camera",
             "use_vision",
-            "use_depth_camera",
             "autostart_mission",
         )
+        if not short_drive_test:
+            required_false += ("use_depth_camera",)
         invalid = [
             name for name in required_true if not _as_bool(context, name)
         ]
@@ -315,6 +320,32 @@ def _validate_configuration(context):
             raise RuntimeError(
                 "supervised_p_to_a_only requires: " + ",".join(invalid)
             )
+    if short_drive_test:
+        required_true = (
+            "use_base",
+            "use_safety",
+            "use_nav",
+            "use_task",
+            "use_depth_camera",
+            "supervised_p_to_a_only",
+            "safety_emergency_stop_on_start",
+        )
+        required_false = (
+            "use_lidar",
+            "use_camera",
+            "use_vision",
+            "autostart_mission",
+            "supervised_p_to_c1_only",
+        )
+        invalid = [
+            name for name in required_true if not _as_bool(context, name)
+        ]
+        invalid.extend(
+            name for name in required_false if _as_bool(context, name)
+        )
+        if invalid:
+            raise RuntimeError(
+                "short_drive_test requires: " + ",".join(invalid))
     if _as_bool(context, "qr_handoff_test_mode"):
         required = (
             "use_nav",
@@ -598,6 +629,7 @@ def generate_launch_description():
             "laser_odometry_calibrated", default_value="false"),
         DeclareLaunchArgument(
             "depth_camera_calibrated", default_value="false"),
+        DeclareLaunchArgument("short_drive_test", default_value="false"),
         DeclareLaunchArgument(
             "longitudinal_velocity_scale", default_value="1.03"),
         DeclareLaunchArgument(

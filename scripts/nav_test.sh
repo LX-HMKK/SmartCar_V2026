@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SmartCar 纯导航安全测试（DUBIN 全正向路线 + 方向门）
-# 用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]
+# 用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--short-drive] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]
 # ============================================================
 set -uo pipefail
 
@@ -25,6 +25,7 @@ RESET_ORIGIN=false
 SUPERVISED_P_TO_A=false
 SUPERVISED_P_TO_C1=false
 DEPTH_CAMERA=false
+SHORT_DRIVE=false
 for arg in "$@"; do
   case "$arg" in
     --no-rviz)   NO_RVIZ=true ;;
@@ -34,9 +35,10 @@ for arg in "$@"; do
     --supervised-p-to-c1) SUPERVISED_P_TO_C1=true ;;
     --reset-origin) RESET_ORIGIN=true ;;
     --depth-camera) DEPTH_CAMERA=true ;;
+    --short-drive) SHORT_DRIVE=true ;;
     *)
       echo "未知选项: $arg"
-      echo "用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]"
+      echo "用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--short-drive] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]"
       exit 1
       ;;
   esac
@@ -59,7 +61,15 @@ if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
   # current, manually aligned heading is made the localization origin.
   RESET_ORIGIN=true
 fi
-if $DEPTH_CAMERA && { $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; }; then
+if $SHORT_DRIVE && ! $DEPTH_CAMERA; then
+  echo "✗ --short-drive 必须与 --depth-camera 一起使用"
+  exit 1
+fi
+if $SHORT_DRIVE && ! $SUPERVISED_P_TO_A; then
+  echo "✗ --short-drive 只允许受看护 P→A 前缀"
+  exit 1
+fi
+if $DEPTH_CAMERA && { $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; } && ! $SHORT_DRIVE; then
   echo "✗ 深度相机尚未完成外参与障碍物标定，不能用于受看护运动前缀"
   exit 1
 fi
@@ -249,10 +259,15 @@ BANNER_MSG="DUBIN + 全正向路线，急停锁存"
 EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
 CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=usb use_depth_camera:=false"
 LIDAR_ARGS="use_lidar:=true"
+SAFETY_CONFIG_ARG=""
 if $DEPTH_CAMERA; then
   BANNER_MSG="DUBIN + Aurora 深度障碍感知，急停锁存"
   CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true"
   LIDAR_ARGS="use_lidar:=false"
+fi
+if $SHORT_DRIVE; then
+  SAFETY_CONFIG_ARG="safety_config_file:=$WORKSPACE/install/smartcar_safety/share/smartcar_safety/config/safety_short_drive.yaml"
+  EXTRA_ARGS="$EXTRA_ARGS short_drive_test:=true depth_camera_calibrated:=true"
 fi
 if [ -n "$END_SEGMENT_ID" ]; then
   EXTRA_ARGS="$EXTRA_ARGS navigation_test_end_segment_id:=$END_SEGMENT_ID"
@@ -279,7 +294,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
   use_laser_odometry:=false use_safety:=true use_nav:=true \
   nav_autostart:=true $CAMERA_ARGS \
   use_task:=true \
-  $EXTRA_ARGS $VISUALIZATION_ARG waypoints_file:="$WP" \
+  $EXTRA_ARGS $SAFETY_CONFIG_ARG $VISUALIZATION_ARG waypoints_file:="$WP" \
   >> "$LOG" 2>&1 &
 LAUNCH_PID=$!
 echo "  Launch PID: $LAUNCH_PID"

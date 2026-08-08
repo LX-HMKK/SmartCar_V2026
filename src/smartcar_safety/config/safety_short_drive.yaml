@@ -1,0 +1,25 @@
+safety_node:
+  ros__parameters:
+    command_timeout_sec: 0.30
+    scan_timeout_sec: 0.35
+    odom_timeout_sec: 0.35
+    raw_odom_timeout_sec: 0.25
+    depth_points_timeout_sec: 0.50
+    odom_throttle_interval_sec: 0.05
+    minimum_voltage: 10.0
+    voltage_timeout_sec: 1.0
+    # Hard cap for the supervised bounded drive. This is enforced downstream
+    # of Nav2 and therefore remains effective if an upstream controller is
+    # misconfigured.
+    max_linear_speed_mps: 0.05
+    publish_frequency_hz: 20.0
+    require_scan: false
+    require_odom: true
+    require_raw_odom: true
+    require_depth_points: true
+    depth_points_topic: /smartcar/depth/points
+    wheelbase: 0.189
+    max_steering_angle: 0.70
+    allow_steering_calibration: false
+    steering_calibration_max_hold_sec: 15.0
+    emergency_stop_on_start: true
