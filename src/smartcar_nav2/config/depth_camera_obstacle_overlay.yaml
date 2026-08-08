@@ -19,7 +19,10 @@ local_costmap:
           raytrace_max_range: 3.5
           raytrace_min_range: 0.25
           min_obstacle_height: 0.05
-          max_obstacle_height: 1.20
+          # The Aurora's raised-field reflection is consistently above the
+          # vehicle collision envelope. Keep low cones and boards, but reject
+          # those overhead returns before they can occupy the 2D costmap.
+          max_obstacle_height: 0.30
 
 global_costmap:
   global_costmap:
@@ -38,4 +41,5 @@ global_costmap:
           raytrace_max_range: 3.5
           raytrace_min_range: 0.25
           min_obstacle_height: 0.05
-          max_obstacle_height: 1.20
+          # Keep this vertical gate identical to the local costmap.
+          max_obstacle_height: 0.30

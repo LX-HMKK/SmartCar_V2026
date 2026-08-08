@@ -165,6 +165,8 @@ class SystemContractTests(unittest.TestCase):
             self.assertEqual(layer["depth_points"]["topic"], "/smartcar/depth/points")
             self.assertEqual(layer["depth_points"]["data_type"], "PointCloud2")
             self.assertEqual(layer["depth_points"]["expected_update_rate"], 0.20)
+            self.assertEqual(layer["depth_points"]["min_obstacle_height"], 0.05)
+            self.assertEqual(layer["depth_points"]["max_obstacle_height"], 0.30)
 
         rules = UDEV_RULES.read_text(encoding="utf-8")
         self.assertIn('ATTR{idVendor}=="05e3", ATTR{idProduct}=="0610"', rules)
