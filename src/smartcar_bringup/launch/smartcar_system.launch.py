@@ -395,10 +395,10 @@ def generate_launch_description():
     depth_camera_extrinsic_defaults = {
         "depth_camera_x": "0.1049",
         "depth_camera_z": "0.1200",
-        # Aurora publishes optical coordinates: x right, y down, z forward.
-        # Convert them to base_link (x forward, y left, z up).
-        "depth_camera_roll": "-1.5708",
-        "depth_camera_yaw": "-1.5708",
+        # Aurora driver frame: x left, y up, z forward. Convert it to
+        # base_link (x forward, y left, z up).
+        "depth_camera_roll": "1.5708",
+        "depth_camera_yaw": "1.5708",
     }
     sensor_calib_names = (
         "longitudinal_velocity_scale",

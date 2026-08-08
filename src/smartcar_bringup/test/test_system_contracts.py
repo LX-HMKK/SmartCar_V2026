@@ -153,7 +153,7 @@ class SystemContractTests(unittest.TestCase):
         self.assertIs(depth["measured"], False)
         self.assertEqual(depth["child"], "depth_camera_link_1")
         self.assertEqual(depth["xyz"], [0.1049, 0.0, 0.12])
-        self.assertEqual(depth["rpy"], [-1.5708, 0.0, -1.5708])
+        self.assertEqual(depth["rpy"], [1.5708, 0.0, 1.5708])
         self.assertIs(config["motion_gates"]["depth_camera_calibrated"], False)
 
         overlay = yaml.safe_load(DEPTH_OVERLAY.read_text(encoding="utf-8"))
