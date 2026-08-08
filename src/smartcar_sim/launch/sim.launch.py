@@ -521,6 +521,12 @@ def generate_launch_description():
             "output_topic": "/smartcar/depth/points",
             "min_range_m": 0.25,
             "max_range_m": 3.5,
+            # Convert the elevated laser fixture into obstacle points in the
+            # same base-frame height window that the Aurora overlay accepts.
+            "output_frame": "base_footprint",
+            "sensor_origin_x_m": 0.0341,
+            "sensor_origin_y_m": 0.0,
+            "point_height_m": 0.15,
         }],
         output="screen",
         condition=IfCondition(use_depth_obstacles),

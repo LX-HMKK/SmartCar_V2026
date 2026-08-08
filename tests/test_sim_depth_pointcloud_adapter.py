@@ -49,6 +49,31 @@ class SimDepthPointCloudAdapterTests(unittest.TestCase):
         self.assertAlmostEqual(y, 0.0)
         self.assertAlmostEqual(z, 0.0)
 
+    def test_adapter_can_materialize_depth_height_in_base_frame(self):
+        scan = LaserScan()
+        scan.header.frame_id = "laser_link"
+        scan.range_min = 0.10
+        scan.range_max = 4.0
+        scan.angle_min = 0.0
+        scan.angle_increment = 1.0
+        scan.ranges = [1.0]
+
+        cloud = MODULE.scan_to_depth_point_cloud(
+            scan,
+            min_range_m=0.25,
+            max_range_m=3.5,
+            output_frame="base_footprint",
+            sensor_origin_x_m=0.0341,
+            sensor_origin_y_m=-0.02,
+            point_height_m=0.15,
+        )
+
+        self.assertEqual(cloud.header.frame_id, "base_footprint")
+        x, y, z = struct.unpack("<fff", bytes(cloud.data))
+        self.assertAlmostEqual(x, 1.0341, places=6)
+        self.assertAlmostEqual(y, -0.02, places=6)
+        self.assertAlmostEqual(z, 0.15, places=6)
+
     def test_adapter_rejects_invalid_range_limits(self):
         with self.assertRaisesRegex(ValueError, "range limits"):
             MODULE.scan_to_depth_point_cloud(

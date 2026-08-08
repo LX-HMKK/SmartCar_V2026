@@ -558,7 +558,11 @@ planner_server:
       analytic_expansion_max_length: 3.0
       minimum_turning_radius: 0.22
       non_straight_penalty: 1.2
-      cost_penalty: 2.0
+      # A centreline that clips an inflated cone may be mathematically
+      # traversable but leaves the RPP footprint projection no safe forward
+      # command. Bias Hybrid-A* toward the clearance already represented by
+      # the live costmap instead of relying on a route-specific connector.
+      cost_penalty: 5.0
       retrospective_penalty: 0.015
       lookup_table_size: 20.0
       cache_obstacle_heuristic: false
