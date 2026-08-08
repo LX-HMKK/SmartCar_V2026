@@ -136,8 +136,12 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('"use_depth_camera")', source)
         self.assertIn('"safety_require_scan": use_lidar', source)
         self.assertEqual(launch_default(SYSTEM, "aurora_ir_fps"), "10")
+        self.assertEqual(
+            launch_default(SYSTEM, "aurora_resolution_mode_index"), "0")
         self.assertEqual(launch_default(SYSTEM, "aurora_heart_enable"), "false")
         self.assertEqual(launch_default(VISION, "aurora_ir_fps"), "10")
+        self.assertEqual(
+            launch_default(VISION, "aurora_resolution_mode_index"), "0")
         self.assertEqual(launch_default(VISION, "aurora_heart_enable"), "false")
         vision_source = VISION.read_text(encoding="utf-8")
         self.assertIn('"heart_enable": aurora_heart_enable', vision_source)

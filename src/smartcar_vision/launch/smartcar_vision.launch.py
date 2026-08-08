@@ -40,6 +40,7 @@ def _camera_action(
     aurora_point_cloud_enable,
     aurora_rgb_fps,
     aurora_ir_fps,
+    aurora_resolution_mode_index,
     aurora_heart_enable,
 ):
     if camera_driver == "aurora":
@@ -53,6 +54,7 @@ def _camera_action(
                 "rgb_enable": aurora_rgb_enable,
                 "rgb_fps": aurora_rgb_fps,
                 "ir_fps": aurora_ir_fps,
+                "resolution_mode_index": aurora_resolution_mode_index,
                 "depth_enable": aurora_depth_enable,
                 "ir_enable": "false",
                 "point_cloud_enable": aurora_point_cloud_enable,
@@ -123,6 +125,8 @@ def _runtime_actions(context):
         "aurora_heart_enable")
     aurora_rgb_fps = LaunchConfiguration("aurora_rgb_fps").perform(context)
     aurora_ir_fps = LaunchConfiguration("aurora_ir_fps").perform(context)
+    aurora_resolution_mode_index = LaunchConfiguration(
+        "aurora_resolution_mode_index").perform(context)
     if camera_driver not in VALID_DRIVERS:
         raise RuntimeError(
             "camera_driver must be one of aurora, usb, mipi, or none")
@@ -151,6 +155,7 @@ def _runtime_actions(context):
                 "true" if aurora_point_cloud_enable else "false"),
             aurora_rgb_fps=aurora_rgb_fps,
             aurora_ir_fps=aurora_ir_fps,
+            aurora_resolution_mode_index=aurora_resolution_mode_index,
             aurora_heart_enable="true" if aurora_heart_enable else "false",
         )
         if camera_action is not None:
@@ -249,6 +254,11 @@ def generate_launch_description():
             "aurora_ir_fps",
             default_value="10",
             description="Aurora IR/depth frame rate",
+        ),
+        DeclareLaunchArgument(
+            "aurora_resolution_mode_index",
+            default_value="0",
+            description="Aurora depth resolution mode (320x200)",
         ),
         DeclareLaunchArgument(
             "aurora_heart_enable",

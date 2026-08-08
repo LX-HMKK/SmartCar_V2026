@@ -110,6 +110,8 @@ def _vision_and_camera_actions(context):
                 "true" if use_depth_camera else "false"),
             "aurora_rgb_fps": LaunchConfiguration("aurora_rgb_fps"),
             "aurora_ir_fps": LaunchConfiguration("aurora_ir_fps"),
+            "aurora_resolution_mode_index": LaunchConfiguration(
+                "aurora_resolution_mode_index"),
             "aurora_heart_enable": LaunchConfiguration("aurora_heart_enable"),
         }.items(),
     )]
@@ -542,6 +544,8 @@ def generate_launch_description():
         DeclareLaunchArgument("camera_driver", default_value="usb"),
         DeclareLaunchArgument("aurora_rgb_fps", default_value="10"),
         DeclareLaunchArgument("aurora_ir_fps", default_value="10"),
+        DeclareLaunchArgument(
+            "aurora_resolution_mode_index", default_value="0"),
         DeclareLaunchArgument("aurora_heart_enable", default_value="false"),
         DeclareLaunchArgument(
             "depth_point_cloud_input_topic",
