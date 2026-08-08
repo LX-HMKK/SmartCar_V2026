@@ -11,7 +11,7 @@ local_costmap:
           topic: /smartcar/depth/points
           data_type: PointCloud2
           observation_persistence: 0.0
-          expected_update_rate: 0.20
+          expected_update_rate: 0.50
           clearing: true
           marking: true
           obstacle_max_range: 3.0
@@ -33,7 +33,7 @@ global_costmap:
           topic: /smartcar/depth/points
           data_type: PointCloud2
           observation_persistence: 0.0
-          expected_update_rate: 0.20
+          expected_update_rate: 0.50
           clearing: true
           marking: true
           obstacle_max_range: 3.0

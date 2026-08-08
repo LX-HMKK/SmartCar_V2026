@@ -169,6 +169,12 @@ def _vision_and_camera_actions(context):
                 "output_frame": LaunchConfiguration(
                     "depth_camera_frame").perform(context),
                 "stale_timeout_sec": 0.50,
+                # Aurora capture stamps remain authoritative.  RDK can
+                # occasionally schedule the serial/costmap chain for a few
+                # hundred milliseconds; keep a bounded acceptance window
+                # below the safety watchdog instead of dropping that frame.
+                "max_capture_age_sec": 0.35,
+                "max_future_skew_sec": 0.05,
                 "use_sim_time": _as_bool(context, "use_sim_time"),
             }],
         ))

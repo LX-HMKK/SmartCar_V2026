@@ -48,6 +48,12 @@ inline PendingFrameAction choose_pending_frame_action(
   bool pending_was_deferred,
   bool received_valid_frame_this_cycle)
 {
+  // Publish the newest complete frame immediately. Remaining bytes may only
+  // be a partial next frame; waiting for the serial buffer to drain would
+  // turn a valid latest-sample update into avoidable odometry starvation.
+  if (received_valid_frame_this_cycle) {
+    return PendingFrameAction::kPublish;
+  }
   if (backlog_remaining) {
     return PendingFrameAction::kDefer;
   }

@@ -213,6 +213,9 @@ TEST(SerialFrameTest, DropsDeferredFrameWhenBacklogClearsWithoutFreshFrame)
   selector.offer(valid, 1U, 1.0);
   EXPECT_EQ(
     choose_pending_frame_action(true, false, true),
+    PendingFrameAction::kPublish);
+  EXPECT_EQ(
+    choose_pending_frame_action(true, false, false),
     PendingFrameAction::kDefer);
   EXPECT_EQ(
     choose_pending_frame_action(false, true, false),

@@ -735,7 +735,7 @@ class TestNav2Contracts(unittest.TestCase):
                 self.assertTrue(source["clearing"])
                 self.assertTrue(source["marking"])
                 self.assertEqual(source["observation_persistence"], 0.0)
-                self.assertEqual(source["expected_update_rate"], 0.20)
+                self.assertEqual(source["expected_update_rate"], 0.50)
 
     def test_reverse_mppi_wrapper_is_built_and_uses_portable_bt_paths(self):
         cmake = (PACKAGE_ROOT / "CMakeLists.txt").read_text(encoding="utf-8")
