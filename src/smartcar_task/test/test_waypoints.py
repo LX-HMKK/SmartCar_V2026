@@ -418,7 +418,7 @@ class WaypointTests(unittest.TestCase):
         self.assertTrue(all(
             is_heading_locked(item)
             for item in nav_only
-            if item.task != "via"
+            if item.task not in {"via", "return"}
         ))
         self.assertTrue(all(
             not is_zero_quaternion(item.orientation) for item in nav_only

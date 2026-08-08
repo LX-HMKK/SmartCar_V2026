@@ -690,14 +690,25 @@ class SimResultValidationTests(unittest.TestCase):
                     ["a_task_observe"],
                 ),
                 (
-                    "action_2_via_1_to_c_corner_1",
+                    "action_2_a_departure_exit_to_via_2",
                     "forward",
-                    ["via_1", "via_2", "c_corner_1"],
+                    [
+                        "a_departure_exit", "via_2_entry", "via_2_corridor",
+                        "via_2",
+                    ],
                 ),
                 (
-                    "action_3_via_3_to_p_finish",
+                    "action_3_c_corner_1_to_c_corner_1",
                     "forward",
-                    ["via_3", "via_4", "p_finish"],
+                    ["c_corner_1"],
+                ),
+                (
+                    "action_4_c_north_1_to_p_finish",
+                    "forward",
+                    [
+                        "c_north_1", "c_north_2", "via_1", "via_3",
+                        "return_corridor_exit", "p_return_approach", "p_finish",
+                    ],
                 ),
             ],
         )
@@ -705,8 +716,8 @@ class SimResultValidationTests(unittest.TestCase):
             VALIDATION.validate_manifest(
                 manifest, 199.0, NAV_ONLY_WAYPOINTS), [])
 
-        self.assertEqual(len(manifest["route"]["segments"]), 3)
-        self.assertEqual(len(manifest["results"]), 3)
+        self.assertEqual(len(manifest["route"]["segments"]), 4)
+        self.assertEqual(len(manifest["results"]), 4)
         self.assertTrue(all(stage[1] == "forward" for stage in stages))
         transit_goal_ids = [
             goal["id"]
@@ -715,12 +726,17 @@ class SimResultValidationTests(unittest.TestCase):
             if goal["heading_mode"] == "free"
         ]
         self.assertEqual(
-            transit_goal_ids, ["via_1", "via_2", "via_3", "via_4", "p_finish"])
-        c1_result = manifest["results"][1]
-        self.assertEqual(c1_result["mode"], "through_poses")
-        self.assertEqual(c1_result["goal_ids"], ["via_1", "via_2", "c_corner_1"])
+            transit_goal_ids,
+            [
+                "a_departure_exit", "via_2_entry", "via_2_corridor", "via_2",
+                "c_north_1", "c_north_2", "via_1", "via_3",
+                "return_corridor_exit", "p_return_approach", "p_finish",
+            ],
+        )
+        c1_result = manifest["results"][2]
+        self.assertEqual(c1_result["id"], "c_corner_1")
         self.assertEqual(c1_result["behavior_tree"], (
-            "navigate_through_poses_precise_w_replanning_and_recovery.xml"))
+            "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"))
         self.assertEqual(c1_result["goal_checker"], "precise_goal_checker")
         self.assertEqual(c1_result["xy_goal_tolerance_m"], 0.12)
         self.assertEqual(c1_result["yaw_goal_tolerance_rad"], 0.15)
@@ -768,17 +784,17 @@ class SimResultValidationTests(unittest.TestCase):
 
     def test_waypoint_snapshot_requires_locked_semantic_quaternions(self):
         manifest, stages = manifest_from_waypoint_snapshot(NAV_ONLY_WAYPOINTS)
-        c1_stage = stages[1]
+        c1_stage = stages[2]
         self.assertEqual(
             [goal["id"] for goal in c1_stage[2]],
-            ["via_1", "via_2", "c_corner_1"],
+            ["c_corner_1"],
         )
         source = yaml.safe_load(NAV_ONLY_WAYPOINTS.read_text(encoding="utf-8"))
         source_goal = next(
             waypoint for waypoint in source["waypoints"]
             if waypoint["id"] == "c_corner_1")
         self.assertIn("orientation", source_goal["pose"])
-        c1_goal = manifest["route"]["segments"][1]["goals"][-1]
+        c1_goal = manifest["route"]["segments"][2]["goals"][-1]
         self.assertEqual(c1_goal["id"], "c_corner_1")
         self.assertEqual(c1_goal["goal_profile"], "precise")
         self.assertEqual(c1_goal["heading_mode"], "locked")

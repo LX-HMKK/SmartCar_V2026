@@ -1326,19 +1326,30 @@ class SimulationContractTests(unittest.TestCase):
             ],
             [
                 ("p_to_qr", "forward", "p_start", "a_task_observe"),
-                ("qr_to_vlm", "forward", "a_task_observe", "c_corner_1"),
+                ("qr_to_via_2", "forward", "a_task_observe", "via_2"),
+                ("qr_to_vlm", "forward", "via_2", "c_corner_1"),
                 ("return_to_p", "forward", "c_corner_1", "p_finish"),
             ],
         )
         self.assertEqual(
             [segment["through_ids"] for segment in nav_only["planning_segments"]],
-            [[], ["via_1", "via_2"], ["via_3", "via_4"]],
+            [
+                [],
+                ["a_departure_exit", "via_2_entry", "via_2_corridor"],
+                [],
+                [
+                    "c_north_1", "c_north_2", "via_1", "via_3",
+                    "return_corridor_exit", "p_return_approach",
+                ],
+            ],
         )
         self.assertEqual(
             [waypoint["id"] for waypoint in nav_only["waypoints"]],
             [
-                "p_start", "a_task_observe", "via_1", "via_2",
-                "c_corner_1", "via_3", "via_4", "p_finish",
+                "p_start", "a_task_observe", "via_2_entry", "a_departure_exit",
+                "via_2_corridor", "via_2", "c_corner_1", "c_north_1",
+                "c_north_2", "via_1", "via_3", "return_corridor_exit",
+                "p_return_approach", "p_finish",
             ],
         )
         self.assertTrue(all(
@@ -1368,8 +1379,8 @@ class SimulationContractTests(unittest.TestCase):
             {
                 "x": 0.0,
                 "y": 0.0,
-                "z": 0.0,
-                "w": 1.0,
+                "z": 0.5521993823302276,
+                "w": 0.8337120858870376,
             },
         )
         direct_return = next(

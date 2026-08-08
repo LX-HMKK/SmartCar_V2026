@@ -50,7 +50,7 @@ class VisionLaunchContractTests(unittest.TestCase):
         self.assertIn("aurora930_launch.py", source)
         for setting in (
             '"rgb_enable": aurora_rgb_enable',
-            '"rgb_fps": "15"',
+            '"rgb_fps": aurora_rgb_fps',
             '"depth_enable": aurora_depth_enable',
             '"ir_enable": "false"',
             '"point_cloud_enable": aurora_point_cloud_enable',

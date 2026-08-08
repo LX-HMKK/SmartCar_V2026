@@ -168,13 +168,20 @@ class DragEditorDirectionTests(unittest.TestCase):
 
 
 class PlanningSegmentTests(unittest.TestCase):
-    def assert_position_only_orientation_contract(self, route):
+    def assert_position_only_orientation_contract(
+        self, route, *, allow_authored_free_heading=False
+    ):
         for item in route:
             with self.subTest(waypoint=item.id):
                 norm = math.sqrt(sum(value * value for value in item.orientation))
                 if is_heading_locked(item):
                     self.assertFalse(is_zero_quaternion(item.orientation))
                     self.assertAlmostEqual(norm, 1.0)
+                elif allow_authored_free_heading:
+                    self.assertTrue(
+                        is_zero_quaternion(item.orientation)
+                        or abs(norm - 1.0) <= 1.0e-6
+                    )
                 else:
                     self.assertEqual(item.orientation, (0.0, 0.0, 0.0, 0.0))
 
@@ -274,7 +281,9 @@ class PlanningSegmentTests(unittest.TestCase):
                     materialize_route(authored, segments)
                 )
 
-                self.assert_position_only_orientation_contract(authored)
+                self.assert_position_only_orientation_contract(
+                    authored, allow_authored_free_heading=True
+                )
                 self.assert_position_only_orientation_contract(executable)
 
     def test_local_preflight_finds_open_space_and_rejects_keepout_center(self):
@@ -328,6 +337,7 @@ class PlanningSegmentTests(unittest.TestCase):
             report.warnings,
             (
                 "middle: position-only; preflight leaves heading free",
+                "end: position-only; preflight leaves heading free",
             ),
         )
         first_leg, second_leg = report.segments[0].legs
@@ -356,7 +366,10 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(baseline, changed)
         self.assertEqual(
             baseline.warnings,
-            ("middle: position-only; preflight leaves heading free",),
+            (
+                "middle: position-only; preflight leaves heading free",
+                "end: position-only; preflight leaves heading free",
+            ),
         )
 
     def test_preflight_preserves_adjacent_transit_action_boundaries(self):
@@ -401,7 +414,7 @@ class PlanningSegmentTests(unittest.TestCase):
                 [constraint.yaw for constraint in call.args[1]]
                 for call in plan_segment.call_args_list
             ],
-            [[0.0, None], [None, 0.0]],
+            [[0.0, None], [None, None]],
         )
         self.assertTrue(report.feasible)
         self.assertEqual(
@@ -534,7 +547,9 @@ class PlanningSegmentTests(unittest.TestCase):
             if not is_heading_locked(waypoint)
         )
         self.assertEqual(report.warnings, expected_warnings)
-        self.assert_position_only_orientation_contract(source)
+        self.assert_position_only_orientation_contract(
+            source, allow_authored_free_heading=True
+        )
         self.assert_position_only_orientation_contract(
             materialize_free_yaws(materialize_route(source, segments))
         )

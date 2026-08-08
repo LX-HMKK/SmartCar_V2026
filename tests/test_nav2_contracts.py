@@ -946,13 +946,20 @@ class TestNav2Contracts(unittest.TestCase):
                 else:
                     # An omitted YAML orientation is parsed as the explicit
                     # all-zero position-only sentinel before Nav2 receives it.
-                    self.assertNotIn("orientation", pose)
-                    self.assertEqual(
-                        pose.get(
-                            "orientation",
-                            {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
-                        ),
-                        {"x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0},
+                    # The authored P return also carries a terminal quaternion
+                    # for the standard return profile; free-heading runtime
+                    # materialization may ignore that heading when required.
+                    orientation = pose.get("orientation")
+                    if orientation is None:
+                        orientation = {
+                            "x": 0.0, "y": 0.0, "z": 0.0, "w": 0.0,
+                        }
+                    quaternion_norm = math.sqrt(
+                        sum(value * value for value in orientation.values())
+                    )
+                    self.assertTrue(
+                        quaternion_norm <= 1.0e-6
+                        or abs(quaternion_norm - 1.0) <= 1.0e-3
                     )
 
         for index, (start, goal) in enumerate(
@@ -987,7 +994,12 @@ class TestNav2Contracts(unittest.TestCase):
         nav_only = self.nav_only_waypoint_document
         self.assertFalse(default["calibrated"])
         self.assertFalse(nav_only["calibrated"])
-        route_ids = ("p_start", "a_task_observe", "c_corner_1", "p_finish")
+        route_ids = (
+            "p_start", "a_task_observe", "via_2_entry", "a_departure_exit",
+            "via_2_corridor", "via_2", "c_corner_1", "c_north_1",
+            "c_north_2", "via_1", "via_3", "return_corridor_exit",
+            "p_return_approach", "p_finish",
+        )
         default_by_id = {
             waypoint["id"]: waypoint for waypoint in default["waypoints"]
         }
@@ -1005,11 +1017,17 @@ class TestNav2Contracts(unittest.TestCase):
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in default["waypoints"]],
-            ["start", "qr", "vlm", "return"],
+            [
+                "start", "qr", "via", "via", "via", "via", "vlm",
+                "via", "via", "via", "via", "via", "via", "return",
+            ],
         )
         self.assertEqual(
             [waypoint["task"] for waypoint in nav_only["waypoints"]],
-            ["start", "nav", "nav", "return"],
+            [
+                "start", "nav", "via", "via", "via", "via", "nav",
+                "via", "via", "via", "via", "via", "via", "return",
+            ],
         )
 
         # The semantic QR target and the supervised P-to-A pure-navigation
@@ -1061,8 +1079,9 @@ class TestNav2Contracts(unittest.TestCase):
                     ))
                     self.assertLessEqual(abs(quaternion_norm - 1.0), 1.0e-3)
                 else:
-                    self.assertEqual(default_by_id[waypoint_id]["task"], "via")
-                    self.assertEqual(nav_by_id[waypoint_id]["task"], "via")
+                    expected_task = "return" if waypoint_id == "p_finish" else "via"
+                    self.assertEqual(default_by_id[waypoint_id]["task"], expected_task)
+                    self.assertEqual(nav_by_id[waypoint_id]["task"], expected_task)
 
         self.assertEqual(default_by_id["a_task_observe"]["task"], "qr")
         self.assertEqual(default_by_id["c_corner_1"]["task"], "vlm")
