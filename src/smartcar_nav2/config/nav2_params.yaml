@@ -237,9 +237,12 @@ controller_server:
       # A-zone cones require RPP to stay close to the body-swept Smac path.
       # The final command guard caps curvature at the 0.22 m vehicle
       # radius, so this shorter carrot cannot demand an infeasible turn.
-      lookahead_dist: 0.40
-      min_lookahead_dist: 0.40
-      max_lookahead_dist: 0.40
+      # Keep the carrot inside the validated tight departure arc.  The
+      # previous 0.40 m carrot made the physical RPP cut across the
+      # minimum-radius A-to-corridor turn and appear to circle at low speed.
+      lookahead_dist: 0.30
+      min_lookahead_dist: 0.30
+      max_lookahead_dist: 0.30
       lookahead_time: 1.5
       transform_tolerance: 0.1
       use_velocity_scaled_lookahead_dist: false

@@ -81,6 +81,33 @@ class DepthPointCloudRelayTests(unittest.TestCase):
             validate_capture_timestamp(
                 capture, Time(sec=100, nanosec=101000000),
                 max_capture_age_sec=0.10, max_future_skew_sec=0.05)
+
+    def test_bounds_large_clouds_without_changing_point_layout(self):
+        source = PointCloud2()
+        source.header.frame_id = "depth_camera_link_1"
+        source.height = 1
+        source.width = 10
+        source.fields = [
+            PointField(name="x", offset=0, datatype=PointField.FLOAT32, count=1),
+            PointField(name="y", offset=4, datatype=PointField.FLOAT32, count=1),
+            PointField(name="z", offset=8, datatype=PointField.FLOAT32, count=1),
+        ]
+        source.point_step = 12
+        source.row_step = 120
+        source.data = b"".join(struct.pack("<fff", float(i), 0.0, 1.0)
+                                for i in range(10))
+        bounded = retime_point_cloud(
+            source, Time(sec=10), "depth_camera_link_1", max_points=3)
+        self.assertEqual((bounded.height, bounded.width), (1, 3))
+        self.assertEqual(bounded.row_step, 36)
+        self.assertEqual(
+            [struct.unpack_from("<f", bounded.data, index * 12)[0]
+             for index in range(3)],
+            [0.0, 4.0, 9.0],
+        )
+        single = retime_point_cloud(
+            source, Time(sec=10), "depth_camera_link_1", max_points=1)
+        self.assertEqual(single.width, 1)
         with self.assertRaisesRegex(ValueError, "future"):
             validate_capture_timestamp(
                 Time(sec=100, nanosec=51000000), Time(sec=100),

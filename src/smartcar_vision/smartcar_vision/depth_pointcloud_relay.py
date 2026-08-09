@@ -139,8 +139,15 @@ def retime_point_cloud(
     stamp,
     expected_frame: str,
     output_frame: str = "",
+    max_points: int | None = None,
 ) -> PointCloud2:
-    """Copy a valid cloud with its corrected acquisition time and same frame."""
+    """Copy a valid cloud with its corrected time, optionally bounded in size.
+
+    Aurora publishes many thousands of depth returns per frame.  Nav2 only
+    needs a representative obstacle sample, and forwarding every return can
+    starve the controller executor on the RDK.  When ``max_points`` is set,
+    select evenly spaced records while preserving the original point layout.
+    """
     frame_id = message.header.frame_id.strip()
     if not frame_id:
         raise ValueError("point cloud frame_id is empty")
@@ -160,17 +167,49 @@ def retime_point_cloud(
         raise ValueError("point cloud data is truncated")
     if not _has_finite_xyz_sample(message):
         raise ValueError("point cloud has no finite x/y/z sample")
+    point_count = message.width * message.height
+    if max_points is not None and (
+        isinstance(max_points, bool) or not isinstance(max_points, int) or
+        max_points <= 0
+    ):
+        raise ValueError("max_points must be a positive integer")
 
     relayed = PointCloud2()
     relayed.header.stamp = stamp
     relayed.header.frame_id = frame_id
-    relayed.height = message.height
-    relayed.width = message.width
+    if max_points is not None and point_count > max_points:
+        # Keep samples distributed over the complete organized cloud.  Build
+        # the bounded payload with bytes joins so record copying stays cheap
+        # on the RDK's ARM Python runtime; unlike a NumPy gather this does not
+        # materialize the whole organized cloud before selecting records.
+        if max_points == 1:
+            point_indices = (0,)
+        else:
+            point_indices = (
+                index * (point_count - 1) // (max_points - 1)
+                for index in range(max_points)
+            )
+        selected = b"".join(
+            message.data[
+                (point_index // message.width) * message.row_step
+                + (point_index % message.width) * message.point_step:
+                (point_index // message.width) * message.row_step
+                + (point_index % message.width + 1) * message.point_step
+            ]
+            for point_index in point_indices
+        )
+        relayed.height = 1
+        relayed.width = max_points
+        relayed.row_step = max_points * message.point_step
+        relayed.data = selected
+    else:
+        relayed.height = message.height
+        relayed.width = message.width
+        relayed.row_step = message.row_step
+        relayed.data = message.data
     relayed.fields = message.fields
     relayed.is_bigendian = message.is_bigendian
     relayed.point_step = message.point_step
-    relayed.row_step = message.row_step
-    relayed.data = message.data
     relayed.is_dense = message.is_dense
     return relayed
 
@@ -188,6 +227,8 @@ class DepthPointCloudRelay(Node):
         self.declare_parameter("source_timestamp_scale", 1000)
         self.declare_parameter("max_capture_age_sec", 0.10)
         self.declare_parameter("max_future_skew_sec", 0.05)
+        self.declare_parameter("max_points", 1024)
+        self.declare_parameter("max_publish_rate_hz", 5.0)
 
         input_topic = str(self.get_parameter("input_topic").value).strip()
         output_topic = str(self.get_parameter("output_topic").value).strip()
@@ -203,6 +244,9 @@ class DepthPointCloudRelay(Node):
             "max_capture_age_sec").value)
         max_future_skew_sec = float(self.get_parameter(
             "max_future_skew_sec").value)
+        max_points = self.get_parameter("max_points").value
+        max_publish_rate_hz = float(self.get_parameter(
+            "max_publish_rate_hz").value)
         if not input_topic or not output_topic:
             raise ValueError("input_topic and output_topic must be non-empty")
         if (
@@ -228,12 +272,25 @@ class DepthPointCloudRelay(Node):
             or max_future_skew_sec < 0.0
         ):
             raise ValueError("capture timestamp tolerances are invalid")
+        if (
+            isinstance(max_points, bool) or not isinstance(max_points, int) or
+            max_points <= 0
+        ):
+            raise ValueError("max_points must be a positive integer")
+        if (
+            not math.isfinite(max_publish_rate_hz)
+            or max_publish_rate_hz <= 0.0
+        ):
+            raise ValueError("max_publish_rate_hz must be positive and finite")
 
         self._stale_timeout = stale_timeout
         self._source_timestamp_scale = source_timestamp_scale
         self._max_capture_age_sec = max_capture_age_sec
         self._max_future_skew_sec = max_future_skew_sec
+        self._max_points = max_points
+        self._min_publish_interval_sec = 1.0 / max_publish_rate_hz
         self._last_received_at: float | None = None
+        self._last_published_at: float | None = None
         self._status = ""
         self._publisher = self.create_publisher(
             PointCloud2, output_topic, qos_profile_sensor_data)
@@ -252,6 +309,13 @@ class DepthPointCloudRelay(Node):
         self._status_publisher.publish(String(data=value))
 
     def _on_point_cloud(self, message: PointCloud2) -> None:
+        received_at = time.monotonic()
+        if (
+            self._last_published_at is not None
+            and received_at - self._last_published_at
+            < self._min_publish_interval_sec
+        ):
+            return
         try:
             receipt_stamp = self.get_clock().now().to_msg()
             capture_stamp = correct_aurora_timestamp(
@@ -267,6 +331,7 @@ class DepthPointCloudRelay(Node):
                 capture_stamp,
                 self._expected_frame,
                 self._output_frame,
+                self._max_points,
             )
         except ValueError as error:
             self._last_received_at = None
@@ -275,7 +340,8 @@ class DepthPointCloudRelay(Node):
             return
 
         self._publisher.publish(relayed)
-        self._last_received_at = time.monotonic()
+        self._last_received_at = received_at
+        self._last_published_at = received_at
         self._publish_status("depth_points_active")
 
     def _check_freshness(self) -> None:

@@ -175,6 +175,14 @@ def _vision_and_camera_actions(context):
                 # below the safety watchdog instead of dropping that frame.
                 "max_capture_age_sec": 0.35,
                 "max_future_skew_sec": 0.05,
+                # Bound Aurora's organized cloud before Nav2's two obstacle
+                # layers process it.  The relay keeps samples spread across
+                # the full image, so narrow obstacles remain represented.
+                "max_points": 1024,
+                # A 5 Hz obstacle update moves the vehicle no more than 6 cm
+                # at 0.30 m/s and stays well inside the 0.50 s depth
+                # watchdog, while leaving CPU time for Nav2 control renewals.
+                "max_publish_rate_hz": 5.0,
                 "use_sim_time": _as_bool(context, "use_sim_time"),
             }],
         ))

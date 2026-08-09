@@ -81,7 +81,7 @@ TUNABLE_PARAMS = {
         "name": "forward_lookahead_dist",
         "path": "controller_server.ros__parameters.ForwardAvoidance.lookahead_dist",
         "desc": "前进 RPP 前视距离 (m)",
-        "default": 0.40,
+        "default": 0.30,
         "range": (0.30, 0.65),
         "step": 0.05,
     },
