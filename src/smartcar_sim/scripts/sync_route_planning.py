@@ -5,8 +5,7 @@
 the small set of constraints that the editor and simulation can share.  This
 script writes only the corresponding simulation-overlay values:
 
-* Smac Hybrid, forward/reverse controller, and free-heading minimum turning
-  radii;
+* Smac Hybrid and native RPP minimum-turning-radius parameters;
 * the padded Nav2 footprint and simulation-only cost inflation radius.
 
 It never changes the real vehicle's Nav2 parameter file or obstacle-layer
@@ -138,14 +137,7 @@ def synchronize(
         (
             keepout_overlay_file,
             {
-                "bt_navigator.ros__parameters.free_heading_minimum_turning_radius": radius,
-                "bt_navigator_navigate_through_poses_rclcpp_node.ros__parameters.free_heading_minimum_turning_radius": radius,
-                "bt_navigator_navigate_to_pose_rclcpp_node.ros__parameters.free_heading_minimum_turning_radius": radius,
-                "controller_server.ros__parameters.ForwardAvoidance.regulated_linear_scaling_min_radius": radius,
-                "controller_server.ros__parameters.ForwardAvoidance.forward_min_turning_radius": radius,
                 "controller_server.ros__parameters.FollowPath.regulated_linear_scaling_min_radius": radius,
-                "controller_server.ros__parameters.ReverseHandoff.AckermannConstraints.min_turning_r": radius,
-                "controller_server.ros__parameters.ReverseRecovery.AckermannConstraints.min_turning_r": radius,
                 "planner_server.ros__parameters.GridBased.minimum_turning_radius": radius,
                 "local_costmap.local_costmap.ros__parameters.footprint": footprint_text,
                 "local_costmap.local_costmap.ros__parameters.footprint_padding": footprint.padding_m,

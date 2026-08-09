@@ -1,47 +1,20 @@
-<!-- Precise forward handoff tree: no backup, wait, spin, or in-place rotation. -->
+<!-- Native Nav2 planning and tracking for a precise endpoint. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <!-- The P-to-A geometry has a direct 1.00x feasible Dubins path. Limit
-         measured travel to one modest avoidance arc; a controller that starts
-         orbiting must fail/replan instead of completing a large circle. -->
-      <!-- One clear/replan retry is enough for a transient scan; more retries
-           create repeated Ackermann arcs and can turn a local failure into a
-           large loop. -->
-      <RecoveryNode number_of_retries="1" name="NavigatePreciseRecovery">
-        <PipelineSequence name="NavigatePreciseWithReplanning">
-          <LatchSuccess name="LatchPreciseFreeHeadingPathToPose">
-            <RateController hz="0.5">
-              <RecoveryNode number_of_retries="1" name="ComputePreciseFreeHeadingPathToPose">
-                <ComputeFreeHeadingPathToPose
-                    goal="{goal}"
-                    path="{path}"
-                    planner_id="GridBased"
-                    heading_samples="12"
-                    candidate_timeout_ms="3500"
-                    max_start_drift_m="0.10"
-                    footprint_half_length_m="0.2491"
-                    footprint_half_width_m="0.095"
-                    footprint_sweep_step_m="0.025"
-                    footprint_lethal_cost="254"
-                    local_tracking_cross_track_error_m="0.10"
-                    local_tracking_horizon_m="0.50"
-                    local_tracking_lethal_cost="254"
-                    />
-                <ClearEntireCostmap name="ClearGlobalCostmap-PreciseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
-              </RecoveryNode>
-            </RateController>
-          </LatchSuccess>
-          <!-- Keep the hardware-only odometry and full-footprint plan checks,
-               but follow P-to-A with the forward-only RPP controller used by
-               the completed Gazebo route. A tracking failure intentionally
-               reaches the outer recovery: clearing only the local costmap
-               and re-sending the stale path delayed a fresh global replan. -->
-          <RecordFollowPath path="{path}" controller_id="ForwardAvoidance" goal_checker_id="precise_goal_checker"/>
-        </PipelineSequence>
-        <Sequence name="ClearPreciseCostmapsRecovery">
-          <ClearEntireCostmap name="ClearLocalCostmap-PreciseSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
-          <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
-        </Sequence>
-      </RecoveryNode>
+    <RecoveryNode number_of_retries="1" name="NavigatePreciseRecovery">
+      <PipelineSequence name="NavigatePreciseWithReplanning">
+        <RateController hz="0.5">
+          <RecoveryNode number_of_retries="1" name="ComputePathToPose">
+            <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
+            <ClearEntireCostmap name="ClearGlobalCostmap-PreciseContext" service_name="global_costmap/clear_entirely_global_costmap"/>
+          </RecoveryNode>
+        </RateController>
+        <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="precise_goal_checker"/>
+      </PipelineSequence>
+      <Sequence name="ClearPreciseCostmapsRecovery">
+        <ClearEntireCostmap name="ClearLocalCostmap-PreciseSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
+        <ClearEntireCostmap name="ClearGlobalCostmap-PreciseSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+      </Sequence>
+    </RecoveryNode>
   </BehaviorTree>
 </root>

@@ -98,9 +98,7 @@ Visualization Manager:
       Draw Behind: true
       Enabled: true
 
-    # `/plan` contains every free-heading candidate, including candidates
-    # rejected before FollowPath. Keep it available for diagnosis, but do not
-    # render it as the vehicle's intended route.
+    # Native Nav2's current global plan.
     - Class: rviz_default_plugins/Path
       Name: Planner Candidate Path (/plan)
       Topic:
@@ -111,21 +109,6 @@ Visualization Manager:
       Color: 160; 160; 160
       Line Style: Solid
       Line Width: 0.04
-      Enabled: true
-
-    # This project topic is published only after controller_server accepts a
-    # raw FollowPath goal. Unlike Humble RPP's clipped tracking window, it is
-    # the full global route actually handed to the active controller.
-    - Class: rviz_default_plugins/Path
-      Name: Accepted Global Path (/smartcar/accepted_global_plan)
-      Topic:
-        Depth: 1
-        Durability Policy: Transient Local
-        Reliability Policy: Reliable
-        Value: /smartcar/accepted_global_plan
-      Color: 0; 255; 0
-      Line Style: Solid
-      Line Width: 0.08
       Enabled: true
 
     # RPP's transformed window is the current tracking subset, unlike the

@@ -43,7 +43,9 @@ HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
 HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
-FORWARD_AVOIDANCE_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
+NATIVE_RPP_CONTROLLER = (
+    "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+)
 NATIVE_RPP_CONTROLLER = (
     "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
 )
@@ -67,10 +69,9 @@ MAX_ACCEPTED_PATH_TRACE_POINTS = 64
 MAX_EXECUTION_TRACE_SAMPLES = 128
 EXECUTION_TRACE_SCHEMA_VERSION = 1
 PERCEPTION_READY_TOPIC = "/smartcar/sim_perception_ready"
-# Every forward route tree publishes an acknowledged controller path through
-# RecordFollowPath, so the result is correlated with the path actually handed
-# to the Ackermann-safe controller rather than an unaccepted planner candidate.
-ACCEPTED_CONTROLLER_PATH_TOPIC = "/smartcar/accepted_global_plan"
+# Native Nav2 exposes the planner's current path on /plan. It is the only
+# route-path evidence retained by the simulator; the controller is not wrapped
+# or post-processed by project code.
 PERCEPTION_REQUIRED_CHECKS = (
     "scan",
     "odom",
@@ -137,11 +138,6 @@ class AutoTrain(Node):
             reliability=ReliabilityPolicy.RELIABLE,
             durability=DurabilityPolicy.VOLATILE,
         )
-        accepted_path_qos = QoSProfile(
-            depth=1,
-            reliability=ReliabilityPolicy.RELIABLE,
-            durability=DurabilityPolicy.TRANSIENT_LOCAL,
-        )
         perception_qos = QoSProfile(
             depth=1,
             reliability=ReliabilityPolicy.RELIABLE,
@@ -155,12 +151,6 @@ class AutoTrain(Node):
             Twist, "/cmd_vel_candidate", self._cmd_cb, qos)
         self.create_subscription(
             NavPath, "/plan", self._path_cb, planner_path_qos)
-        self.create_subscription(
-            NavPath,
-            ACCEPTED_CONTROLLER_PATH_TOPIC,
-            self._accepted_path_cb,
-            accepted_path_qos,
-        )
         self.create_subscription(
             String,
             str(self.get_parameter("perception_ready_topic").value),
@@ -783,26 +773,22 @@ class AutoTrain(Node):
         }
 
     def _forward_controller_contract(self, waypoint):
-        """Read the final-command envelope selected by this forward goal."""
+        """Read the native RPP envelope selected by this forward goal."""
         document = self._runtime_nav2_params()
         controller = document["controller_server"]["ros__parameters"]
         smoother = document["velocity_smoother"]["ros__parameters"]
-        forward = controller["ForwardAvoidance"]
+        forward = controller["FollowPath"]
         plugin = str(forward["plugin"])
-        if plugin == FORWARD_AVOIDANCE_CONTROLLER:
-            return {
-                "plugin": plugin,
-                "vx_max": float(forward["desired_linear_vel"]),
-                "wz_max": abs(float(forward["forward_max_angular_velocity"])),
-                "min_turning_radius": float(
-                    forward["forward_min_turning_radius"]),
-                "path_max_cross_track_error": float(
-                    forward["forward_path_max_cross_track_error"]),
-                "scale_velocities": bool(smoother["scale_velocities"]),
-            }
-        raise ValueError(
-            "forward controller must be the configured Ackermann-safe RPP wrapper: "
-            + plugin)
+        if plugin != NATIVE_RPP_CONTROLLER:
+            raise ValueError("forward controller must be Nav2 Regulated Pure Pursuit")
+        return {
+            "plugin": plugin,
+            "vx_max": float(forward["desired_linear_vel"]),
+            "wz_max": None,
+            "min_turning_radius": None,
+            "path_max_cross_track_error": None,
+            "scale_velocities": bool(smoother["scale_velocities"]),
+        }
 
     def _wait_for_odom(self, timeout_sec=10.0):
         deadline = time.monotonic() + timeout_sec
@@ -1084,7 +1070,7 @@ class AutoTrain(Node):
         controller_cmd_start = len(self._controller_cmd_samples)
         cmd_start = len(self._cmd_samples)
         path_start = len(self._path_messages)
-        accepted_path_start = len(self._accepted_path_messages)
+        accepted_path_start = len(self._path_messages)
         start_pose = self._latest_odom
 
         pose = waypoint["pose"]
@@ -1347,9 +1333,9 @@ class AutoTrain(Node):
         target_y = float(position["y"])
         executed_travel = self._executed_travel_metrics(
             start_pose, goal_odom_samples, [waypoint])
-        evidence_messages = self._accepted_path_messages
-        evidence_metrics = self._accepted_path_metrics
-        evidence_traces = self._accepted_path_traces
+        evidence_messages = self._path_messages
+        evidence_metrics = self._path_metrics
+        evidence_traces = self._path_traces
         evidence_start = accepted_path_start
         matching_paths = [
             (path_x, path_y, path_yaw)
@@ -1423,15 +1409,10 @@ class AutoTrain(Node):
                 contract_errors.append("forward_velocity_sign")
             if controller_metrics["negative_count"] > 0:
                 contract_errors.append("forward_controller_velocity_sign")
-            if forward_contract["plugin"] != FORWARD_AVOIDANCE_CONTROLLER:
+            if forward_contract["plugin"] != NATIVE_RPP_CONTROLLER:
                 contract_errors.append("forward_controller_plugin")
             if not forward_contract["scale_velocities"]:
                 contract_errors.append("forward_smoother_scaling")
-            if (
-                not math.isfinite(forward_contract["path_max_cross_track_error"])
-                or forward_contract["path_max_cross_track_error"] <= 0.0
-            ):
-                contract_errors.append("forward_path_tracking_guard_disabled")
             for prefix, metrics in (
                 ("forward_controller", controller_metrics),
                 ("forward_candidate", candidate_metrics),
@@ -1649,11 +1630,11 @@ class AutoTrain(Node):
                 if forward_contract is not None else None
             ),
             "forward_wz_cap_radps": (
-                round(forward_contract["wz_max"], 3)
+                self._round_optional(forward_contract["wz_max"])
                 if forward_contract is not None else None
             ),
             "forward_min_turning_radius_m": (
-                round(forward_contract["min_turning_radius"], 3)
+                self._round_optional(forward_contract["min_turning_radius"])
                 if forward_contract is not None else None
             ),
             "forward_path_max_cross_track_error_m": (
@@ -1823,7 +1804,7 @@ class AutoTrain(Node):
         controller_cmd_start = len(self._controller_cmd_samples)
         cmd_start = len(self._cmd_samples)
         path_start = len(self._path_messages)
-        accepted_path_start = len(self._accepted_path_messages)
+        accepted_path_start = len(self._path_messages)
 
         goal = NavigateThroughPoses.Goal()
         for w in waypoints:
@@ -1962,14 +1943,14 @@ class AutoTrain(Node):
 
         matching_paths = [
             sample
-            for sample in self._accepted_path_messages[accepted_path_start:]
+            for sample in self._path_messages[accepted_path_start:]
             if math.hypot(sample[1] - terminal_x, sample[2] - terminal_y)
             <= PATH_ENDPOINT_MATCH_TOLERANCE_M
         ]
         matching_path_traces = [
             trace
             for _, path_x, path_y, trace
-            in self._accepted_path_traces[accepted_path_start:]
+            in self._path_traces[accepted_path_start:]
             if math.hypot(path_x - terminal_x, path_y - terminal_y)
             <= PATH_ENDPOINT_MATCH_TOLERANCE_M
         ]
@@ -1978,7 +1959,7 @@ class AutoTrain(Node):
             odom_slice,
             self._controller_cmd_samples[controller_cmd_start:],
             self._cmd_samples[cmd_start:],
-            self._accepted_path_traces,
+            self._path_traces,
             accepted_path_start,
         )
         path_messages = len(matching_paths)
@@ -1986,7 +1967,7 @@ class AutoTrain(Node):
             accepted_path_start,
             terminal_x,
             terminal_y,
-            self._accepted_path_metrics,
+            self._path_metrics,
         )
         planner_candidate_path_messages = sum(
             1
@@ -2063,15 +2044,10 @@ class AutoTrain(Node):
                         contract_errors.append(f"{prefix}_velocity_missing")
                     if metrics["negative_count"] > 0:
                         contract_errors.append(f"{prefix}_velocity_sign")
-                if forward_contract["plugin"] != FORWARD_AVOIDANCE_CONTROLLER:
+                if forward_contract["plugin"] != NATIVE_RPP_CONTROLLER:
                     contract_errors.append("forward_controller_plugin")
                 if not forward_contract["scale_velocities"]:
                     contract_errors.append("forward_smoother_scaling")
-                if (
-                    not math.isfinite(forward_contract["path_max_cross_track_error"])
-                    or forward_contract["path_max_cross_track_error"] <= 0.0
-                ):
-                    contract_errors.append("forward_path_tracking_guard_disabled")
                 for prefix, metrics in (
                     ("forward_controller", controller_metrics),
                     ("forward_candidate", candidate_metrics),
@@ -2195,15 +2171,15 @@ class AutoTrain(Node):
                 if forward_contract is not None else None
             ),
             "forward_wz_cap_radps": (
-                round(forward_contract["wz_max"], 3)
+                self._round_optional(forward_contract["wz_max"])
                 if forward_contract is not None else None
             ),
             "forward_min_turning_radius_m": (
-                round(forward_contract["min_turning_radius"], 3)
+                self._round_optional(forward_contract["min_turning_radius"])
                 if forward_contract is not None else None
             ),
             "forward_path_max_cross_track_error_m": (
-                round(forward_contract["path_max_cross_track_error"], 3)
+                self._round_optional(forward_contract["path_max_cross_track_error"])
                 if forward_contract is not None else None
             ),
             "forward_controller_plugin": (

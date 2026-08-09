@@ -19,7 +19,6 @@ HANDOFF_POST_XY_MAX_POSITION_ERROR_M = 0.75
 HANDOFF_POST_XY_MAX_TRAVEL_M = 1.00
 HANDOFF_POST_XY_MAX_DURATION_SEC = 25.0
 REVERSE_HANDOFF_CONTROLLER = "smartcar_nav2::ReverseOnlyMPPIController"
-FORWARD_AVOIDANCE_CONTROLLER = "smartcar_nav2::ForwardOnlyRPPController"
 NATIVE_RPP_CONTROLLER = (
     "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
 )
@@ -477,15 +476,7 @@ def _validate_forward_ackermann_contract(
         return
 
     speed_cap = result.get("forward_speed_cap_mps")
-    angular_cap = result.get("forward_wz_cap_radps")
-    turning_radius = result.get("forward_min_turning_radius_m")
-    path_max_cross_track_error = result.get(
-        "forward_path_max_cross_track_error_m")
-    # Every forward simulation tree, including the precise P-to-A tree, now
-    # routes commands through the Ackermann-safe wrapper.  Keeping this
-    # expectation identical to auto_train prevents a stale native-RPP result
-    # from being accepted after the terminal-loop fix.
-    expected_controller = FORWARD_AVOIDANCE_CONTROLLER
+    expected_controller = NATIVE_RPP_CONTROLLER
     if result.get("forward_controller_plugin") != expected_controller:
         errors.append(f"{label} forward controller does not match its Nav2 tree")
     if result.get("forward_velocity_smoother_scale_velocities") is not True:
@@ -496,68 +487,21 @@ def _validate_forward_ackermann_contract(
         > CONFIG_TOLERANCE_EPSILON
     ):
         errors.append(f"{label} has invalid forward speed cap")
-    if (
-        not _finite_number(angular_cap)
-        or abs(float(angular_cap) - SIMULATION_FORWARD_WZ_CAP_RADPS)
-        > CONFIG_TOLERANCE_EPSILON
-    ):
-        errors.append(f"{label} has invalid forward angular cap")
-    if (
-        not _finite_number(turning_radius)
-        or abs(float(turning_radius) - SIMULATION_MINIMUM_TURNING_RADIUS_M)
-        > CONFIG_TOLERANCE_EPSILON
-    ):
-        errors.append(
-            f"{label} forward turning radius must be "
-            f"{SIMULATION_MINIMUM_TURNING_RADIUS_M:.2f}")
-    if (
-        not _finite_number(path_max_cross_track_error)
-        or abs(
-            float(path_max_cross_track_error) -
-            SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M
-        ) > CONFIG_TOLERANCE_EPSILON
-    ):
-        errors.append(
-            f"{label} forward path tracking threshold must be "
-            f"{SIMULATION_FORWARD_PATH_MAX_CROSS_TRACK_ERROR_M:.2f}")
-
     for prefix in ("controller_cmd", "cmd"):
         maximum = result.get(f"{prefix}_linear_max")
-        angular = result.get(f"{prefix}_angular_abs_max")
         violations = result.get(f"{prefix}_kinematic_violation_count")
-        observed_radius = result.get(f"{prefix}_min_turning_radius_m")
         if (
             _finite_number(maximum)
             and _finite_number(speed_cap)
             and float(maximum) > float(speed_cap) + VELOCITY_EPSILON
         ):
             errors.append(f"{label} {prefix} exceeds forward speed cap")
-        if not _finite_number(angular):
-            errors.append(f"{label} {prefix} angular maximum must be finite")
-        elif _finite_number(angular_cap) and (
-            float(angular) > float(angular_cap) + VELOCITY_EPSILON
-        ):
-            errors.append(f"{label} {prefix} exceeds forward angular cap")
         if (
             isinstance(violations, bool)
             or not isinstance(violations, int)
             or violations != 0
         ):
             errors.append(f"{label} {prefix} violates forward Ackermann curvature")
-        if (
-            _finite_number(angular)
-            and float(angular) > VELOCITY_EPSILON
-            and (
-                not _finite_number(observed_radius)
-                or (
-                    _finite_number(turning_radius)
-                    and float(observed_radius)
-                    < float(turning_radius) - CONFIG_TOLERANCE_EPSILON
-                )
-            )
-        ):
-            errors.append(
-                f"{label} {prefix} forward observed turning radius is too small")
 
 
 def _validate_planned_path_metrics(result, label, errors):

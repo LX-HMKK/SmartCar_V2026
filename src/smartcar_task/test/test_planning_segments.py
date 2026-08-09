@@ -89,12 +89,14 @@ class PlanningSegmentActionTests(unittest.TestCase):
         segments = (
             PlanningSegment(
                 "to_vlm", "forward", "p_start", "c_corner_1",
+                ("via_1", "via_2", "via_3"),
             ),
             PlanningSegment(
                 "to_qr", "forward", "c_corner_1", "a_task_observe",
             ),
             PlanningSegment(
                 "return", "forward", "a_task_observe", "p_finish",
+                ("via_4", "via_5"),
             ),
         )
 
@@ -149,7 +151,7 @@ class PlanningSegmentActionTests(unittest.TestCase):
         actions = materialize_navigation_segments(waypoints, segments)
 
         self.assertEqual(len(actions), 3)
-        self.assertEqual([len(action) for action in actions], [1, 1, 1])
+        self.assertEqual([len(action) for action in actions], [1, 4, 3])
         self.assertTrue(all(
             waypoint.direction == "forward"
             for action in actions
@@ -162,8 +164,8 @@ class PlanningSegmentActionTests(unittest.TestCase):
             ],
             [
                 ("forward", ["a_task_observe"]),
-                ("forward", ["c_corner_1"]),
-                ("forward", ["p_finish"]),
+                ("forward", ["via_1", "via_2", "via_3", "c_corner_1"]),
+                ("forward", ["via_4", "via_5", "p_finish"]),
             ],
         )
 
@@ -196,13 +198,13 @@ class PlanningSegmentActionTests(unittest.TestCase):
             ],
             [
                 ("forward", ["a_task_observe"]),
-                ("forward", ["c_corner_1"]),
-                ("forward", ["p_finish"]),
+                ("forward", ["via_1", "via_2", "via_3", "c_corner_1"]),
+                ("forward", ["via_4", "via_5", "p_finish"]),
             ],
         )
         self.assertEqual(
             [waypoint.task for waypoint in waypoints],
-            ["start", "qr", "vlm", "return"],
+            ["start", "qr", "via", "via", "via", "vlm", "via", "via", "return"],
         )
 
     def test_allows_standard_vias_before_terminal_precise_goal(self):

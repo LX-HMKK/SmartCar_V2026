@@ -273,35 +273,13 @@ class SharedRoutePlanningTests(unittest.TestCase):
             ["minimum_turning_radius"],
             0.21,
         )
-        for navigator in (
-            "bt_navigator",
-            "bt_navigator_navigate_through_poses_rclcpp_node",
-            "bt_navigator_navigate_to_pose_rclcpp_node",
-        ):
-            with self.subTest(navigator=navigator):
-                self.assertEqual(
-                    overlay[navigator]["ros__parameters"]
-                    ["free_heading_minimum_turning_radius"],
-                    0.21,
-                )
-
         controller = overlay["controller_server"]["ros__parameters"]
-        forward_avoidance = controller["ForwardAvoidance"]
-        self.assertEqual(
-            forward_avoidance["regulated_linear_scaling_min_radius"], 0.21
-        )
-        self.assertEqual(forward_avoidance["forward_min_turning_radius"], 0.21)
         follow_path = controller["FollowPath"]
         self.assertEqual(
             follow_path["regulated_linear_scaling_min_radius"], 0.21
         )
-        self.assertNotIn("forward_min_turning_radius", follow_path)
-        for name in ("ReverseHandoff", "ReverseRecovery"):
-            with self.subTest(controller=name):
-                self.assertEqual(
-                    controller[name]["AckermannConstraints"]["min_turning_r"],
-                    0.21,
-                )
+        self.assertEqual(controller["controller_plugins"], ["FollowPath"])
+        self.assertNotIn("ForwardAvoidance", controller)
         for name in ("local_costmap", "global_costmap"):
             parameters = overlay[name][name]["ros__parameters"]
             self.assertEqual(

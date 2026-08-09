@@ -4,10 +4,6 @@ bt_navigator:
     global_frame: odom_combined
     robot_base_frame: base_footprint
     odom_topic: /odom_combined
-    # ComputeFreeHeadingPathAction validates the planner output against this
-    # same radius. 0.22 m retains a 2 cm margin over the measured 0.20 m
-    # physical minimum; Gazebo may still override it independently.
-    free_heading_minimum_turning_radius: 0.22
     # Milliseconds. 20 ms halves the default 100 Hz BT load while remaining
     # faster than the independent 20 Hz path-controller loop.
     bt_loop_duration: 20
@@ -17,8 +13,8 @@ bt_navigator:
     default_server_timeout: 100
     default_nav_to_pose_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
-    # Setting plugin_lib_names replaces Nav2's defaults, so retain the full
-    # 1.1.20 list and append the project path/recovery nodes.
+    # Setting plugin_lib_names replaces Nav2's defaults, so retain Nav2's
+    # complete 1.1.20 list. Active trees use only native Nav2 nodes.
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
@@ -72,9 +68,6 @@ bt_navigator:
       - nav2_back_up_cancel_bt_node
       - nav2_drive_on_heading_cancel_bt_node
       - nav2_is_battery_charging_condition_bt_node
-      - smartcar_compute_free_heading_path_action_bt_node
-      - smartcar_ackermann_reverse_retreat_action_bt_node
-      - smartcar_record_follow_path_action_bt_node
 
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:
@@ -82,7 +75,6 @@ bt_navigator_navigate_through_poses_rclcpp_node:
     global_frame: odom_combined
     robot_base_frame: base_footprint
     odom_topic: /odom_combined
-    free_heading_minimum_turning_radius: 0.22
     bt_loop_duration: 20
     # Keep the ThroughPoses navigator aligned with the primary navigator.
     default_server_timeout: 100
@@ -132,14 +124,10 @@ bt_navigator_navigate_through_poses_rclcpp_node:
       - nav2_planner_selector_bt_node
       - nav2_controller_selector_bt_node
       - nav2_goal_checker_selector_bt_node
-      - smartcar_compute_free_heading_path_action_bt_node
-      - smartcar_ackermann_reverse_retreat_action_bt_node
-      - smartcar_record_follow_path_action_bt_node
 
 bt_navigator_navigate_to_pose_rclcpp_node:
   ros__parameters:
     use_sim_time: false
-    free_heading_minimum_turning_radius: 0.22
 
 controller_server:
   ros__parameters:
@@ -156,7 +144,7 @@ controller_server:
     progress_checker_plugin: "progress_checker"
     goal_checker_plugins: ["goal_checker", "precise_goal_checker", "reverse_goal_checker", "return_goal_checker", "transit_goal_checker", "recovery_goal_checker"]
     current_goal_checker: "goal_checker"
-    controller_plugins: ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"]
+    controller_plugins: ["FollowPath"]
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.25
@@ -226,58 +214,7 @@ controller_server:
       regulated_linear_scaling_min_radius: 0.9
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
-      allow_reversing: true
-    # Forward routes use deterministic RPP tracking.  It keeps Nav2's live
-    # costmap collision projection and the BT clear/replan branch, but does
-    # not invent an optimizer detour around a nearby target.  The wrapper
-    # rejects reverse, in-place, and sub-radius commands at its final output.
-    ForwardAvoidance:
-      plugin: "smartcar_nav2::ForwardOnlyRPPController"
-      desired_linear_vel: 0.30
-      # A-zone cones require RPP to stay close to the body-swept Smac path.
-      # The final command guard caps curvature at the 0.22 m vehicle
-      # radius, so this shorter carrot cannot demand an infeasible turn.
-      # Keep the carrot inside the validated tight departure arc.  The
-      # previous 0.40 m carrot made the physical RPP cut across the
-      # minimum-radius A-to-corridor turn and appear to circle at low speed.
-      lookahead_dist: 0.30
-      min_lookahead_dist: 0.30
-      max_lookahead_dist: 0.30
-      lookahead_time: 1.5
-      transform_tolerance: 0.1
-      use_velocity_scaled_lookahead_dist: false
-      min_approach_linear_velocity: 0.05
-      approach_velocity_scaling_dist: 0.6
-      # Preserve Ackermann curvature while settling into a locked task pose.
-      # Cruise remains 0.30 m/s; only the last path half metre is capped.
-      forward_terminal_speed_mps: 0.08
-      forward_terminal_speed_distance_m: 0.50
-      forward_terminal_lookahead_m: 0.12
-      forward_terminal_activation_distance_m: 0.60
-      # In the precise terminal window, track the accepted path tangent so an
-      # Ackermann vehicle settles its yaw before entering the goal disk. This
-      # is terminal-only; ordinary route tracking remains native RPP.
-      forward_terminal_use_curvature_tracking: true
-      forward_terminal_heading_gain: 1.0
-      forward_terminal_cross_track_gain: 2.0
-      forward_terminal_collision_projection_m: 0.15
-      max_allowed_time_to_collision_up_to_carrot: 1.0
-      use_collision_detection: true
-      use_cost_regulated_linear_velocity_scaling: true
-      cost_scaling_dist: 0.25
-      cost_scaling_gain: 1.0
-      inflation_cost_scaling_factor: 5.0
-      regulated_linear_scaling_min_radius: 0.22
-      regulated_linear_scaling_min_speed: 0.05
-      use_rotate_to_heading: false
       allow_reversing: false
-      # 0.30 / 0.22 = 1.3636 rad/s. Keep the command cap so the final
-      # guard does not weaken the planner's curvature envelope.
-      forward_max_angular_velocity: 1.3636363636363635
-      forward_min_turning_radius: 0.22
-      # Reject a P-to-A tracking deviation before the body can cut into the
-      # protected right-side envelope.
-      forward_path_max_cross_track_error: 0.12
     # The reverse-to-forward handoff needs closed-loop terminal pose control.
     # The wrapper maps the real reverse path and odometry into a virtual
     # positive-forward Ackermann problem, then maps the command back through a
@@ -562,9 +499,8 @@ planner_server:
       allow_unknown: true
       max_iterations: 100000
       max_on_approach_iterations: 1000
-      # The free-heading BT has a 2.4 s action-level budget. Bound one
-      # underlying Hybrid-A* search below it so a rejected heading cannot
-      # stall the next route attempt for multiple seconds.
+      # Bound one native Hybrid-A* search so a failed planning attempt leaves
+      # time for Nav2's costmap-clear and replan recovery.
       max_planning_time: 1.0
       # Forward-only search. Reverse paths are generated by rotating the
       # vehicle headings by pi in the reverse BT node, then restoring them.
@@ -574,9 +510,8 @@ planner_server:
       analytic_expansion_max_length: 3.0
       minimum_turning_radius: 0.22
       non_straight_penalty: 1.2
-      # Keep the balanced cost weighting used by the validated full-route
-      # run. Collision and footprint clearance remain enforced by the live
-      # raw costmap and the free-heading path validator.
+      # Collision and footprint clearance are evaluated by Nav2's live
+      # costmaps during planning and tracking.
       cost_penalty: 5.0
       retrospective_penalty: 0.015
       lookup_table_size: 20.0

@@ -393,27 +393,25 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(
             [item.id for item in nav_only],
             [
-                "p_start", "a_task_observe", "via_2_entry", "a_departure_exit",
-                "via_2_corridor", "via_2", "c_corner_1", "c_north_1",
-                "c_north_2", "via_1", "via_3", "return_corridor_exit",
-                "p_return_approach", "p_finish",
+                "p_start", "a_task_observe", "via_1", "via_2", "via_3",
+                "c_corner_1", "via_4", "via_5", "p_finish",
             ],
         )
         self.assertEqual(
             [item.task for item in nav_only],
             [
-                "start", "nav", "via", "via", "via", "via", "nav", "via",
-                "via", "via", "via", "via", "via", "return",
+                "start", "nav", "via", "via", "via", "nav", "via", "via",
+                "return",
             ],
         )
         self.assertEqual(
             [item.direction for item in nav_only],
-            ["forward"] * 14,
+            ["forward"] * 9,
         )
         self.assertEqual(
             [item.goal_profile for item in nav_only],
-            ["standard", "precise"] + ["standard"] * 4
-            + ["precise"] + ["standard"] * 7,
+            ["standard", "precise"] + ["standard"] * 3
+            + ["precise"] + ["standard"] * 3,
         )
         self.assertTrue(all(
             is_heading_locked(item)
@@ -422,14 +420,14 @@ class WaypointTests(unittest.TestCase):
         ))
         self.assertTrue(all(
             not is_zero_quaternion(item.orientation) for item in nav_only
-            if item.task != "via"
+            if item.task not in {"via", "return"}
         ))
         self.assertEqual(nav_only[1].goal_profile, "precise")
         c_corner_1 = next(item for item in nav_only if item.id == "c_corner_1")
         self.assertEqual(c_corner_1.task, "nav")
         self.assertEqual(
             c_corner_1.position,
-            (0.9330276705276708, 3.8337068653474913, 0.0),
+            (3.197238477316604, 3.9960183397683418, 0.0),
         )
         self.assertEqual(c_corner_1.goal_profile, "precise")
         self.assertTrue(all(
@@ -460,10 +458,10 @@ class WaypointTests(unittest.TestCase):
         vlm = next(item for item in waypoints if item.id == "c_corner_1")
         self.assertEqual(vlm.task, "vlm")
         self.assertEqual(vlm.position,
-                         (0.9330276705276708, 3.8337068653474913, 0.0))
+                         (3.197238477316604, 3.9960183397683418, 0.0))
         _, _, qz, qw = vlm.orientation
         yaw = math.atan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)
-        self.assertAlmostEqual(yaw, 1.17, delta=1.0e-6)
+        self.assertAlmostEqual(yaw, 0.0, delta=1.0e-6)
 
     def test_deployment_route_keeps_qr_standoff_and_forward_return(self):
         default_file = (
@@ -479,17 +477,12 @@ class WaypointTests(unittest.TestCase):
         qr = waypoints[1]
         vlm = next(item for item in waypoints if item.id == "c_corner_1")
         return_waypoint = waypoints[-1]
-        self.assertEqual(qr.position, (3.025965510598539, 1.2045443727459233, 0.0))
-        standoff = math.hypot(4.15 - qr.position[0], 1.35 - qr.position[1])
-        self.assertAlmostEqual(standoff, 1.13340676, delta=1.0e-6)
-        self.assertGreater(standoff, 0.5)
+        self.assertEqual(qr.position, (2.898403475881205, 0.9659945286391132, 0.0))
         self.assertEqual(
             [item.id for item in waypoints],
             [
-                "p_start", "a_task_observe", "via_2_entry", "a_departure_exit",
-                "via_2_corridor", "via_2", "c_corner_1", "c_north_1",
-                "c_north_2", "via_1", "via_3", "return_corridor_exit",
-                "p_return_approach", "p_finish",
+                "p_start", "a_task_observe", "via_1", "via_2", "via_3",
+                "c_corner_1", "via_4", "via_5", "p_finish",
             ],
         )
         self.assertEqual(vlm.task, "vlm")
@@ -497,22 +490,13 @@ class WaypointTests(unittest.TestCase):
         self.assertEqual(vlm.goal_profile, "precise")
         self.assertEqual(return_waypoint.task, "return")
         self.assertEqual(return_waypoint.direction, "forward")
-        return_yaw = math.atan2(
-            2.0 * return_waypoint.orientation[3] * return_waypoint.orientation[2],
-            1.0 - 2.0 * return_waypoint.orientation[2] ** 2,
-        )
-        self.assertAlmostEqual(return_yaw, -2.498091544796509, delta=1.0e-6)
         self.assertEqual(
             [item.direction for item in waypoints],
-            ["forward"] * 14,
+            ["forward"] * 9,
         )
         self.assertEqual(
             [item.id for item in waypoints if item.task == "via"],
-            [
-                "via_2_entry", "a_departure_exit", "via_2_corridor", "via_2",
-                "c_north_1", "c_north_2", "via_1", "via_3",
-                "return_corridor_exit", "p_return_approach",
-            ],
+            ["via_1", "via_2", "via_3", "via_4", "via_5"],
         )
 
     def test_atomic_editor_write_preserves_ids_and_clears_calibration(self):
@@ -563,36 +547,28 @@ class WaypointTests(unittest.TestCase):
         waypoints = load_waypoints(default_file)
         self.assertEqual(
             [item.task for item in waypoints],
-            [
-                "start", "qr", "via", "via", "via", "via", "vlm", "via",
-                "via", "via", "via", "via", "via", "return",
-            ],
+            ["start", "qr", "via", "via", "via", "vlm", "via", "via", "return"],
         )
         self.assertEqual(
             [item.id for item in waypoints],
             [
                 "p_start",
                 "a_task_observe",
-                "via_2_entry",
-                "a_departure_exit",
-                "via_2_corridor",
-                "via_2",
-                "c_corner_1",
-                "c_north_1",
-                "c_north_2",
                 "via_1",
+                "via_2",
                 "via_3",
-                "return_corridor_exit",
-                "p_return_approach",
+                "c_corner_1",
+                "via_4",
+                "via_5",
                 "p_finish",
             ],
         )
         self.assertEqual(waypoints[1].goal_profile, "precise")
-        self.assertEqual(waypoints[6].goal_profile, "precise")
+        self.assertEqual(waypoints[5].goal_profile, "precise")
         self.assertTrue(all(
             item.goal_profile == "standard"
             for index, item in enumerate(waypoints)
-            if index not in {1, 6}
+            if index not in {1, 5}
         ))
 
 

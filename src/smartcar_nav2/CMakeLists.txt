@@ -251,16 +251,8 @@ install(TARGETS
 
 if(BUILD_TESTING)
   find_package(ament_cmake_gtest REQUIRED)
-  find_package(ament_cmake_pytest REQUIRED)
   find_package(launch_testing_ament_cmake REQUIRED)
 
-  ament_add_gtest(test_reverse_path_utils
-    test/test_reverse_path_utils.cpp
-  )
-
-  ament_add_gtest(test_reverse_command_filter
-    test/test_reverse_command_filter.cpp
-  )
   ament_add_gtest(test_forward_command_filter
     test/test_forward_command_filter.cpp
   )
@@ -276,14 +268,8 @@ if(BUILD_TESTING)
   ament_add_gtest(test_local_costmap_tracking_envelope
     test/test_local_costmap_tracking_envelope.cpp
   )
-  ament_add_gtest(test_ackermann_reverse_retreat_path
-    test/test_ackermann_reverse_retreat_path.cpp
-  )
   ament_add_gtest(test_costmap_sample_guard
     test/test_costmap_sample_guard.cpp
-  )
-  ament_add_gtest(test_planner_path_start_contract
-    test/test_planner_path_start_contract.cpp
   )
   target_include_directories(test_free_transit_goal_samples PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
@@ -300,24 +286,8 @@ if(BUILD_TESTING)
   target_include_directories(test_forward_path_tracking_guard PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
   )
-  target_include_directories(test_ackermann_reverse_retreat_path PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
   target_include_directories(test_costmap_sample_guard PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
-  target_include_directories(test_planner_path_start_contract PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
-  target_include_directories(test_reverse_command_filter PRIVATE
-    ${CMAKE_CURRENT_SOURCE_DIR}/include
-  )
-  target_link_libraries(test_reverse_path_utils reverse_path_utils)
-  ament_target_dependencies(test_reverse_path_utils
-    geometry_msgs
-    nav_msgs
-    tf2
-    tf2_geometry_msgs
   )
   ament_target_dependencies(test_costmap_footprint_sweep
     geometry_msgs
@@ -337,24 +307,9 @@ if(BUILD_TESTING)
     geometry_msgs
     nav_msgs
   )
-  ament_target_dependencies(test_ackermann_reverse_retreat_path
-    geometry_msgs
-    nav2_msgs
-    nav_msgs
-    tf2
-    tf2_geometry_msgs
-  )
   ament_target_dependencies(test_costmap_sample_guard
     nav2_msgs
     rclcpp
-  )
-  ament_target_dependencies(test_planner_path_start_contract
-    geometry_msgs
-    nav_msgs
-  )
-
-  ament_add_pytest_test(reverse_navigation_contracts
-    test/test_reverse_navigation_contracts.py
   )
   add_launch_test(test/test_smartcar_nav2_launch.py TIMEOUT 90)
 endif()

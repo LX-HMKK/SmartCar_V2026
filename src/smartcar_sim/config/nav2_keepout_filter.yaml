@@ -4,59 +4,13 @@
 # This permits the requested 0.22 m rear-axle radius. The real chain now uses
 # the same conservative lower bound after a measured approximately 0.20 m
 # physical circle; simulation-only controller and keepout tuning stay local.
-bt_navigator:
-  ros__parameters:
-    # Keep the custom free-heading path validator in the exact same kinematic
-    # envelope as the simulation-only Smac and controller overrides below.
-    free_heading_minimum_turning_radius: 0.22
-
-bt_navigator_navigate_through_poses_rclcpp_node:
-  ros__parameters:
-    free_heading_minimum_turning_radius: 0.22
-
-bt_navigator_navigate_to_pose_rclcpp_node:
-  ros__parameters:
-    free_heading_minimum_turning_radius: 0.22
-
 controller_server:
   ros__parameters:
     # Stop before the physical 0.12 m precise-terminal verification limit.
     # This is a goal acceptance threshold, not a path or steering guide.
     precise_goal_checker:
       xy_goal_tolerance: 0.10
-    # The local route's P -> A tree uses stock FollowPath.
-    controller_plugins: ["FollowPath", "ForwardAvoidance", "ReverseHandoff", "ReverseRecovery"]
-    ForwardAvoidance:
-      # Local Gazebo and the production route use one 0.30 m/s operating
-      # point. Keep angular speed coupled to the 0.22 m minimum radius.
-      desired_linear_vel: 0.30
-      # Keep the carrot inside the current local arc so RPP converges before
-      # beginning the next obstacle-clear turn.
-      lookahead_dist: 0.30
-      min_lookahead_dist: 0.30
-      max_lookahead_dist: 0.30
-      use_velocity_scaled_lookahead_dist: false
-      regulated_linear_scaling_min_radius: 0.22
-      forward_max_angular_velocity: 1.3636363636363635
-      forward_min_turning_radius: 0.22
-      forward_terminal_lookahead_m: 0.12
-      forward_terminal_activation_distance_m: 0.60
-      forward_terminal_speed_mps: 0.08
-      forward_terminal_speed_distance_m: 0.50
-      # Use the same terminal-only tangent tracker as the production chain;
-      # it does not enable route-wide curvature following.
-      forward_terminal_use_curvature_tracking: true
-      forward_terminal_heading_gain: 1.0
-      forward_terminal_cross_track_gain: 2.0
-      forward_terminal_collision_projection_m: 0.15
-      # Do not let RPP recover a path-tracking error by cutting toward an
-      # obstacle or beginning a new large circle. The controller fails to the
-      # BT's existing clear/replan branch outside this swept path band.
-      forward_path_max_cross_track_error: 0.12
-      # Retain full collision checking but do not reduce the requested
-      # 0.30 m/s cruise speed just because the path is turning.
-      use_regulated_linear_velocity_scaling: false
-      use_cost_regulated_linear_velocity_scaling: false
+    controller_plugins: ["FollowPath"]
     FollowPath:
       # P -> A uses Nav2's stock Regulated Pure Pursuit controller. Keep the
       # only simulation overrides within that controller's native parameters.
@@ -80,23 +34,6 @@ controller_server:
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
       allow_reversing: false
-    ReverseHandoff:
-      # Reverse handoff is also part of the single 0.30 m/s simulation
-      # operating point.  Its MPPI sampling envelope must cover that speed.
-      vx_max: 0.30
-      wz_max: 1.3636363636363635
-      vx_std: 0.18
-      wz_std: 0.60
-      batch_size: 100
-      AckermannConstraints:
-        min_turning_r: 0.22
-    ReverseRecovery:
-      # The bounded 0.15 m recovery retains its collision sweep and distance
-      # cap, but does not inherit the old 0.05 m/s simulation limit.
-      vx_max: 0.30
-      vx_std: 0.09
-      AckermannConstraints:
-        min_turning_r: 0.22
 
 planner_server:
   ros__parameters:
@@ -110,10 +47,7 @@ planner_server:
       # visibly clear side of an A-zone obstacle before the independent sweep
       # has to reject the path.
       cost_penalty: 10.0
-      # Permit one bounded analytic terminal Dubins connection so the final
-      # tangent agrees with the locked task yaw. ComputeFreeHeadingPath still
-      # sweeps the complete padded footprint against fresh raw costmap and
-      # keepout data before FollowPath can receive it.
+      # Native Smac Hybrid-A* may use its standard analytic expansion.
       analytic_expansion_max_length: 1.5
       # A local-Gazebo-only vehicle constraint. The matching controller limits
       # and SDF steering geometry are changed together.

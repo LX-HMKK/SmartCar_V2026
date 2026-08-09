@@ -5,30 +5,21 @@ planning_segments:
   start_id: p_start
   end_id: a_task_observe
   through_ids: []
-- id: qr_to_via_2
-  direction: forward
-  start_id: a_task_observe
-  end_id: via_2
-  through_ids:
-  - a_departure_exit
-  - via_2_entry
-  - via_2_corridor
 - id: qr_to_vlm
   direction: forward
-  start_id: via_2
+  start_id: a_task_observe
   end_id: c_corner_1
-  through_ids: []
+  through_ids:
+  - via_1
+  - via_2
+  - via_3
 - id: return_to_p
   direction: forward
   start_id: c_corner_1
   end_id: p_finish
   through_ids:
-  - c_north_1
-  - c_north_2
-  - via_1
-  - via_3
-  - return_corridor_exit
-  - p_return_approach
+  - via_4
+  - via_5
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -49,43 +40,23 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.025965510598539
-      y: 1.2045443727459233
+      x: 2.898403475881205
+      y: 0.9659945286391132
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.08715574274765817
-      w: 0.9961946980917455
+      z: 0.10452846326765347
+      w: 0.9945218953682733
   task: qr
   direction: forward
   goal_profile: precise
-- id: via_2_entry
+- id: via_1
   frame_id: odom_combined
   pose:
     position:
-      x: 2.05
-      y: 1.20
-      z: 0.0
-  task: via
-  direction: forward
-  goal_profile: standard
-- id: a_departure_exit
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 3.35
-      y: 1.20
-      z: 0.0
-  task: via
-  direction: forward
-  goal_profile: standard
-- id: via_2_corridor
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 2.05
-      y: 2.95
+      x: 1.990071488899615
+      y: 2.5497506435006443
       z: 0.0
   task: via
   direction: forward
@@ -94,53 +65,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.7304189792471045
-      y: 2.818009974259976
-      z: 0.0
-  task: via
-  direction: forward
-  goal_profile: standard
-- id: c_corner_1
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 0.9330276705276708
-      y: 3.8337068653474913
-      z: 0.0
-    orientation:
-      x: 0.0
-      y: 0.0
-      z: 0.5521993823302276
-      w: 0.8337120858870376
-  task: vlm
-  direction: forward
-  goal_profile: precise
-- id: c_north_1
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 0.75
-      y: 3.95
-      z: 0.0
-  task: via
-  direction: forward
-  goal_profile: standard
-- id: c_north_2
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 3.15
-      y: 4.0
-      z: 0.0
-  task: via
-  direction: forward
-  goal_profile: standard
-- id: via_1
-  frame_id: odom_combined
-  pose:
-    position:
-      x: 3.4019935069572593
-      y: 3.5638138712833114
+      x: 0.48548654681467207
+      y: 2.987129987129989
       z: 0.0
   task: via
   direction: forward
@@ -149,31 +75,43 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 1.9780821492448313
-      y: 2.125441223786812
+      x: 0.43300102557915077
+      y: 3.9901866151866168
       z: 0.0
   task: via
   direction: forward
   goal_profile: standard
-- id: return_corridor_exit
+- id: c_corner_1
   frame_id: odom_combined
   pose:
     position:
-      x: 2.0
-      y: 1.55
+      x: 3.197238477316604
+      y: 3.9960183397683418
+      z: 0.0
+    orientation:
+      x: 0.0
+      y: 0.0
+      z: 0.0
+      w: 1.0
+  task: vlm
+  direction: forward
+  goal_profile: precise
+- id: via_4
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 3.197238477316604
+      y: 2.9463079150579166
       z: 0.0
   task: via
   direction: forward
   goal_profile: standard
-- id: p_return_approach
+- id: via_5
   frame_id: odom_combined
   pose:
     position:
-      x: 0.6
-      # Stay left of the physical A4 cone before the final P approach. A
-      # front-facing depth camera cannot safely clear a cone after it leaves
-      # its FOV, so the return constraint must retain body clearance itself.
-      y: 1.15
+      x: 1.9842397643178904
+      y: 2.4214527027027035
       z: 0.0
   task: via
   direction: forward
@@ -185,11 +123,6 @@ waypoints:
       x: 0.0
       y: 0.0
       z: 0.0
-    orientation:
-      x: 0.0
-      y: 0.0
-      z: -0.9486832980505138
-      w: 0.31622776601683794
   task: return
   direction: forward
   goal_profile: standard

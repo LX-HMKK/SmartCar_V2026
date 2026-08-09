@@ -47,11 +47,6 @@ class WaypointSyncContracts(unittest.TestCase):
                     deployment_point["goal_profile"],
                     simulation_point["goal_profile"],
                 )
-                if waypoint_id == "a_task_observe":
-                    self.assertNotEqual(
-                        deployment_point["pose"], simulation_point["pose"]
-                    )
-                    continue
                 self.assertEqual(
                     deployment_point["pose"], simulation_point["pose"]
                 )

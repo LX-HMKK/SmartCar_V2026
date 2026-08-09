@@ -391,7 +391,7 @@ def generate_launch_description():
         "navigate_through_poses_return_w_replanning_and_recovery.xml",
     ])
     bt_precise = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
-        "navigate_to_pose_precise_sim_w_replanning_and_recovery.xml"])
+        "navigate_to_pose_precise_w_replanning_and_recovery.xml"])
     bt_reverse = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_reverse_sim_w_replanning_and_recovery.xml"])
     bt_reverse_handoff = PathJoinSubstitution([

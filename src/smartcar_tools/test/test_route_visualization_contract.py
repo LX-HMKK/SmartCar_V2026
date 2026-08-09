@@ -19,7 +19,6 @@ FIELD_REFERENCE = PACKAGE_ROOT / "smartcar_tools" / "field_reference_node.py"
 GLOBAL_PATH_NAME = "Actual Nav2 Global Path (/plan)"
 LOCAL_PATH_NAME = "Actual Nav2 Local Path (/local_plan)"
 SIM_CANDIDATE_PATH_NAME = "Planner Candidate Path (/plan)"
-SIM_ACCEPTED_PATH_NAME = "Accepted Global Path (/smartcar/accepted_global_plan)"
 SIM_TRACKING_PATH_NAME = "Controller Tracking Window (/transformed_global_plan)"
 REFERENCE_NAME = "Waypoint Reference Constraints (not a Nav2 path)"
 
@@ -45,8 +44,6 @@ class RouteVisualizationContracts(unittest.TestCase):
 
         simulation = yaml.safe_load(SIM_RVIZ.read_text(encoding="utf-8"))
         candidate = display_by_topic(simulation, "/plan")
-        accepted = display_by_topic(
-            simulation, "/smartcar/accepted_global_plan")
         tracking = display_by_topic(simulation, "/transformed_global_plan")
         reference = display_by_topic(
             simulation, "/smartcar/waypoints/markers")
@@ -54,8 +51,11 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertEqual(candidate["Class"], "rviz_default_plugins/Path")
         self.assertEqual(candidate["Name"], SIM_CANDIDATE_PATH_NAME)
         self.assertTrue(candidate["Enabled"])
-        self.assertEqual(accepted["Class"], "rviz_default_plugins/Path")
-        self.assertEqual(accepted["Name"], SIM_ACCEPTED_PATH_NAME)
+        self.assertFalse(any(
+            display.get("Topic", {}).get("Value") ==
+            "/smartcar/accepted_global_plan"
+            for display in simulation["Visualization Manager"]["Displays"]
+        ))
         self.assertEqual(tracking["Class"], "rviz_default_plugins/Path")
         self.assertEqual(tracking["Name"], SIM_TRACKING_PATH_NAME)
         self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")

@@ -1,35 +1,14 @@
-<!-- Forward return tree: preserve every transit constraint and tightly lock P. -->
+<!-- Native Nav2 planning and tracking through points to P. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
     <RecoveryNode number_of_retries="5" name="NavigateReturnRecovery">
       <PipelineSequence name="NavigateReturnWithReplanning">
-        <!-- Preserve every configured return corridor target. The first goal
-             can be near the preceding C1 terminal tolerance, so it must not
-             be removed before ComputeFreeHeadingPathThroughPoses uses it. -->
-        <LatchSuccess name="LatchReturnFreeHeadingPathThroughPoses">
-          <RecoveryNode number_of_retries="1" name="ComputeReturnFreeHeadingPathThroughPoses">
-            <ComputeFreeHeadingPathThroughPoses
-                goals="{goals}"
-                path="{path}"
-                planner_id="GridBased"
-                heading_samples="12"
-                candidate_timeout_ms="1000"
-                search_budget_ms="2400"
-                through_search_budget_ms="12000"
-                through_solution_limit="4"
-                max_start_drift_m="0.10"
-                footprint_half_length_m="0.2491"
-                footprint_half_width_m="0.095"
-                footprint_sweep_step_m="0.025"
-                footprint_lethal_cost="253"
-                local_tracking_cross_track_error_m="0.10"
-                local_tracking_horizon_m="0.50"
-                local_tracking_lethal_cost="254"/>
-            <ClearEntireCostmap name="ClearGlobalCostmap-ReturnContext" service_name="global_costmap/clear_entirely_global_costmap"/>
-          </RecoveryNode>
-        </LatchSuccess>
+        <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
+          <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+          <ClearEntireCostmap name="ClearGlobalCostmap-ReturnContext" service_name="global_costmap/clear_entirely_global_costmap"/>
+        </RecoveryNode>
         <RecoveryNode number_of_retries="1" name="FollowReturnPath">
-          <RecordFollowPath path="{path}" controller_id="ForwardAvoidance" goal_checker_id="return_goal_checker" completion_settle_delay_ms="600"/>
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="return_goal_checker"/>
           <ClearEntireCostmap name="ClearLocalCostmap-ReturnContext" service_name="local_costmap/clear_entirely_local_costmap"/>
         </RecoveryNode>
       </PipelineSequence>

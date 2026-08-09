@@ -4,7 +4,7 @@
 
 ## 软件里程碑
 
-当前软件基线包含可选 RF2O、一条四个显式 planning segment、14 个航点约束的全正向语义路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与纯导航 `nav_only.yaml` 共享 P→A、A→`a_departure_exit`→`via_2_entry`→`via_2_corridor`→`via_2`、`via_2`→C1、C1→`c_north_1`→`c_north_2`→`via_1`→`via_3`→`return_corridor_exit`→`p_return_approach`→P 四个正向分段，以及除 A 外的几何；前者的 A 是待标定 QR 语义点，后者的 A 是纯导航停点，二者姿态独立维护。前者在 A/C1 触发 QR/VLM，后者用 `nav` 跳过媒体服务，A 与 C1 使用 `precise` profile，P 终点使用 `standard` profile，且两份 YAML 均保持 `calibrated: false`。`via` 是无朝向的普通经过约束；有经过点的动作使用正向 `NavigateThroughPoses` 行为树，后置方向门将动作 UUID 与速度方向租约绑定。当前路线已通过离线几何预检和本机 Gazebo 全路线校验（`run_20260807_170954_1`），但尚未完成 RDK 或实体车辆验证。2026-07-24 的 RDK 核心包验证为 `108 tests, 0 errors, 0 failures, 0 skipped`，不验证当前路线、真实相机、云端 API、音频或完整赛道运动验收。
+当前软件基线包含可选 RF2O、一条三个显式 planning segment、九个航点约束的全正向路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与纯导航 `nav_only.yaml` 共享完全相同的点位和分段：P→A、A→`via_1`→`via_2`→`via_3`→C1、C1→`via_4`→`via_5`→P；仅 A/C1 的任务类型分别为 `qr`/`vlm` 与 `nav`。A 与 C1 使用 `precise` profile，P 终点使用 `standard` profile，且两份 YAML 均保持 `calibrated: false`。运行路径一律由 Nav2 基于实时 costmap 规划，不存在强制路线或点位专用阈值。当前路线尚未完成 Gazebo、RDK 或实体车辆验证。文档入口见 [docs/README.md](docs/README.md)。
 
 ## 当前边界
 
@@ -213,4 +213,4 @@ ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
 
 关键输出：`/cmd_vel_candidate`、`/cmd_vel`、`/cmd_vel_safe`、`/ackermann_cmd`、`/smartcar/direction_guard/status`、`/smartcar/safety/status`、`/smartcar/task/state`、`/smartcar/vision/read_qr`、`/smartcar/vision/describe_scene`、`/smartcar/speech/status`。
 
-更多设计与部署细节见 [`docs/deployment/rdk-environment-setup.md`](docs/deployment/rdk-environment-setup.md)、[`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md) 和 [`docs/智慧医疗挑战赛_技术方案_本地部署版.md`](docs/智慧医疗挑战赛_技术方案_本地部署版.md)。
+当前操作文档见 [`docs/README.md`](docs/README.md)。

@@ -79,10 +79,10 @@ TUNABLE_PARAMS = {
     },
     "5": {
         "name": "forward_lookahead_dist",
-        "path": "controller_server.ros__parameters.ForwardAvoidance.lookahead_dist",
+        "path": "controller_server.ros__parameters.FollowPath.lookahead_dist",
         "desc": "前进 RPP 前视距离 (m)",
-        "default": 0.30,
-        "range": (0.30, 0.65),
+        "default": 0.80,
+        "range": (0.30, 1.20),
         "step": 0.05,
     },
     "6": {
@@ -100,22 +100,6 @@ TUNABLE_PARAMS = {
         "default": 0.65,
         "range": (0.40, 1.00),
         "step": 0.05,
-    },
-    "8": {
-        "name": "reverse_handoff_vx_max",
-        "path": "controller_server.ros__parameters.ReverseHandoff.vx_max",
-        "desc": "倒车交接 MPPI 虚拟正向最大速度 (m/s)",
-        "default": 0.30,
-        "range": (0.04, 0.30),
-        "step": 0.01,
-    },
-    "9": {
-        "name": "reverse_handoff_goal_angle_weight",
-        "path": "controller_server.ros__parameters.ReverseHandoff.GoalAngleCritic.cost_weight",
-        "desc": "倒车交接 MPPI 终点航向权重",
-        "default": 12.0,
-        "range": (6.0, 18.0),
-        "step": 2.0,
     },
 }
 
