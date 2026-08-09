@@ -128,6 +128,8 @@ class ShortDrive(Node):
         self.start_pose = None
         self.latest_odom = None
         self.last_odom_at = None
+        self.latest_nav_odom = None
+        self.last_nav_odom_at = None
         self.last_depth_at = None
         self.last_local_costmap_at = None
         self.last_global_costmap_at = None
@@ -139,6 +141,8 @@ class ShortDrive(Node):
         self.last_state = ""
         self.saw_navigating = False
         self.create_subscription(Odometry, "/odom", self._on_odom, 10)
+        self.create_subscription(
+            Odometry, "/odom_combined", self._on_nav_odom, 10)
         self.create_subscription(
             PointCloud2,
             "/smartcar/depth/points",
@@ -184,6 +188,10 @@ class ShortDrive(Node):
     def _on_odom(self, message):
         self.latest_odom = message
         self.last_odom_at = time.monotonic()
+
+    def _on_nav_odom(self, message):
+        self.latest_nav_odom = message
+        self.last_nav_odom_at = time.monotonic()
 
     def _on_depth(self, _message):
         self.last_depth_at = time.monotonic()
@@ -350,7 +358,8 @@ class ShortDrive(Node):
                 "require_mission_complete": self.require_mission_complete,
             },
             "measurements": {
-                "forward_displacement_m": round(self.forward_displacement(), 4),
+                "fused_forward_displacement_m": round(
+                    self.forward_displacement(), 4),
                 "max_ackermann_speed_mps": round(self.max_ackermann_speed, 4),
                 "last_ackermann_speed_mps": self.last_ackermann,
                 "local_raw_occupied_cells": self.local_costmap_occupied_cells,
@@ -373,10 +382,10 @@ class ShortDrive(Node):
         self.get_logger().info(f"Bounded test result: {self.results_file}")
 
     def forward_displacement(self):
-        if self.start_pose is None or self.latest_odom is None:
+        if self.start_pose is None or self.latest_nav_odom is None:
             return 0.0
         p0 = self.start_pose.pose.pose.position
-        p1 = self.latest_odom.pose.pose.position
+        p1 = self.latest_nav_odom.pose.pose.position
         q = self.start_pose.pose.pose.orientation
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
@@ -386,6 +395,7 @@ class ShortDrive(Node):
         if not self.spin_until(
             lambda: (
                 self.latest_odom is not None
+                and self.latest_nav_odom is not None
                 and self.last_depth_at is not None
                 and self.last_ackermann is not None
                 and self.last_local_costmap_at is not None
@@ -399,7 +409,7 @@ class ShortDrive(Node):
         if abs(float(self.last_ackermann)) > 1.0e-4:
             raise RuntimeError("ackermann output was nonzero while e-stop was latched")
         self.verify_runtime_mode()
-        self.start_pose = self.latest_odom
+        self.start_pose = self.latest_nav_odom
         self.set_speed_limits()
         self.get_logger().info(
             f"Preflight passed: speed cap {self.speed_mps:.3f} m/s, "
@@ -434,6 +444,9 @@ class ShortDrive(Node):
                 break
             if self.last_odom_at is None or now - self.last_odom_at > 0.45:
                 reason = "raw_odom_stale"
+                break
+            if self.last_nav_odom_at is None or now - self.last_nav_odom_at > 0.45:
+                reason = "fused_odom_stale"
                 break
             if self.last_depth_at is None or now - self.last_depth_at > 0.65:
                 reason = "depth_points_stale"

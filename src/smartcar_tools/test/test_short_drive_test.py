@@ -58,6 +58,10 @@ class ShortDriveLimitTests(unittest.TestCase):
         self.assertFalse(outcome_passed("timeout", True))
         self.assertTrue(outcome_passed("distance_limit:0.250m", False))
 
+    def test_fused_odom_watchdog_failure_is_not_a_pass(self):
+        self.assertFalse(outcome_passed("fused_odom_stale", False))
+        self.assertFalse(outcome_passed("fused_odom_stale", True))
+
     def test_runtime_mode_rejects_normal_navigation_settings(self):
         safety = {
             "max_linear_speed_mps": 0.30,
