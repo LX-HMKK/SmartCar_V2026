@@ -45,6 +45,8 @@ void ForwardOnlyRPPController::readSafetyParameters()
   double forward_path_tight_turn_speed_mps = 0.0;
   double forward_path_tight_turn_radius_m = 0.0;
   double forward_path_tight_turn_preview_m = 0.0;
+  double forward_terminal_speed_mps = 0.0;
+  double forward_terminal_speed_distance_m = 0.0;
   bool allow_reversing = true;
   bool use_rotate_to_heading = true;
   const std::string prefix = plugin_name_ + ".";
@@ -86,6 +88,12 @@ void ForwardOnlyRPPController::readSafetyParameters()
     node, prefix + "forward_path_tight_turn_radius_m", rclcpp::ParameterValue(0.0));
   nav2_util::declare_parameter_if_not_declared(
     node, prefix + "forward_path_tight_turn_preview_m", rclcpp::ParameterValue(0.0));
+  // A terminal speed cap preserves the accepted path curvature while giving
+  // the vehicle time to settle into a precise goal envelope. Zero disables it.
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "forward_terminal_speed_mps", rclcpp::ParameterValue(0.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "forward_terminal_speed_distance_m", rclcpp::ParameterValue(0.0));
   if (!node->get_parameter(prefix + "desired_linear_vel", desired_linear_velocity) ||
     !node->get_parameter(
       prefix + "forward_max_angular_velocity", max_angular_velocity) ||
@@ -119,6 +127,11 @@ void ForwardOnlyRPPController::readSafetyParameters()
     !node->get_parameter(
       prefix + "forward_path_tight_turn_preview_m",
       forward_path_tight_turn_preview_m) ||
+    !node->get_parameter(
+      prefix + "forward_terminal_speed_mps", forward_terminal_speed_mps) ||
+    !node->get_parameter(
+      prefix + "forward_terminal_speed_distance_m",
+      forward_terminal_speed_distance_m) ||
     false)
   {
     throw std::runtime_error(
@@ -153,6 +166,13 @@ void ForwardOnlyRPPController::readSafetyParameters()
     !finiteForwardValue(forward_path_tight_turn_speed_mps) ||
     !finiteForwardValue(forward_path_tight_turn_radius_m) ||
     !finiteForwardValue(forward_path_tight_turn_preview_m) ||
+    !finiteForwardValue(forward_terminal_speed_mps) ||
+    !finiteForwardValue(forward_terminal_speed_distance_m) ||
+    forward_terminal_speed_mps < 0.0 ||
+    forward_terminal_speed_distance_m < 0.0 ||
+    ((forward_terminal_speed_mps > 0.0 || forward_terminal_speed_distance_m > 0.0) &&
+    (forward_terminal_speed_mps <= 0.0 || forward_terminal_speed_distance_m <= 0.0 ||
+    forward_terminal_speed_mps > desired_linear_velocity)) ||
     (tight_turn_speed_cap_enabled &&
     (!forward_path_use_curvature_tracking || forward_path_tight_turn_speed_mps <= 0.0 ||
     forward_path_tight_turn_speed_mps > desired_linear_velocity ||
@@ -184,7 +204,39 @@ void ForwardOnlyRPPController::readSafetyParameters()
     forward_path_tight_turn_speed_mps_ = forward_path_tight_turn_speed_mps;
     forward_path_tight_turn_radius_m_ = forward_path_tight_turn_radius_m;
     forward_path_tight_turn_preview_m_ = forward_path_tight_turn_preview_m;
+    forward_terminal_speed_mps_ = forward_terminal_speed_mps;
+    forward_terminal_speed_distance_m_ = forward_terminal_speed_distance_m;
   }
+}
+
+void ForwardOnlyRPPController::applyTerminalSpeedCap(
+  geometry_msgs::msg::TwistStamped & command,
+  double remaining_path_m,
+  nav2_core::GoalChecker * goal_checker) const
+{
+  double terminal_speed = 0.0;
+  double terminal_distance = 0.0;
+  {
+    std::lock_guard<std::mutex> lock(path_tracking_mutex_);
+    terminal_speed = forward_terminal_speed_mps_;
+    terminal_distance = forward_terminal_speed_distance_m_;
+  }
+  geometry_msgs::msg::Pose pose_tolerance;
+  geometry_msgs::msg::Twist velocity_tolerance;
+  const bool precise_goal = goal_checker != nullptr &&
+    goal_checker->getTolerances(pose_tolerance, velocity_tolerance) &&
+    finiteForwardValue(pose_tolerance.position.x) &&
+    finiteForwardValue(pose_tolerance.position.y) &&
+    pose_tolerance.position.x <= 0.12 && pose_tolerance.position.y <= 0.12;
+  if (!precise_goal || terminal_speed <= 0.0 || terminal_distance <= 0.0 ||
+    !finiteForwardValue(remaining_path_m) || remaining_path_m > terminal_distance ||
+    command.twist.linear.x <= terminal_speed || command.twist.linear.x <= 0.0)
+  {
+    return;
+  }
+  const double scale = terminal_speed / command.twist.linear.x;
+  command.twist.linear.x = terminal_speed;
+  command.twist.angular.z *= scale;
 }
 
 void ForwardOnlyRPPController::setPlan(const nav_msgs::msg::Path & path)
@@ -307,6 +359,7 @@ ForwardOnlyRPPController::computeCurvatureTrackingCommand(
   command.twist.angular.x = filtered.command.angular_x;
   command.twist.angular.y = filtered.command.angular_y;
   command.twist.angular.z = filtered.command.angular_z;
+  applyTerminalSpeedCap(command, projection.remaining_path_m, goal_checker);
   return command;
 }
 
@@ -423,6 +476,8 @@ geometry_msgs::msg::TwistStamped ForwardOnlyRPPController::computeVelocityComman
     max_lookahead_dist_ = configured_max_lookahead;
     use_velocity_scaled_lookahead_dist_ = configured_velocity_scaled;
   }
+
+  applyTerminalSpeedCap(command, projection.remaining_path_m, goal_checker);
 
   ForwardCommandLimits limits;
   {

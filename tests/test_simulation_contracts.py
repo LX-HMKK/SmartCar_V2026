@@ -1445,10 +1445,14 @@ class SimulationContractTests(unittest.TestCase):
             "forward_path_use_curvature_tracking",
             "forward_path_p_departure_speed_cap_mps",
             "forward_path_p_departure_right_correction_gain",
-            "forward_terminal_lookahead_m",
-            "forward_terminal_activation_distance_m",
         ):
             self.assertNotIn(forbidden, sim_forward)
+        self.assertAlmostEqual(sim_forward["forward_terminal_lookahead_m"], 0.12)
+        self.assertAlmostEqual(
+            sim_forward["forward_terminal_activation_distance_m"], 0.60)
+        self.assertAlmostEqual(sim_forward["forward_terminal_speed_mps"], 0.08)
+        self.assertAlmostEqual(
+            sim_forward["forward_terminal_speed_distance_m"], 0.50)
         self.assertIs(sim_forward["use_regulated_linear_velocity_scaling"], False)
         self.assertIs(
             sim_forward["use_cost_regulated_linear_velocity_scaling"], False)
@@ -1460,10 +1464,14 @@ class SimulationContractTests(unittest.TestCase):
             "forward_path_use_curvature_tracking",
             "forward_path_p_departure_speed_cap_mps",
             "forward_path_p_departure_right_correction_gain",
-            "forward_terminal_lookahead_m",
-            "forward_terminal_activation_distance_m",
         ):
             self.assertNotIn(forbidden, real_forward)
+        self.assertAlmostEqual(real_forward["forward_terminal_lookahead_m"], 0.12)
+        self.assertAlmostEqual(
+            real_forward["forward_terminal_activation_distance_m"], 0.60)
+        self.assertAlmostEqual(real_forward["forward_terminal_speed_mps"], 0.08)
+        self.assertAlmostEqual(
+            real_forward["forward_terminal_speed_distance_m"], 0.50)
         self.assertEqual(
             sim_follow.attrib["controller_id"], "ForwardAvoidance")
         self.assertEqual(sim_follow.attrib["goal_checker_id"], "precise_goal_checker")

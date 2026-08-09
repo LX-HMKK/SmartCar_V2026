@@ -39,6 +39,10 @@ controller_server:
       regulated_linear_scaling_min_radius: 0.22
       forward_max_angular_velocity: 1.3636363636363635
       forward_min_turning_radius: 0.22
+      forward_terminal_lookahead_m: 0.12
+      forward_terminal_activation_distance_m: 0.60
+      forward_terminal_speed_mps: 0.08
+      forward_terminal_speed_distance_m: 0.50
       # Do not let RPP recover a path-tracking error by cutting toward an
       # obstacle or beginning a new large circle. The controller fails to the
       # BT's existing clear/replan branch outside this swept path band.

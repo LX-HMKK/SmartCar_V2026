@@ -45,6 +45,10 @@ public:
 
 private:
   void readSafetyParameters();
+  void applyTerminalSpeedCap(
+    geometry_msgs::msg::TwistStamped & command,
+    double remaining_path_m,
+    nav2_core::GoalChecker * goal_checker) const;
   geometry_msgs::msg::TwistStamped computeCurvatureTrackingCommand(
     const geometry_msgs::msg::PoseStamped & robot_pose,
     const geometry_msgs::msg::Twist & robot_speed,
@@ -72,6 +76,8 @@ private:
   double forward_path_tight_turn_speed_mps_{0.0};
   double forward_path_tight_turn_radius_m_{0.0};
   double forward_path_tight_turn_preview_m_{0.0};
+  double forward_terminal_speed_mps_{0.0};
+  double forward_terminal_speed_distance_m_{0.0};
 };
 
 }  // namespace smartcar_nav2
