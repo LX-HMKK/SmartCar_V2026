@@ -170,7 +170,10 @@ waypoints:
   pose:
     position:
       x: 0.6
-      y: 0.45
+      # Stay left of the physical A4 cone before the final P approach. A
+      # front-facing depth camera cannot safely clear a cone after it leaves
+      # its FOV, so the return constraint must retain body clearance itself.
+      y: 1.15
       z: 0.0
   task: via
   direction: forward

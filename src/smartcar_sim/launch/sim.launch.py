@@ -518,9 +518,15 @@ def generate_launch_description():
         parameters=[{
             "use_sim_time": True,
             "input_topic": "/scan",
+            # The depth fixture uses synchronized world obstacle projections,
+            # not a scan-to-cloud conversion that inherits lidar occlusion.
+            "source_mode": "world_obstacles",
+            "odom_topic": "/odom_combined",
+            "world_obstacles": "1.1,0.3;1.5,0.3;2.2,0.5;1.0,0.8;1.8,0.9;2.45,0.15",
             "output_topic": "/smartcar/depth/points",
             "min_range_m": 0.25,
             "max_range_m": 3.5,
+            "horizontal_half_fov_rad": 0.75,
             # Convert the elevated laser fixture into obstacle points in the
             # same base-frame height window that the Aurora overlay accepts.
             "output_frame": "base_footprint",

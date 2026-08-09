@@ -54,7 +54,8 @@ private:
     const geometry_msgs::msg::Twist & robot_speed,
     nav2_core::GoalChecker * goal_checker,
     const nav_msgs::msg::Path & confirmed_plan,
-    const ForwardPathTrackingProjection & projection);
+    const ForwardPathTrackingProjection & projection,
+    bool terminal_mode);
 
   mutable std::mutex limits_mutex_;
   ForwardCommandLimits configured_limits_{};
@@ -78,6 +79,10 @@ private:
   double forward_path_tight_turn_preview_m_{0.0};
   double forward_terminal_speed_mps_{0.0};
   double forward_terminal_speed_distance_m_{0.0};
+  bool forward_terminal_use_curvature_tracking_{false};
+  double forward_terminal_heading_gain_{0.0};
+  double forward_terminal_cross_track_gain_{0.0};
+  double forward_terminal_collision_projection_m_{0.0};
 };
 
 }  // namespace smartcar_nav2

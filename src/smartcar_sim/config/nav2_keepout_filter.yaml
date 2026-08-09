@@ -43,6 +43,12 @@ controller_server:
       forward_terminal_activation_distance_m: 0.60
       forward_terminal_speed_mps: 0.08
       forward_terminal_speed_distance_m: 0.50
+      # Use the same terminal-only tangent tracker as the production chain;
+      # it does not enable route-wide curvature following.
+      forward_terminal_use_curvature_tracking: true
+      forward_terminal_heading_gain: 1.0
+      forward_terminal_cross_track_gain: 2.0
+      forward_terminal_collision_projection_m: 0.15
       # Do not let RPP recover a path-tracking error by cutting toward an
       # obstacle or beginning a new large circle. The controller fails to the
       # BT's existing clear/replan branch outside this swept path band.

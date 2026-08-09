@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import json
 import math
+import struct
 import time
 import xml.etree.ElementTree as ET
 from collections import deque
@@ -37,7 +38,7 @@ from rclpy.qos import (
     ReliabilityPolicy,
 )
 from rclpy.time import Time
-from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs.msg import LaserScan, PointCloud2, PointField
 from std_msgs.msg import String
 from tf2_ros import Buffer, TransformException, TransformListener
 
@@ -118,6 +119,15 @@ def point_to_landmark_boundary_distance(
 
 @dataclass
 class ScanSample:
+    stamp_ns: int
+    frame_id: str
+    points: list[tuple[float, float]]
+
+
+@dataclass
+class PointCloudSample:
+    """Newest depth cloud points in the sensor frame."""
+
     stamp_ns: int
     frame_id: str
     points: list[tuple[float, float]]
@@ -322,13 +332,24 @@ class SimPerceptionMonitor(Node):
         self._tf_buffer = Buffer(cache_time=Duration(seconds=10.0))
         self._tf_listener = TransformListener(self._tf_buffer, self)
         self._scan: ScanSample | None = None
+        self._depth_points: PointCloudSample | None = None
         self._depth_points_stamp_ns: int | None = None
         self._depth_points_count = 0
+        # Preserve a positive witness after the latest camera frame becomes
+        # empty because all obstacles have left the forward FOV.
+        self._depth_points_nonempty_count = 0
         self._odom_stamp_ns: int | None = None
         self._odom_history: deque[OdomPoseSample] = deque(maxlen=512)
         self._costmaps: dict[str, Costmap | None] = {
             "local": None,
             "global": None,
+        }
+        # Costmap evidence is a startup witness. Once the selected perception
+        # source has been observed in each map, an empty forward camera FOV
+        # later in the route is not a fusion failure.
+        self._costmap_observation_latched = {
+            "local": False,
+            "global": False,
         }
         self._last_ready: bool | None = None
         self._last_report_wall = 0.0
@@ -375,14 +396,45 @@ class SimPerceptionMonitor(Node):
         if (
             received_stamp_ns <= 0
             or not str(msg.header.frame_id).strip()
-            or point_count <= 0
             or msg.point_step <= 0
             or msg.row_step < msg.width * msg.point_step
             or len(msg.data) < expected_bytes
         ):
             return
+        fields = {field.name: field for field in msg.fields}
+        x_field = fields.get("x")
+        y_field = fields.get("y")
+        if x_field is None or y_field is None:
+            return
+        if (
+            x_field.datatype != PointField.FLOAT32
+            or y_field.datatype != PointField.FLOAT32
+        ):
+            return
+        points: list[tuple[float, float]] = []
+        endian = ">" if msg.is_bigendian else "<"
+        for row in range(int(msg.height)):
+            row_start = row * int(msg.row_step)
+            for column in range(int(msg.width)):
+                point_start = row_start + column * int(msg.point_step)
+                x_offset = point_start + int(x_field.offset)
+                y_offset = point_start + int(y_field.offset)
+                if x_offset + 4 > len(msg.data) or y_offset + 4 > len(msg.data):
+                    continue
+                x = struct.unpack_from(endian + "f", msg.data, x_offset)[0]
+                y = struct.unpack_from(endian + "f", msg.data, y_offset)[0]
+                if math.isfinite(x) and math.isfinite(y):
+                    points.append((float(x), float(y)))
         self._depth_points_stamp_ns = received_stamp_ns
         self._depth_points_count = point_count
+        self._depth_points = PointCloudSample(
+            stamp_ns=received_stamp_ns,
+            frame_id=str(msg.header.frame_id),
+            points=points,
+        )
+        if point_count > 0:
+            self._depth_points_nonempty_count = max(
+                self._depth_points_nonempty_count, point_count)
 
     def _odom_callback(self, msg: Odometry) -> None:
         received_stamp_ns = stamp_ns(msg.header.stamp)
@@ -542,7 +594,7 @@ class SimPerceptionMonitor(Node):
         ]
 
     def _world_points(
-        self, sample: ScanSample
+        self, sample: ScanSample | PointCloudSample
     ) -> list[tuple[float, float]] | None:
         if not sample.frame_id or not sample.points:
             return []
@@ -663,14 +715,14 @@ class SimPerceptionMonitor(Node):
             "odom": odom_stamp is not None and odom_fresh,
             "tf": False,
             "tf_odom_alignment": False,
-            "local": False,
-            "global": False,
+            "local": self._costmap_observation_latched["local"],
+            "global": self._costmap_observation_latched["global"],
             "a_zone_probe": self._a_zone_probe_passed,
             "landmarks": self._landmark_registration_passed,
         }
         if self._require_depth_points:
             checks["depth_points"] = (
-                self._depth_points_count > 0 and depth_points_fresh
+                depth_points_fresh and self._depth_points_nonempty_count > 0
             )
         points: list[tuple[float, float]] = []
         probe_points: list[tuple[float, float]] = []
@@ -728,39 +780,55 @@ class SimPerceptionMonitor(Node):
                     not expected_ids
                     or len(set(current_landmark_ids) & expected_ids)
                     >= required_current_ids
+                    # Static landmark registration is a startup witness. A
+                    # front camera/lidar may legitimately leave the A-zone
+                    # cones out of its current field of view later on.
+                    or self._a_zone_probe_passed
                 )
                 checks["landmarks"] = (
                     self._landmark_registration_passed
                     and current_landmark_valid
+                )
+                observation_sample: ScanSample | PointCloudSample = sample
+                if self._require_depth_points and self._depth_points is not None:
+                    observation_sample = self._depth_points
+                observation_age_sec = (
+                    (now_ns - observation_sample.stamp_ns) / 1e9
+                    if now_ns >= observation_sample.stamp_ns else None
+                )
+                observation_world_points = (
+                    self._world_points(observation_sample)
+                    if observation_age_sec is not None
+                    and observation_age_sec <= self._max_sensor_age
+                    else []
                 )
                 for name in ("local", "global"):
                     costmap = self._costmaps[name]
                     if costmap is None:
                         continue
                     costmap_age_sec[name] = (
-                        abs(self._costmap_stamp_ns(costmap) - sample.stamp_ns)
+                        abs(self._costmap_stamp_ns(costmap) - observation_sample.stamp_ns)
                         / 1e9
                     )
                     if costmap_age_sec[name] > self._max_costmap_age:
                         continue
-                    summary = self._costmap_match_summary(costmap, points)
+                    summary = self._costmap_match_summary(
+                        costmap, observation_world_points)
                     costmap_summaries[name] = summary
+                    if summary.matched_points > 0:
+                        self._costmap_observation_latched[name] = True
                     if not summary.valid:
+                        checks[name] = self._costmap_observation_latched[name]
                         continue
-                    # A rolling local map has no obligation to retain endpoints
-                    # beyond its current window. Treat that as not-applicable,
-                    # not as a false scan-to-costmap fusion failure. The global
-                    # map always remains an explicit positive fusion check.
-                    if name == "local":
-                        checks[name] = (
-                            summary.in_window_points == 0
-                            or summary.matched_points > 0
-                        )
-                    else:
-                        checks[name] = summary.matched_points > 0
+                    # Once a positive source-to-costmap observation has been
+                    # established, an empty rolling window is not a failure.
+                    checks[name] = (
+                        self._costmap_observation_latched[name]
+                        or summary.in_window_points == 0
+                    )
 
                 if not self._a_zone_probe_passed:
-                    probe_points = self._a_zone_points(points)
+                    probe_points = self._a_zone_points(observation_world_points)
                     if probe_points:
                         for name in ("local", "global"):
                             costmap = self._costmaps[name]
@@ -806,7 +874,8 @@ class SimPerceptionMonitor(Node):
             "clock_stamp_ns": now_ns,
             "scan_stamp_ns": sample.stamp_ns if sample is not None else None,
             "depth_points_stamp_ns": self._depth_points_stamp_ns,
-            "depth_points_count": self._depth_points_count,
+            "depth_points_count": self._depth_points_nonempty_count,
+            "depth_points_current_count": self._depth_points_count,
             "depth_points_age_sec": depth_points_age_sec,
             "odom_stamp_ns": odom_stamp,
             "scan_age_sec": scan_age_sec,

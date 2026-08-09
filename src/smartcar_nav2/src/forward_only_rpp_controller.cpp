@@ -47,6 +47,10 @@ void ForwardOnlyRPPController::readSafetyParameters()
   double forward_path_tight_turn_preview_m = 0.0;
   double forward_terminal_speed_mps = 0.0;
   double forward_terminal_speed_distance_m = 0.0;
+  bool forward_terminal_use_curvature_tracking = false;
+  double forward_terminal_heading_gain = 0.0;
+  double forward_terminal_cross_track_gain = 0.0;
+  double forward_terminal_collision_projection_m = 0.0;
   bool allow_reversing = true;
   bool use_rotate_to_heading = true;
   const std::string prefix = plugin_name_ + ".";
@@ -94,6 +98,17 @@ void ForwardOnlyRPPController::readSafetyParameters()
     node, prefix + "forward_terminal_speed_mps", rclcpp::ParameterValue(0.0));
   nav2_util::declare_parameter_if_not_declared(
     node, prefix + "forward_terminal_speed_distance_m", rclcpp::ParameterValue(0.0));
+  // Precise Ackermann goals cannot rotate in place.  This optional tracker is
+  // activated only inside the terminal lookahead window, so ordinary route
+  // following keeps the native RPP behavior and collision projection.
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "forward_terminal_use_curvature_tracking", rclcpp::ParameterValue(false));
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "forward_terminal_heading_gain", rclcpp::ParameterValue(0.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "forward_terminal_cross_track_gain", rclcpp::ParameterValue(0.0));
+  nav2_util::declare_parameter_if_not_declared(
+    node, prefix + "forward_terminal_collision_projection_m", rclcpp::ParameterValue(0.0));
   if (!node->get_parameter(prefix + "desired_linear_vel", desired_linear_velocity) ||
     !node->get_parameter(
       prefix + "forward_max_angular_velocity", max_angular_velocity) ||
@@ -132,6 +147,16 @@ void ForwardOnlyRPPController::readSafetyParameters()
     !node->get_parameter(
       prefix + "forward_terminal_speed_distance_m",
       forward_terminal_speed_distance_m) ||
+    !node->get_parameter(
+      prefix + "forward_terminal_use_curvature_tracking",
+      forward_terminal_use_curvature_tracking) ||
+    !node->get_parameter(
+      prefix + "forward_terminal_heading_gain", forward_terminal_heading_gain) ||
+    !node->get_parameter(
+      prefix + "forward_terminal_cross_track_gain", forward_terminal_cross_track_gain) ||
+    !node->get_parameter(
+      prefix + "forward_terminal_collision_projection_m",
+      forward_terminal_collision_projection_m) ||
     false)
   {
     throw std::runtime_error(
@@ -163,6 +188,13 @@ void ForwardOnlyRPPController::readSafetyParameters()
     !finiteForwardValue(forward_path_collision_projection_m) ||
     forward_path_heading_gain < 0.0 || forward_path_cross_track_gain < 0.0 ||
     forward_path_collision_projection_m <= 0.0)) ||
+    !finiteForwardValue(forward_terminal_heading_gain) ||
+    !finiteForwardValue(forward_terminal_cross_track_gain) ||
+    !finiteForwardValue(forward_terminal_collision_projection_m) ||
+    (forward_terminal_use_curvature_tracking &&
+    (forward_terminal_heading_gain < 0.0 ||
+    forward_terminal_cross_track_gain < 0.0 ||
+    forward_terminal_collision_projection_m <= 0.0)) ||
     !finiteForwardValue(forward_path_tight_turn_speed_mps) ||
     !finiteForwardValue(forward_path_tight_turn_radius_m) ||
     !finiteForwardValue(forward_path_tight_turn_preview_m) ||
@@ -206,6 +238,10 @@ void ForwardOnlyRPPController::readSafetyParameters()
     forward_path_tight_turn_preview_m_ = forward_path_tight_turn_preview_m;
     forward_terminal_speed_mps_ = forward_terminal_speed_mps;
     forward_terminal_speed_distance_m_ = forward_terminal_speed_distance_m;
+    forward_terminal_use_curvature_tracking_ = forward_terminal_use_curvature_tracking;
+    forward_terminal_heading_gain_ = forward_terminal_heading_gain;
+    forward_terminal_cross_track_gain_ = forward_terminal_cross_track_gain;
+    forward_terminal_collision_projection_m_ = forward_terminal_collision_projection_m;
   }
 }
 
@@ -250,9 +286,10 @@ geometry_msgs::msg::TwistStamped
 ForwardOnlyRPPController::computeCurvatureTrackingCommand(
   const geometry_msgs::msg::PoseStamped & robot_pose,
   const geometry_msgs::msg::Twist & robot_speed,
-  nav2_core::GoalChecker * goal_checker,
-  const nav_msgs::msg::Path & confirmed_plan,
-  const ForwardPathTrackingProjection & projection)
+    nav2_core::GoalChecker * goal_checker,
+    const nav_msgs::msg::Path & confirmed_plan,
+    const ForwardPathTrackingProjection & projection,
+    const bool terminal_mode)
 {
   static_cast<void>(goal_checker);
 
@@ -264,15 +301,17 @@ ForwardOnlyRPPController::computeCurvatureTrackingCommand(
   double tight_turn_preview_m = 0.0;
   {
     std::lock_guard<std::mutex> lock(path_tracking_mutex_);
-    heading_gain = forward_path_heading_gain_;
-    cross_track_gain = forward_path_cross_track_gain_;
-    collision_projection_m = forward_path_collision_projection_m_;
+    heading_gain = terminal_mode ? forward_terminal_heading_gain_ : forward_path_heading_gain_;
+    cross_track_gain = terminal_mode ?
+      forward_terminal_cross_track_gain_ : forward_path_cross_track_gain_;
+    collision_projection_m = terminal_mode ?
+      forward_terminal_collision_projection_m_ : forward_path_collision_projection_m_;
     tight_turn_speed_mps = forward_path_tight_turn_speed_mps_;
     tight_turn_radius_m = forward_path_tight_turn_radius_m_;
     tight_turn_preview_m = forward_path_tight_turn_preview_m_;
   }
   const auto path_curvature = forwardPathTrackingLocalCurvature(confirmed_plan, projection);
-  if (!path_curvature.valid) {
+  if (!path_curvature.valid && !terminal_mode) {
     throw nav2_core::PlannerException(
             "ForwardOnlyRPPController has no valid local path curvature: " +
             path_curvature.reason);
@@ -290,19 +329,28 @@ ForwardOnlyRPPController::computeCurvatureTrackingCommand(
             "ForwardOnlyRPPController curvature tracking has invalid limits");
   }
   const double maximum_curvature = 1.0 / limits.min_turning_radius;
-  if (!finiteForwardValue(path_curvature.curvature_m_inv) ||
-    std::abs(path_curvature.curvature_m_inv) > maximum_curvature + 0.25)
-  {
+  if (!finiteForwardValue(path_curvature.curvature_m_inv) && !terminal_mode) {
     throw nav2_core::PlannerException(
             "ForwardOnlyRPPController rejected path curvature outside the Ackermann envelope");
   }
+  if (std::abs(path_curvature.curvature_m_inv) > maximum_curvature + 0.25 && !terminal_mode) {
+    throw nav2_core::PlannerException(
+            "ForwardOnlyRPPController rejected path curvature outside the Ackermann envelope");
+  }
+  // Smac's final pose orientation can be quantized over a very short segment
+  // even when the already-swept positional path is clear.  At a precise goal,
+  // preserve the Ackermann command envelope and let heading/cross-track
+  // feedback settle the terminal tangent instead of abandoning the action on
+  // that discrete spike.  Full-route curvature mode remains fail-closed.
+  const double bounded_path_curvature = finiteForwardValue(path_curvature.curvature_m_inv) ?
+    std::clamp(path_curvature.curvature_m_inv, -maximum_curvature, maximum_curvature) : 0.0;
 
   // The centreline curvature comes from the already full-footprint-swept
   // plan. Feedback is intentionally mild: it closes model error without
   // converting a safe 0.50 m departure arc into an unswept 0.33 m shortcut.
   const double heading_to_path = -projection.path_heading_error_rad;
   const double requested_curvature = std::clamp(
-    path_curvature.curvature_m_inv + heading_gain * heading_to_path -
+    bounded_path_curvature + heading_gain * heading_to_path -
     cross_track_gain * projection.signed_cross_track_m,
     -maximum_curvature, maximum_curvature);
 
@@ -381,6 +429,7 @@ geometry_msgs::msg::TwistStamped ForwardOnlyRPPController::computeVelocityComman
   double terminal_lookahead_m = 0.0;
   double terminal_activation_distance_m = 0.0;
   bool use_curvature_tracking = false;
+  bool use_terminal_curvature_tracking = false;
   {
     std::lock_guard<std::mutex> lock(path_tracking_mutex_);
     confirmed_plan = confirmed_plan_;
@@ -388,6 +437,7 @@ geometry_msgs::msg::TwistStamped ForwardOnlyRPPController::computeVelocityComman
     terminal_lookahead_m = forward_terminal_lookahead_m_;
     terminal_activation_distance_m = forward_terminal_activation_distance_m_;
     use_curvature_tracking = forward_path_use_curvature_tracking_;
+    use_terminal_curvature_tracking = forward_terminal_use_curvature_tracking_;
   }
   const auto projection = projectForwardPathTrackingPose(confirmed_plan, robot_pose);
   if (maximum_cross_track_error > 0.0) {
@@ -436,15 +486,23 @@ geometry_msgs::msg::TwistStamped ForwardOnlyRPPController::computeVelocityComman
             "ForwardOnlyRPPController current footprint is in collision");
   }
 
-  if (use_curvature_tracking) {
-    return computeCurvatureTrackingCommand(
-      robot_pose, robot_speed, goal_checker, confirmed_plan, projection);
-  }
-
   const bool terminal_lookahead_active = forwardPathTrackingTerminalLookaheadActive(
     confirmed_plan, projection, terminal_lookahead_m, terminal_activation_distance_m);
+  geometry_msgs::msg::Pose pose_tolerance;
+  geometry_msgs::msg::Twist velocity_tolerance;
+  const bool precise_goal = goal_checker != nullptr &&
+    goal_checker->getTolerances(pose_tolerance, velocity_tolerance) &&
+    finiteForwardValue(pose_tolerance.position.x) &&
+    finiteForwardValue(pose_tolerance.position.y) &&
+    pose_tolerance.position.x <= 0.12 && pose_tolerance.position.y <= 0.12;
+  const bool terminal_curvature_tracking_active = precise_goal &&
+    terminal_lookahead_active && use_terminal_curvature_tracking;
   geometry_msgs::msg::TwistStamped command;
-  if (!terminal_lookahead_active) {
+  if (use_curvature_tracking || terminal_curvature_tracking_active) {
+    command = computeCurvatureTrackingCommand(
+      robot_pose, robot_speed, goal_checker, confirmed_plan, projection,
+      !use_curvature_tracking && terminal_curvature_tracking_active);
+  } else if (!terminal_lookahead_active) {
     command = nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController::
       computeVelocityCommands(robot_pose, robot_speed, goal_checker);
   } else {

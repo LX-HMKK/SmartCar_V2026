@@ -5,6 +5,7 @@ import struct
 import unittest
 
 from sensor_msgs.msg import LaserScan
+from nav_msgs.msg import Odometry
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -78,6 +79,29 @@ class SimDepthPointCloudAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "range limits"):
             MODULE.scan_to_depth_point_cloud(
                 LaserScan(), min_range_m=3.5, max_range_m=0.25)
+
+    def test_world_fixture_projects_visible_obstacles_without_scan_occlusion(self):
+        odom = Odometry()
+        odom.header.frame_id = "odom_combined"
+        odom.pose.pose.orientation.w = 1.0
+        odom.pose.pose.position.x = 0.0
+        odom.pose.pose.position.y = 0.0
+        cloud = MODULE.world_obstacles_to_depth_point_cloud(
+            odom,
+            [(1.0, 0.0), (2.0, 0.5), (-1.0, 0.0)],
+            min_range_m=0.25,
+            max_range_m=3.5,
+        )
+        self.assertEqual(cloud.header.frame_id, "base_footprint")
+        self.assertGreaterEqual(cloud.width, 2)
+        self.assertEqual(cloud.height, 1)
+        points = [
+            struct.unpack("<fff", bytes(cloud.data[offset:offset + MODULE.XYZ_POINT_STEP]))
+            for offset in range(0, len(cloud.data), MODULE.XYZ_POINT_STEP)
+        ]
+        self.assertAlmostEqual(points[0][0], 1.0, places=6)
+        self.assertAlmostEqual(points[1][1], 0.5, places=6)
+        self.assertTrue(all(abs(point[2] - 0.15) < 1.0e-6 for point in points))
 
     def test_adapter_handles_ros_shutdown_without_a_nonzero_exit_path(self):
         source = ADAPTER.read_text(encoding="utf-8")

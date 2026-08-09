@@ -251,6 +251,13 @@ controller_server:
       forward_terminal_speed_distance_m: 0.50
       forward_terminal_lookahead_m: 0.12
       forward_terminal_activation_distance_m: 0.60
+      # In the precise terminal window, track the accepted path tangent so an
+      # Ackermann vehicle settles its yaw before entering the goal disk. This
+      # is terminal-only; ordinary route tracking remains native RPP.
+      forward_terminal_use_curvature_tracking: true
+      forward_terminal_heading_gain: 1.0
+      forward_terminal_cross_track_gain: 2.0
+      forward_terminal_collision_projection_m: 0.15
       max_allowed_time_to_collision_up_to_carrot: 1.0
       use_collision_detection: true
       use_cost_regulated_linear_velocity_scaling: true
