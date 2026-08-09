@@ -9,6 +9,7 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 from smartcar_tools.short_drive_test import (
     completed_distance_reason,
     runtime_mode_errors,
+    outcome_passed,
     validate_test_limits,
 )
 
@@ -50,6 +51,12 @@ class ShortDriveLimitTests(unittest.TestCase):
         ):
             with self.subTest(reason=reason):
                 self.assertFalse(completed_distance_reason(reason))
+
+    def test_full_segment_requires_the_task_completion_state(self):
+        self.assertTrue(outcome_passed("mission_completed", True))
+        self.assertFalse(outcome_passed("distance_limit:3.100m", True))
+        self.assertFalse(outcome_passed("timeout", True))
+        self.assertTrue(outcome_passed("distance_limit:0.250m", False))
 
     def test_runtime_mode_rejects_normal_navigation_settings(self):
         safety = {

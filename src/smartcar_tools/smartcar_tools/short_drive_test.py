@@ -35,6 +35,13 @@ def completed_distance_reason(reason):
     return str(reason).startswith("distance_limit:")
 
 
+def outcome_passed(reason, require_mission_complete):
+    """Apply the requested completion contract to a terminal test reason."""
+    if require_mission_complete:
+        return str(reason) == "mission_completed"
+    return completed_distance_reason(reason)
+
+
 def runtime_mode_errors(safety_params, task_params, speed_mps):
     """Reject a test stack that is not the dedicated depth-only short-drive mode."""
     errors = []
@@ -107,6 +114,7 @@ class ShortDrive(Node):
         distance_m=0.25,
         speed_mps=0.05,
         timeout_sec=10.0,
+        require_mission_complete=False,
         results_file=DEFAULT_RESULTS_FILE,
     ):
         super().__init__("short_drive_test")
@@ -114,6 +122,7 @@ class ShortDrive(Node):
         self.distance_m = limits["distance_m"]
         self.speed_mps = limits["speed_mps"]
         self.timeout_sec = limits["timeout_sec"]
+        self.require_mission_complete = bool(require_mission_complete)
         self.results_file = Path(results_file)
         self.invoked_at = time.monotonic()
         self.start_pose = None
@@ -128,6 +137,7 @@ class ShortDrive(Node):
         self.max_ackermann_speed = 0.0
         self.last_safety = ""
         self.last_state = ""
+        self.saw_navigating = False
         self.create_subscription(Odometry, "/odom", self._on_odom, 10)
         self.create_subscription(
             PointCloud2,
@@ -337,6 +347,7 @@ class ShortDrive(Node):
                 "distance_m": self.distance_m,
                 "speed_mps": self.speed_mps,
                 "timeout_sec": self.timeout_sec,
+                "require_mission_complete": self.require_mission_complete,
             },
             "measurements": {
                 "forward_displacement_m": round(self.forward_displacement(), 4),
@@ -404,6 +415,17 @@ class ShortDrive(Node):
             rclpy.spin_once(self, timeout_sec=0.05)
             displacement = self.forward_displacement()
             now = time.monotonic()
+            if self.last_state == "NAVIGATING":
+                self.saw_navigating = True
+            if self.last_state == "COMPLETED":
+                if self.saw_navigating and self.max_ackermann_speed > 1.0e-4:
+                    reason = "mission_completed"
+                else:
+                    reason = "mission_completed_without_observed_drive"
+                break
+            if self.last_state in ("FAILED", "STOPPED"):
+                reason = f"task_terminal:{self.last_state}"
+                break
             if displacement >= self.distance_m:
                 reason = f"distance_limit:{displacement:.3f}m"
                 break
@@ -443,7 +465,11 @@ class ShortDrive(Node):
                 nonzero.append(self.last_ackermann)
         if nonzero:
             raise RuntimeError(f"final ackermann not zero: {nonzero[-1]:.3f}")
-        result = self._result(completed_distance_reason(reason), reason, started_at)
+        result = self._result(
+            outcome_passed(reason, self.require_mission_complete),
+            reason,
+            started_at,
+        )
         self.get_logger().info(
             "Bounded test %s: reason=%s displacement=%.3fm state=%s safety=%s"
             % (
@@ -470,6 +496,9 @@ def main(argv=None):
         "--timeout-sec", type=float, default=10.0,
         help="maximum run time, at most 120 s (default: 10)")
     parser.add_argument(
+        "--require-mission-complete", action="store_true",
+        help="pass only after the supervised P-to-A mission reaches COMPLETED")
+    parser.add_argument(
         "--results-file", default=DEFAULT_RESULTS_FILE,
         help=f"JSON evidence path (default: {DEFAULT_RESULTS_FILE})")
     args = parser.parse_args(argv)
@@ -478,6 +507,7 @@ def main(argv=None):
         distance_m=args.distance_m,
         speed_mps=args.speed_mps,
         timeout_sec=args.timeout_sec,
+        require_mission_complete=args.require_mission_complete,
         results_file=args.results_file,
     )
     try:
