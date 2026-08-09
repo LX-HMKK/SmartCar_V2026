@@ -22,7 +22,10 @@ from std_srvs.srv import SetBool, Trigger
 
 
 MAX_TEST_SPEED_MPS = 0.30
-MAX_TEST_DISTANCE_M = 3.0
+# The measured P-to-A segment is 3.055 m; leave a small bounded margin so a
+# full supervised segment can reach its terminal checker without removing the
+# distance guard.
+MAX_TEST_DISTANCE_M = 3.5
 MAX_TEST_TIMEOUT_SEC = 120.0
 DEFAULT_RESULTS_FILE = "/tmp/smartcar_short_drive_result.json"
 

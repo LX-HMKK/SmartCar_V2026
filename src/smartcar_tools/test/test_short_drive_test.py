@@ -20,6 +20,10 @@ class ShortDriveLimitTests(unittest.TestCase):
             {"distance_m": 0.75, "speed_mps": 0.05, "timeout_sec": 30.0},
         )
 
+    def test_accepts_the_full_p_to_a_segment_distance(self):
+        limits = validate_test_limits(3.1, 0.05, 120.0)
+        self.assertEqual(limits["distance_m"], 3.1)
+
     def test_rejects_speed_above_release_test_cap(self):
         with self.assertRaisesRegex(ValueError, "speed_mps exceeds"):
             validate_test_limits(0.25, 0.31, 10.0)
@@ -32,7 +36,7 @@ class ShortDriveLimitTests(unittest.TestCase):
 
     def test_rejects_distance_and_timeout_above_caps(self):
         with self.assertRaisesRegex(ValueError, "distance_m exceeds"):
-            validate_test_limits(3.01, 0.05, 10.0)
+            validate_test_limits(3.51, 0.05, 10.0)
         with self.assertRaisesRegex(ValueError, "timeout_sec exceeds"):
             validate_test_limits(0.25, 0.05, 120.1)
 
