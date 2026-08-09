@@ -57,7 +57,7 @@ if $SUPERVISED_P_TO_A && $SUPERVISED_P_TO_C1; then
   exit 1
 fi
 if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
-  # A watched P-to-A measurement is only meaningful when the vehicle's
+  # A watched fixed-prefix measurement is only meaningful when the vehicle's
   # current, manually aligned heading is made the localization origin.
   RESET_ORIGIN=true
 fi
@@ -65,8 +65,8 @@ if $SHORT_DRIVE && ! $DEPTH_CAMERA; then
   echo "✗ --short-drive 必须与 --depth-camera 一起使用"
   exit 1
 fi
-if $SHORT_DRIVE && ! $SUPERVISED_P_TO_A; then
-  echo "✗ --short-drive 只允许受看护 P→A 前缀"
+if $SHORT_DRIVE && ! $SUPERVISED_P_TO_A && ! $SUPERVISED_P_TO_C1; then
+  echo "✗ --short-drive 必须选择受看护 P→A 或 P→C1 前缀"
   exit 1
 fi
 if $DEPTH_CAMERA && { $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; } && ! $SHORT_DRIVE; then

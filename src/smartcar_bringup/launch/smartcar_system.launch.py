@@ -324,7 +324,7 @@ def _validate_configuration(context):
             )
         if invalid:
             raise RuntimeError(
-                "supervised_p_to_a_only requires: " + ",".join(invalid)
+                "supervised navigation prefix requires: " + ",".join(invalid)
             )
     if short_drive_test:
         required_true = (
@@ -333,7 +333,6 @@ def _validate_configuration(context):
             "use_nav",
             "use_task",
             "use_depth_camera",
-            "supervised_p_to_a_only",
             "safety_emergency_stop_on_start",
         )
         required_false = (
@@ -341,7 +340,6 @@ def _validate_configuration(context):
             "use_camera",
             "use_vision",
             "autostart_mission",
-            "supervised_p_to_c1_only",
         )
         invalid = [
             name for name in required_true if not _as_bool(context, name)
@@ -349,6 +347,10 @@ def _validate_configuration(context):
         invalid.extend(
             name for name in required_false if _as_bool(context, name)
         )
+        if not supervised_prefixes:
+            invalid.append(
+                "one_of(supervised_p_to_a_only,supervised_p_to_c1_only)"
+            )
         if invalid:
             raise RuntimeError(
                 "short_drive_test requires: " + ",".join(invalid))

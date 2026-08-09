@@ -155,10 +155,10 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("--supervised-p-to-c1", script)
         self.assertIn('"$END_SEGMENT_ID" != "p_to_qr"', script)
         self.assertIn('"$END_SEGMENT_ID" != "qr_to_vlm"', script)
-        self.assertIn("if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then\n  # A watched P-to-A", script)
+        self.assertIn("if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then\n  # A watched fixed-prefix", script)
         self.assertIn("RESET_ORIGIN=true", script)
         system_source = SYSTEM.read_text(encoding="utf-8")
-        self.assertIn("supervised_p_to_a_only requires:", system_source)
+        self.assertIn("supervised navigation prefix requires:", system_source)
         self.assertIn('"safety_emergency_stop_on_start",', system_source)
         self.assertIn('"use_camera",', system_source)
         self.assertIn('"use_vision",', system_source)
@@ -185,6 +185,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertNotIn("safety_emergency_stop_on_start:=false", source)
         self.assertIn("if $SUPERVISED_P_TO_A", source)
         self.assertIn("supervised_p_to_a_only:=true", source)
+        self.assertIn("--short-drive 必须选择受看护 P→A 或 P→C1 前缀", source)
 
     def test_navigation_test_script_requires_live_obstacle_avoidance(self):
         source = NAV_TEST.read_text(encoding="utf-8")

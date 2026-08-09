@@ -10,6 +10,7 @@ from smartcar_tools.short_drive_test import (
     completed_distance_reason,
     runtime_mode_errors,
     outcome_passed,
+    route_profile_spec,
     validate_test_limits,
 )
 
@@ -24,6 +25,11 @@ class ShortDriveLimitTests(unittest.TestCase):
     def test_accepts_the_full_p_to_a_segment_distance(self):
         limits = validate_test_limits(3.1, 0.05, 120.0)
         self.assertEqual(limits["distance_m"], 3.1)
+
+    def test_accepts_the_fixed_p_to_c1_prefix_bounds(self):
+        limits = validate_test_limits(10.5, 0.05, 240.0, "p_to_c1")
+        self.assertEqual(limits["distance_m"], 10.5)
+        self.assertEqual(limits["timeout_sec"], 240.0)
 
     def test_rejects_speed_above_release_test_cap(self):
         with self.assertRaisesRegex(ValueError, "speed_mps exceeds"):
@@ -40,6 +46,14 @@ class ShortDriveLimitTests(unittest.TestCase):
             validate_test_limits(3.51, 0.05, 10.0)
         with self.assertRaisesRegex(ValueError, "timeout_sec exceeds"):
             validate_test_limits(0.25, 0.05, 120.1)
+        with self.assertRaisesRegex(ValueError, "distance_m exceeds"):
+            validate_test_limits(10.6, 0.05, 240.0, "p_to_c1")
+        with self.assertRaisesRegex(ValueError, "timeout_sec exceeds"):
+            validate_test_limits(10.5, 0.05, 240.1, "p_to_c1")
+
+    def test_rejects_unknown_route_profile(self):
+        with self.assertRaisesRegex(ValueError, "route_profile must be one of"):
+            route_profile_spec("full_route")
 
     def test_only_the_distance_limit_is_a_successful_outcome(self):
         self.assertTrue(completed_distance_reason("distance_limit:0.250m"))
@@ -108,6 +122,28 @@ class ShortDriveLimitTests(unittest.TestCase):
             "operator_approved": True,
         }
         self.assertEqual(runtime_mode_errors(safety, task, 0.05), [])
+
+    def test_runtime_mode_accepts_the_fixed_depth_p_to_c1_prefix(self):
+        safety = {
+            "max_linear_speed_mps": 0.05,
+            "require_depth_points": True,
+            "require_scan": False,
+            "emergency_stop_on_start": True,
+        }
+        task = {
+            "use_depth_camera": True,
+            "depth_camera_calibrated": True,
+            "supervised_p_to_a_only": False,
+            "supervised_p_to_c1_only": True,
+            "navigation_test_end_segment_id": "qr_to_vlm",
+            "autostart_mission": False,
+            "waypoints_calibrated": True,
+            "extrinsics_calibrated": True,
+            "steering_calibrated": True,
+            "emergency_stop_ready": True,
+            "operator_approved": True,
+        }
+        self.assertEqual(runtime_mode_errors(safety, task, 0.05, "p_to_c1"), [])
 
 
 if __name__ == "__main__":
