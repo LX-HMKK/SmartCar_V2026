@@ -208,6 +208,9 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("ros2 topic echo --no-daemon", source)
         self.assertIn("for attempt in 1 2 3 4 5 6", source)
         self.assertIn("The status is transient-local", source)
+        self.assertIn("AURORA_USBFS_BUFFER_MB=64", source)
+        self.assertIn("ensure_aurora_usbfs_buffer", source)
+        self.assertIn("usbfs_memory_mb", source)
         self.assertIn(
             "/local_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
         self.assertIn(

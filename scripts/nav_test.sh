@@ -10,6 +10,7 @@ WORKSPACE=/root/ros2_ws
 LOG=/tmp/bringup.log
 GEOM=/root/ros2_ws/src/smartcar_tools/config/routes/field_geometry.yaml
 WP=/root/ros2_ws/src/smartcar_nav2/config/waypoints/nav_only.yaml
+AURORA_USBFS_BUFFER_MB=64
 
 # TROS humble setup.bash has unbound AMENT_TRACE_SETUP_FILES — disable
 # nounset around the source to avoid script exit under set -uo pipefail.
@@ -79,6 +80,23 @@ export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
 banner() { echo ""; echo "=== $* ==="; }
 
 die()  { echo "✗ $*"; exit 1; }
+
+ensure_aurora_usbfs_buffer() {
+  local parameter=/sys/module/usbcore/parameters/usbfs_memory_mb
+  local current
+
+  [ -r "$parameter" ] || die "未找到 usbcore usbfs_memory_mb 参数"
+  current=$(cat "$parameter")
+  [[ "$current" =~ ^[0-9]+$ ]] || die "usbfs_memory_mb 值无效: $current"
+  if [ "$current" -lt "$AURORA_USBFS_BUFFER_MB" ]; then
+    printf '%s' "$AURORA_USBFS_BUFFER_MB" > "$parameter" \
+      || die "无法设置 usbfs_memory_mb"
+    current=$(cat "$parameter")
+  fi
+  [ "$current" -ge "$AURORA_USBFS_BUFFER_MB" ] \
+    || die "usbfs_memory_mb 未达到 ${AURORA_USBFS_BUFFER_MB} MiB"
+  echo "  ✓ usbfs_memory_mb=${current} MiB"
+}
 
 require_parameter() {
   local node=$1
@@ -238,6 +256,9 @@ verify_obstacle_avoidance() {
 
 # ---- 1. 清理 ----
 banner "[1/6] 彻底清理"
+if $DEPTH_CAMERA; then
+  ensure_aurora_usbfs_buffer
+fi
 if [ -x /usr/local/bin/ros_cleanup ]; then
   bash /usr/local/bin/ros_cleanup
 else
