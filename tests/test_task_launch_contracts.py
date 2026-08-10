@@ -206,6 +206,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("inflation_layer.enabled", source)
         self.assertIn("ros2 param get --no-daemon", source)
         self.assertIn("ros2 topic echo --no-daemon", source)
+        self.assertIn("for attempt in 1 2 3 4 5 6", source)
+        self.assertIn("The status is transient-local", source)
         self.assertIn(
             "/local_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
         self.assertIn(

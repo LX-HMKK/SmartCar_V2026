@@ -164,16 +164,29 @@ require_latched_status() {
   local topic=$1
   local expected=$2
   local result
+  local attempt
 
-  result=$(timeout 12s ros2 topic echo --no-daemon --once \
-    --qos-reliability reliable --qos-durability transient_local \
-    "$topic" std_msgs/msg/String 2>&1) || true
-  if [[ "$result" != *"data: $expected"* ]]; then
-    echo "  ✗ $topic 状态不是 $expected"
-    echo "    实际: $result"
-    return 1
-  fi
-  echo "  ✓ $topic = $expected"
+  # Aurora can publish one stale startup frame before the first valid depth
+  # frame.  The status is transient-local, so a single late subscriber could
+  # observe that startup state even though the healthy stream follows shortly.
+  # Keep this bounded and fail closed if the expected healthy status never
+  # arrives.
+  for attempt in 1 2 3 4 5 6; do
+    result=$(timeout 12s ros2 topic echo --no-daemon --once \
+      --qos-reliability reliable --qos-durability transient_local \
+      "$topic" std_msgs/msg/String 2>&1) || true
+    if [[ "$result" == *"data: $expected"* ]]; then
+      echo "  ✓ $topic = $expected"
+      return 0
+    fi
+    if [ "$attempt" -lt 6 ]; then
+      sleep 2
+    fi
+  done
+
+  echo "  ✗ $topic 状态不是 $expected"
+  echo "    实际: $result"
+  return 1
 }
 
 verify_obstacle_avoidance() {
