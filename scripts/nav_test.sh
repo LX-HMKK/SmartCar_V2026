@@ -262,7 +262,10 @@ LIDAR_ARGS="use_lidar:=true"
 SAFETY_CONFIG_ARG=""
 if $DEPTH_CAMERA; then
   BANNER_MSG="DUBIN + Aurora 深度障碍感知，急停锁存"
-  CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true"
+  # Aurora's 5 Hz depth mode is the validated stable setting on the RDK.
+  # Keep the disabled RGB stream at the same rate because the vendor driver
+  # requires rgb_fps not to exceed ir_fps.
+  CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true aurora_ir_fps:=5 aurora_rgb_fps:=5"
   LIDAR_ARGS="use_lidar:=false"
 fi
 if $SHORT_DRIVE; then

@@ -136,6 +136,10 @@ def _runtime_actions(context):
         raise RuntimeError("Aurora depth and point cloud require camera_driver=aurora")
     if aurora_point_cloud_enable and not aurora_depth_enable:
         raise RuntimeError("aurora_point_cloud_enable requires aurora_depth_enable")
+    # The Aurora driver requires RGB not to exceed its IR/depth rate. Keep the
+    # depth pipeline at its validated 5 Hz setting even when RGB is enabled.
+    effective_aurora_rgb_fps = (
+        aurora_ir_fps if aurora_depth_enable else aurora_rgb_fps)
     if camera_driver == "none":
         if not configured_topic:
             raise RuntimeError(
@@ -153,7 +157,7 @@ def _runtime_actions(context):
             aurora_depth_enable="true" if aurora_depth_enable else "false",
             aurora_point_cloud_enable=(
                 "true" if aurora_point_cloud_enable else "false"),
-            aurora_rgb_fps=aurora_rgb_fps,
+            aurora_rgb_fps=effective_aurora_rgb_fps,
             aurora_ir_fps=aurora_ir_fps,
             aurora_resolution_mode_index=aurora_resolution_mode_index,
             aurora_heart_enable="true" if aurora_heart_enable else "false",
@@ -252,8 +256,8 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "aurora_ir_fps",
-            default_value="10",
-            description="Aurora IR/depth frame rate",
+            default_value="5",
+            description="Aurora IR/depth frame rate for obstacle sensing",
         ),
         DeclareLaunchArgument(
             "aurora_resolution_mode_index",

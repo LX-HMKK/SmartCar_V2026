@@ -594,7 +594,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("camera_driver", default_value="usb"),
         DeclareLaunchArgument("aurora_rgb_fps", default_value="10"),
-        DeclareLaunchArgument("aurora_ir_fps", default_value="10"),
+        DeclareLaunchArgument("aurora_ir_fps", default_value="5"),
         DeclareLaunchArgument(
             "aurora_resolution_mode_index", default_value="0"),
         DeclareLaunchArgument("aurora_heart_enable", default_value="false"),

@@ -202,6 +202,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("obstacle_layer.scan.inf_is_valid", source)
         self.assertIn("obstacle_layer.depth_points.topic", source)
         self.assertIn('LIDAR_ARGS="use_lidar:=false"', source)
+        self.assertIn("aurora_ir_fps:=5 aurora_rgb_fps:=5", source)
         self.assertIn("inflation_layer.enabled", source)
         self.assertIn("ros2 param get --no-daemon", source)
         self.assertIn("ros2 topic echo --no-daemon", source)
