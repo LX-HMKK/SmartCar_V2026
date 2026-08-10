@@ -9,7 +9,6 @@ from smartcar_task.mission import OperationResult
 STATUS_SUCCEEDED = 4
 STATUS_CANCELED = 5
 MOTION_FORWARD = 1
-MOTION_REVERSE = 2
 
 
 def classify_follow_waypoints_result(status, missed_waypoints):
@@ -34,49 +33,28 @@ def classify_navigate_to_pose_result(status):
     return OperationResult(False, f"navigation_status_{int(status)}")
 
 
-def motion_direction(reverse_direction):
-    return MOTION_REVERSE if bool(reverse_direction) else MOTION_FORWARD
+def motion_direction():
+    return MOTION_FORWARD
 
 
 def navigation_behavior_tree(
-    reverse_direction,
-    reverse_behavior_tree,
-    goal_profile="standard",
-    precise_forward_behavior_tree="",
-    reverse_handoff_behavior_tree="",
-    forward_transit_behavior_tree="",
+    goal_profile,
+    precise_behavior_tree,
+    transit_behavior_tree,
     heading_locked=True,
 ):
     profile = str(goal_profile).strip()
-    if profile not in {"standard", "precise", "reverse_handoff"}:
+    if profile not in {"standard", "precise"}:
         raise ValueError(f"unknown goal profile {profile!r}")
-    if reverse_direction:
-        if profile == "reverse_handoff":
-            value = str(reverse_handoff_behavior_tree).strip()
-            if not value:
-                raise ValueError(
-                    "reverse_handoff_behavior_tree must not be empty")
-            return value
-        if profile != "standard":
-            raise ValueError(
-                "reverse goals must use the standard or "
-                "reverse_handoff profile")
-        value = str(reverse_behavior_tree).strip()
-        if not value:
-            raise ValueError("reverse_behavior_tree must not be empty")
-        return value
-    if profile == "reverse_handoff":
-        raise ValueError("reverse_handoff goals must be reverse")
     if profile == "precise":
-        value = str(precise_forward_behavior_tree).strip()
+        value = str(precise_behavior_tree).strip()
         if not value:
-            raise ValueError(
-                "precise_forward_behavior_tree must not be empty")
+            raise ValueError("precise_behavior_tree must not be empty")
         return value
     if not bool(heading_locked):
-        value = str(forward_transit_behavior_tree).strip()
+        value = str(transit_behavior_tree).strip()
         if not value:
-            raise ValueError("forward_transit_behavior_tree must not be empty")
+            raise ValueError("transit_behavior_tree must not be empty")
         return value
     return ""
 
@@ -90,7 +68,7 @@ class MotionLease:
     lease_id: int = 0
 
     def __post_init__(self):
-        if self.direction not in (MOTION_FORWARD, MOTION_REVERSE):
+        if self.direction != MOTION_FORWARD:
             raise ValueError("unknown motion direction")
         if int(self.generation) <= 0:
             raise ValueError("motion generation must be positive")

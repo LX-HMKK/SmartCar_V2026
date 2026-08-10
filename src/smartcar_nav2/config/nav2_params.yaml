@@ -13,61 +13,16 @@ bt_navigator:
     default_server_timeout: 100
     default_nav_to_pose_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
-    # Setting plugin_lib_names replaces Nav2's defaults, so retain Nav2's
-    # complete 1.1.20 list. Active trees use only native Nav2 nodes.
+    # Setting plugin_lib_names replaces Nav2's defaults. Load only the native
+    # nodes referenced by the installed forward-only trees.
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
-      - nav2_compute_and_track_route_bt_node
-      - nav2_compute_route_bt_node
-      - nav2_smooth_path_action_bt_node
       - nav2_follow_path_action_bt_node
-      - nav2_spin_action_bt_node
-      - nav2_wait_action_bt_node
-      - nav2_assisted_teleop_action_bt_node
-      - nav2_back_up_action_bt_node
-      - nav2_drive_on_heading_bt_node
       - nav2_clear_costmap_service_bt_node
-      - nav2_is_stuck_condition_bt_node
-      - nav2_goal_reached_condition_bt_node
-      - nav2_initial_pose_received_condition_bt_node
-      - nav2_goal_updated_condition_bt_node
-      - nav2_globally_updated_goal_condition_bt_node
-      - nav2_is_path_valid_condition_bt_node
-      - nav2_reinitialize_global_localization_service_bt_node
       - nav2_rate_controller_bt_node
-      - nav2_distance_controller_bt_node
-      - nav2_speed_controller_bt_node
-      - nav2_truncate_path_action_bt_node
-      - nav2_truncate_path_local_action_bt_node
-      - nav2_get_pose_from_path_action_bt_node
-      - nav2_goal_updater_node_bt_node
       - nav2_recovery_node_bt_node
       - nav2_pipeline_sequence_bt_node
-      - nav2_round_robin_node_bt_node
-      - nav2_transform_available_condition_bt_node
-      - nav2_time_expired_condition_bt_node
-      - nav2_path_expiring_timer_condition
-      - nav2_distance_traveled_condition_bt_node
-      - nav2_single_trigger_bt_node
-      - nav2_goal_updated_controller_bt_node
-      - nav2_is_battery_low_condition_bt_node
-      - nav2_navigate_through_poses_action_bt_node
-      - nav2_navigate_to_pose_action_bt_node
-      - nav2_remove_passed_goals_action_bt_node
-      - nav2_planner_selector_bt_node
-      - nav2_controller_selector_bt_node
-      - nav2_goal_checker_selector_bt_node
-      - nav2_progress_checker_selector_bt_node
-      - nav2_smoother_selector_bt_node
-      - nav2_controller_cancel_bt_node
-      - nav2_path_longer_on_approach_bt_node
-      - nav2_wait_cancel_bt_node
-      - nav2_spin_cancel_bt_node
-      - nav2_assisted_teleop_cancel_bt_node
-      - nav2_back_up_cancel_bt_node
-      - nav2_drive_on_heading_cancel_bt_node
-      - nav2_is_battery_charging_condition_bt_node
 
 bt_navigator_navigate_through_poses_rclcpp_node:
   ros__parameters:
@@ -80,49 +35,15 @@ bt_navigator_navigate_through_poses_rclcpp_node:
     default_server_timeout: 100
     default_nav_to_pose_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
-    # Same plugin list as primary bt_navigator; through-poses BT XML uses a subset.
+    # Same minimal native node set as the primary navigator.
     plugin_lib_names:
       - nav2_compute_path_to_pose_action_bt_node
       - nav2_compute_path_through_poses_action_bt_node
-      - nav2_compute_and_track_route_bt_node
-      - nav2_compute_route_bt_node
-      - nav2_smooth_path_action_bt_node
       - nav2_follow_path_action_bt_node
-      - nav2_spin_action_bt_node
-      - nav2_wait_action_bt_node
-      - nav2_assisted_teleop_action_bt_node
-      - nav2_back_up_action_bt_node
-      - nav2_drive_on_heading_bt_node
       - nav2_clear_costmap_service_bt_node
-      - nav2_is_stuck_condition_bt_node
-      - nav2_goal_reached_condition_bt_node
-      - nav2_initial_pose_received_condition_bt_node
-      - nav2_goal_updated_condition_bt_node
-      - nav2_globally_updated_goal_condition_bt_node
-      - nav2_is_path_valid_condition_bt_node
-      - nav2_reinitialize_global_localization_service_bt_node
       - nav2_rate_controller_bt_node
-      - nav2_distance_controller_bt_node
-      - nav2_speed_controller_bt_node
-      - nav2_truncate_path_action_bt_node
-      - nav2_truncate_path_local_action_bt_node
-      - nav2_get_pose_from_path_action_bt_node
-      - nav2_goal_updater_node_bt_node
       - nav2_recovery_node_bt_node
       - nav2_pipeline_sequence_bt_node
-      - nav2_round_robin_node_bt_node
-      - nav2_transform_available_condition_bt_node
-      - nav2_time_expired_condition_bt_node
-      - nav2_path_expiring_timer_condition
-      - nav2_distance_traveled_condition_bt_node
-      - nav2_single_trigger_bt_node
-      - nav2_goal_updated_controller_bt_node
-      - nav2_is_battery_low_condition_bt_node
-      - nav2_navigate_through_poses_action_bt_node
-      - nav2_navigate_to_pose_action_bt_node
-      - nav2_remove_passed_goals_action_bt_node
-      - nav2_planner_selector_bt_node
-      - nav2_controller_selector_bt_node
       - nav2_goal_checker_selector_bt_node
 
 bt_navigator_navigate_to_pose_rclcpp_node:
@@ -142,7 +63,7 @@ controller_server:
     min_theta_velocity_threshold: 0.001
     failure_tolerance: 0.3
     progress_checker_plugin: "progress_checker"
-    goal_checker_plugins: ["goal_checker", "precise_goal_checker", "reverse_goal_checker", "return_goal_checker", "transit_goal_checker", "recovery_goal_checker"]
+    goal_checker_plugins: ["goal_checker", "precise_goal_checker", "return_goal_checker", "transit_goal_checker"]
     current_goal_checker: "goal_checker"
     controller_plugins: ["FollowPath"]
     progress_checker:
@@ -154,19 +75,9 @@ controller_server:
       xy_goal_tolerance: 0.35
       yaw_goal_tolerance: 0.50
       stateful: false
-    # The QR pose seeds a direction change. This smaller envelope stays clear
-    # of the long-CCC handoff region found in the offline Dubins sampling.
+    # QR and VLM task poses need a tighter terminal envelope than transit.
     precise_goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.12
-      yaw_goal_tolerance: 0.15
-      stateful: false
-    reverse_goal_checker:
-      plugin: "nav2_controller::SimpleGoalChecker"
-      # C1 is a locked reverse handoff endpoint, not a transit waypoint.
-      # Keep its arrival envelope aligned with the proven precise A endpoint
-      # so the controller cannot report success at the old 0.35 m / 0.50 rad
-      # early-stop boundary.
       xy_goal_tolerance: 0.12
       yaw_goal_tolerance: 0.15
       stateful: false
@@ -186,13 +97,6 @@ controller_server:
       # full vehicle inside a narrow corridor before the next segment starts.
       # Task poses retain their own precise/yaw-aware checkers.
       xy_goal_tolerance: 0.20
-      stateful: false
-    # A recovery path is only 0.15 m, so it cannot share the wide transit
-    # tolerance or it would finish before issuing a physical reverse command.
-    recovery_goal_checker:
-      plugin: "nav2_controller::SimpleGoalChecker"
-      xy_goal_tolerance: 0.03
-      yaw_goal_tolerance: 0.10
       stateful: false
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
@@ -215,170 +119,6 @@ controller_server:
       regulated_linear_scaling_min_speed: 0.05
       use_rotate_to_heading: false
       allow_reversing: false
-    # The reverse-to-forward handoff needs closed-loop terminal pose control.
-    # The wrapper maps the real reverse path and odometry into a virtual
-    # positive-forward Ackermann problem, then maps the command back through a
-    # final reverse-only velocity and curvature guard.
-    ReverseHandoff:
-      plugin: "smartcar_nav2::ReverseOnlyMPPIController"
-      # Keep the reverse terminal rollout inside the C1 corner rather than
-      # projecting beyond the strict handoff pose into the outer keepout.
-      time_steps: 60
-      model_dt: 0.05
-      batch_size: 100
-      iteration_count: 1
-      vx_std: 0.18
-      vy_std: 0.0
-      wz_std: 0.60
-      vx_max: 0.30
-      vx_min: 0.02
-      vy_max: 0.0
-      # Must cover vx_max / minimum_turning_radius (1.3636 rad/s).
-      wz_max: 1.3636363636363635
-      prune_distance: 1.0
-      transform_tolerance: 0.1
-      temperature: 0.2
-      gamma: 0.015
-      motion_model: "Ackermann"
-      visualize: false
-      retry_attempt_limit: 1
-      reset_period: 1.0
-      regenerate_noises: false
-      AckermannConstraints:
-        min_turning_r: 0.22
-      critics:
-        - ConstraintCritic
-        - CostCritic
-        - GoalCritic
-        - GoalAngleCritic
-        - PathAlignCritic
-        - PathFollowCritic
-        - PathAngleCritic
-      ConstraintCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 16.0
-      CostCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 3.81
-        critical_cost: 300.0
-        consider_footprint: true
-        collision_cost: 1000000.0
-        near_goal_distance: 0.30
-      GoalCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 5.0
-        threshold_to_consider: 0.70
-      GoalAngleCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 12.0
-        threshold_to_consider: 0.70
-      PathAlignCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 18.0
-        max_path_occupancy_ratio: 0.10
-        trajectory_point_step: 2
-        threshold_to_consider: 0.30
-        offset_from_furthest: 4
-        use_path_orientations: true
-      PathFollowCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 8.0
-        offset_from_furthest: 4
-        threshold_to_consider: 0.70
-      PathAngleCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 12.0
-        offset_from_furthest: 2
-        threshold_to_consider: 0.30
-        max_angle_to_furthest: 0.75
-        forward_preference: true
-    # Dedicated path controller for the one permitted recovery motion. It
-    # operates in the virtual-forward frame, while the wrapper's final guard
-    # makes the physical command strictly reverse and zero-curvature.
-    ReverseRecovery:
-      plugin: "smartcar_nav2::ReverseOnlyMPPIController"
-      time_steps: 30
-      model_dt: 0.05
-      batch_size: 400
-      iteration_count: 1
-      vx_std: 0.09
-      vy_std: 0.0
-      wz_std: 0.001
-      vx_max: 0.30
-      vx_min: 0.015
-      vy_max: 0.0
-      wz_max: 0.0
-      prune_distance: 0.30
-      transform_tolerance: 0.1
-      temperature: 0.2
-      gamma: 0.015
-      motion_model: "Ackermann"
-      visualize: false
-      retry_attempt_limit: 1
-      reset_period: 1.0
-      regenerate_noises: false
-      AckermannConstraints:
-        min_turning_r: 0.22
-      critics:
-        - ConstraintCritic
-        - CostCritic
-        - GoalCritic
-        - GoalAngleCritic
-        - PathAlignCritic
-        - PathFollowCritic
-        - PathAngleCritic
-      ConstraintCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 16.0
-      CostCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 3.81
-        critical_cost: 300.0
-        consider_footprint: true
-        collision_cost: 1000000.0
-        near_goal_distance: 0.15
-      GoalCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 5.0
-        threshold_to_consider: 0.30
-      GoalAngleCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 12.0
-        threshold_to_consider: 0.30
-      PathAlignCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 18.0
-        max_path_occupancy_ratio: 0.10
-        trajectory_point_step: 2
-        threshold_to_consider: 0.15
-        offset_from_furthest: 2
-        use_path_orientations: true
-      PathFollowCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 8.0
-        offset_from_furthest: 2
-        threshold_to_consider: 0.30
-      PathAngleCritic:
-        enabled: true
-        cost_power: 1
-        cost_weight: 12.0
-        offset_from_furthest: 1
-        threshold_to_consider: 0.15
-        max_angle_to_furthest: 0.75
-        forward_preference: true
 
 local_costmap:
   local_costmap:
@@ -391,9 +131,7 @@ local_costmap:
       width: 3
       height: 3
       resolution: 0.03
-      # pi-invariant conservative hull. MPPI evaluates the same physical body
-      # at a virtual yaw shifted by pi, so an asymmetric rear-axle footprint
-      # would swap its front and rear collision extents.
+      # Conservative hull of the physical body for live Nav2 costmaps.
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
@@ -448,8 +186,7 @@ global_costmap:
       width: 10
       height: 10
       resolution: 0.05
-      # pi-invariant hull of the real footprint. This keeps virtual-yaw
-      # reverse planning collision-equivalent to the physical vehicle.
+      # Conservative hull of the real footprint for planning and tracking.
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
       plugins: ["obstacle_layer", "inflation_layer"]
@@ -493,8 +230,8 @@ planner_server:
       plugin: "nav2_smac_planner/SmacPlannerHybrid"
       downsample_costmap: false
       downsampling_factor: 1
-      # Semantic waypoints, especially the QR direction handoff, must not be
-      # replaced by a nearby planner endpoint. Fail and replan if exact is blocked.
+      # Semantic waypoints must not be replaced by a nearby planner endpoint.
+      # Fail and replan if an exact goal is blocked.
       tolerance: 0.0
       allow_unknown: true
       max_iterations: 100000
@@ -502,8 +239,7 @@ planner_server:
       # Bound one native Hybrid-A* search so a failed planning attempt leaves
       # time for Nav2's costmap-clear and replan recovery.
       max_planning_time: 1.0
-      # Forward-only search. Reverse paths are generated by rotating the
-      # vehicle headings by pi in the reverse BT node, then restoring them.
+      # Forward-only native Hybrid-A* search.
       motion_model_for_search: "DUBIN"
       angle_quantization_bins: 144
       analytic_expansion_ratio: 3.5
@@ -518,7 +254,7 @@ planner_server:
       cache_obstacle_heuristic: false
       # Humble's Smac smoother is collision-aware but does not preserve the
       # Hybrid-A* curvature bound. Keep the DUBIN lattice path intact so a
-      # valid R=0.22 m plan cannot be tightened before reverse validation.
+      # valid R=0.22 m plan cannot be tightened before tracking.
       smooth_path: false
 
 velocity_smoother:

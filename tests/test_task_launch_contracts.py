@@ -14,6 +14,9 @@ PACKAGE_XML = PACKAGE / "package.xml"
 TASK_CONFIG = PACKAGE / "config" / "task.yaml"
 NAV_TEST = ROOT / "scripts" / "nav_test.sh"
 SYSTEM = ROOT / "src" / "smartcar_bringup" / "launch" / "smartcar_system.launch.py"
+NAV2_CONFIG = ROOT / "src" / "smartcar_nav2" / "config"
+NAV2_BEHAVIOR_TREES = NAV2_CONFIG / "behavior_trees"
+NAV2_CMAKE = ROOT / "src" / "smartcar_nav2" / "CMakeLists.txt"
 
 
 class TaskLaunchContractTests(unittest.TestCase):
@@ -75,12 +78,14 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("goal = NavigateToPose.Goal()", source)
         self.assertIn("goal.pose = self.pose_stamped(waypoint)", source)
         self.assertIn("pose.header.frame_id = waypoint.frame_id", source)
-        self.assertIn("goal.behavior_tree = behavior_tree", source)
+        self.assertIn("goal.behavior_tree = navigation_behavior_tree(", source)
+        self.assertIn("navigation_goal_requires_forward_direction", source)
+        self.assertIn("navigation_through_requires_forward_direction", source)
         self.assertIn("goal = NavigateThroughPoses.Goal()", source)
         self.assertIn("goal.poses = [self.pose_stamped(waypoint)", source)
         node_source = NODE.read_text(encoding="utf-8")
         self.assertIn("goal, goal_uuid=action_uuid", node_source)
-        self.assertIn("motion_direction(reverse_direction)", node_source)
+        self.assertIn("direction = motion_direction()", node_source)
         self.assertIn("Nav2GoalFactory", node_source)
         self.assertNotIn("FollowWaypoints", source)
 
@@ -96,19 +101,56 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("def _nav2_behavior_tree_path(filename):", source)
         self.assertNotIn("/root/ros2_ws", source)
         for filename in (
-            "navigate_to_pose_reverse_w_replanning_and_recovery.xml",
-            "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml",
             "navigate_to_pose_precise_w_replanning_and_recovery.xml",
             "navigate_to_pose_transit_w_replanning_and_recovery.xml",
             "navigate_through_poses_w_replanning_and_recovery.xml",
             "navigate_through_poses_return_w_replanning_and_recovery.xml",
             "navigate_through_poses_transit_w_replanning_and_recovery.xml",
             "navigate_through_poses_precise_w_replanning_and_recovery.xml",
-            "navigate_through_poses_reverse_w_replanning_and_recovery.xml",
-            "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml",
-            "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml",
         ):
             self.assertIn(filename, source)
+        self.assertNotIn("reverse_behavior_tree", source)
+        self.assertNotIn("reverse_handoff", source)
+
+    def test_nav2_installs_only_native_forward_behavior_trees(self):
+        expected = {
+            "navigate_to_pose_w_replanning_and_recovery.xml",
+            "navigate_to_pose_precise_w_replanning_and_recovery.xml",
+            "navigate_to_pose_transit_w_replanning_and_recovery.xml",
+            "navigate_through_poses_w_replanning_and_recovery.xml",
+            "navigate_through_poses_precise_w_replanning_and_recovery.xml",
+            "navigate_through_poses_transit_w_replanning_and_recovery.xml",
+            "navigate_through_poses_return_w_replanning_and_recovery.xml",
+        }
+        observed = {
+            path.name for path in NAV2_BEHAVIOR_TREES.glob("*.xml")
+        }
+        self.assertEqual(observed, expected)
+        forbidden = (
+            "ComputeFreeHeading",
+            "RecordFollowPath",
+            "AckermannReverse",
+            "Reverse",
+            "Spin",
+            "Wait",
+            "BackUp",
+            "DriveOnHeading",
+        )
+        for tree in NAV2_BEHAVIOR_TREES.glob("*.xml"):
+            source = tree.read_text(encoding="utf-8")
+            self.assertIn("FollowPath", source)
+            self.assertTrue(
+                "ComputePathToPose" in source
+                or "ComputePathThroughPoses" in source
+            )
+            for token in forbidden:
+                self.assertNotIn(token, source)
+        cmake = NAV2_CMAKE.read_text(encoding="utf-8")
+        for token in (*forbidden[:4], "ForwardOnlyRPP"):
+            self.assertNotIn(token, cmake)
+        params = (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        for token in ("nav2_spin", "nav2_wait", "nav2_back_up", "nav2_drive_on_heading"):
+            self.assertNotIn(token, params)
 
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = NODE.read_text(encoding="utf-8")

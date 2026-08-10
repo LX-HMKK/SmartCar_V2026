@@ -1,12 +1,10 @@
-"""Normalize semantic waypoints for Nav2's position-only transit contract.
+"""Materialize valid Nav2 poses without changing the authored route.
 
-Nav2 Humble's Smac planner has no orientation-free ``PoseStamped`` goal: a
-zero quaternion is otherwise interpreted as a concrete yaw.  The task layer
-therefore preserves zero quaternions for ordinary waypoints and the custom
-Nav2 BT node resolves them against the live costmap immediately before
-planning.  This module deliberately does *not* invent a route tangent: doing
-so would turn an operator-free position into the hard yaw constraint that
-causes Ackermann loops at tight corners.
+Nav2 Humble requires every ``PoseStamped`` goal to carry a unit quaternion.
+The YAML zero quaternion is only an authoring sentinel for a position-only
+transit constraint.  Before a native Nav2 action is sent, it becomes a local
+route tangent so Smac receives a valid pose; the position goal checker still
+owns completion and Nav2 remains the sole planner.
 """
 
 from __future__ import annotations
@@ -23,10 +21,11 @@ from smartcar_task.waypoints import (
 
 
 ZERO_QUATERNION = (0.0, 0.0, 0.0, 0.0)
+_POSITION_EPSILON = 1.0e-6
 
 
 class RouteGeometryError(ValueError):
-    """Raised when a route cannot safely reach the Nav2 free-heading node."""
+    """Raised when a route cannot produce valid native Nav2 goal poses."""
 
 
 def _require_unit_orientation(waypoint: Waypoint) -> None:
@@ -42,13 +41,31 @@ def _require_unit_orientation(waypoint: Waypoint) -> None:
         )
 
 
-def materialize_free_yaws(waypoints: Sequence[Waypoint]) -> tuple[Waypoint, ...]:
-    """Return Nav2 action inputs with nonsemantic headings explicitly free.
+def _tangent_orientation(route: tuple[Waypoint, ...], index: int) -> tuple[float, ...]:
+    """Return a unit yaw from the next usable route chord, then the previous."""
+    origin_x, origin_y, _origin_z = route[index].position
+    for candidate in route[index + 1:]:
+        dx = candidate.position[0] - origin_x
+        dy = candidate.position[1] - origin_y
+        if math.hypot(dx, dy) > _POSITION_EPSILON:
+            yaw = math.atan2(dy, dx)
+            return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+    for candidate in reversed(route[:index]):
+        dx = origin_x - candidate.position[0]
+        dy = origin_y - candidate.position[1]
+        if math.hypot(dx, dy) > _POSITION_EPSILON:
+            yaw = math.atan2(dy, dx)
+            return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+    raise RouteGeometryError(
+        f"{route[index].id}: position-only waypoint has no route tangent")
 
-    Only P, QR, and VLM retain their authored base-frame yaw.  All other
-    points become the all-zero sentinel consumed by
-    ``Compute*FreeHeadingPath*``.  Any stale arrow in YAML is deliberately
-    ignored so editing a transit point cannot accidentally change the route.
+
+def materialize_free_yaws(waypoints: Sequence[Waypoint]) -> tuple[Waypoint, ...]:
+    """Return action inputs with authored headings or valid transit tangents.
+
+    The derived orientation is not written back to YAML and is not a path or a
+    controller directive.  It only lets Nav2's native Smac planner construct
+    a legal pose for a semantic position-only route point.
     """
     route = tuple(waypoints)
     if not route:
@@ -58,8 +75,8 @@ def materialize_free_yaws(waypoints: Sequence[Waypoint]) -> tuple[Waypoint, ...]
         raise RouteGeometryError("position-only route has duplicate waypoint ids")
 
     normalized: list[Waypoint] = []
-    for waypoint in route:
-        if waypoint.direction not in {"forward", "reverse"}:
+    for index, waypoint in enumerate(route):
+        if waypoint.direction != "forward":
             raise RouteGeometryError(f"{waypoint.id}: invalid travel direction")
         if not all(math.isfinite(float(value)) for value in waypoint.position[:2]):
             raise RouteGeometryError(f"{waypoint.id}: position must be finite")
@@ -67,5 +84,8 @@ def materialize_free_yaws(waypoints: Sequence[Waypoint]) -> tuple[Waypoint, ...]
             _require_unit_orientation(waypoint)
             normalized.append(waypoint)
         else:
-            normalized.append(replace(waypoint, orientation=ZERO_QUATERNION))
+            normalized.append(replace(
+                waypoint,
+                orientation=_tangent_orientation(route, index),
+            ))
     return tuple(normalized)

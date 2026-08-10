@@ -17,11 +17,10 @@ ALLOWED_TASKS = frozenset({
     "nav",       # pure navigation pass-through (no vision/media subtask)
     "via",       # editor-created route constraint (no vision/media subtask)
 })
-ALLOWED_DIRECTIONS = frozenset({"forward", "reverse"})
+ALLOWED_DIRECTIONS = frozenset({"forward"})
 ALLOWED_GOAL_PROFILES = frozenset({
     "standard",
     "precise",
-    "reverse_handoff",
 })
 ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
 # These are the only mission positions whose physical base-frame heading is
@@ -104,17 +103,6 @@ def _parse_waypoint(raw, index):
     ):
         raise ValueError(
             f"waypoints[{index}] has unknown goal_profile {goal_profile!r}")
-    if direction == "reverse" and goal_profile not in {
-        "standard",
-        "reverse_handoff",
-    }:
-        raise ValueError(
-            f"waypoints[{index}] reverse goals must use the standard "
-            "or reverse_handoff profile")
-    if direction != "reverse" and goal_profile == "reverse_handoff":
-        raise ValueError(
-            f"waypoints[{index}] reverse_handoff goals must be reverse")
-
     heading_mode = item.get("heading_mode")
     if heading_mode is not None and (
         not isinstance(heading_mode, str)

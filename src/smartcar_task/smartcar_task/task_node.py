@@ -357,9 +357,8 @@ class RosNavigator:
         node,
         callback_group,
         direction_guard,
-        reverse_behavior_tree,
-        reverse_handoff_behavior_tree,
-        precise_forward_behavior_tree,
+        precise_behavior_tree,
+        transit_behavior_tree,
         navigation_timeout_sec,
         goal_response_timeout_sec,
         cancel_timeout_sec,
@@ -367,13 +366,9 @@ class RosNavigator:
         direction_prepare_timeout_sec,
         direction_prepare_retry_period_sec,
         through_poses_behavior_tree="",
-        reverse_through_poses_behavior_tree="",
-        reverse_locked_through_poses_behavior_tree="",
-        reverse_return_through_poses_behavior_tree="",
-        forward_transit_behavior_tree="",
-        forward_transit_through_poses_behavior_tree="",
-        forward_precise_through_poses_behavior_tree="",
-        forward_return_through_poses_behavior_tree="",
+        transit_through_poses_behavior_tree="",
+        precise_through_poses_behavior_tree="",
+        return_through_poses_behavior_tree="",
     ):
         self._node = node
         self._callback_group = callback_group
@@ -388,17 +383,12 @@ class RosNavigator:
         )
         self._goal_factory = Nav2GoalFactory(
             node,
-            reverse_behavior_tree,
-            reverse_handoff_behavior_tree,
-            precise_forward_behavior_tree,
-            forward_transit_behavior_tree,
+            precise_behavior_tree,
+            transit_behavior_tree,
             through_poses_behavior_tree,
-            reverse_through_poses_behavior_tree,
-            reverse_locked_through_poses_behavior_tree,
-            reverse_return_through_poses_behavior_tree,
-            forward_transit_through_poses_behavior_tree,
-            forward_precise_through_poses_behavior_tree,
-            forward_return_through_poses_behavior_tree,
+            transit_through_poses_behavior_tree,
+            precise_through_poses_behavior_tree,
+            return_through_poses_behavior_tree,
         )
         self._navigation_timeout_sec = _positive_finite(
             "navigation_timeout_sec", navigation_timeout_sec)
@@ -484,9 +474,9 @@ class RosNavigator:
             if self._active_locked():
                 return
 
-    def navigate(self, waypoint, reverse_direction=False):
+    def navigate(self, waypoint):
         try:
-            goal = self._goal_factory.navigate_goal(waypoint, reverse_direction)
+            goal = self._goal_factory.navigate_goal(waypoint)
         except (TypeError, ValueError) as error:
             return OperationResult(False, f"navigation_config:{error}")
         client = self._action_client(through_poses=False)
@@ -496,15 +486,14 @@ class RosNavigator:
             self._release_idle_action_client(client)
             return OperationResult(False, "navigation_server_unavailable")
         try:
-            return self._navigate_goal(goal, client, reverse_direction)
+            return self._navigate_goal(goal, client)
         finally:
             self._release_idle_action_client(client)
 
-    def navigate_through(self, waypoints, reverse_direction=False):
+    def navigate_through(self, waypoints):
         """Run one constant-direction segment without stopping at through goals."""
         try:
-            goal = self._goal_factory.navigate_through_goal(
-                waypoints, reverse_direction)
+            goal = self._goal_factory.navigate_through_goal(waypoints)
         except (TypeError, ValueError) as error:
             if str(error).startswith("navigation_through_"):
                 return OperationResult(False, str(error))
@@ -516,24 +505,13 @@ class RosNavigator:
             self._release_idle_action_client(client)
             return OperationResult(False, "navigation_server_unavailable")
         try:
-            return self._navigate_goal(goal, client, reverse_direction)
+            return self._navigate_goal(goal, client)
         finally:
             self._release_idle_action_client(client)
 
-    def _through_behavior_tree(
-        self, reverse_direction, terminal_heading_locked, terminal_is_return=False,
-        terminal_goal_profile="standard",
-    ):
-        return self._goal_factory.through_behavior_tree(
-            reverse_direction,
-            terminal_heading_locked,
-            terminal_is_return,
-            terminal_goal_profile,
-        )
-
-    def _navigate_goal(self, goal, action_client, reverse_direction=False):
+    def _navigate_goal(self, goal, action_client):
         action_uuid = UUID(uuid=list(uuid4().bytes))
-        direction = motion_direction(reverse_direction)
+        direction = motion_direction()
         with self._condition:
             if self._active_locked():
                 status = (
@@ -841,7 +819,7 @@ class RosNavigator:
                 identity = self._current_identity
                 if identity is None:
                     identity = self._motion_protocol.provisional(
-                        motion_direction(False), generation, UUID())
+                    motion_direction(), generation, UUID())
                 self._guard_stop_attempted_generation = generation
             result = self._motion_protocol.revoke(identity)
             with self._condition:
@@ -1360,22 +1338,12 @@ class TaskNode(Node):
         self.declare_parameter("cancel_timeout_sec", 3.0)
         self.declare_parameter("stop_timeout_sec", 5.0)
         self.declare_parameter(
-            "reverse_behavior_tree",
-            _nav2_behavior_tree_path(
-                "navigate_to_pose_reverse_w_replanning_and_recovery.xml"),
-        )
-        self.declare_parameter(
-            "reverse_handoff_behavior_tree",
-            _nav2_behavior_tree_path(
-                "navigate_to_pose_reverse_handoff_w_replanning_and_recovery.xml"),
-        )
-        self.declare_parameter(
-            "precise_forward_behavior_tree",
+            "precise_behavior_tree",
             _nav2_behavior_tree_path(
                 "navigate_to_pose_precise_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
-            "forward_transit_behavior_tree",
+            "transit_behavior_tree",
             _nav2_behavior_tree_path(
                 "navigate_to_pose_transit_w_replanning_and_recovery.xml"),
         )
@@ -1385,34 +1353,19 @@ class TaskNode(Node):
                 "navigate_through_poses_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
-            "forward_transit_through_poses_behavior_tree",
+            "transit_through_poses_behavior_tree",
             _nav2_behavior_tree_path(
                 "navigate_through_poses_transit_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
-            "forward_precise_through_poses_behavior_tree",
+            "precise_through_poses_behavior_tree",
             _nav2_behavior_tree_path(
                 "navigate_through_poses_precise_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter(
-            "forward_return_through_poses_behavior_tree",
+            "return_through_poses_behavior_tree",
             _nav2_behavior_tree_path(
                 "navigate_through_poses_return_w_replanning_and_recovery.xml"),
-        )
-        self.declare_parameter(
-            "reverse_through_poses_behavior_tree",
-            _nav2_behavior_tree_path(
-                "navigate_through_poses_reverse_w_replanning_and_recovery.xml"),
-        )
-        self.declare_parameter(
-            "reverse_locked_through_poses_behavior_tree",
-            _nav2_behavior_tree_path(
-                "navigate_through_poses_reverse_locked_w_replanning_and_recovery.xml"),
-        )
-        self.declare_parameter(
-            "reverse_return_through_poses_behavior_tree",
-            _nav2_behavior_tree_path(
-                "navigate_through_poses_reverse_return_w_replanning_and_recovery.xml"),
         )
         self.declare_parameter("direction_service_timeout_sec", 0.08)
         self.declare_parameter("direction_lease_timeout_sec", 0.25)
@@ -1583,9 +1536,8 @@ class TaskNode(Node):
             self,
             self._io_group,
             self._direction_guard,
-            self.get_parameter("reverse_behavior_tree").value,
-            self.get_parameter("reverse_handoff_behavior_tree").value,
-            self.get_parameter("precise_forward_behavior_tree").value,
+            self.get_parameter("precise_behavior_tree").value,
+            self.get_parameter("transit_behavior_tree").value,
             self.get_parameter("navigation_timeout_sec").value,
             self.get_parameter("goal_response_timeout_sec").value,
             self.get_parameter("cancel_timeout_sec").value,
@@ -1593,19 +1545,12 @@ class TaskNode(Node):
             self.get_parameter("direction_prepare_timeout_sec").value,
             self.get_parameter("direction_prepare_retry_period_sec").value,
             self.get_parameter("through_poses_behavior_tree").value,
-            self.get_parameter("reverse_through_poses_behavior_tree").value,
             self.get_parameter(
-                "reverse_locked_through_poses_behavior_tree").value,
+                "transit_through_poses_behavior_tree").value,
             self.get_parameter(
-                "reverse_return_through_poses_behavior_tree").value,
-            forward_transit_behavior_tree=self.get_parameter(
-                "forward_transit_behavior_tree").value,
-            forward_transit_through_poses_behavior_tree=self.get_parameter(
-                "forward_transit_through_poses_behavior_tree").value,
-            forward_precise_through_poses_behavior_tree=self.get_parameter(
-                "forward_precise_through_poses_behavior_tree").value,
-            forward_return_through_poses_behavior_tree=self.get_parameter(
-                "forward_return_through_poses_behavior_tree").value,
+                "precise_through_poses_behavior_tree").value,
+            self.get_parameter(
+                "return_through_poses_behavior_tree").value,
         )
         self._vision = RosVision(self, self._io_group)
         self._localization = RosLocalization(

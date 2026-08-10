@@ -1,4 +1,5 @@
-"""Contracts for Nav2 position-only transit waypoints."""
+"""Contracts for native Nav2 transit-pose materialization."""
+
 import math
 from pathlib import Path
 import sys
@@ -10,130 +11,77 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_task.route_geometry import (  # noqa: E402
     RouteGeometryError,
-    ZERO_QUATERNION,
     materialize_free_yaws,
 )
-from smartcar_task.waypoints import (  # noqa: E402
-    HEADING_LOCKED_TASKS,
-    Waypoint,
-    is_heading_locked,
-    is_zero_quaternion,
-)
+from smartcar_task.waypoints import Waypoint, is_heading_locked  # noqa: E402
 
 
 def quaternion(yaw):
-    half_yaw = yaw / 2.0
-    return (0.0, 0.0, math.sin(half_yaw), math.cos(half_yaw))
+    return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
 
 
-def waypoint(
-    waypoint_id,
-    task,
-    x,
-    y,
-    heading=0.0,
-    direction="forward",
-    heading_mode=None,
-):
+def waypoint(waypoint_id, task, x, y, orientation=(0.0, 0.0, 0.0, 0.0), **kwargs):
     return Waypoint(
         frame_id="odom_combined",
         position=(x, y, 0.0),
-        orientation=quaternion(heading),
+        orientation=orientation,
         task=task,
-        direction=direction,
+        direction="forward",
         id=waypoint_id,
-        heading_mode=heading_mode,
+        **kwargs,
     )
 
 
 class RouteGeometryTests(unittest.TestCase):
-    def test_only_start_qr_and_vlm_positions_keep_authored_headings(self):
+    def test_transit_waypoints_become_valid_outgoing_tangent_poses(self):
         route = (
-            waypoint("p_start", "start", 0.0, 0.0, 0.0),
-            waypoint("qr", "qr", 1.0, 0.0, 0.31),
-            waypoint("nav", "nav", 2.0, 0.0, -2.2),
-            waypoint("via", "via", 3.0, 1.0, -1.8),
-            waypoint("loop", "loop", 3.0, 2.0, -1.4),
-            waypoint("corridor", "corridor", 2.0, 2.0, -0.9),
-            waypoint("vlm", "vlm", 1.0, 2.0, 1.17, "reverse"),
-            waypoint("p_finish", "return", 0.0, 2.0, -0.72, "reverse"),
+            waypoint("p_start", "start", 0.0, 0.0, quaternion(0.0)),
+            waypoint("a", "qr", 1.0, 0.0, quaternion(0.2), goal_profile="precise"),
+            waypoint("via", "via", 1.0, 1.0),
+            waypoint("c", "vlm", 2.0, 1.0, quaternion(0.0), goal_profile="precise"),
+            waypoint("p_finish", "return", 0.0, 0.0),
+        )
+        materialized = materialize_free_yaws(route)
+
+        self.assertEqual(materialized[0].orientation, route[0].orientation)
+        self.assertEqual(materialized[1].orientation, route[1].orientation)
+        self.assertEqual(materialized[3].orientation, route[3].orientation)
+        self.assertAlmostEqual(materialized[2].orientation[2], 0.0, places=6)
+        self.assertAlmostEqual(materialized[2].orientation[3], 1.0, places=6)
+        self.assertAlmostEqual(
+            math.sqrt(sum(value * value for value in materialized[-1].orientation)),
+            1.0,
         )
 
-        normalized = materialize_free_yaws(route)
-
-        self.assertEqual(
-            HEADING_LOCKED_TASKS,
-            frozenset({"start", "qr", "vlm"}),
-        )
-        for index in (0, 1, 6):
-            self.assertEqual(normalized[index].orientation, route[index].orientation)
-        for index in (2, 3, 4, 5, 7):
-            self.assertEqual(normalized[index].orientation, ZERO_QUATERNION)
-            self.assertTrue(is_zero_quaternion(normalized[index].orientation))
-
-    def test_stale_transit_arrow_cannot_change_an_action_goal(self):
+    def test_final_free_goal_uses_its_incoming_tangent(self):
         route = (
-            waypoint("p_start", "start", 0.0, 0.0),
-            waypoint("first", "nav", 1.0, 0.0, -2.6),
-            waypoint("second", "corridor", 1.0, 1.0, 2.2, "reverse"),
-            waypoint("p_finish", "return", 0.0, 1.0, 0.5, "reverse"),
+            waypoint("p_start", "start", 0.0, 0.0, quaternion(0.0)),
+            waypoint("p_finish", "return", 0.0, 1.0),
         )
+        materialized = materialize_free_yaws(route)
+        self.assertAlmostEqual(materialized[-1].orientation[2], math.sin(math.pi / 4.0))
+        self.assertAlmostEqual(materialized[-1].orientation[3], math.cos(math.pi / 4.0))
 
-        normalized = materialize_free_yaws(route)
+    def test_explicit_locked_nav_heading_is_preserved(self):
+        locked = waypoint(
+            "nav_locked", "nav", 1.0, 0.0, quaternion(0.7), heading_mode="locked")
+        materialized = materialize_free_yaws((locked,))
+        self.assertTrue(is_heading_locked(locked))
+        self.assertEqual(materialized[0].orientation, locked.orientation)
 
-        self.assertEqual(normalized[1].orientation, ZERO_QUATERNION)
-        self.assertEqual(normalized[2].orientation, ZERO_QUATERNION)
-        self.assertEqual(normalized[0].orientation, route[0].orientation)
-        self.assertEqual(normalized[3].orientation, ZERO_QUATERNION)
+    def test_free_waypoint_without_a_route_tangent_is_rejected(self):
+        with self.assertRaisesRegex(RouteGeometryError, "no route tangent"):
+            materialize_free_yaws((waypoint("via", "via", 1.0, 1.0),))
 
-    def test_nav_can_explicitly_keep_an_authored_heading(self):
-        nav = waypoint(
-            "nav_qr_substitute", "nav", 1.0, 0.0, 0.63,
-            heading_mode="locked",
-        )
-
-        normalized = materialize_free_yaws((nav,))
-
-        self.assertTrue(is_heading_locked(nav))
-        self.assertEqual(normalized[0].orientation, nav.orientation)
-
-    def test_coincident_transit_positions_remain_position_constraints(self):
-        route = (
-            waypoint("p_start", "start", 0.0, 0.0),
-            waypoint("nav", "nav", 0.0, 0.0),
-        )
-
-        normalized = materialize_free_yaws(route)
-
-        self.assertTrue(is_zero_quaternion(normalized[-1].orientation))
-
-    def test_heading_locked_positions_require_finite_unit_quaternions(self):
-        invalid_zero = Waypoint(
-            "odom_combined", (0.0, 0.0, 0.0), ZERO_QUATERNION, "qr", id="qr"
-        )
-        invalid_nan = Waypoint(
-            "odom_combined", (0.0, 0.0, 0.0), (0.0, 0.0, math.nan, 1.0), "vlm", id="vlm"
-        )
-        invalid_locked_nav = Waypoint(
-            "odom_combined", (0.0, 0.0, 0.0), ZERO_QUATERNION, "nav",
-            id="nav", heading_mode="locked",
-        )
-
-        with self.assertRaisesRegex(RouteGeometryError, "unit orientation"):
-            materialize_free_yaws((invalid_zero,))
-        with self.assertRaisesRegex(RouteGeometryError, "finite unit orientation"):
-            materialize_free_yaws((invalid_nan,))
-        with self.assertRaisesRegex(RouteGeometryError, "unit orientation"):
-            materialize_free_yaws((invalid_locked_nav,))
-
-    def test_rejects_invalid_direction_and_nonfinite_position(self):
-        invalid_direction = waypoint("nav", "nav", 1.0, 0.0, direction="sideways")
-        invalid_position = waypoint("nav", "nav", math.nan, 0.0)
-
+    def test_rejects_reverse_direction_and_invalid_locked_orientation(self):
+        reverse = waypoint("via", "via", 1.0, 0.0)
+        reverse = reverse.__class__(**{**reverse.__dict__, "direction": "reverse"})
         with self.assertRaisesRegex(RouteGeometryError, "invalid travel direction"):
-            materialize_free_yaws((invalid_direction,))
-        with self.assertRaisesRegex(RouteGeometryError, "position must be finite"):
-            materialize_free_yaws((invalid_position,))
+            materialize_free_yaws((reverse,))
+
+        invalid = waypoint("qr", "qr", 1.0, 0.0, (0.0, 0.0, 0.0, 0.0))
+        with self.assertRaisesRegex(RouteGeometryError, "unit orientation"):
+            materialize_free_yaws((invalid,))
 
 
 if __name__ == "__main__":

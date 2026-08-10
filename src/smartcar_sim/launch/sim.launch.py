@@ -130,8 +130,6 @@ def generate_launch_description():
     results_file = LaunchConfiguration(
         "results_file", default="/tmp/auto_train_results.json")
     use_through_poses_lc = LaunchConfiguration("use_through_poses", default="true")
-    start_goal_id = LaunchConfiguration("start_goal_id", default="")
-    end_goal_id = LaunchConfiguration("end_goal_id", default="")
 
     # ── Gazebo ──
     # 注意：gz_server 和 gz_server_headless 互斥，只启动其中一个。
@@ -292,7 +290,8 @@ def generate_launch_description():
     )
 
     # ── Direction guard: SKIP in simulation (no lease needed) ──
-    # The real system requires forward/reverse leases per waypoint.
+    # The simulator exercises the same forward-only Nav2 route contract as
+    # the vehicle stack; it does not emulate physical motion leases.
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
     # ── Prior-map keepout stack ──
@@ -392,24 +391,6 @@ def generate_launch_description():
     ])
     bt_precise = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
         "navigate_to_pose_precise_w_replanning_and_recovery.xml"])
-    bt_reverse = PathJoinSubstitution([pkg_nav2, "config", "behavior_trees",
-        "navigate_to_pose_reverse_sim_w_replanning_and_recovery.xml"])
-    bt_reverse_handoff = PathJoinSubstitution([
-        pkg_nav2, "config", "behavior_trees",
-        "navigate_to_pose_reverse_handoff_sim_w_replanning_and_recovery.xml",
-    ])
-    bt_reverse_through_poses = PathJoinSubstitution([
-        pkg_nav2, "config", "behavior_trees",
-        "navigate_through_poses_reverse_sim_w_replanning_and_recovery.xml",
-    ])
-    bt_reverse_locked_through_poses = PathJoinSubstitution([
-        pkg_nav2, "config", "behavior_trees",
-        "navigate_through_poses_reverse_locked_sim_w_replanning_and_recovery.xml",
-    ])
-    bt_reverse_return_through_poses = PathJoinSubstitution([
-        pkg_nav2, "config", "behavior_trees",
-        "navigate_through_poses_reverse_return_sim_w_replanning_and_recovery.xml",
-    ])
 
     active_nav2_overlay = None
     active_nav2_params = None
@@ -696,8 +677,6 @@ def generate_launch_description():
             "forward_behavior_tree": bt_forward,
             "transit_behavior_tree": bt_transit,
             "precise_behavior_tree": bt_precise,
-            "reverse_behavior_tree": bt_reverse,
-            "reverse_handoff_behavior_tree": bt_reverse_handoff,
             "through_poses_behavior_tree": PathJoinSubstitution([
                 pkg_nav2, "config", "behavior_trees",
                 "navigate_through_poses_w_replanning_and_recovery.xml",
@@ -706,17 +685,10 @@ def generate_launch_description():
             "through_poses_precise_behavior_tree": bt_precise_through_poses,
             "through_poses_return_behavior_tree": (
                 bt_forward_return_through_poses),
-            "through_poses_reverse_behavior_tree": bt_reverse_through_poses,
-            "through_poses_reverse_locked_behavior_tree": (
-                bt_reverse_locked_through_poses),
-            "through_poses_reverse_return_behavior_tree": (
-                bt_reverse_return_through_poses),
             "use_through_poses": use_through_poses_lc,
             "nav2_params_file": active_nav2_params_file,
             "nav2_params_overlay_file": active_nav2_overlay_file,
             "results_file": results_file,
-            "start_goal_id": start_goal_id,
-            "end_goal_id": end_goal_id,
             "goal_timeout_sec": 180.0,
         }],
         condition=IfCondition(run_route),
@@ -789,8 +761,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "results_file", default_value="/tmp/auto_train_results.json"),
         DeclareLaunchArgument("use_through_poses", default_value="true"),
-        DeclareLaunchArgument("start_goal_id", default_value=""),
-        DeclareLaunchArgument("end_goal_id", default_value=""),
         set_rmw,
         set_localhost,
         set_model_path,

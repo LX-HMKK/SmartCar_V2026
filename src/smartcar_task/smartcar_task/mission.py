@@ -6,7 +6,6 @@ import threading
 
 from smartcar_task.planning_segments import (
     allows_precise_terminal_through_poses,
-    allows_reverse_handoff_through_poses,
 )
 
 
@@ -16,7 +15,7 @@ TERMINAL_STATES = frozenset({"COMPLETED", "STOPPED", "FAILED"})
 RESETTABLE_STATES = TERMINAL_STATES | frozenset({"IDLE"})
 QR_HANDOFF_TEST_CONTENT = "模拟赛题数据：任务类型为诊疗区人物描述。"
 QR_HANDOFF_TEST_ANNOUNCEMENT = (
-    "下一导航：倒车经由 via_2 前往 c_corner_1 诊疗区，执行人物描述。"
+    "下一导航：前向经由 via_2 前往 c_corner_1 诊疗区，执行人物描述。"
     "测试到此停止，未执行下一导航段。"
 )
 
@@ -327,6 +326,8 @@ class Mission:
         if any(waypoint.task == "start" for waypoint in segment):
             return "navigation_segment_contains_start"
         direction = segment[0].direction
+        if direction != "forward":
+            return "navigation_segment_direction_not_forward"
         if any(waypoint.direction != direction for waypoint in segment):
             return "navigation_segment_direction_mismatch"
         if any(
@@ -339,32 +340,22 @@ class Mission:
                 getattr(waypoint, "goal_profile", "standard") != "standard"
                 for waypoint in segment
             )
-            if nonstandard and not (
-                allows_reverse_handoff_through_poses(segment)
-                or allows_precise_terminal_through_poses(segment)
-            ):
+            if nonstandard and not allows_precise_terminal_through_poses(segment):
                 return "navigation_segment_nonstandard_goal_profile"
         return None
 
     def _navigate(self, generation, segment):
         self._set_state(MissionState.NAVIGATING, generation)
-        reverse_direction = segment[0].direction == "reverse"
         attempts = self._config.navigation_retries + 1
         last_status = "navigation_failed"
         for attempt in range(attempts):
             if self._stop_requested.is_set():
                 return self._finish_stopped(generation)
             if len(segment) == 1:
-                result = self._navigator.navigate(
-                    segment[0],
-                    reverse_direction=reverse_direction,
-                )
+                result = self._navigator.navigate(segment[0])
             else:
                 try:
-                    result = self._navigator.navigate_through(
-                        segment,
-                        reverse_direction=reverse_direction,
-                    )
+                    result = self._navigator.navigate_through(segment)
                 except AttributeError:
                     return self._fail(
                         generation,
