@@ -8,6 +8,7 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 PACKAGE = ROOT / "src" / "smartcar_task"
 NODE = PACKAGE / "smartcar_task" / "task_node.py"
+NAVIGATION_GOALS = PACKAGE / "smartcar_task" / "navigation_goals.py"
 LAUNCH = PACKAGE / "launch" / "smartcar_task.launch.py"
 PACKAGE_XML = PACKAGE / "package.xml"
 TASK_CONFIG = PACKAGE / "config" / "task.yaml"
@@ -70,15 +71,17 @@ class TaskLaunchContractTests(unittest.TestCase):
             self.assertIn(token, source)
 
     def test_navigation_goals_are_uuid_and_direction_bound(self):
-        source = NODE.read_text(encoding="utf-8")
+        source = NAVIGATION_GOALS.read_text(encoding="utf-8")
         self.assertIn("goal = NavigateToPose.Goal()", source)
-        self.assertIn("goal.pose = self._pose_stamped(waypoint)", source)
+        self.assertIn("goal.pose = self.pose_stamped(waypoint)", source)
         self.assertIn("pose.header.frame_id = waypoint.frame_id", source)
         self.assertIn("goal.behavior_tree = behavior_tree", source)
         self.assertIn("goal = NavigateThroughPoses.Goal()", source)
-        self.assertIn("goal.poses = [self._pose_stamped(waypoint)", source)
-        self.assertIn("goal, goal_uuid=action_uuid", source)
-        self.assertIn("motion_direction(reverse_direction)", source)
+        self.assertIn("goal.poses = [self.pose_stamped(waypoint)", source)
+        node_source = NODE.read_text(encoding="utf-8")
+        self.assertIn("goal, goal_uuid=action_uuid", node_source)
+        self.assertIn("motion_direction(reverse_direction)", node_source)
+        self.assertIn("Nav2GoalFactory", node_source)
         self.assertNotIn("FollowWaypoints", source)
 
     def test_behavior_tree_paths_are_resolved_from_the_installed_nav2_package(self):

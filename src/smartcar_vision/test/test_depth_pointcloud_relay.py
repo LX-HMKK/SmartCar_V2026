@@ -10,16 +10,24 @@ from builtin_interfaces.msg import Time
 import rclpy
 from rclpy.executors import SingleThreadedExecutor
 from rclpy.node import Node
-from rclpy.qos import qos_profile_sensor_data
+from rclpy.qos import (
+    DurabilityPolicy,
+    HistoryPolicy,
+    ReliabilityPolicy,
+    qos_profile_sensor_data,
+)
 from sensor_msgs.msg import PointCloud2, PointField
 from std_msgs.msg import String
 
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
+COMMON_ROOT = PACKAGE_ROOT.parent / "smartcar_common"
+sys.path.insert(0, str(COMMON_ROOT))
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_vision.depth_pointcloud_relay import (  # noqa: E402
     STATUS_QOS,
+    LATEST_SENSOR_QOS,
     DepthPointCloudRelay,
     correct_aurora_timestamp,
     retime_point_cloud,
@@ -46,6 +54,14 @@ def point_cloud(*, frame_id="depth_camera_link_1", data=None, fields=None):
 
 
 class DepthPointCloudRelayTests(unittest.TestCase):
+    def test_point_cloud_transport_keeps_only_the_latest_sensor_sample(self):
+        self.assertEqual(LATEST_SENSOR_QOS.history, HistoryPolicy.KEEP_LAST)
+        self.assertEqual(LATEST_SENSOR_QOS.depth, 1)
+        self.assertEqual(
+            LATEST_SENSOR_QOS.reliability, ReliabilityPolicy.BEST_EFFORT)
+        self.assertEqual(
+            LATEST_SENSOR_QOS.durability, DurabilityPolicy.VOLATILE)
+
     def test_retimes_valid_cloud_without_rewriting_its_geometry(self):
         input_cloud = point_cloud()
         input_cloud.header.stamp.sec = 1786008

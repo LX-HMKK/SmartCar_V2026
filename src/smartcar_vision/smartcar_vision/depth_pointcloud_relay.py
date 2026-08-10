@@ -9,18 +9,11 @@ from builtin_interfaces.msg import Time
 import rclpy
 from rclpy.executors import ExternalShutdownException
 from rclpy.node import Node
-from rclpy.qos import QoSProfile, ReliabilityPolicy, DurabilityPolicy
-from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import PointCloud2
 from sensor_msgs.msg import PointField
 from std_msgs.msg import String
 
-
-STATUS_QOS = QoSProfile(
-    depth=1,
-    reliability=ReliabilityPolicy.RELIABLE,
-    durability=DurabilityPolicy.TRANSIENT_LOCAL,
-)
+from smartcar_common.qos import LATEST_SENSOR_QOS, STATUS_QOS
 
 _FLOAT_FIELD_FORMATS = {
     PointField.FLOAT32: ("f", 4),
@@ -293,12 +286,12 @@ class DepthPointCloudRelay(Node):
         self._last_published_at: float | None = None
         self._status = ""
         self._publisher = self.create_publisher(
-            PointCloud2, output_topic, qos_profile_sensor_data)
+            PointCloud2, output_topic, LATEST_SENSOR_QOS)
         self._status_publisher = self.create_publisher(
             String, "/smartcar/depth_obstacles/status", STATUS_QOS)
         self._subscription = self.create_subscription(
             PointCloud2, input_topic, self._on_point_cloud,
-            qos_profile_sensor_data)
+            LATEST_SENSOR_QOS)
         self.create_timer(min(0.10, stale_timeout / 2.0), self._check_freshness)
         self._publish_status("waiting_for_depth_points")
 

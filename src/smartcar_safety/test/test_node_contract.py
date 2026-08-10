@@ -11,14 +11,29 @@ NODE_SOURCE = (
 )
 CPP_NODE_SOURCE = Path(__file__).resolve().parents[1] / "src" / "safety_node.cpp"
 CONFIG_SOURCE = Path(__file__).resolve().parents[1] / "config" / "safety.yaml"
+COMMON_QOS_SOURCE = (
+    Path(__file__).resolve().parents[2]
+    / "smartcar_common"
+    / "smartcar_common"
+    / "qos.py"
+)
 
 
 class SafetyNodeCommandContractTests(unittest.TestCase):
     def test_safety_inputs_keep_only_the_latest_sample(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
+        common_source = COMMON_QOS_SOURCE.read_text(encoding="utf-8")
         self.assertIn("LATEST_RELIABLE_QOS = QoSProfile(depth=1)", source)
-        self.assertIn("LATEST_SENSOR_QOS = QoSProfile(", source)
-        self.assertIn("depth=1", source)
+        self.assertIn(
+            "from smartcar_common.qos import LATEST_SENSOR_QOS, STATUS_QOS",
+            source,
+        )
+        self.assertIn("LATEST_SENSOR_QOS = QoSProfile(", common_source)
+        self.assertIn("depth=1", common_source)
+        self.assertIn(
+            "rclcpp::QoS(1).best_effort().keep_last(1)",
+            CPP_NODE_SOURCE.read_text(encoding="utf-8"),
+        )
         self.assertIn('Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS', source)
         self.assertIn(
             'LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True',
@@ -152,8 +167,14 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
 
     def test_status_is_transient_local_and_only_changes_are_published(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("STATUS_QOS = QoSProfile(", source)
-        self.assertIn("durability=DurabilityPolicy.TRANSIENT_LOCAL", source)
+        common_source = COMMON_QOS_SOURCE.read_text(encoding="utf-8")
+        self.assertIn(
+            "from smartcar_common.qos import LATEST_SENSOR_QOS, STATUS_QOS",
+            source,
+        )
+        self.assertIn("STATUS_QOS = QoSProfile(", common_source)
+        self.assertIn(
+            "durability=DurabilityPolicy.TRANSIENT_LOCAL", common_source)
         self.assertIn("String, \"/smartcar/safety/status\", STATUS_QOS", source)
         self.assertIn("if reason == self._last_status_reason:", source)
         self.assertNotIn("_last_blocked_status_at", source)

@@ -13,6 +13,7 @@
   <exec_depend>cv_bridge</exec_depend>
   <exec_depend>sensor_msgs</exec_depend>
   <exec_depend>std_msgs</exec_depend>
+  <exec_depend>smartcar_common</exec_depend>
   <exec_depend>smartcar_interfaces</exec_depend>
   <exec_depend>zbar_ros</exec_depend>
   <exec_depend>deptrum-ros-driver-aurora930</exec_depend>

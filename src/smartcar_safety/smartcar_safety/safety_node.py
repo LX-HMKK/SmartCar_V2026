@@ -7,16 +7,12 @@ from geometry_msgs.msg import Twist
 from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
-from rclpy.qos import (
-    DurabilityPolicy,
-    HistoryPolicy,
-    QoSProfile,
-    ReliabilityPolicy,
-)
+from rclpy.qos import QoSProfile
 from sensor_msgs.msg import LaserScan, PointCloud2
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
 
+from smartcar_common.qos import LATEST_SENSOR_QOS, STATUS_QOS
 from smartcar_interfaces.srv import HoldSteeringCalibration
 from smartcar_safety.guard import SafetyGuard, validate_publish_frequency
 from smartcar_safety.velocity import (
@@ -26,18 +22,6 @@ from smartcar_safety.velocity import (
 
 
 LATEST_RELIABLE_QOS = QoSProfile(depth=1)
-LATEST_SENSOR_QOS = QoSProfile(
-    history=HistoryPolicy.KEEP_LAST,
-    depth=1,
-    reliability=ReliabilityPolicy.BEST_EFFORT,
-    durability=DurabilityPolicy.VOLATILE,
-)
-STATUS_QOS = QoSProfile(
-    history=HistoryPolicy.KEEP_LAST,
-    depth=1,
-    reliability=ReliabilityPolicy.RELIABLE,
-    durability=DurabilityPolicy.TRANSIENT_LOCAL,
-)
 
 
 def twist_from_components(components):

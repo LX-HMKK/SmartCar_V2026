@@ -20,6 +20,8 @@
   <depend>std_srvs</depend>
   <depend>unique_identifier_msgs</depend>
   <depend>ackermann_msgs</depend>
+  <build_depend>smartcar_common</build_depend>
+  <exec_depend>smartcar_common</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
 

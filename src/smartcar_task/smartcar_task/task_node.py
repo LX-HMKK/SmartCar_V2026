@@ -7,7 +7,7 @@ import time
 from uuid import uuid4
 
 from ament_index_python.packages import get_package_share_directory
-from geometry_msgs.msg import PoseStamped, PoseWithCovarianceStamped
+from geometry_msgs.msg import PoseWithCovarianceStamped
 from nav_msgs.msg import Odometry
 from nav2_msgs.action import NavigateThroughPoses, NavigateToPose
 import rclpy
@@ -37,10 +37,9 @@ from smartcar_task.mission import (
     MissionConfig,
     OperationResult,
 )
+from smartcar_task.navigation_goals import Nav2GoalFactory
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
-    allows_precise_terminal_through_poses,
-    allows_reverse_handoff_through_poses,
     load_planning_segments,
     materialize_mission_route,
     materialize_navigation_segments,
@@ -50,13 +49,12 @@ from smartcar_task.protocols import (
     MotionDirectionProtocol,
     classify_navigate_to_pose_result,
     motion_direction,
-    navigation_behavior_tree,
     odometry_matches_origin,
     run_reset_sequence,
     twist_is_stopped,
 )
 from smartcar_task.route_geometry import RouteGeometryError, materialize_free_yaws
-from smartcar_task.waypoints import is_heading_locked, load_waypoint_document
+from smartcar_task.waypoints import load_waypoint_document
 
 
 SUPERVISED_P_TO_A_SEGMENT_ID = "p_to_qr"
@@ -388,47 +386,20 @@ class RosNavigator:
             prepare_timeout_sec=direction_prepare_timeout_sec,
             prepare_retry_period_sec=direction_prepare_retry_period_sec,
         )
-        self._reverse_behavior_tree = str(reverse_behavior_tree).strip()
-        navigation_behavior_tree(True, self._reverse_behavior_tree)
-        self._reverse_handoff_behavior_tree = str(
-            reverse_handoff_behavior_tree).strip()
-        navigation_behavior_tree(
-            True,
-            self._reverse_behavior_tree,
-            goal_profile="reverse_handoff",
-            reverse_handoff_behavior_tree=(
-                self._reverse_handoff_behavior_tree),
+        self._goal_factory = Nav2GoalFactory(
+            node,
+            reverse_behavior_tree,
+            reverse_handoff_behavior_tree,
+            precise_forward_behavior_tree,
+            forward_transit_behavior_tree,
+            through_poses_behavior_tree,
+            reverse_through_poses_behavior_tree,
+            reverse_locked_through_poses_behavior_tree,
+            reverse_return_through_poses_behavior_tree,
+            forward_transit_through_poses_behavior_tree,
+            forward_precise_through_poses_behavior_tree,
+            forward_return_through_poses_behavior_tree,
         )
-        self._precise_forward_behavior_tree = str(
-            precise_forward_behavior_tree).strip()
-        navigation_behavior_tree(
-            False,
-            self._reverse_behavior_tree,
-            goal_profile="precise",
-            precise_forward_behavior_tree=self._precise_forward_behavior_tree,
-        )
-        self._forward_transit_behavior_tree = str(
-            forward_transit_behavior_tree).strip()
-        navigation_behavior_tree(
-            False,
-            self._reverse_behavior_tree,
-            forward_transit_behavior_tree=self._forward_transit_behavior_tree,
-            heading_locked=False,
-        )
-        self._forward_transit_through_poses_behavior_tree = str(
-            forward_transit_through_poses_behavior_tree).strip()
-        self._forward_precise_through_poses_behavior_tree = str(
-            forward_precise_through_poses_behavior_tree).strip()
-        self._forward_return_through_poses_behavior_tree = str(
-            forward_return_through_poses_behavior_tree).strip()
-        self._through_poses_behavior_tree = str(
-            through_poses_behavior_tree).strip()
-        self._reverse_through_poses_behavior_tree = str(
-            reverse_through_poses_behavior_tree).strip()
-        self._reverse_locked_through_poses_behavior_tree = str(
-            reverse_locked_through_poses_behavior_tree).strip()
-        self._reverse_return_through_poses_behavior_tree = str(
-            reverse_return_through_poses_behavior_tree).strip()
         self._navigation_timeout_sec = _positive_finite(
             "navigation_timeout_sec", navigation_timeout_sec)
         self._goal_response_timeout_sec = _positive_finite(
@@ -515,25 +486,7 @@ class RosNavigator:
 
     def navigate(self, waypoint, reverse_direction=False):
         try:
-            behavior_tree = navigation_behavior_tree(
-                reverse_direction,
-                self._reverse_behavior_tree,
-                goal_profile=waypoint.goal_profile,
-                precise_forward_behavior_tree=(
-                    self._precise_forward_behavior_tree),
-                reverse_handoff_behavior_tree=(
-                    self._reverse_handoff_behavior_tree),
-                forward_transit_behavior_tree=(
-                    self._forward_transit_behavior_tree),
-                heading_locked=is_heading_locked(waypoint),
-            )
-        except ValueError as error:
-            return OperationResult(False, f"navigation_config:{error}")
-
-        try:
-            goal = NavigateToPose.Goal()
-            goal.pose = self._pose_stamped(waypoint)
-            goal.behavior_tree = behavior_tree
+            goal = self._goal_factory.navigate_goal(waypoint, reverse_direction)
         except (TypeError, ValueError) as error:
             return OperationResult(False, f"navigation_config:{error}")
         client = self._action_client(through_poses=False)
@@ -549,39 +502,12 @@ class RosNavigator:
 
     def navigate_through(self, waypoints, reverse_direction=False):
         """Run one constant-direction segment without stopping at through goals."""
-        goals = tuple(waypoints)
-        if len(goals) < 2:
-            return OperationResult(
-                False, "navigation_through_requires_multiple_goals")
-        if any(
-            waypoint.direction != goals[0].direction for waypoint in goals
-        ):
-            return OperationResult(False, "navigation_through_direction_mismatch")
-        nonstandard = [
-            waypoint.id or str(index)
-            for index, waypoint in enumerate(goals)
-            if waypoint.goal_profile != "standard"
-        ]
-        if nonstandard and not (
-            allows_reverse_handoff_through_poses(goals)
-            or allows_precise_terminal_through_poses(goals)
-        ):
-            return OperationResult(
-                False,
-                "navigation_through_nonstandard_goal_profile:"
-                + ",".join(nonstandard),
-            )
         try:
-            behavior_tree = self._through_behavior_tree(
-                reverse_direction,
-                is_heading_locked(goals[-1]),
-                goals[-1].task == "return",
-                goals[-1].goal_profile,
-            )
-            goal = NavigateThroughPoses.Goal()
-            goal.poses = [self._pose_stamped(waypoint) for waypoint in goals]
-            goal.behavior_tree = behavior_tree
+            goal = self._goal_factory.navigate_through_goal(
+                waypoints, reverse_direction)
         except (TypeError, ValueError) as error:
+            if str(error).startswith("navigation_through_"):
+                return OperationResult(False, str(error))
             return OperationResult(False, f"navigation_config:{error}")
         client = self._action_client(through_poses=True)
         if not self._wait_for_action_server(
@@ -598,52 +524,12 @@ class RosNavigator:
         self, reverse_direction, terminal_heading_locked, terminal_is_return=False,
         terminal_goal_profile="standard",
     ):
-        if not reverse_direction and terminal_goal_profile == "precise":
-            behavior_tree = self._forward_precise_through_poses_behavior_tree
-            direction = "forward_precise"
-        elif not reverse_direction and terminal_is_return:
-            behavior_tree = self._forward_return_through_poses_behavior_tree
-            direction = "forward_return"
-        elif reverse_direction and terminal_heading_locked and terminal_is_return:
-            behavior_tree = self._reverse_return_through_poses_behavior_tree
-            direction = "reverse_return"
-        elif reverse_direction and terminal_heading_locked:
-            behavior_tree = self._reverse_locked_through_poses_behavior_tree
-            direction = "reverse_locked"
-        elif reverse_direction:
-            behavior_tree = self._reverse_through_poses_behavior_tree
-            direction = "reverse"
-        elif not terminal_heading_locked:
-            behavior_tree = self._forward_transit_through_poses_behavior_tree
-            direction = "forward_transit"
-        else:
-            behavior_tree = self._through_poses_behavior_tree
-            direction = "forward"
-        if not behavior_tree:
-            raise ValueError(
-                f"{direction}_through_poses_behavior_tree must not be empty"
-            )
-        return behavior_tree
-
-    def _pose_stamped(self, waypoint):
-        qx, qy, qz, qw = waypoint.orientation
-        norm = math.sqrt(qx * qx + qy * qy + qz * qz + qw * qw)
-        if not math.isfinite(norm) or (
-            norm > 1.0e-3 and abs(norm - 1.0) > 1.0e-3
-        ):
-            raise ValueError(
-                "navigation goal orientation must be a unit quaternion or "
-                "the free-heading zero sentinel"
-            )
-        pose = PoseStamped()
-        pose.header.stamp = self._node.get_clock().now().to_msg()
-        pose.header.frame_id = waypoint.frame_id
-        pose.pose.position.x, pose.pose.position.y, pose.pose.position.z = (
-            waypoint.position
+        return self._goal_factory.through_behavior_tree(
+            reverse_direction,
+            terminal_heading_locked,
+            terminal_is_return,
+            terminal_goal_profile,
         )
-        pose.pose.orientation.x, pose.pose.orientation.y = qx, qy
-        pose.pose.orientation.z, pose.pose.orientation.w = qz, qw
-        return pose
 
     def _navigate_goal(self, goal, action_client, reverse_direction=False):
         action_uuid = UUID(uuid=list(uuid4().bytes))
