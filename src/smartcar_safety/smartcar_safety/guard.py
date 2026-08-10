@@ -42,7 +42,7 @@ class SafetyGuard:
         require_odom=True,
         raw_odom_timeout_sec=0.25,
         require_raw_odom=True,
-        depth_points_timeout_sec=0.50,
+        depth_points_timeout_sec=1.0,
         require_depth_points=False,
     ):
         self.command_timeout_sec = require_positive_finite(

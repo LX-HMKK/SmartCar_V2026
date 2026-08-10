@@ -1327,7 +1327,6 @@ class TaskNode(Node):
         self.declare_parameter("use_laser_odometry", False)
         self.declare_parameter("laser_odometry_calibrated", False)
         self.declare_parameter("use_depth_camera", False)
-        self.declare_parameter("depth_camera_calibrated", False)
         self.declare_parameter("autostart_mission", False)
         self.declare_parameter("navigation_test_end_segment_id", "")
         self.declare_parameter("supervised_p_to_a_only", False)
@@ -1493,9 +1492,6 @@ class TaskNode(Node):
         if bool(self.get_parameter("use_laser_odometry").value):
             self._motion_gates["laser_odometry_calibrated"] = bool(
                 self.get_parameter("laser_odometry_calibrated").value)
-        if bool(self.get_parameter("use_depth_camera").value):
-            self._motion_gates["depth_camera_calibrated"] = bool(
-                self.get_parameter("depth_camera_calibrated").value)
         self._stop_timeout_sec = _positive_finite(
             "stop_timeout_sec",
             self.get_parameter("stop_timeout_sec").value,

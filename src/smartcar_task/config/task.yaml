@@ -8,7 +8,6 @@ task_node:
     emergency_stop_ready: false
     operator_approved: false
     use_depth_camera: false
-    depth_camera_calibrated: false
     server_wait_timeout_sec: 30.0
     navigation_timeout_sec: 120.0
     goal_response_timeout_sec: 2.0

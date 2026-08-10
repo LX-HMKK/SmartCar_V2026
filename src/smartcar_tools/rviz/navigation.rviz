@@ -38,7 +38,7 @@ Visualization Manager:
       Name: Robot
       Visual Enabled: true
     - Class: rviz_default_plugins/LaserScan
-      Enabled: true
+      Enabled: false
       Name: Laser Scan
       Size (m): 0.02
       Style: Points
@@ -51,6 +51,22 @@ Visualization Manager:
         Value: /scan
       Queue Size: 1
       Decay Time: 0.0
+    - Alpha: 1.0
+      Class: rviz_default_plugins/PointCloud2
+      Color: 40; 220; 255
+      Color Transformer: FlatColor
+      Decay Time: 0.0
+      Enabled: true
+      Name: Depth Obstacle Points
+      Position Transformer: XYZ
+      Queue Size: 1
+      Size (m): 0.025
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        Value: /smartcar/depth/points
     - Alpha: 0.45
       Class: rviz_default_plugins/Map
       Color Scheme: costmap
@@ -116,7 +132,7 @@ Visualization Manager:
   Global Options:
     Background Color: 32; 34; 38
     Fixed Frame: odom_combined
-    Frame Rate: 30
+    Frame Rate: 5
   Name: root
   Tools:
     - Class: rviz_default_plugins/Interact

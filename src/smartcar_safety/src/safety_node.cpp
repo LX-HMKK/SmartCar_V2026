@@ -76,7 +76,7 @@ public:
     declare_parameter("scan_timeout_sec", 0.35);
     declare_parameter("odom_timeout_sec", 0.35);
     declare_parameter("raw_odom_timeout_sec", 0.25);
-    declare_parameter("depth_points_timeout_sec", 0.50);
+    declare_parameter("depth_points_timeout_sec", 1.0);
     declare_parameter("odom_throttle_interval_sec", 0.05);
     declare_parameter("minimum_voltage", 0.0);
     declare_parameter("voltage_timeout_sec", 1.0);

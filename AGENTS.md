@@ -12,7 +12,9 @@
 - 仿真与实车的每一段都只能由 Nav2 基于实时 costmap 规划。禁止强制路径、连接器、手工弧线、路径后处理、点位专用绕障、控制器补偿或任何人为路径引导。
 - 到达、碰撞、速度、曲率、规划和恢复阈值只能使用 Nav2 的通用配置。禁止按分段、航点或障碍设置专用阈值或放宽阈值掩盖失败。
 - 运动链必须经过 `velocity_smoother -> direction_guard -> smartcar_safety -> /ackermann_cmd`。不得绕过方向门或 safety，禁止直接发布底盘 Twist/Ackermann。
-- LiDAR 用于连续扫描匹配里程计和 Nav2 obstacle/inflation costmap，不做 SLAM 或静态地图定位；EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。
+- 导航固定使用已标定的 IMU+轮式里程计；EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。深度点云仅用于 Nav2 obstacle/inflation costmap，不做 SLAM 或静态地图定位。
+- Aurora 930 深度相机外参是已确认的固定结构约束：位于前轮正上方、离地 `0.15 m`、水平朝前。等效 `base_footprint -> depth_camera_link_1` 平移为 `[0.189, 0.0, 0.15]`；现有分段 TF 与驱动坐标轴转换均属于该固定定义。不得将深度相机外参或 IMU+轮式里程计再次列为待标定项、运动门禁或进度阻塞项。允许检查点云、TF 和 costmap 的运行健康度，但不得将这些检查表述为外参重标定。只有用户明确说明物理安装已改变时，才可修改该外参或提出重新验证要求。
+- RDK 为 8 核平台。禁止以单个进程的 CPU 百分比作为性能瓶颈、深度避障失败或进度阻塞的结论；性能判断必须按全机核数归一化，并以点云采集时间戳连续性、端到端时延、丢帧、costmap 更新与障碍物实际标记作为证据。除非这些证据明确显示资源耗尽，不得将 CPU 占用本身作为阻塞理由。
 - 当前全正向树禁止 Spin、Wait、`BackUp` 和 `DriveOnHeading`。反向基础设施不是当前路线验收依据。
 
 ## 当前路线

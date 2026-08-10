@@ -11,6 +11,7 @@ LOG=/tmp/bringup.log
 GEOM=/root/ros2_ws/src/smartcar_tools/config/routes/field_geometry.yaml
 WP=/root/ros2_ws/src/smartcar_nav2/config/waypoints/nav_only.yaml
 AURORA_USBFS_BUFFER_MB=64
+COLCON_PARALLEL_WORKERS=8
 
 # TROS humble setup.bash has unbound AMENT_TRACE_SETUP_FILES — disable
 # nounset around the source to avoid script exit under set -uo pipefail.
@@ -68,10 +69,6 @@ if $SHORT_DRIVE && ! $DEPTH_CAMERA; then
 fi
 if $SHORT_DRIVE && ! $SUPERVISED_P_TO_A && ! $SUPERVISED_P_TO_C1; then
   echo "✗ --short-drive 必须选择受看护 P→A 或 P→C1 前缀"
-  exit 1
-fi
-if $DEPTH_CAMERA && { $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; } && ! $SHORT_DRIVE; then
-  echo "✗ 深度相机尚未完成外参与障碍物标定，不能用于受看护运动前缀"
   exit 1
 fi
 
@@ -224,7 +221,7 @@ verify_obstacle_avoidance() {
     if $DEPTH_CAMERA; then
       require_parameter "$costmap" "obstacle_layer.depth_points.topic" "String value is: /smartcar/depth/points" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.data_type" "String value is: PointCloud2" || return 1
-      require_parameter "$costmap" "obstacle_layer.depth_points.observation_persistence" "Double value is: 0.0" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_points.observation_persistence" "Double value is: 1.0" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.marking" "Boolean value is: True" || return 1
       require_parameter "$costmap" "obstacle_layer.depth_points.clearing" "Boolean value is: True" || return 1
     else
@@ -243,6 +240,7 @@ verify_obstacle_avoidance() {
     require_parameter /safety_node "require_depth_points" "Boolean value is: True" || return 1
     require_parameter /safety_node "require_scan" "Boolean value is: False" || return 1
     require_parameter /safety_node "depth_points_topic" "String value is: /smartcar/depth/points" || return 1
+    require_parameter /safety_node "depth_points_timeout_sec" "Double value is: 1.0" || return 1
   else
     require_topic_sample /scan sensor_msgs/msg/LaserScan || return 1
   fi
@@ -269,10 +267,16 @@ echo "  ✓ 清理完成"
 # ---- 2. 构建 ----
 banner "[2/6] 构建"
 colcon build --symlink-install \
-  --packages-select smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision \
+  --parallel-workers "$COLCON_PARALLEL_WORKERS" \
+  --packages-select smartcar_common smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
   --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8 \
   || die "构建失败"
+# New packages added by the build (for example smartcar_common) are not in the
+# pre-build environment. Refresh the overlay before launching their consumers.
+set +u
+source "$WORKSPACE/install/setup.bash"
+set -u
 echo "  ✓ 构建完成"
 
 # ---- 3. 参数验证 ----
@@ -296,15 +300,15 @@ LIDAR_ARGS="use_lidar:=true"
 SAFETY_CONFIG_ARG=""
 if $DEPTH_CAMERA; then
   BANNER_MSG="DUBIN + Aurora 深度障碍感知，急停锁存"
-  # Aurora's 5 Hz depth mode is the validated stable setting on the RDK.
-  # Keep the disabled RGB stream at the same rate because the vendor driver
-  # requires rgb_fps not to exceed ir_fps.
-  CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true aurora_ir_fps:=5 aurora_rgb_fps:=5"
+  # Aurora supports 10 Hz IR/depth capture. Keep the disabled RGB stream at
+  # the same rate because the vendor driver requires rgb_fps not to exceed
+  # ir_fps.
+  CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=aurora use_depth_camera:=true aurora_ir_fps:=10 aurora_rgb_fps:=10"
   LIDAR_ARGS="use_lidar:=false"
 fi
 if $SHORT_DRIVE; then
   SAFETY_CONFIG_ARG="safety_config_file:=$WORKSPACE/install/smartcar_safety/share/smartcar_safety/config/safety_short_drive.yaml"
-  EXTRA_ARGS="$EXTRA_ARGS short_drive_test:=true depth_camera_calibrated:=true"
+  EXTRA_ARGS="$EXTRA_ARGS short_drive_test:=true"
 fi
 if [ -n "$END_SEGMENT_ID" ]; then
   EXTRA_ARGS="$EXTRA_ARGS navigation_test_end_segment_id:=$END_SEGMENT_ID"

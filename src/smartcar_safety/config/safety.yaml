@@ -6,7 +6,9 @@ safety_node:
     raw_odom_timeout_sec: 0.25
     # The depth-obstacle mode enables this heartbeat at launch time. Keep it
     # optional for the normal LiDAR navigation stack.
-    depth_points_timeout_sec: 0.50
+    # A valid latest cloud remains usable through one measured source-frame
+    # gap. The relay rejects delayed captures by their acquisition timestamp.
+    depth_points_timeout_sec: 1.0
     odom_throttle_interval_sec: 0.05
     minimum_voltage: 10.0
     voltage_timeout_sec: 1.0

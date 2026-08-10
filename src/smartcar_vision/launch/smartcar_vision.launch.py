@@ -256,7 +256,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "aurora_ir_fps",
-            default_value="5",
+            default_value="10",
             description="Aurora IR/depth frame rate for obstacle sensing",
         ),
         DeclareLaunchArgument(

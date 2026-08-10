@@ -85,7 +85,6 @@ class ShortDriveLimitTests(unittest.TestCase):
         }
         task = {
             "use_depth_camera": False,
-            "depth_camera_calibrated": False,
             "supervised_p_to_a_only": False,
             "supervised_p_to_c1_only": False,
             "navigation_test_end_segment_id": "",
@@ -110,7 +109,6 @@ class ShortDriveLimitTests(unittest.TestCase):
         }
         task = {
             "use_depth_camera": True,
-            "depth_camera_calibrated": True,
             "supervised_p_to_a_only": True,
             "supervised_p_to_c1_only": False,
             "navigation_test_end_segment_id": "p_to_qr",
@@ -132,7 +130,6 @@ class ShortDriveLimitTests(unittest.TestCase):
         }
         task = {
             "use_depth_camera": True,
-            "depth_camera_calibrated": True,
             "supervised_p_to_a_only": False,
             "supervised_p_to_c1_only": True,
             "navigation_test_end_segment_id": "qr_to_vlm",

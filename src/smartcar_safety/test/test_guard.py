@@ -112,18 +112,18 @@ class SafetyGuardTests(unittest.TestCase):
             scan_timeout_sec=1.0,
             odom_timeout_sec=1.0,
             raw_odom_timeout_sec=1.0,
-            depth_points_timeout_sec=0.50,
+            depth_points_timeout_sec=1.0,
             require_depth_points=True,
         )
         self.make_healthy(guard)
         self.assertEqual(guard.evaluate(10.20), {"allowed": True, "reason": "ok"})
 
-        guard.mark_command(10.60, 0.0)
-        guard.mark_scan(10.60)
-        guard.mark_odom(10.60)
-        guard.mark_raw_odom(10.60)
+        guard.mark_command(11.10, 0.0)
+        guard.mark_scan(11.10)
+        guard.mark_odom(11.10)
+        guard.mark_raw_odom(11.10)
         self.assertEqual(
-            guard.evaluate(10.60),
+            guard.evaluate(11.10),
             {"allowed": False, "reason": "depth_points_stale"},
         )
 

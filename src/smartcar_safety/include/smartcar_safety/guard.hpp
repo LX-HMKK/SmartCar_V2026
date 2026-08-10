@@ -16,7 +16,7 @@ public:
               double raw_odom_timeout, double min_voltage,
               double voltage_timeout, double max_linear_speed_mps,
               bool require_scan, bool require_odom, bool require_raw_odom,
-              double depth_points_timeout = 0.50,
+              double depth_points_timeout = 1.0,
               bool require_depth_points = false);
 
   bool mark_command(double now_sec, double linear_x);

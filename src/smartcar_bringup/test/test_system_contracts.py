@@ -126,24 +126,21 @@ class SystemContractTests(unittest.TestCase):
     def test_depth_camera_can_be_the_only_obstacle_source(self):
         source = SYSTEM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(SYSTEM, "use_depth_camera"), "false")
-        self.assertEqual(
-            launch_default(SYSTEM, "depth_camera_calibrated"), "false")
         self.assertIn(
             'use_nav requires use_lidar=true or use_depth_camera=true', source)
         self.assertIn('executable="depth_pointcloud_relay"', source)
-        self.assertIn('"depth_camera_calibrated"', source)
+        self.assertNotIn("depth_camera_calibrated", source)
         self.assertIn('"safety_require_depth_points": LaunchConfiguration(', source)
         self.assertIn('"use_depth_camera")', source)
         self.assertIn('"safety_require_scan": use_lidar', source)
-        # Capture is intentionally 5 Hz; the relay has modest scheduling
-        # headroom so source jitter cannot turn this into an alternating frame
-        # drop pattern.
-        self.assertIn('"max_publish_rate_hz": 6.0', source)
-        self.assertEqual(launch_default(SYSTEM, "aurora_ir_fps"), "5")
+        # Run the depth-only Aurora source at 10 Hz and leave relay headroom
+        # so legitimate capture frames are never rate-limited downstream.
+        self.assertIn('"max_publish_rate_hz": 12.0', source)
+        self.assertEqual(launch_default(SYSTEM, "aurora_ir_fps"), "10")
         self.assertEqual(
             launch_default(SYSTEM, "aurora_resolution_mode_index"), "0")
         self.assertEqual(launch_default(SYSTEM, "aurora_heart_enable"), "false")
-        self.assertEqual(launch_default(VISION, "aurora_ir_fps"), "5")
+        self.assertEqual(launch_default(VISION, "aurora_ir_fps"), "10")
         self.assertEqual(
             launch_default(VISION, "aurora_resolution_mode_index"), "0")
         self.assertEqual(launch_default(VISION, "aurora_heart_enable"), "false")
@@ -155,11 +152,11 @@ class SystemContractTests(unittest.TestCase):
         self.assertIs(config["toggles"]["use_lidar"], False)
         self.assertIs(config["toggles"]["use_depth_camera"], True)
         depth = config["extrinsics"]["link_to_depth_camera"]
-        self.assertIs(depth["measured"], False)
+        self.assertIs(depth["measured"], True)
         self.assertEqual(depth["child"], "depth_camera_link_1")
         self.assertEqual(depth["xyz"], [0.1049, 0.0, 0.12])
         self.assertEqual(depth["rpy"], [1.5708, 0.0, 1.5708])
-        self.assertIs(config["motion_gates"]["depth_camera_calibrated"], False)
+        self.assertNotIn("depth_camera_calibrated", config["motion_gates"])
 
         overlay = yaml.safe_load(DEPTH_OVERLAY.read_text(encoding="utf-8"))
         for costmap in ("local_costmap", "global_costmap"):
@@ -169,7 +166,8 @@ class SystemContractTests(unittest.TestCase):
             self.assertNotIn("scan", layer)
             self.assertEqual(layer["depth_points"]["topic"], "/smartcar/depth/points")
             self.assertEqual(layer["depth_points"]["data_type"], "PointCloud2")
-            self.assertEqual(layer["depth_points"]["expected_update_rate"], 0.50)
+            self.assertEqual(layer["depth_points"]["observation_persistence"], 1.0)
+            self.assertEqual(layer["depth_points"]["expected_update_rate"], 1.0)
             self.assertEqual(layer["depth_points"]["min_obstacle_height"], 0.05)
             self.assertEqual(layer["depth_points"]["max_obstacle_height"], 0.30)
 
@@ -345,7 +343,6 @@ class SystemContractTests(unittest.TestCase):
             "emergency_stop_ready",
             "operator_approved",
             "laser_odometry_calibrated",
-            "depth_camera_calibrated",
         ):
             self.assertIs(gates[name], False)
 

@@ -247,13 +247,24 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("obstacle_layer.scan.inf_is_valid", source)
         self.assertIn("obstacle_layer.depth_points.topic", source)
         self.assertIn('LIDAR_ARGS="use_lidar:=false"', source)
-        self.assertIn("aurora_ir_fps:=5 aurora_rgb_fps:=5", source)
+        self.assertIn("aurora_ir_fps:=10 aurora_rgb_fps:=10", source)
+        self.assertIn(
+            '"obstacle_layer.depth_points.observation_persistence" '
+            '"Double value is: 1.0"',
+            source,
+        )
+        self.assertIn(
+            '"depth_points_timeout_sec" "Double value is: 1.0"',
+            source,
+        )
         self.assertIn("inflation_layer.enabled", source)
         self.assertIn("ros2 param get --no-daemon", source)
         self.assertIn("ros2 topic echo --no-daemon", source)
         self.assertIn("for attempt in 1 2 3 4 5 6", source)
         self.assertIn("The status is transient-local", source)
         self.assertIn("AURORA_USBFS_BUFFER_MB=64", source)
+        self.assertIn("COLCON_PARALLEL_WORKERS=8", source)
+        self.assertIn('--parallel-workers "$COLCON_PARALLEL_WORKERS"', source)
         self.assertIn("ensure_aurora_usbfs_buffer", source)
         self.assertIn("usbfs_memory_mb", source)
         self.assertIn(

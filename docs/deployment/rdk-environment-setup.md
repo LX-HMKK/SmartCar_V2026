@@ -91,10 +91,12 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 | 路线文件 | `default_waypoints.yaml` 与 `nav_only.yaml` 完全共用航点 ID、顺序、坐标、姿态、方向、profile 和 `planning_segments`；仅 A/C1 任务类型不同。 |
 | 路线状态 | 两份路线均为 `calibrated: false`，未完成当前路线的 Gazebo、RDK 或实车验收。 |
 | 任务 profile | A、C1 为 `precise`；P 为 `standard`。 |
-| 运动门禁 | `waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved`、`laser_odometry_calibrated`、`depth_camera_calibrated` 全为 `false`。 |
+| 运动门禁 | `waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved` 全为 `false`。固定深度相机外参不是门禁。 |
 | 底盘串口 | `/dev/ttyACM0` |
 | LiDAR 串口 | `/dev/ttyUSB0` |
 | 默认相机驱动 | `aurora`；纯导航准备时明确关闭相机和视觉。 |
+| Aurora 深度模式 | `10 Hz` IR/depth，relay 上限 `12 Hz`；校正 Aurora 固件采集时间戳后发布 `/smartcar/depth/points`。 |
+| 深度观测时窗 | local/global costmap `observation_persistence=1.0 s`、`expected_update_rate=1.0 s`；safety 深度心跳 `1.0 s`。 |
 | 轮距/最大转角 | `0.189 m` / `0.70 rad` |
 | 最大线速度 | `0.30 m/s` |
 | 最低电压 | `10.0 V` |
@@ -112,6 +114,16 @@ velocity_smoother -> direction_guard -> smartcar_safety -> /ackermann_cmd
 不得绕过方向门或 safety，禁止直接向底盘发布 Twist 或 Ackermann 命令。LiDAR 用于连续扫描匹配
 里程计与 Nav2 costmap，不用于 SLAM 或静态地图定位；EKF 是 `odom_combined -> base_footprint` 的唯一
 TF owner。
+
+## 深度静态验收
+
+2026-08-10 在 RDK `172.16.24.164`、急停锁存且未发布非零速度的条件下完成深度链路静态检查：
+
+- Aurora 已按 `10 Hz` 启动；50 帧 `/smartcar/depth/points` 的中位接收间隔为 `0.106 s`，最大间隔为 `0.783 s`。
+- 修正后的采集时间戳最大年龄为 `0.215 s`，低于 relay 的 `0.35 s` 拒绝阈值。
+- local/global costmap 均实际订阅 `/smartcar/depth/points`，并加载 `1.0 s` 留存与预期更新时窗；safety 已加载 `1.0 s` 深度心跳。
+
+该记录只证明点云时间戳与 costmap 静态接入，不构成动态避障、路线、速度或实体车辆验收。动态测试仍须在每次明确运动授权后进行。
 
 ## 检查与异常处理
 

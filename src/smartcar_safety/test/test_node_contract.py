@@ -87,7 +87,7 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
         self.assertIn("PointCloud2", source)
         self.assertIn("PointCloud2", cpp_source)
         self.assertIn(
-            "depth_points_timeout_sec: 0.50",
+            "depth_points_timeout_sec: 1.0",
             CONFIG_SOURCE.read_text(encoding="utf-8"),
         )
 

@@ -57,7 +57,7 @@ class SafetyNode(Node):
         self.declare_parameter("require_raw_odom", True)
         self.declare_parameter("raw_odom_timeout_sec", 0.25)
         self.declare_parameter("require_depth_points", False)
-        self.declare_parameter("depth_points_timeout_sec", 0.50)
+        self.declare_parameter("depth_points_timeout_sec", 1.0)
         self.declare_parameter("depth_points_topic", "/smartcar/depth/points")
         self.declare_parameter("odom_throttle_interval_sec", 0.05)
         self.declare_parameter("wheelbase", 0.189)

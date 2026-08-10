@@ -64,14 +64,14 @@ extrinsics:
     # Aurora 930 is mounted directly over the front axle. Its reported height
     # is 0.15 m above ground, so this transform is relative to base_link
     # (base_link is 0.03 m above base_footprint). Point-cloud orientation and
-    # obstacle coverage still require static validation before motion.
-    measured: false
+    # obstacle coverage still requires a live point-cloud check before motion,
+    # but its fixed physical pose is an accepted structural constraint.
+    measured: true
     parent: base_link
     child: depth_camera_link_1
     xyz: [0.1049, 0.0, 0.12]
-    # Live left-side target calibration shows the Aurora driver frame is
-    # x left, y up, z forward. Map it into base_link (x forward, y left,
-    # z up); measured remains false until all coverage checks pass.
+    # Aurora driver frame: x left, y up, z forward. Map it into base_link
+    # (x forward, y left, z up).
     rpy: [1.5708, 0.0, 1.5708]
 
 calibration:
@@ -91,7 +91,6 @@ motion_gates:
   emergency_stop_ready: false
   operator_approved: false
   laser_odometry_calibrated: false
-  depth_camera_calibrated: false
 
 hardware:
   chassis_serial: /dev/ttyACM0

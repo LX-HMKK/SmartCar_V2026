@@ -22,6 +22,7 @@ from std_srvs.srv import SetBool, Trigger
 
 
 MAX_TEST_SPEED_MPS = 0.30
+DEPTH_POINTS_TIMEOUT_SEC = 1.0
 # Each profile is a fixed, contiguous route prefix. These limits retain a
 # fail-closed travel and time bound for a watched physical test.
 ROUTE_PROFILES = {
@@ -104,7 +105,6 @@ def runtime_mode_errors(safety_params, task_params, speed_mps, route_profile="p_
 
     expected_task = {
         "use_depth_camera": True,
-        "depth_camera_calibrated": True,
         "autostart_mission": False,
         "waypoints_calibrated": True,
         "extrinsics_calibrated": True,
@@ -317,7 +317,6 @@ class ShortDrive(Node):
         }
         task_types = {
             "use_depth_camera": ParameterType.PARAMETER_BOOL,
-            "depth_camera_calibrated": ParameterType.PARAMETER_BOOL,
             "supervised_p_to_a_only": ParameterType.PARAMETER_BOOL,
             "supervised_p_to_c1_only": ParameterType.PARAMETER_BOOL,
             "navigation_test_end_segment_id": ParameterType.PARAMETER_STRING,
@@ -555,7 +554,10 @@ class ShortDrive(Node):
             if self.last_nav_odom_at is None or now - self.last_nav_odom_at > 0.45:
                 reason = "fused_odom_stale"
                 break
-            if self.last_depth_at is None or now - self.last_depth_at > 0.65:
+            if (
+                self.last_depth_at is None
+                or now - self.last_depth_at > DEPTH_POINTS_TIMEOUT_SEC
+            ):
                 reason = "depth_points_stale"
                 break
             if (

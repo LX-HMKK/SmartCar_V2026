@@ -172,8 +172,11 @@ bash /root/nav_test.sh --depth-camera
 点云布局、有限的浮点 XYZ 样本和采集时间；Aurora 930 1.7.2 的时间戳会乘以 `1000` 后再供 TF
 查询。两个 Nav2 costmap 与 safety 看门狗只订阅 `/smartcar/depth/points`，不依赖 `/scan`。
 脚本在保持急停锁存的状态下验证点云、两个 costmap 参数和 KeepoutFilter。
-`depth_camera_calibrated` 默认仍为 `false`：必须完成实车外参、点云 frame、清障和障碍物避让验收，
-才可打开该门禁；不要用软件配置替代标定或现场运动验证。
+深度相机固定在前轮正上方、离地 `0.15 m`、水平朝前，其外参是已确认的结构约束，不设外参标定门禁。
+深度模式以 `10 Hz` 请求 Aurora IR/depth，relay 上限为 `12 Hz`；relay 保留校正后的采集时间戳，
+并拒绝超龄云。两个 costmap 的 `observation_persistence` 与深度 safety 心跳均为 `1.0 s`，
+用于跨越一次有效云的偶发帧间隔，不能使超龄云变为有效云。点云 frame、清障和动态障碍物避让
+仍须完成现场验证；这些验证用于确认障碍感知效果，而不是重新标定固定外参。
 
 ## 任务控制与急停
 

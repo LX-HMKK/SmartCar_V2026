@@ -1,7 +1,8 @@
 # Aurora 930 depth obstacle source for the physical Nav2 stack.
 #
-# This overlay is selected with use_lidar:=false. The relay retimestamps the
-# point cloud only after validating Aurora's frame and PointCloud2 layout.
+# This overlay is selected with use_lidar:=false. The relay corrects Aurora's
+# firmware timestamp scale, then preserves the camera acquisition stamp after
+# validating the frame and PointCloud2 layout.
 local_costmap:
   local_costmap:
     ros__parameters:
@@ -10,8 +11,11 @@ local_costmap:
         depth_points:
           topic: /smartcar/depth/points
           data_type: PointCloud2
-          observation_persistence: 0.0
-          expected_update_rate: 0.50
+          # Keep the latest valid observation across one occasional depth-frame
+          # gap. The relay rejects delayed captures, so persistence never makes
+          # an old transport frame appear current.
+          observation_persistence: 1.0
+          expected_update_rate: 1.0
           clearing: true
           marking: true
           obstacle_max_range: 3.0
@@ -32,8 +36,9 @@ global_costmap:
         depth_points:
           topic: /smartcar/depth/points
           data_type: PointCloud2
-          observation_persistence: 0.0
-          expected_update_rate: 0.50
+          # Keep this timing contract identical to the local costmap.
+          observation_persistence: 1.0
+          expected_update_rate: 1.0
           clearing: true
           marking: true
           obstacle_max_range: 3.0

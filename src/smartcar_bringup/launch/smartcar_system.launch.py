@@ -168,21 +168,23 @@ def _vision_and_camera_actions(context):
                     "depth_camera_input_frame").perform(context),
                 "output_frame": LaunchConfiguration(
                     "depth_camera_frame").perform(context),
-                "stale_timeout_sec": 0.50,
+                "stale_timeout_sec": 1.0,
                 # Aurora capture stamps remain authoritative.  RDK can
                 # occasionally schedule the serial/costmap chain for a few
-                # hundred milliseconds; keep a bounded acceptance window
-                # below the safety watchdog instead of dropping that frame.
+                # hundred milliseconds.  The depth watchdog and costmap
+                # observation window use the same one-second bound, while
+                # the relay still rejects a cloud captured outside this
+                # transport-age window.
                 "max_capture_age_sec": 0.35,
                 "max_future_skew_sec": 0.05,
                 # Bound Aurora's organized cloud before Nav2's two obstacle
                 # layers process it.  The relay keeps samples spread across
                 # the full image, so narrow obstacles remain represented.
                 "max_points": 1024,
-                # Aurora capture remains constrained to 5 Hz.  Keep one Hz
-                # of scheduling headroom here so normal source jitter does
-                # not cause the relay to discard an otherwise valid frame.
-                "max_publish_rate_hz": 6.0,
+                # Aurora captures at 10 Hz in depth-only mode. Keep modest
+                # headroom so a legitimate source frame is not rate-limited
+                # by the relay.
+                "max_publish_rate_hz": 12.0,
                 "use_sim_time": _as_bool(context, "use_sim_time"),
             }],
         ))
@@ -256,8 +258,6 @@ def _task_actions(context):
             "laser_odometry_calibrated": LaunchConfiguration(
                 "laser_odometry_calibrated"),
             "use_depth_camera": LaunchConfiguration("use_depth_camera"),
-            "depth_camera_calibrated": LaunchConfiguration(
-                "depth_camera_calibrated"),
             "barcode_reader_image_topic": image_topic,
             **{
                 name: LaunchConfiguration(name)
@@ -395,11 +395,6 @@ def _validate_configuration(context):
         and not _as_bool(context, "laser_odometry_calibrated")
     ):
         missing.append("laser_odometry_calibrated")
-    if (
-        _as_bool(context, "use_depth_camera")
-        and not _as_bool(context, "depth_camera_calibrated")
-    ):
-        missing.append("depth_camera_calibrated")
     if missing:
         raise RuntimeError(
             "autostart_mission requires: " + ",".join(missing))
@@ -594,7 +589,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument("camera_driver", default_value="usb"),
         DeclareLaunchArgument("aurora_rgb_fps", default_value="10"),
-        DeclareLaunchArgument("aurora_ir_fps", default_value="5"),
+        DeclareLaunchArgument("aurora_ir_fps", default_value="10"),
         DeclareLaunchArgument(
             "aurora_resolution_mode_index", default_value="0"),
         DeclareLaunchArgument("aurora_heart_enable", default_value="false"),
@@ -643,8 +638,6 @@ def generate_launch_description():
             "operator_approved", default_value="false"),
         DeclareLaunchArgument(
             "laser_odometry_calibrated", default_value="false"),
-        DeclareLaunchArgument(
-            "depth_camera_calibrated", default_value="false"),
         DeclareLaunchArgument("short_drive_test", default_value="false"),
         DeclareLaunchArgument(
             "longitudinal_velocity_scale", default_value="1.03"),
