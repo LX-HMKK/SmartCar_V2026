@@ -179,10 +179,10 @@ def _vision_and_camera_actions(context):
                 # layers process it.  The relay keeps samples spread across
                 # the full image, so narrow obstacles remain represented.
                 "max_points": 1024,
-                # A 5 Hz obstacle update moves the vehicle no more than 6 cm
-                # at 0.30 m/s and stays well inside the 0.50 s depth
-                # watchdog, while leaving CPU time for Nav2 control renewals.
-                "max_publish_rate_hz": 5.0,
+                # Aurora capture remains constrained to 5 Hz.  Keep one Hz
+                # of scheduling headroom here so normal source jitter does
+                # not cause the relay to discard an otherwise valid frame.
+                "max_publish_rate_hz": 6.0,
                 "use_sim_time": _as_bool(context, "use_sim_time"),
             }],
         ))

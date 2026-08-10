@@ -135,6 +135,10 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('"safety_require_depth_points": LaunchConfiguration(', source)
         self.assertIn('"use_depth_camera")', source)
         self.assertIn('"safety_require_scan": use_lidar', source)
+        # Capture is intentionally 5 Hz; the relay has modest scheduling
+        # headroom so source jitter cannot turn this into an alternating frame
+        # drop pattern.
+        self.assertIn('"max_publish_rate_hz": 6.0', source)
         self.assertEqual(launch_default(SYSTEM, "aurora_ir_fps"), "5")
         self.assertEqual(
             launch_default(SYSTEM, "aurora_resolution_mode_index"), "0")
