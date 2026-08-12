@@ -51,8 +51,9 @@ smartcar_task -> Nav2 -> /cmd_vel_nav -> velocity_smoother
 ```text
 轮式 /odom + /imu/data_raw -> EKF -> /odom_combined -> base_footprint
 
-Aurora /aurora/points2 -> 深度 relay -> /smartcar/depth/points
-                                      -> local/global costmap + safety
+Aurora /aurora/points2 -> 深度 relay -> /smartcar/depth/points -> safety + RViz
+                                      -> pointcloud_to_laserscan -> /smartcar/depth/scan
+                                                                  -> local/global costmap
 ```
 
 EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。深度点云仅作为 Nav2 障碍物数据，

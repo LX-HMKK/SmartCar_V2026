@@ -12,6 +12,14 @@
 
 echo "=== SmartCar ROS2 全量清理 ==="
 
+# This script is also invoked directly over SSH. Load the ROS environment so
+# daemon shutdown and restart are not silently skipped in that path.
+if [ -r /root/source_env.sh ]; then
+  set +u
+  source /root/source_env.sh
+  set -u
+fi
+
 # ---- 0. 保护树：找到自身、父 shell 和 SSH 会话链 ----
 PROTECTED_PIDS="$$"
 # 沿 PPID 链向上，收集所有祖先 PID，直到 init(1)
@@ -49,6 +57,7 @@ CXX_BINS=(
   # Sensors / platform
   origincar_base_node
   aurora930_node
+  pointcloud_to_laserscan_node
   ydlidar_ros2_driver_node ydlidar_ros2_driver
   obstacle_extractor_node
   # RF2O laser odometry
@@ -74,6 +83,7 @@ PY_PATTERNS=(
   "python3.*smartcar"
   "python3.*origincar"
   "python3.*nav2"
+  "pointcloud_to_laserscan_node"
 )
 for pat in "${PY_PATTERNS[@]}"; do
   for pid in $(pgrep -f "$pat" 2>/dev/null || true); do
@@ -154,6 +164,6 @@ sleep 1
 
 # ---- 8. 验证 ----
 COUNT_CMD="ps aux | grep -v grep | grep -ciE"
-REMAINING=$($COUNT_CMD "ekf_node|safety_node|controller_server|planner_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager|task_node|origincar_base|aurora930|ydlidar|static_transform|rviz2|field_ref|waypoint_viz|direction_guard" 2>/dev/null || printf "0")
+REMAINING=$($COUNT_CMD "ekf_node|safety_node|controller_server|planner_server|bt_navigator|waypoint_follower|velocity_smoother|lifecycle_manager|task_node|origincar_base|aurora930|pointcloud_to_laserscan|ydlidar|static_transform|rviz2|field_ref|waypoint_viz|direction_guard" 2>/dev/null || printf "0")
 echo "Remaining ROS processes: ${REMAINING:-0} (expect 0)"
 echo "=== Done ==="

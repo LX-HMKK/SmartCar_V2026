@@ -51,6 +51,18 @@ Visualization Manager:
         Value: /scan
       Queue Size: 1
       Decay Time: 0.0
+    - Class: rviz_default_plugins/LaserScan
+      Enabled: false
+      Name: Depth Free-Space Scan
+      Size (m): 0.02
+      Style: Points
+      Topic:
+        Depth: 1
+        Durability Policy: Volatile
+        Reliability Policy: Best Effort
+        Value: /smartcar/depth/scan
+      Queue Size: 1
+      Decay Time: 0.0
     - Alpha: 1.0
       Class: rviz_default_plugins/PointCloud2
       Color: 40; 220; 255
@@ -132,7 +144,7 @@ Visualization Manager:
   Global Options:
     Background Color: 32; 34; 38
     Fixed Frame: odom_combined
-    Frame Rate: 5
+    Frame Rate: 20
   Name: root
   Tools:
     - Class: rviz_default_plugins/Interact

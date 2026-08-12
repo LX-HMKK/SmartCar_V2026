@@ -164,9 +164,8 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(result.status, "navigation_segment_semantic_boundary")
         self.assertEqual(self.navigator.calls, [])
 
-    def test_navigation_failure_retries_then_fails_closed(self):
+    def test_navigation_failure_does_not_reissue_the_same_goal(self):
         navigator = FakeNavigator([
-            OperationResult(False, "planner_failed"),
             OperationResult(False, "planner_failed"),
         ])
         mission = self.make_mission(
@@ -176,8 +175,34 @@ class MissionTests(unittest.TestCase):
         target = waypoint("p_finish", "return", 0.0)
         result = mission.execute((waypoint("p", "start", 0.0), target), ((target,),))
         self.assertEqual(result.status, "navigation_failed:planner_failed")
-        self.assertEqual(len(navigator.calls), 2)
+        self.assertEqual(len(navigator.calls), 1)
         self.assertEqual(mission.state, MissionState.FAILED)
+
+    def test_reset_after_navigation_failure_allows_a_fresh_mission(self):
+        navigator = FakeNavigator([
+            OperationResult(False, "planner_failed"),
+            OperationResult(True, "ok"),
+        ])
+        mission = self.make_mission(
+            navigator=navigator,
+            config=MissionConfig(qr_settle_sec=0.0, navigation_retry_delay_sec=0.0),
+        )
+        target = waypoint("p_finish", "return", 0.0)
+
+        first = mission.execute(
+            (waypoint("p", "start", 0.0), target), ((target,),))
+        self.assertEqual(first.status, "navigation_failed:planner_failed")
+        self.assertEqual(mission.state, MissionState.FAILED)
+
+        reset = mission.reset()
+        self.assertTrue(reset.success)
+        self.assertEqual(mission.state, MissionState.IDLE)
+
+        second = mission.execute(
+            (waypoint("p", "start", 0.0), target), ((target,),))
+        self.assertTrue(second.success)
+        self.assertEqual(self.localization.calls, 1)
+        self.assertEqual(len(navigator.calls), 2)
 
     def test_vlm_failure_uses_fixed_fallback(self):
         mission = self.make_mission(vision=FakeVision(

@@ -268,11 +268,11 @@ class RosDirectionGuard:
             )
 
     def _stop_odom_observation(self):
-        with self._odom_condition:
-            subscription = self._odom_subscription
-            self._odom_subscription = None
-        if subscription is not None:
-            self._node.destroy_subscription(subscription)
+        # Keep the subscription alive for the node lifetime. Destroying it
+        # immediately after a stop barrier can race a queued callback in a
+        # MultiThreadedExecutor and raise rclpy InvalidHandle. The next
+        # barrier excludes observations from the previous wait.
+        return
 
     def wait_stopped(self):
         self._start_odom_observation()
@@ -1200,15 +1200,11 @@ class RosLocalization:
                 )
 
     def _stop_odometry_observation(self):
-        with self._condition:
-            odom_subscription = self._odom_subscription
-            laser_odom_subscription = self._laser_odom_subscription
-            self._odom_subscription = None
-            self._laser_odom_subscription = None
-        if odom_subscription is not None:
-            self._node.destroy_subscription(odom_subscription)
-        if laser_odom_subscription is not None:
-            self._node.destroy_subscription(laser_odom_subscription)
+        # As with the stop observer, keep reset observers alive for the node
+        # lifetime. Destroying a subscription while its QoS event remains in a
+        # MultiThreadedExecutor wait set can raise rclpy InvalidHandle. Reset
+        # sequence counters establish the next observation boundary.
+        return
 
     def _wait_for_reset_services(self):
         remaining = self._deadline - time.monotonic()
@@ -1331,6 +1327,7 @@ class TaskNode(Node):
         self.declare_parameter("navigation_test_end_segment_id", "")
         self.declare_parameter("supervised_p_to_a_only", False)
         self.declare_parameter("supervised_p_to_c1_only", False)
+        self.declare_parameter("supervised_full_route", False)
         self.declare_parameter("server_wait_timeout_sec", 30.0)
         self.declare_parameter("navigation_timeout_sec", 120.0)
         self.declare_parameter("goal_response_timeout_sec", 2.0)
@@ -1376,7 +1373,7 @@ class TaskNode(Node):
         self.declare_parameter("direction_stop_linear_tolerance", 0.01)
         self.declare_parameter("direction_stop_angular_tolerance", 0.05)
         self.declare_parameter("direction_odom_stale_timeout_sec", 0.25)
-        self.declare_parameter("navigation_retries", 1)
+        self.declare_parameter("navigation_retries", 0)
         self.declare_parameter("navigation_retry_delay_sec", 0.25)
         self.declare_parameter("qr_settle_sec", 2.0)
         self.declare_parameter("qr_timeout_sec", 3.0)
@@ -1441,8 +1438,15 @@ class TaskNode(Node):
                 raise ValueError(
                     "only one supervised navigation prefix may be enabled"
                 )
-            self._supervised_navigation_test = bool(supervised_prefixes)
-            if self._supervised_navigation_test:
+            supervised_full_route = bool(
+                self.get_parameter("supervised_full_route").value)
+            if supervised_full_route and supervised_prefixes:
+                raise ValueError(
+                    "supervised full route and prefix cannot be combined"
+                )
+            self._supervised_navigation_test = bool(
+                supervised_prefixes) or supervised_full_route
+            if supervised_prefixes:
                 expected_segment_id = supervised_prefixes[0]
                 selected_segment_ids = tuple(
                     segment.id for segment in selected_segments
@@ -1468,6 +1472,29 @@ class TaskNode(Node):
                         "supervised navigation test requires the fixed "
                         "pure-navigation route prefix"
                     )
+            if supervised_full_route:
+                selected_segment_ids = tuple(
+                    segment.id for segment in selected_segments
+                )
+                route_segment_ids = tuple(
+                    segment.id for segment in planning_segments
+                )
+                selected_tasks = tuple(
+                    waypoint.task
+                    for segment in self._navigation_segments
+                    for waypoint in segment
+                )
+                if (
+                    selected_segment_ids != route_segment_ids
+                    or any(
+                        task not in {"start", "nav", "via", "return"}
+                        for task in selected_tasks
+                    )
+                ):
+                    raise ValueError(
+                        "supervised full route requires the complete "
+                        "pure-navigation route"
+                    )
         except (PlanningSegmentError, RouteGeometryError, ValueError) as error:
             raise ValueError(f"invalid mission route: {error}") from error
         self._motion_gates = {
@@ -1486,8 +1513,8 @@ class TaskNode(Node):
         ):
             # Launch arguments are an operator attestation, while the route
             # document records whether these exact coordinates were approved.
-            # Both must be true before normal navigation can start.  The sole
-            # exception is the explicit, pure-navigation P-to-A field test.
+            # Both must be true before normal navigation can start. Explicit
+            # supervised pure-navigation entries are the controlled exception.
             self._motion_gates["waypoints_calibrated"] = False
         if bool(self.get_parameter("use_laser_odometry").value):
             self._motion_gates["laser_odometry_calibrated"] = bool(

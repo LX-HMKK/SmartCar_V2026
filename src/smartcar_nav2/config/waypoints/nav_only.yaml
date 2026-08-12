@@ -40,14 +40,14 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 2.898403475881205
-      y: 0.9659945286391132
+      x: 3.3659794280888047
+      y: 0.51564510939511
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.10452846326765347
-      w: 0.9945218953682733
+      z: 0.3583679495453002
+      w: 0.9335804264972017
   task: nav
   direction: forward
   goal_profile: precise

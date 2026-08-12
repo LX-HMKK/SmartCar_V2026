@@ -19,7 +19,7 @@ def generate_launch_description():
             description="Semantic waypoint YAML file",
         ),
         DeclareLaunchArgument(
-            "config_file",
+            "task_config_file",
             default_value=PathJoinSubstitution([
                 FindPackageShare("smartcar_task"),
                 "config",
@@ -52,6 +52,13 @@ def generate_launch_description():
             description=(
                 "Permit the uncalibrated pure-navigation P-to-A-to-C1 test "
                 "only; all motion gates still require explicit confirmation"),
+        ),
+        DeclareLaunchArgument(
+            "supervised_full_route",
+            default_value="false",
+            description=(
+                "Permit one explicitly supervised pure-navigation run of the "
+                "complete all-forward route"),
         ),
         DeclareLaunchArgument(
             "qr_handoff_test_mode",
@@ -116,7 +123,7 @@ def generate_launch_description():
             name="task_node",
             output="screen",
             parameters=[
-                LaunchConfiguration("config_file"),
+                LaunchConfiguration("task_config_file"),
                 {
                     "waypoints_file": LaunchConfiguration("waypoints_file"),
                     "waypoints_calibrated": LaunchConfiguration(
@@ -143,6 +150,8 @@ def generate_launch_description():
                         "supervised_p_to_a_only"),
                     "supervised_p_to_c1_only": LaunchConfiguration(
                         "supervised_p_to_c1_only"),
+                    "supervised_full_route": LaunchConfiguration(
+                        "supervised_full_route"),
                     "qr_handoff_test_mode": LaunchConfiguration(
                         "qr_handoff_test_mode"),
                     "barcode_reader_image_topic": LaunchConfiguration(

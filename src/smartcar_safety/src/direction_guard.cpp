@@ -241,7 +241,12 @@ TwistComponents DirectionGuard::on_candidate(const TwistComponents &candidate,
   if (phase_ != DirectionGuardPhase::Active) {
     return zero_command();
   }
-  if (std::abs(candidate[0]) > config_.direction_epsilon) {
+  if (candidate_is_zero(candidate)) {
+    // VelocitySmoother may become silent after publishing an explicit zero
+    // while Nav2 clears a costmap and replans. Keep forwarding zero, but do
+    // not mistake that quiescent state for stale nonzero motion.
+    active_candidate_seen_ = false;
+  } else if (std::abs(candidate[0]) > config_.direction_epsilon) {
     active_candidate_seen_ = true;
   }
   if (active_expired(now_sec)) {

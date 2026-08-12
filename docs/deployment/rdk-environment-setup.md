@@ -59,15 +59,19 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 
 ## 安全启动规范
 
-唯一支持的纯导航准备入口是：
+源代码或配置变更后的独立准备入口是：
 
 ```bash
+cd /home/zyh/SmartCar_V2026
+bash scripts/nav_deploy.sh
 ssh root@192.168.128.10
 bash /root/nav_test.sh
 ```
 
-无线时将上例的 SSH 目标替换为 `$SMARTCAR_RDK_HOST`。该脚本会清理残留 ROS 进程、增量构建、
-启动系统和 RViz，并固定使用 `nav_only.yaml`，同时显式设置：
+无线时将上例的 SSH 目标替换为 `$SMARTCAR_RDK_HOST`。`nav_deploy.sh` 会在本机推送
+`src/config` 和运行脚本、先备份 RDK 的 `src/config`，再远程执行 `nav_prepare.sh` 的定向清理和
+7 包增量构建。它不启动相机或车辆。`nav_test.sh` 只启动系统和 RViz，并固定使用
+`nav_only.yaml`，同时显式设置：
 
 ```text
 autostart_mission:=false
@@ -76,7 +80,8 @@ use_camera:=false
 use_vision:=false
 ```
 
-因此它只让系统进入急停锁存的就绪状态，不自动开始任务、不解除急停，也不改变运动门禁。不要
+`nav_test.sh` 不会同步、清理或构建。它会并行启动 RViz，并用单个状态进程汇总 Nav2 四个 lifecycle、
+task、急停、depth points/scan 和两张 costmap；需要完整静态预检时传入 `--verify`。它只让系统进入急停锁存的就绪状态，不自动开始任务、不解除急停，也不改变运动门禁。不要
 执行会自动解除急停或自动发车的历史脚本；不得把 `--p-to-a`、`--p-to-c1`、受看护前缀或短距离
 选项当作默认启动方式，任何运动均须另行取得该次明确授权。
 
@@ -89,14 +94,15 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 | --- | --- |
 | 路线 | 全正向 `P -> A -> via_1 -> via_2 -> via_3 -> C1 -> via_4 -> via_5 -> P` |
 | 路线文件 | `default_waypoints.yaml` 与 `nav_only.yaml` 完全共用航点 ID、顺序、坐标、姿态、方向、profile 和 `planning_segments`；仅 A/C1 任务类型不同。 |
-| 路线状态 | 两份路线均为 `calibrated: false`，未完成当前路线的 Gazebo、RDK 或实车验收。 |
+| 路线状态 | 两份路线均为 `calibrated: false`。当前全正向纯导航路线已通过 LiDAR 无障碍现场基础通行性验证；深度相机的动态障碍感知仍需单独验证。 |
 | 任务 profile | A、C1 为 `precise`；P 为 `standard`。 |
-| 运动门禁 | `waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved` 全为 `false`。固定深度相机外参不是门禁。 |
+| 运动门禁 | 默认均为 `false`，用于防止无人自动发车。对收到本次明确运动授权的官方受看护短测，脚本会为指定前缀一次性传入运行确认；不得将默认值反复作为 LiDAR 已验证路线的技术阻塞。固定深度相机外参不是门禁。 |
 | 底盘串口 | `/dev/ttyACM0` |
 | LiDAR 串口 | `/dev/ttyUSB0` |
 | 默认相机驱动 | `aurora`；纯导航准备时明确关闭相机和视觉。 |
 | Aurora 深度模式 | `10 Hz` IR/depth，relay 上限 `12 Hz`；校正 Aurora 固件采集时间戳后发布 `/smartcar/depth/points`。 |
-| 深度观测时窗 | local/global costmap `observation_persistence=1.0 s`、`expected_update_rate=1.0 s`；safety 深度心跳 `1.0 s`。 |
+| 深度有效距离 | 转换后的前向 `/smartcar/depth/scan`、障碍标记与 clearing 均限制在 `3.0 m` 内。 |
+| 深度观测时窗 | relay 将相机同高切片转换为前向 `/smartcar/depth/scan`；local/global costmap `observation_persistence=0.0 s`、`expected_update_rate=1.0 s`、`inf_is_valid=true`，使空束清除已移走障碍；safety 原始点云心跳 `1.0 s`。 |
 | 轮距/最大转角 | `0.189 m` / `0.70 rad` |
 | 最大线速度 | `0.30 m/s` |
 | 最低电压 | `10.0 V` |
@@ -121,9 +127,9 @@ TF owner。
 
 - Aurora 已按 `10 Hz` 启动；50 帧 `/smartcar/depth/points` 的中位接收间隔为 `0.106 s`，最大间隔为 `0.783 s`。
 - 修正后的采集时间戳最大年龄为 `0.215 s`，低于 relay 的 `0.35 s` 拒绝阈值。
-- local/global costmap 均实际订阅 `/smartcar/depth/points`，并加载 `1.0 s` 留存与预期更新时窗；safety 已加载 `1.0 s` 深度心跳。
+- 当时 local/global costmap 的原始点云静态接入与 safety 的 `1.0 s` 深度心跳均已核对。当前版本改用前向 `/smartcar/depth/scan` 的 `+Inf` clearing；部署后须在急停锁存、无运动状态下复核其标记和移障清除。
 
-该记录只证明点云时间戳与 costmap 静态接入，不构成动态避障、路线、速度或实体车辆验收。动态测试仍须在每次明确运动授权后进行。
+该记录只证明点云时间戳与 costmap 静态接入。LiDAR 无障碍实测已证明路线的基础通行性；深度模式仍须在每次明确运动授权后验证动态障碍物的标记/清障与 Nav2 实时重规划，不要求重复航点或固定外参标定。
 
 ## 检查与异常处理
 

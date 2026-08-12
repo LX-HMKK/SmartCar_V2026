@@ -8,10 +8,10 @@ safety_node:
     odom_throttle_interval_sec: 0.05
     minimum_voltage: 10.0
     voltage_timeout_sec: 1.0
-    # Hard cap for the supervised bounded drive. This is enforced downstream
-    # of Nav2 and therefore remains effective if an upstream controller is
-    # misconfigured.
-    max_linear_speed_mps: 0.05
+    # Keep the same general safety speed limit as normal navigation. The
+    # supervised action bounds test distance; a lower segment-specific cap
+    # leaves the chassis below its reliable drive threshold.
+    max_linear_speed_mps: 0.30
     publish_frequency_hz: 20.0
     require_scan: false
     require_odom: true

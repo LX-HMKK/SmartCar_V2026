@@ -61,15 +61,29 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
         self.assertEqual(reference["Name"], REFERENCE_NAME)
 
-    def test_navigation_scan_display_shows_only_the_newest_frame(self):
+    def test_navigation_depth_displays_show_only_the_newest_frame(self):
         navigation = yaml.safe_load(NAVIGATION_RVIZ.read_text(encoding="utf-8"))
-        scan = display_by_topic(navigation, "/scan")
+        scan_topics = (
+            "/scan",
+            "/smartcar/depth/scan",
+            "/smartcar/depth/points",
+        )
 
-        self.assertEqual(scan["Topic"]["Depth"], 1)
-        self.assertEqual(scan["Topic"]["Durability Policy"], "Volatile")
-        self.assertEqual(scan["Topic"]["Reliability Policy"], "Best Effort")
-        self.assertEqual(scan["Queue Size"], 1)
-        self.assertEqual(scan["Decay Time"], 0.0)
+        for topic in scan_topics:
+            with self.subTest(topic=topic):
+                display = display_by_topic(navigation, topic)
+                self.assertEqual(display["Topic"]["Depth"], 1)
+                self.assertEqual(
+                    display["Topic"]["Durability Policy"], "Volatile")
+                self.assertEqual(
+                    display["Topic"]["Reliability Policy"], "Best Effort")
+                self.assertEqual(display["Queue Size"], 1)
+                self.assertEqual(display["Decay Time"], 0.0)
+
+        self.assertEqual(
+            navigation["Visualization Manager"]["Global Options"]["Frame Rate"],
+            20,
+        )
 
     def test_editor_reference_display_is_not_named_as_a_nav2_path(self):
         document = yaml.safe_load(EDITOR_RVIZ.read_text(encoding="utf-8"))

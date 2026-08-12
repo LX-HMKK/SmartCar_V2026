@@ -1,7 +1,7 @@
 #!/bin/bash
 # ============================================================
 # SmartCar 纯导航安全测试（DUBIN 全正向路线 + 方向门）
-# 用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--short-drive] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]
+# 用法: bash /root/nav_test.sh [--no-rviz] [--verify] [--depth-camera] [--short-drive] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1|--supervised-full-route] [--reset-origin]
 # ============================================================
 set -uo pipefail
 
@@ -10,8 +10,10 @@ WORKSPACE=/root/ros2_ws
 LOG=/tmp/bringup.log
 GEOM=/root/ros2_ws/src/smartcar_tools/config/routes/field_geometry.yaml
 WP=/root/ros2_ws/src/smartcar_nav2/config/waypoints/nav_only.yaml
-AURORA_USBFS_BUFFER_MB=64
-COLCON_PARALLEL_WORKERS=8
+STATUS_TOOL=/root/nav_status.py
+BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"
+LAUNCH_PID=""
+RVIZ_PID=""
 
 # TROS humble setup.bash has unbound AMENT_TRACE_SETUP_FILES — disable
 # nounset around the source to avoid script exit under set -uo pipefail.
@@ -26,8 +28,10 @@ END_SEGMENT_ID=""
 RESET_ORIGIN=false
 SUPERVISED_P_TO_A=false
 SUPERVISED_P_TO_C1=false
+SUPERVISED_FULL_ROUTE=false
 DEPTH_CAMERA=false
 SHORT_DRIVE=false
+FULL_VERIFY=false
 for arg in "$@"; do
   case "$arg" in
     --no-rviz)   NO_RVIZ=true ;;
@@ -35,12 +39,14 @@ for arg in "$@"; do
     --p-to-c1)   END_SEGMENT_ID="qr_to_vlm" ;;
     --supervised-p-to-a) SUPERVISED_P_TO_A=true ;;
     --supervised-p-to-c1) SUPERVISED_P_TO_C1=true ;;
+    --supervised-full-route) SUPERVISED_FULL_ROUTE=true ;;
     --reset-origin) RESET_ORIGIN=true ;;
     --depth-camera) DEPTH_CAMERA=true ;;
     --short-drive) SHORT_DRIVE=true ;;
+    --verify) FULL_VERIFY=true ;;
     *)
       echo "未知选项: $arg"
-      echo "用法: bash /root/nav_test.sh [--no-rviz] [--depth-camera] [--short-drive] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1] [--reset-origin]"
+      echo "用法: bash /root/nav_test.sh [--no-rviz] [--verify] [--depth-camera] [--short-drive] [--p-to-a|--p-to-c1] [--supervised-p-to-a|--supervised-p-to-c1|--supervised-full-route] [--reset-origin]"
       exit 1
       ;;
   esac
@@ -54,14 +60,26 @@ if $SUPERVISED_P_TO_C1 && [ "$END_SEGMENT_ID" != "qr_to_vlm" ]; then
   echo "✗ --supervised-p-to-c1 必须同时指定 --p-to-c1"
   exit 1
 fi
-if $SUPERVISED_P_TO_A && $SUPERVISED_P_TO_C1; then
-  echo "✗ 一次只能选择一个受看护导航前缀"
+if ($SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1) && $SUPERVISED_FULL_ROUTE; then
+  echo "✗ 完整路线不能与受看护前缀同时选择"
   exit 1
 fi
-if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
+if $SUPERVISED_P_TO_A && $SUPERVISED_P_TO_C1; then
+  echo "✗ 一次只能选择一个受看护导航路线"
+  exit 1
+fi
+if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1 || $SUPERVISED_FULL_ROUTE; then
   # A watched fixed-prefix measurement is only meaningful when the vehicle's
   # current, manually aligned heading is made the localization origin.
   RESET_ORIGIN=true
+fi
+if $SUPERVISED_FULL_ROUTE && [ -n "$END_SEGMENT_ID" ]; then
+  echo "✗ --supervised-full-route 不接受 --p-to-a 或 --p-to-c1"
+  exit 1
+fi
+if $SUPERVISED_FULL_ROUTE && ! $DEPTH_CAMERA; then
+  echo "✗ --supervised-full-route 必须与 --depth-camera 一起使用"
+  exit 1
 fi
 if $SHORT_DRIVE && ! $DEPTH_CAMERA; then
   echo "✗ --short-drive 必须与 --depth-camera 一起使用"
@@ -76,23 +94,68 @@ export DISPLAY=:0 XAUTHORITY=/var/run/lightdm/root/:0
 
 banner() { echo ""; echo "=== $* ==="; }
 
-die()  { echo "✗ $*"; exit 1; }
-
-ensure_aurora_usbfs_buffer() {
-  local parameter=/sys/module/usbcore/parameters/usbfs_memory_mb
-  local current
-
-  [ -r "$parameter" ] || die "未找到 usbcore usbfs_memory_mb 参数"
-  current=$(cat "$parameter")
-  [[ "$current" =~ ^[0-9]+$ ]] || die "usbfs_memory_mb 值无效: $current"
-  if [ "$current" -lt "$AURORA_USBFS_BUFFER_MB" ]; then
-    printf '%s' "$AURORA_USBFS_BUFFER_MB" > "$parameter" \
-      || die "无法设置 usbfs_memory_mb"
-    current=$(cat "$parameter")
+cleanup_launch() {
+  if [ -n "$LAUNCH_PID" ] && kill -0 "$LAUNCH_PID" 2>/dev/null; then
+    kill -INT "$LAUNCH_PID" 2>/dev/null || true
+    for _ in 1 2 3 4 5; do
+      kill -0 "$LAUNCH_PID" 2>/dev/null || break
+      sleep 1
+    done
+    kill -0 "$LAUNCH_PID" 2>/dev/null && kill -TERM "$LAUNCH_PID" 2>/dev/null || true
   fi
-  [ "$current" -ge "$AURORA_USBFS_BUFFER_MB" ] \
-    || die "usbfs_memory_mb 未达到 ${AURORA_USBFS_BUFFER_MB} MiB"
-  echo "  ✓ usbfs_memory_mb=${current} MiB"
+  if [ -n "$RVIZ_PID" ] && kill -0 "$RVIZ_PID" 2>/dev/null; then
+    kill -TERM "$RVIZ_PID" 2>/dev/null || true
+  fi
+}
+
+die() {
+  echo "✗ $*"
+  cleanup_launch
+  exit 1
+}
+
+hold_started_stack() {
+  echo "✗ $*"
+  echo "  急停保持锁存；已启动的 ROS 栈和 RViz 保留供现场诊断。"
+  exit 1
+}
+
+source_fingerprint() {
+  # Runtime scripts are deployed independently and do not produce any of the
+  # seven package artifacts. Only rebuild when a package build input changes.
+  find \
+    "$WORKSPACE/src/smartcar_common" \
+    "$WORKSPACE/src/smartcar_interfaces" \
+    "$WORKSPACE/src/smartcar_safety" \
+    "$WORKSPACE/src/smartcar_nav2" \
+    "$WORKSPACE/src/smartcar_task" \
+    "$WORKSPACE/src/smartcar_bringup" \
+    "$WORKSPACE/src/smartcar_vision" \
+    -type f \
+    ! -path '*/__pycache__/*' \
+    ! -name '*.pyc' \
+    ! -name '*.bak' \
+    ! -name '*.orig' \
+    -print0 \
+    | sort -z \
+    | xargs -0r sha256sum \
+    | sha256sum \
+    | awk '{print $1}'
+}
+
+start_rviz() {
+  if $NO_RVIZ; then
+    echo "  - RViz disabled (--no-rviz)"
+    return
+  fi
+  OLD_RVIZ=$(ps -C rviz2 -o pid= --no-headers 2>/dev/null || true)
+  [ -n "$OLD_RVIZ" ] && kill -TERM $OLD_RVIZ 2>/dev/null || true
+  nohup setsid rviz2 -d "$WORKSPACE/src/smartcar_tools/rviz/navigation.rviz" \
+    >/tmp/rviz.log 2>&1 &
+  RVIZ_PID=$!
+  sleep 0.2
+  kill -0 "$RVIZ_PID" 2>/dev/null || die "RViz launch failed"
+  echo "  ✓ RViz PID: $RVIZ_PID"
 }
 
 require_parameter() {
@@ -209,7 +272,7 @@ verify_obstacle_avoidance() {
   local costmap
   local expected_sources="String value is: scan"
   if $DEPTH_CAMERA; then
-    expected_sources="String value is: depth_points"
+    expected_sources="String value is: depth_scan"
   fi
   for costmap in /local_costmap/local_costmap /global_costmap/global_costmap; do
     wait_for_parameter_service "$costmap" || return 1
@@ -219,11 +282,14 @@ verify_obstacle_avoidance() {
     require_parameter "$costmap" "keepout_filter.enabled" "Boolean value is: True" || return 1
     require_parameter "$costmap" "keepout_filter.filter_info_topic" "String value is: /keepout_filter_info" || return 1
     if $DEPTH_CAMERA; then
-      require_parameter "$costmap" "obstacle_layer.depth_points.topic" "String value is: /smartcar/depth/points" || return 1
-      require_parameter "$costmap" "obstacle_layer.depth_points.data_type" "String value is: PointCloud2" || return 1
-      require_parameter "$costmap" "obstacle_layer.depth_points.observation_persistence" "Double value is: 1.0" || return 1
-      require_parameter "$costmap" "obstacle_layer.depth_points.marking" "Boolean value is: True" || return 1
-      require_parameter "$costmap" "obstacle_layer.depth_points.clearing" "Boolean value is: True" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.topic" "String value is: /smartcar/depth/scan" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.data_type" "String value is: LaserScan" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.observation_persistence" "Double value is: 0.0" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.marking" "Boolean value is: True" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.clearing" "Boolean value is: True" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.inf_is_valid" "Boolean value is: True" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.obstacle_max_range" "Double value is: 3.0" || return 1
+      require_parameter "$costmap" "obstacle_layer.depth_scan.raytrace_max_range" "Double value is: 3.0" || return 1
     else
       require_parameter "$costmap" "obstacle_layer.scan.topic" "String value is: /scan" || return 1
       require_parameter "$costmap" "obstacle_layer.scan.data_type" "String value is: LaserScan" || return 1
@@ -235,6 +301,7 @@ verify_obstacle_avoidance() {
   done
   if $DEPTH_CAMERA; then
     require_topic_sample /smartcar/depth/points sensor_msgs/msg/PointCloud2 || return 1
+    require_topic_sample /smartcar/depth/scan sensor_msgs/msg/LaserScan || return 1
     require_latched_status /smartcar/depth_obstacles/status depth_points_active || return 1
     wait_for_parameter_service /safety_node || return 1
     require_parameter /safety_node "require_depth_points" "Boolean value is: True" || return 1
@@ -252,35 +319,23 @@ verify_obstacle_avoidance() {
   require_topic_sample /global_costmap/costmap nav_msgs/msg/OccupancyGrid || return 1
 }
 
-# ---- 1. 清理 ----
-banner "[1/6] 彻底清理"
-if $DEPTH_CAMERA; then
-  ensure_aurora_usbfs_buffer
-fi
-if [ -x /usr/local/bin/ros_cleanup ]; then
-  bash /usr/local/bin/ros_cleanup
-else
-  bash /root/ros2_ws/scripts/ros_cleanup.sh
-fi
-echo "  ✓ 清理完成"
+# ---- 1. 参数验证 ----
+banner "[1/5] 构建匹配"
+test -x "$STATUS_TOOL" || die "missing $STATUS_TOOL; run the separate deploy/prepare entry"
+test -r "$BUILD_FINGERPRINT" || {
+  echo "PREPARE_REQUIRED missing fingerprint; run /root/nav_prepare.sh"
+  exit 2
+}
+CURRENT_FINGERPRINT=$(source_fingerprint)
+PREPARED_FINGERPRINT=$(cat "$BUILD_FINGERPRINT")
+[ "$CURRENT_FINGERPRINT" = "$PREPARED_FINGERPRINT" ] \
+  || {
+    echo "PREPARE_REQUIRED source changed after prepare; run /root/nav_prepare.sh"
+    exit 2
+  }
+echo "  ✓ source matches the last separate prepare"
 
-# ---- 2. 构建 ----
-banner "[2/6] 构建"
-colcon build --symlink-install \
-  --parallel-workers "$COLCON_PARALLEL_WORKERS" \
-  --packages-select smartcar_common smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision \
-  --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup 2>&1 | tail -8 \
-  || die "构建失败"
-# New packages added by the build (for example smartcar_common) are not in the
-# pre-build environment. Refresh the overlay before launching their consumers.
-set +u
-source "$WORKSPACE/install/setup.bash"
-set -u
-echo "  ✓ 构建完成"
-
-# ---- 3. 参数验证 ----
-banner "[3/6] 参数验证"
+banner "[2/5] 参数验证"
 FIXED_YAML="$WORKSPACE/install/smartcar_nav2/share/smartcar_nav2/config/nav2_params_fixed.yaml"
 if [ -f "$FIXED_YAML" ]; then
   echo "  motion_model: $(grep motion_model_for_search "$FIXED_YAML" | xargs)"
@@ -289,10 +344,10 @@ if [ -f "$FIXED_YAML" ]; then
   echo "  min_velocity: $(grep 'min_velocity:' "$FIXED_YAML" | xargs)"
   echo "  current_goal_checker: $(grep current_goal_checker "$FIXED_YAML" | xargs)"
 else
-  echo "  ⚠ nav2_params_fixed.yaml 未找到，将使用默认参数"
+  die "missing generated nav2_params_fixed.yaml; run /root/nav_prepare.sh before startup"
 fi
 
-# ---- 4. 启动系统 ----
+# ---- 2. 启动系统 ----
 BANNER_MSG="DUBIN + 全正向路线，急停锁存"
 EXTRA_ARGS="autostart_mission:=false safety_emergency_stop_on_start:=true"
 CAMERA_ARGS="use_camera:=false use_vision:=false camera_driver:=usb use_depth_camera:=false"
@@ -323,14 +378,17 @@ if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1; then
   fi
   EXTRA_ARGS="$EXTRA_ARGS $SUPERVISED_ARG waypoints_calibrated:=true extrinsics_calibrated:=true steering_calibrated:=true emergency_stop_ready:=true operator_approved:=true"
 fi
+if $SUPERVISED_FULL_ROUTE; then
+  EXTRA_ARGS="$EXTRA_ARGS supervised_full_route:=true waypoints_calibrated:=true extrinsics_calibrated:=true steering_calibrated:=true emergency_stop_ready:=true operator_approved:=true"
+fi
 if $NO_RVIZ; then
   VISUALIZATION_ARG="use_visualization:=false"
 else
   VISUALIZATION_ARG="use_visualization:=true"
 fi
-banner "[4/6] 启动系统 ($BANNER_MSG)"
+banner "[3/5] 启动系统 ($BANNER_MSG)"
 true > "$LOG"
-ros2 launch smartcar_bringup smartcar_system.launch.py \
+nohup setsid ros2 launch smartcar_bringup smartcar_system.launch.py \
   use_base:=true $LIDAR_ARGS \
   use_laser_odometry:=false use_safety:=true use_nav:=true \
   nav_autostart:=true $CAMERA_ARGS \
@@ -339,28 +397,27 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
   >> "$LOG" 2>&1 &
 LAUNCH_PID=$!
 echo "  Launch PID: $LAUNCH_PID"
+start_rviz
 
-# ---- 5. 等就绪 ----
-banner "[5/6] 等待就绪"
-READY=0
-READY_TIMEOUT_SEC=120
-for i in $(seq 1 $((READY_TIMEOUT_SEC / 10))); do
-  if grep -q "Managed nodes are active" "$LOG" 2>/dev/null; then
-    READY=1; echo "  Nav2 就绪 (${i}0s)"; break
-  fi
-  if ! kill -0 "$LAUNCH_PID" 2>/dev/null; then
-    echo "  ✗ Launch 异常退出"; tail -30 "$LOG"; exit 1
-  fi
-  sleep 10
-done
-[ "$READY" -eq 0 ] && {
-  echo "  ✗ Nav2 lifecycle ${READY_TIMEOUT_SEC}s 内未全部 active"
-  tail -60 "$LOG"
-  exit 1
-}
-sleep 5
-echo "  ✓ 全部 lifecycle active"
-verify_obstacle_avoidance || die "避障感知未就绪；急停保持锁存，禁止解除急停或发车"
+# ---- 4. 等就绪 ----
+banner "[4/5] 并行启动状态"
+STATUS_ARGS=(--timeout 60)
+STATUS_ARGS+=(--launch-pid "$LAUNCH_PID")
+if [ -n "$RVIZ_PID" ]; then
+  STATUS_ARGS+=(--rviz-pid "$RVIZ_PID")
+fi
+if $DEPTH_CAMERA; then
+  STATUS_ARGS+=(--depth-camera)
+fi
+if ! python3 "$STATUS_TOOL" "${STATUS_ARGS[@]}"; then
+  tail -80 "$LOG" || true
+  hold_started_stack "startup health did not become ready; emergency stop remains latched"
+fi
+if $FULL_VERIFY; then
+  verify_obstacle_avoidance || die "避障感知未就绪；急停保持锁存，禁止解除急停或发车"
+else
+  echo "  ✓ fast startup status passed; --verify keeps the exhaustive checks available"
+fi
 
 if $RESET_ORIGIN; then
   banner "定位原点复位"
@@ -376,19 +433,7 @@ if $RESET_ORIGIN; then
   echo "  ✓ 已将人工放置的 P 点当前位置和航向写入定位原点"
 fi
 
-# ---- 6. RViz ----
-if $NO_RVIZ; then
-  banner "[6/6] 跳过 RViz"
-  echo "  - RViz 已禁用 (--no-rviz)"
-else
-  OLD_RVIZ=$(ps -C rviz2 -o pid= --no-headers 2>/dev/null || true)
-  [ -n "$OLD_RVIZ" ] && kill -9 $OLD_RVIZ 2>/dev/null || true
-  sleep 1
-  banner "[6/6] RViz + 等待人工发车"
-  rviz2 -d "$WORKSPACE/src/smartcar_tools/rviz/navigation.rviz" &
-  sleep 3
-  echo "  ✓ RViz 已启动"
-fi
+banner "[5/5] 等待人工发车"
 
 echo ""
 echo "╔══════════════════════════════════════════════╗"
@@ -397,5 +442,5 @@ echo "║  本脚本不授予运动门禁                          ║"
 echo "║  监控: ros2 topic echo /smartcar/task/state  ║"
 echo "║  日志: tail -f /tmp/bringup.log               ║"
 echo "║  急停: ros2 service call /smartcar/safety/emergency_stop std_srvs/srv/SetBool '{data: true}' ║"
-echo "║  硬杀: bash /usr/local/bin/ros_cleanup        ║"
+echo "║  准备: bash /root/nav_prepare.sh              ║"
 echo "╚══════════════════════════════════════════════╝"

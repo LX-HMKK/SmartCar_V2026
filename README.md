@@ -12,19 +12,19 @@
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
-- `nav_only.yaml` 当前保持 `calibrated: false`；本机 Gazebo 已使用它完成全路线软件校验，但 RDK 仅支持受看护 P→A 固定前缀，仍不构成实体完整路线或语义任务验收。
+- `nav_only.yaml` 当前保持 `calibrated: false`；本机 Gazebo 已使用它完成全路线软件校验，现场 LiDAR 无障碍实测已确认当前全正向纯导航路线的基础通行性。该结论不替代深度相机动态避障或语义任务验收。
 - 正式语义路线 `default_waypoints.yaml` 也保持 `calibrated: false`；其 QR/A 点须单独按现场坐标复测，QR/VLM、语音和完整五子任务尚未完成实体验收。
 - `base_footprint -> base_link`、`base_link -> laser`、`base_link -> camera` 外参已测量并接入；更换或重装传感器后必须重新确认。
-- 轮速、陀螺仪和转向命令比例/偏置已完成标定；运行链仍须通过车轮离地、低速地面和完整赛道复验。
+- 轮速、陀螺仪和转向命令比例/偏置已完成标定；LiDAR 无障碍实测已覆盖当前纯导航路线的基础通行性。新增深度模式只验证其障碍感知与重规划效果，不重复要求基础路线或固定外参标定。
 - 先前 QR→VLM 倒车软件链仅保留为未激活的通用能力；当前路线每一段均为正向。规划与安全链采用保守 `0.22 m` 最小转弯半径，离线预检不能视为实体路线验收。
 - RF2O 无地图连续扫描匹配已作为可选激光里程计接入，默认关闭，且已通过 RDK Humble/aarch64 构建；真实雷达时间同步、外参、协方差、漂移、异常观测拒绝和轮速/IMU 退化回退仍未实测。
 - 火山 Ark VLM 与火山 TTS 已提供可选适配器，但凭据、现场网络、模型可用性和扬声器尚未验收；默认均禁用。
 - 使用火山云端后端前必须确认比赛规则允许公网且赛场网络稳定；否则需准备并实测端侧 VLM 备用方案。
 - 当前 TTS 为异步 fire-and-forget；若比赛流程要求播报完成后才能继续导航，仍需增加 action/ack 协议。
 - VFH/YOLO 是架构候选，不是当前 release 依赖。
-- 人工物理急停、车轮离地、低速地面和完整赛道测试尚未完成。
+- 任何新增传感器模式的动态地面测试仍须确认人工物理急停、现场摆位和本次运动授权；不得将这些操作性确认重复表述为路线或固定外参未标定。
 
-五个运动门禁默认全部为 `false`：`waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved`。启用 RF2O 时还会条件性要求 `laser_odometry_calibrated=true`。未完成对应实测前不得把门禁改为 `true`。
+五个运动门禁默认全部为 `false`：`waypoints_calibrated`、`extrinsics_calibrated`、`steering_calibrated`、`emergency_stop_ready`、`operator_approved`。它们防止无人自动发车；官方受看护短测在每次明确实体运动授权后一次性传入运行确认，不能作为反复拒绝已验证 LiDAR 路线的理由。启用 RF2O 时还会条件性要求 `laser_odometry_calibrated=true`。
 
 ## 平台与结构
 
@@ -135,7 +135,7 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
   autostart_mission:=false
 ```
 
-常用开关：`use_base`、`use_lidar`、`use_laser_odometry`、`use_imu_filter`、`use_robot_description`、`use_safety`、`use_nav`、`use_camera`、`use_vision`、`use_depth_camera`、`use_task`、`use_visualization`、`use_speech`、`nav_autostart`、`safety_emergency_stop_on_start`、`use_sim_time`。`use_laser_odometry`、`use_imu_filter`、`use_robot_description`、`use_visualization`、`use_speech` 和 `use_depth_camera` 默认均为 `false`；常规模式的 YDLIDAR `/scan` 进入 costmap，深度模式则由 `/smartcar/depth/points` 完整替代它。RF2O 启用后要求底盘、LiDAR 和额外的 `laser_odometry_calibrated` 门禁。关闭 `use_base` 时仍会保留 safety 节点，适合无硬件 bench；物理底盘开启时系统强制要求 `use_safety=true` 且使用 safety 的 Ackermann 输出。
+常用开关：`use_base`、`use_lidar`、`use_laser_odometry`、`use_imu_filter`、`use_robot_description`、`use_safety`、`use_nav`、`use_camera`、`use_vision`、`use_depth_camera`、`use_task`、`use_visualization`、`use_speech`、`nav_autostart`、`safety_emergency_stop_on_start`、`use_sim_time`。`use_laser_odometry`、`use_imu_filter`、`use_robot_description`、`use_visualization`、`use_speech` 和 `use_depth_camera` 默认均为 `false`；常规模式的 YDLIDAR `/scan` 进入 costmap，深度模式将 `/smartcar/depth/points` 的相机同高切片转换为前向 `/smartcar/depth/scan` 进入 costmap，原始点云仍供 safety 与 RViz 诊断。RF2O 启用后要求底盘、LiDAR 和额外的 `laser_odometry_calibrated` 门禁。关闭 `use_base` 时仍会保留 safety 节点，适合无硬件 bench；物理底盘开启时系统强制要求 `use_safety=true` 且使用 safety 的 Ackermann 输出。
 
 ## 场地路线与独立测试入口
 
@@ -143,14 +143,16 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整的分段、途经点、无朝向、预检、保存和仿真同步流程见 [`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md)。
 
-无视觉导航测试使用已部署的 `/root/nav_test.sh`。脚本完成清理、增量构建、启动和 RViz 准备，并在就绪前验证两个 costmap 的 KeepoutFilter、规则掩膜和 filter-info 话题；它明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车：
+无视觉导航测试使用已部署的 `/root/nav_test.sh`。它只启动、写入已人工摆位的原点并打开 RViz，明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车。源代码或配置变更后，先在本机运行独立部署入口；它同步、备份并执行 RDK 的定向清理和构建，不启动实体设备：
 
 ```bash
+cd /home/zyh/SmartCar_V2026
+bash scripts/nav_deploy.sh
 ssh root@<RDK_IP>
 bash /root/nav_test.sh
 ```
 
-首次测试必须车轮离地并由现场人员持续观察。确认 RViz 不会授权发车：脚本保持五项门禁和 YAML `calibrated` 标记为 `false`，此时 `start` 会被拒绝。完成对应实测、现场标定和书面确认后，才可按门禁流程 reset、解除急停并 start。当前全正向路线的实体车仍须按 P→A、A→C1、C1→P 分段复验；运行配置为 `0.30 m/s` 不能表述为现场验收通过。
+LiDAR 无障碍实测已确认当前全正向纯导航路线的基础通行性，不必为深度模式重复该验收。深度测试使用受看护短测入口：它在急停锁存下完成准备和健康检查，并在本次明确运动授权、人工急停和 P 点摆位已确认后，为指定短前缀一次性传入运行确认。深度模式待验证的是动态障碍物在 costmap 的标记/清障及 Nav2 实时重规划，不是重复航点或固定外参标定。
 
 真实相机默认使用 USB 驱动和 `/image`；Aurora 和 MIPI 保留为备选。系统会把解析后的
 `image_topic` 同时交给 vision 服务和任务按需启动的 zbar，因此切换驱动或显式覆盖话题时
@@ -165,22 +167,22 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 Aurora 930 深度避障使用独立的显式入口：
 
 ```bash
+bash scripts/nav_deploy.sh
 bash /root/nav_test.sh --depth-camera
 ```
 
 该模式关闭 YDLIDAR 与 RF2O，仅保留轮式里程计和 IMU EKF 导航。中继会校验 source frame、
 点云布局、有限的浮点 XYZ 样本和采集时间；Aurora 930 1.7.2 的时间戳会乘以 `1000` 后再供 TF
-查询。两个 Nav2 costmap 与 safety 看门狗只订阅 `/smartcar/depth/points`，不依赖 `/scan`。
+查询。两个 Nav2 costmap 订阅 `/smartcar/depth/scan`；转换器仅生成相机前向视场内的扫描，并对空束发布 `+Inf`，使障碍移走后产生明确 clearing 射线。safety 看门狗继续只订阅原始 `/smartcar/depth/points`。
 脚本在保持急停锁存的状态下验证点云、两个 costmap 参数和 KeepoutFilter。
 深度相机固定在前轮正上方、离地 `0.15 m`、水平朝前，其外参是已确认的结构约束，不设外参标定门禁。
 深度模式以 `10 Hz` 请求 Aurora IR/depth，relay 上限为 `12 Hz`；relay 保留校正后的采集时间戳，
-并拒绝超龄云。两个 costmap 的 `observation_persistence` 与深度 safety 心跳均为 `1.0 s`，
-用于跨越一次有效云的偶发帧间隔，不能使超龄云变为有效云。点云 frame、清障和动态障碍物避让
+并拒绝超龄云。两个 costmap 的扫描 `observation_persistence=0.0 s`、`expected_update_rate=1.0 s`，深度 safety 心跳为 `1.0 s`；这些时限不能使超龄云变为有效云。点云 frame、清障和动态障碍物避让
 仍须完成现场验证；这些验证用于确认障碍感知效果，而不是重新标定固定外参。
 
 ## 任务控制与急停
 
-任务开始前必须完成五个运动门禁和现场校准。服务调用：
+完整任务开始前必须完成五个运动门禁和现场校准；已获本次明确授权的官方受看护短测由启动入口一次性传入运行确认。服务调用：
 
 ```bash
 ros2 service call /smartcar/task/start std_srvs/srv/Trigger "{}"

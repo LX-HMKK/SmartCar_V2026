@@ -13,17 +13,19 @@ task_node:
     goal_response_timeout_sec: 2.0
     cancel_timeout_sec: 3.0
     stop_timeout_sec: 5.0
-    direction_service_timeout_sec: 0.15
-    direction_lease_timeout_sec: 0.50
+    # Keep renewal transport within the guard's unchanged 0.30 s permit
+    # window while tolerating one delayed service round trip.
+    direction_service_timeout_sec: 0.20
+    direction_lease_timeout_sec: 0.30
     direction_prepare_timeout_sec: 1.0
     direction_prepare_retry_period_sec: 0.05
-    direction_renew_period_sec: 0.20
+    direction_renew_period_sec: 0.05
     direction_stop_timeout_sec: 2.0
     direction_stop_dwell_sec: 0.25
     direction_stop_linear_tolerance: 0.01
     direction_stop_angular_tolerance: 0.05
     direction_odom_stale_timeout_sec: 0.25
-    navigation_retries: 1
+    navigation_retries: 0
     navigation_retry_delay_sec: 0.25
     qr_settle_sec: 2.0
     qr_timeout_sec: 3.0

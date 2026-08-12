@@ -257,6 +257,19 @@ TEST(DirectionGuardTest, CandidateAndPermitTimeoutsLatch) {
   }
 }
 
+TEST(DirectionGuardTest, ExplicitZeroCandidateKeepsRecoveryQuiescent) {
+  DirectionGuard guard(test_config(), 42);
+  const auto identity = prepare_and_activate(
+      guard, MotionDirection::Forward, 1, uuid(1), 0.0);
+
+  EXPECT_EQ(guard.on_candidate(command(0.12), 0.15), command(0.12));
+  expect_zero(guard.on_candidate(command(0.0), 0.16));
+  ASSERT_TRUE(guard.renew(identity, 0.35).success);
+  expect_zero(guard.evaluate(0.37));
+  EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
+  EXPECT_EQ(guard.on_candidate(command(0.12), 0.38), command(0.12));
+}
+
 TEST(DirectionGuardTest, IdentityMismatchCannotRenewOrActivate) {
   DirectionGuard guard(test_config(), 42);
   satisfy_stop_barrier(guard, 0.0);

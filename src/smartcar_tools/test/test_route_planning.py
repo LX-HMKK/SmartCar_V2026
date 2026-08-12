@@ -36,12 +36,15 @@ NAV2_PARAMS = REPOSITORY_ROOT / "src" / "smartcar_nav2" / "config" / "nav2_param
 KEEPOUT_OVERLAY = (
     REPOSITORY_ROOT / "src" / "smartcar_sim" / "config" / "nav2_keepout_filter.yaml"
 )
+SAFETY_CONFIG = (
+    REPOSITORY_ROOT / "src" / "smartcar_safety" / "config" / "safety.yaml"
+)
 
 sys.path.insert(0, str(PACKAGE_ROOT))
 sys.path.insert(0, str(PACKAGE_ROOT.parent / "smartcar_task"))
 
 from smartcar_tools.field_keepouts import (  # noqa: E402
-    central_c_keepout,
+    keepout_bounds,
     keepout_mask_bounds,
 )
 from smartcar_tools.field_reference import load_field_reference  # noqa: E402
@@ -95,14 +98,24 @@ class SharedRoutePlanningTests(unittest.TestCase):
     def setUpClass(cls) -> None:
         cls.reference = load_field_reference(GEOMETRY_FILE)
 
-    def test_defaults_preserve_current_motion_and_c_zone_constraints(self) -> None:
+    def test_defaults_preserve_current_motion_and_b_zone_constraints(self) -> None:
         config = load_route_planning_config(CONFIG_FILE)
-        core = central_c_keepout(self.reference, config)
+        keepouts = keepout_bounds(self.reference, config)
 
-        self.assertEqual(config.minimum_turning_radius_m, 0.22)
+        self.assertEqual(config.minimum_turning_radius_m, 0.23)
         self.assertEqual(config.simulation_minimum_turning_radius_m, 0.22)
+        safety = yaml.safe_load(SAFETY_CONFIG.read_text(encoding="utf-8"))[
+            "safety_node"]["ros__parameters"]
+        physical_limit = safety["wheelbase"] / math.tan(
+            safety["max_steering_angle"])
+        nav2 = yaml.safe_load(NAV2_PARAMS.read_text(encoding="utf-8"))[
+            "planner_server"]["ros__parameters"]["GridBased"]
+        self.assertGreaterEqual(config.minimum_turning_radius_m, physical_limit)
+        self.assertEqual(nav2["minimum_turning_radius"],
+                         config.minimum_turning_radius_m)
         self.assertEqual(config.simulation_keepout.map_resolution_m, 0.025)
         self.assertEqual(config.simulation_keepout.boundary_padding_m, 0.25)
+        self.assertEqual(config.simulation_keepout.b_zone_inflation_m, 0.05)
         footprint = config.runtime_footprint
         self.assertEqual(footprint.length_m, 0.27)
         self.assertEqual(footprint.width_m, 0.13)
@@ -118,14 +131,17 @@ class SharedRoutePlanningTests(unittest.TestCase):
         self.assertEqual(
             config.simulation_keepout.costmap_inflation_radius_m, 0.30
         )
-        self.assertEqual(config.c_zone_keepout.horizontal_inset_m, 0.80)
-        self.assertEqual(config.c_zone_keepout.vertical_inset_m, 0.15)
-        self.assertEqual((core.x_min, core.x_max, core.y_min, core.y_max), (
-            1.3,
-            2.7,
-            3.35,
-            3.70,
-        ))
+        self.assertEqual(len(keepouts), 2)
+        self.assertEqual(
+            (keepouts[0].x_min, keepouts[0].x_max,
+             keepouts[0].y_min, keepouts[0].y_max),
+            (-0.55, 1.55, 1.7, 2.3),
+        )
+        self.assertEqual(
+            (keepouts[1].x_min, keepouts[1].x_max,
+             keepouts[1].y_min, keepouts[1].y_max),
+            (2.45, 4.55, 1.7, 2.3),
+        )
 
     def test_simulation_radius_is_required_and_positive(self) -> None:
         document = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
@@ -188,10 +204,10 @@ class SharedRoutePlanningTests(unittest.TestCase):
                     ):
                         load_route_planning_config(altered_path)
 
-    def test_c_zone_tuning_changes_editor_keepout_and_simulation_pgm_together(self) -> None:
+    def test_b_zone_tuning_changes_editor_keepout_and_simulation_pgm_together(self) -> None:
         generator = load_field_map_generator()
         document = yaml.safe_load(CONFIG_FILE.read_text(encoding="utf-8"))
-        document["c_zone_keepout"]["horizontal_inset_m"] = 1.0
+        document["simulation_keepout"]["b_zone_inflation_m"] = 0.35
 
         with tempfile.TemporaryDirectory() as temporary:
             altered_path = Path(temporary) / "route_planning.yaml"
@@ -199,7 +215,7 @@ class SharedRoutePlanningTests(unittest.TestCase):
                 yaml.safe_dump(document, sort_keys=False), encoding="utf-8"
             )
             altered = load_route_planning_config(altered_path)
-            altered_core = central_c_keepout(self.reference, altered)
+            altered_keepouts = keepout_bounds(self.reference, altered)
             default_pgm, default_descriptor = generator.render(
                 GEOMETRY_FILE, CONFIG_FILE
             )
@@ -207,14 +223,23 @@ class SharedRoutePlanningTests(unittest.TestCase):
                 GEOMETRY_FILE, altered_path
             )
 
-        self.assertEqual((altered_core.x_min, altered_core.x_max), (1.5, 2.5))
-        # This cell lies inside the default C core but in the lane released by
-        # the narrower tuned core. The editor and generated PGM must agree.
         self.assertEqual(
-            pgm_value_at(default_pgm, default_descriptor, 1.35, 3.5), 0
+            (altered_keepouts[0].x_min, altered_keepouts[0].x_max),
+            (-0.85, 1.85),
+        )
+        # This cell is free under the default B-zone clearance and becomes
+        # lethal when the shared static B-zone clearance is enlarged.
+        self.assertEqual(
+            pgm_value_at(default_pgm, default_descriptor, 1.80, 2.0), 254
         )
         self.assertEqual(
-            pgm_value_at(altered_pgm, altered_descriptor, 1.35, 3.5), 254
+            pgm_value_at(default_pgm, default_descriptor, 2.0, 3.5), 254
+        )
+        self.assertEqual(
+            pgm_value_at(default_pgm, default_descriptor, 0.0, -0.4), 254
+        )
+        self.assertEqual(
+            pgm_value_at(altered_pgm, altered_descriptor, 1.80, 2.0), 0
         )
 
     def test_editor_and_tune_entrypoints_accept_the_same_config_file(self) -> None:
@@ -293,27 +318,22 @@ class SharedRoutePlanningTests(unittest.TestCase):
                 0.17,
             )
 
-    def test_preflight_uses_padded_oriented_footprint_and_mask_cells(self) -> None:
+    def test_preflight_uses_b_zone_mask_cells_only(self) -> None:
         config = load_route_planning_config(CONFIG_FILE)
         planner = LatticePreflightPlanner(self.reference, config)
-        c_core = keepout_mask_bounds(self.reference, config)[2]
+        left_b_wall, right_b_wall = keepout_mask_bounds(self.reference, config)
 
-        # The 0.025 m PGM aligns exactly with the raw C-core edges, so this
-        # is the actual KeepoutFilter collision boundary rather than a coarse
-        # one-cell expansion.
         for actual, expected in zip(
-            (c_core.x_min, c_core.x_max, c_core.y_min, c_core.y_max),
-            (1.3, 2.7, 3.35, 3.70),
+            (left_b_wall.x_min, left_b_wall.x_max,
+             left_b_wall.y_min, left_b_wall.y_max),
+            (-0.55, 1.55, 1.7, 2.3),
         ):
             self.assertAlmostEqual(actual, expected)
-        # The padded 0.33 x 0.19 m body clears this C-core edge while aligned
-        # with the field, but its rotated envelope intersects it.
-        self.assertTrue(planner._is_free(1.04, 3.40, 0.0))
-        self.assertFalse(planner._is_free(1.04, 3.40, 0.40))
-        # P remains valid, but no padded vehicle pose can use the map's
-        # exterior ring as an unmodelled shortcut below the south field edge.
+        self.assertAlmostEqual(right_b_wall.x_min, 2.45)
+        self.assertFalse(planner._is_free(1.0, 2.0, 0.0))
+        self.assertFalse(planner._is_free(3.0, 2.0, 0.0))
         self.assertTrue(planner._is_free(0.0, 0.0, 0.0))
-        self.assertFalse(planner._is_free(0.0, -0.26, 0.0))
+        self.assertTrue(planner._is_free(2.0, 3.5, 0.0))
 
     def test_terminal_route_is_tangent_continuous_not_a_straight_line_patch(self) -> None:
         planner = LatticePreflightPlanner(

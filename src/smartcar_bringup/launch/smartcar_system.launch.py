@@ -29,8 +29,17 @@ EXTERNAL_IMAGE_TOPIC = "/smartcar/vision/image"
 DEPTH_CAMERA_DRIVER = "aurora"
 DEPTH_POINT_CLOUD_INPUT_TOPIC = "/aurora/points2"
 DEPTH_POINT_CLOUD_TOPIC = "/smartcar/depth/points"
+DEPTH_LASER_SCAN_TOPIC = "/smartcar/depth/scan"
 DEPTH_CAMERA_INPUT_FRAME = "depth_camera_link_1"
 DEPTH_CAMERA_FRAME = "depth_camera_link_1"
+DEPTH_SCAN_TARGET_FRAME = "base_footprint"
+# Match the forward-only Aurora depth fixture. Limiting the synthetic scan to
+# the camera field of view prevents +Inf from clearing blind side/rear cells.
+DEPTH_SCAN_HALF_FOV_RAD = 0.75
+# Nav2 converts +Inf beams to the scan maximum. Keep that endpoint just beyond
+# the 3.0 m costmap marking limit, so it is used only for clearing, never as a
+# circular ring of obstacle returns.
+DEPTH_SCAN_CLEARING_ENVELOPE_M = 3.01
 VALID_CAMERA_DRIVERS = tuple(CAMERA_FRAMES)
 MOTION_GATES = (
     "waypoints_calibrated",
@@ -169,13 +178,11 @@ def _vision_and_camera_actions(context):
                 "output_frame": LaunchConfiguration(
                     "depth_camera_frame").perform(context),
                 "stale_timeout_sec": 1.0,
-                # Aurora capture stamps remain authoritative.  RDK can
-                # occasionally schedule the serial/costmap chain for a few
-                # hundred milliseconds.  The depth watchdog and costmap
-                # observation window use the same one-second bound, while
-                # the relay still rejects a cloud captured outside this
-                # transport-age window.
-                "max_capture_age_sec": 0.35,
+                # Preserve Aurora's acquisition stamp so transforms use the
+                # pose at capture time, but discard a frame that is older
+                # than one 10 Hz capture interval.  An old frame would make
+                # a static obstacle appear to follow a moving vehicle.
+                "max_capture_age_sec": 0.10,
                 "max_future_skew_sec": 0.05,
                 # Bound Aurora's organized cloud before Nav2's two obstacle
                 # layers process it.  The relay keeps samples spread across
@@ -185,6 +192,36 @@ def _vision_and_camera_actions(context):
                 # headroom so a legitimate source frame is not rate-limited
                 # by the relay.
                 "max_publish_rate_hz": 12.0,
+                "use_sim_time": _as_bool(context, "use_sim_time"),
+            }],
+        ))
+        actions.append(Node(
+            package="pointcloud_to_laserscan",
+            executable="pointcloud_to_laserscan_node",
+            name="depth_pointcloud_to_laserscan",
+            output="screen",
+            remappings=[
+                ("cloud_in", DEPTH_POINT_CLOUD_TOPIC),
+                ("scan", DEPTH_LASER_SCAN_TOPIC),
+            ],
+            parameters=[{
+                "target_frame": DEPTH_SCAN_TARGET_FRAME,
+                "transform_tolerance": 0.1,
+                # The default follows CPU count, which permits an eight-frame
+                # backlog on the RDK.  Keep only the latest depth slice.
+                "queue_size": 1,
+                # Preserve Aurora's camera-height 2D obstacle slice before
+                # Nav2 consumes it. Raw points remain available to safety and
+                # RViz independently of this conversion.
+                "min_height": 0.14,
+                "max_height": 0.16,
+                "angle_min": -DEPTH_SCAN_HALF_FOV_RAD,
+                "angle_max": DEPTH_SCAN_HALF_FOV_RAD,
+                "angle_increment": 0.01,
+                "scan_time": 0.1,
+                "range_min": 0.25,
+                "range_max": DEPTH_SCAN_CLEARING_ENVELOPE_M,
+                "use_inf": True,
                 "use_sim_time": _as_bool(context, "use_sim_time"),
             }],
         ))
@@ -252,6 +289,8 @@ def _task_actions(context):
                 "supervised_p_to_a_only"),
             "supervised_p_to_c1_only": LaunchConfiguration(
                 "supervised_p_to_c1_only"),
+            "supervised_full_route": LaunchConfiguration(
+                "supervised_full_route"),
             "qr_handoff_test_mode": LaunchConfiguration(
                 "qr_handoff_test_mode"),
             "use_laser_odometry": LaunchConfiguration("use_laser_odometry"),
@@ -294,45 +333,43 @@ def _validate_configuration(context):
         )
         if _as_bool(context, parameter_name)
     )
-    if len(supervised_prefixes) > 1:
-        raise RuntimeError("only one supervised navigation prefix may be enabled")
-    if supervised_prefixes:
+    supervised_full_route = _as_bool(context, "supervised_full_route")
+    if len(supervised_prefixes) + int(supervised_full_route) > 1:
+        raise RuntimeError(
+            "only one supervised navigation route mode may be enabled")
+    if supervised_prefixes or supervised_full_route:
+        # The watched navigation entry is depth-only after the LiDAR removal.
+        # Keep the obstacle-source choice out of the motion gate itself.
         required_true = (
             "use_base",
             "use_safety",
             "use_nav",
             "use_task",
             "safety_emergency_stop_on_start",
+            "use_depth_camera",
         )
-        if short_drive_test:
-            required_true += ("use_depth_camera",)
-        else:
-            required_true += ("use_lidar",)
         required_false = (
             "use_camera",
             "use_vision",
             "autostart_mission",
         )
-        if not short_drive_test:
-            required_false += ("use_depth_camera",)
         invalid = [
             name for name in required_true if not _as_bool(context, name)
         ]
         invalid.extend(
             name for name in required_false if _as_bool(context, name)
         )
-        if (
-            LaunchConfiguration("navigation_test_end_segment_id").perform(
-                context
-            ).strip()
-            != supervised_prefixes[0][1]
-        ):
+        end_segment_id = LaunchConfiguration(
+            "navigation_test_end_segment_id").perform(context).strip()
+        if supervised_prefixes and end_segment_id != supervised_prefixes[0][1]:
             invalid.append(
                 "navigation_test_end_segment_id=" + supervised_prefixes[0][1]
             )
+        if supervised_full_route and end_segment_id:
+            invalid.append("navigation_test_end_segment_id=empty")
         if invalid:
             raise RuntimeError(
-                "supervised navigation prefix requires: " + ",".join(invalid)
+                "supervised navigation route requires: " + ",".join(invalid)
             )
     if short_drive_test:
         required_true = (
@@ -549,6 +586,8 @@ def generate_launch_description():
             "supervised_p_to_a_only", default_value="false"),
         DeclareLaunchArgument(
             "supervised_p_to_c1_only", default_value="false"),
+        DeclareLaunchArgument(
+            "supervised_full_route", default_value="false"),
         DeclareLaunchArgument(
             "qr_handoff_test_mode", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),

@@ -47,7 +47,7 @@ from smartcar_tools.field_reference import (
     Point2D,
     load_field_reference,
 )
-from smartcar_tools.field_keepouts import central_c_keepout, keepout_bounds
+from smartcar_tools.field_keepouts import keepout_bounds
 from smartcar_task.planning_segments import (
     PlanningSegment,
     PlanningSegmentError,
@@ -363,22 +363,16 @@ class DragEditor:
             )
 
     def _draw_keepout_reference(self):
-        """Make the offline geometric constraints visible before editing."""
-        core = central_c_keepout(self._field_ref)
+        """Show the B-zone-only static KeepoutFilter constraints."""
         for bounds in keepout_bounds(self._field_ref):
-            is_core = bounds == core
             self._ax.add_patch(plt.Rectangle(
                 (bounds.x_min, bounds.y_min), bounds.width, bounds.height,
-                facecolor="#F0443833" if is_core else "#F0443818",
-                edgecolor="#FF7368" if is_core else "#D26A63",
-                linewidth=1.2 if is_core else 0.7,
+                facecolor="#F0443818",
+                edgecolor="#D26A63",
+                linewidth=0.7,
                 linestyle="--",
                 zorder=2,
             ))
-        self._ax.annotate(
-            "C 区禁区", (core.center.x, core.y_min - 0.08),
-            fontsize=7, color="#FF8B80", ha="center", va="top", zorder=2,
-        )
 
     # ── route-segment panel and model ──────────────────────────────────
 

@@ -18,6 +18,13 @@ try:
 except ImportError:
     ROS_AVAILABLE = False
 
+try:
+    from smartcar_task.task_node import RosDirectionGuard, RosLocalization
+
+    TASK_NODE_AVAILABLE = True
+except ImportError:
+    TASK_NODE_AVAILABLE = False
+
 
 def waypoint(waypoint_id, task, x, profile="standard", heading_mode=None, direction="forward"):
     return Waypoint(
@@ -86,6 +93,97 @@ class Nav2GoalFactoryTests(unittest.TestCase):
             "via", id="zero")
         with self.assertRaisesRegex(ValueError, "unit quaternion"):
             self.factory.navigate_goal(zero)
+
+
+@unittest.skipUnless(
+    TASK_NODE_AVAILABLE,
+    "task_node ROS interfaces are unavailable",
+)
+class RosDirectionGuardObservationTests(unittest.TestCase):
+    class FakeNode:
+        def __init__(self):
+            self.subscriptions = []
+            self.destroy_calls = 0
+
+        @staticmethod
+        def create_client(*_args, **_kwargs):
+            return object()
+
+        def create_subscription(self, *_args, **_kwargs):
+            subscription = object()
+            self.subscriptions.append(subscription)
+            return subscription
+
+        def destroy_subscription(self, _subscription):
+            self.destroy_calls += 1
+
+    def test_stop_observation_subscription_is_reused(self):
+        node = self.FakeNode()
+        guard = RosDirectionGuard(
+            node,
+            object(),
+            service_timeout_sec=0.1,
+            stop_timeout_sec=0.1,
+            stop_dwell_sec=0.01,
+            linear_tolerance=0.01,
+            angular_tolerance=0.01,
+            odom_stale_timeout_sec=0.1,
+        )
+
+        guard._start_odom_observation()
+        first = guard._odom_subscription
+        guard._stop_odom_observation()
+        guard._start_odom_observation()
+
+        self.assertIs(guard._odom_subscription, first)
+        self.assertEqual(len(node.subscriptions), 1)
+        self.assertEqual(node.destroy_calls, 0)
+
+
+@unittest.skipUnless(
+    TASK_NODE_AVAILABLE,
+    "task_node ROS interfaces are unavailable",
+)
+class RosLocalizationObservationTests(unittest.TestCase):
+    class FakeNode:
+        def __init__(self):
+            self.subscriptions = []
+            self.destroy_calls = 0
+
+        @staticmethod
+        def create_client(*_args, **_kwargs):
+            return object()
+
+        def create_subscription(self, *_args, **_kwargs):
+            subscription = object()
+            self.subscriptions.append(subscription)
+            return subscription
+
+        def destroy_subscription(self, _subscription):
+            self.destroy_calls += 1
+
+    def test_reset_observation_subscriptions_are_reused(self):
+        node = self.FakeNode()
+        localization = RosLocalization(
+            node,
+            object(),
+            object(),
+            reset_timeout_sec=0.1,
+            position_tolerance=0.2,
+            yaw_tolerance=0.2,
+            use_laser_odometry=True,
+        )
+
+        localization._start_odometry_observation()
+        first_odom = localization._odom_subscription
+        first_laser = localization._laser_odom_subscription
+        localization._stop_odometry_observation()
+        localization._start_odometry_observation()
+
+        self.assertIs(localization._odom_subscription, first_odom)
+        self.assertIs(localization._laser_odom_subscription, first_laser)
+        self.assertEqual(len(node.subscriptions), 2)
+        self.assertEqual(node.destroy_calls, 0)
 
 
 if __name__ == "__main__":

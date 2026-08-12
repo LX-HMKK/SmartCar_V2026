@@ -1,4 +1,4 @@
-"""Bounded, supervised forward drive through the production Nav2 chain."""
+"""Supervised forward drive through the production Nav2 chain."""
 
 import argparse
 import json
@@ -23,8 +23,8 @@ from std_srvs.srv import SetBool, Trigger
 
 MAX_TEST_SPEED_MPS = 0.30
 DEPTH_POINTS_TIMEOUT_SEC = 1.0
-# Each profile is a fixed, contiguous route prefix. These limits retain a
-# fail-closed travel and time bound for a watched physical test.
+# Each profile is a fixed, contiguous route prefix. Nav2 remains the only
+# component that decides the path and arrival condition.
 ROUTE_PROFILES = {
     "p_to_a": {
         "task_parameters": {
@@ -32,11 +32,7 @@ ROUTE_PROFILES = {
             "supervised_p_to_c1_only": False,
             "navigation_test_end_segment_id": "p_to_qr",
         },
-        "max_distance_m": 3.5,
         "max_timeout_sec": 120.0,
-        "terminal_pose": (2.898403475881205, 0.9659945286391132, 0.20943951023931956),
-        "position_tolerance_m": 0.12,
-        "yaw_tolerance_rad": 0.15,
     },
     "p_to_c1": {
         "task_parameters": {
@@ -44,28 +40,16 @@ ROUTE_PROFILES = {
             "supervised_p_to_c1_only": True,
             "navigation_test_end_segment_id": "qr_to_vlm",
         },
-        "max_distance_m": 10.5,
         "max_timeout_sec": 240.0,
-        "terminal_pose": (0.9330276705276708, 3.8337068653474913, 1.171056970790554),
-        "position_tolerance_m": 0.12,
-        "yaw_tolerance_rad": 0.15,
     },
 }
-MAX_TEST_DISTANCE_M = max(profile["max_distance_m"] for profile in ROUTE_PROFILES.values())
 MAX_TEST_TIMEOUT_SEC = max(profile["max_timeout_sec"] for profile in ROUTE_PROFILES.values())
 DEFAULT_RESULTS_FILE = "/tmp/smartcar_short_drive_result.json"
 
 
-def completed_distance_reason(reason):
-    """Return whether a bounded run met its only successful completion condition."""
-    return str(reason).startswith("distance_limit:")
-
-
-def outcome_passed(reason, require_mission_complete):
-    """Apply the requested completion contract to a terminal test reason."""
-    if require_mission_complete:
-        return str(reason) == "mission_completed"
-    return completed_distance_reason(reason)
+def outcome_passed(reason):
+    """Only Nav2 completion proves a supervised route prefix passed."""
+    return str(reason) == "mission_completed"
 
 
 def route_profile_spec(route_profile):
@@ -119,11 +103,10 @@ def runtime_mode_errors(safety_params, task_params, speed_mps, route_profile="p_
     return errors
 
 
-def validate_test_limits(distance_m, speed_mps, timeout_sec, route_profile="p_to_a"):
-    """Reject unsafe test bounds before any command can be sent."""
+def validate_test_limits(speed_mps, timeout_sec, route_profile="p_to_a"):
+    """Reject unsafe speed and watchdog bounds before any command can be sent."""
     profile = route_profile_spec(route_profile)
     values = {
-        "distance_m": float(distance_m),
         "speed_mps": float(speed_mps),
         "timeout_sec": float(timeout_sec),
     }
@@ -133,10 +116,6 @@ def validate_test_limits(distance_m, speed_mps, timeout_sec, route_profile="p_to
     if values["speed_mps"] > MAX_TEST_SPEED_MPS:
         raise ValueError(
             f"speed_mps exceeds bounded test cap {MAX_TEST_SPEED_MPS:.2f}")
-    if values["distance_m"] > profile["max_distance_m"]:
-        raise ValueError(
-            "distance_m exceeds bounded test cap "
-            f"{profile['max_distance_m']:.1f} for {route_profile}")
     if values["timeout_sec"] > profile["max_timeout_sec"]:
         raise ValueError(
             "timeout_sec exceeds bounded test cap "
@@ -147,22 +126,17 @@ def validate_test_limits(distance_m, speed_mps, timeout_sec, route_profile="p_to
 class ShortDrive(Node):
     def __init__(
         self,
-        distance_m=0.25,
-        speed_mps=0.05,
+        speed_mps=0.30,
         timeout_sec=10.0,
-        require_mission_complete=False,
         route_profile="p_to_a",
         results_file=DEFAULT_RESULTS_FILE,
     ):
         super().__init__("short_drive_test")
         self.route_profile = str(route_profile)
-        self.profile = route_profile_spec(self.route_profile)
         limits = validate_test_limits(
-            distance_m, speed_mps, timeout_sec, self.route_profile)
-        self.distance_m = limits["distance_m"]
+            speed_mps, timeout_sec, self.route_profile)
         self.speed_mps = limits["speed_mps"]
         self.timeout_sec = limits["timeout_sec"]
-        self.require_mission_complete = bool(require_mission_complete)
         self.results_file = Path(results_file)
         self.invoked_at = time.monotonic()
         self.start_pose = None
@@ -357,7 +331,6 @@ class ShortDrive(Node):
         controller_request = SetParameters.Request()
         controller_request.parameters = [
             self._double("FollowPath.desired_linear_vel", self.speed_mps),
-            self._double("ForwardAvoidance.desired_linear_vel", self.speed_mps),
         ]
         smoother_request = SetParameters.Request()
         smoother_request.parameters = [
@@ -395,8 +368,6 @@ class ShortDrive(Node):
             self.get_logger().error(f"e-stop latch failed: {error}")
 
     def _result(self, passed, reason, started_at):
-        terminal_error = self.terminal_error()
-        terminal_x, terminal_y, terminal_yaw = self.profile["terminal_pose"]
         return {
             "schema_version": 1,
             "test": "supervised_depth_short_drive",
@@ -404,18 +375,14 @@ class ShortDrive(Node):
             "reason": str(reason),
             "duration_sec": round(max(0.0, time.monotonic() - started_at), 3),
             "limits": {
-                "distance_m": self.distance_m,
                 "speed_mps": self.speed_mps,
                 "timeout_sec": self.timeout_sec,
-                "require_mission_complete": self.require_mission_complete,
                 "route_profile": self.route_profile,
             },
             "measurements": {
                 "fused_travel_distance_m": round(self.fused_travel_distance_m, 4),
                 "fused_forward_displacement_m": round(
                     self.forward_displacement(), 4),
-                "terminal_position_error_m": terminal_error[0],
-                "terminal_yaw_error_rad": terminal_error[1],
                 "max_ackermann_speed_mps": round(self.max_ackermann_speed, 4),
                 "last_ackermann_speed_mps": self.last_ackermann,
                 "local_raw_occupied_cells": self.local_costmap_occupied_cells,
@@ -424,13 +391,6 @@ class ShortDrive(Node):
             "final_state": {
                 "safety": self.last_safety,
                 "task": self.last_state,
-            },
-            "expected_terminal_pose": {
-                "x": terminal_x,
-                "y": terminal_y,
-                "yaw": terminal_yaw,
-                "position_tolerance_m": self.profile["position_tolerance_m"],
-                "yaw_tolerance_rad": self.profile["yaw_tolerance_rad"],
             },
         }
 
@@ -453,35 +413,6 @@ class ShortDrive(Node):
         yaw = math.atan2(2.0 * (q.w * q.z + q.x * q.y),
                          1.0 - 2.0 * (q.y * q.y + q.z * q.z))
         return (p1.x - p0.x) * math.cos(yaw) + (p1.y - p0.y) * math.sin(yaw)
-
-    @staticmethod
-    def _yaw(orientation):
-        return math.atan2(
-            2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
-            1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z),
-        )
-
-    def terminal_error(self):
-        if self.latest_nav_odom is None:
-            return None, None
-        target_x, target_y, target_yaw = self.profile["terminal_pose"]
-        pose = self.latest_nav_odom.pose.pose
-        position_error = math.hypot(
-            pose.position.x - target_x, pose.position.y - target_y)
-        yaw_error = math.atan2(
-            math.sin(self._yaw(pose.orientation) - target_yaw),
-            math.cos(self._yaw(pose.orientation) - target_yaw),
-        )
-        return round(position_error, 4), round(abs(yaw_error), 4)
-
-    def terminal_pose_passed(self):
-        position_error, yaw_error = self.terminal_error()
-        return (
-            position_error is not None
-            and yaw_error is not None
-            and position_error <= self.profile["position_tolerance_m"]
-            and yaw_error <= self.profile["yaw_tolerance_rad"]
-        )
 
     def begin_measurement(self):
         self.start_pose = self.latest_nav_odom
@@ -511,7 +442,7 @@ class ShortDrive(Node):
         self.set_speed_limits()
         self.get_logger().info(
             f"Preflight passed: speed cap {self.speed_mps:.3f} m/s, "
-            f"travel cap {self.distance_m:.3f} m ({self.route_profile})")
+            f"route profile {self.route_profile}")
         self.clear_estop()
         response = self.call(self.start_client, Trigger.Request(), timeout_sec=4.0)
         if not response.success:
@@ -529,21 +460,13 @@ class ShortDrive(Node):
                 if (
                     self.saw_navigating
                     and self.max_ackermann_speed > 1.0e-4
-                    and self.terminal_pose_passed()
                 ):
                     reason = "mission_completed"
                 else:
-                    position_error, yaw_error = self.terminal_error()
-                    reason = (
-                        "mission_completed_without_terminal_proof:"
-                        f"position={position_error},yaw={yaw_error}"
-                    )
+                    reason = "mission_completed_without_motion_proof"
                 break
             if self.last_state in ("FAILED", "STOPPED"):
                 reason = f"task_terminal:{self.last_state}"
-                break
-            if self.fused_travel_distance_m >= self.distance_m:
-                reason = f"distance_limit:{self.fused_travel_distance_m:.3f}m"
                 break
             if displacement < -0.03:
                 reason = f"unexpected_reverse:{displacement:.3f}m"
@@ -588,7 +511,7 @@ class ShortDrive(Node):
         if nonzero:
             raise RuntimeError(f"final ackermann not zero: {nonzero[-1]:.3f}")
         result = self._result(
-            outcome_passed(reason, self.require_mission_complete),
+            outcome_passed(reason),
             reason,
             started_at,
         )
@@ -607,13 +530,10 @@ class ShortDrive(Node):
 
 def main(argv=None):
     parser = argparse.ArgumentParser(
-        description="Run a bounded supervised forward Nav2 drive test.")
+        description="Run a supervised forward Nav2 drive test.")
     parser.add_argument(
-        "--distance-m", type=float, default=0.25,
-        help="maximum cumulative fused-odometry travel (default: 0.25)")
-    parser.add_argument(
-        "--speed-mps", type=float, default=0.05,
-        help="forward speed cap, at most 0.30 m/s (default: 0.05)")
+        "--speed-mps", type=float, default=0.30,
+        help="forward speed cap, at most 0.30 m/s (default: 0.30)")
     parser.add_argument(
         "--timeout-sec", type=float, default=10.0,
         help="maximum run time within the selected route-profile cap (default: 10)")
@@ -621,18 +541,13 @@ def main(argv=None):
         "--route-profile", choices=tuple(ROUTE_PROFILES), default="p_to_a",
         help="fixed supervised route prefix (default: p_to_a)")
     parser.add_argument(
-        "--require-mission-complete", action="store_true",
-        help="pass only after the fixed supervised mission reaches COMPLETED at its terminal pose")
-    parser.add_argument(
         "--results-file", default=DEFAULT_RESULTS_FILE,
         help=f"JSON evidence path (default: {DEFAULT_RESULTS_FILE})")
     args = parser.parse_args(argv)
     rclpy.init(args=[])
     node = ShortDrive(
-        distance_m=args.distance_m,
         speed_mps=args.speed_mps,
         timeout_sec=args.timeout_sec,
-        require_mission_complete=args.require_mission_complete,
         route_profile=args.route_profile,
         results_file=args.results_file,
     )

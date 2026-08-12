@@ -1,7 +1,7 @@
 direction_guard:
   ros__parameters:
     candidate_timeout_sec: 0.15
-    permit_timeout_sec: 0.25
+    permit_timeout_sec: 0.30
     prepare_timeout_sec: 5.0
     raw_odom_timeout_sec: 0.50
     stop_settle_sec: 0.15

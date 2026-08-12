@@ -59,7 +59,9 @@ def _count(name, value):
 @dataclass(frozen=True)
 class MissionConfig:
     server_wait_timeout_sec: float = 30.0
-    navigation_retries: int = 1
+    # A failed Nav2 action must remain terminal. Reissuing the same goal from
+    # an unknown near-goal pose can turn a nonconvergent endpoint into a loop.
+    navigation_retries: int = 0
     navigation_retry_delay_sec: float = 0.25
     qr_settle_sec: float = 2.0
     qr_timeout_sec: float = 3.0

@@ -129,6 +129,19 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn(
             'use_nav requires use_lidar=true or use_depth_camera=true', source)
         self.assertIn('executable="depth_pointcloud_relay"', source)
+        self.assertIn('package="pointcloud_to_laserscan"', source)
+        self.assertIn('executable="pointcloud_to_laserscan_node"', source)
+        self.assertIn('("scan", DEPTH_LASER_SCAN_TOPIC)', source)
+        self.assertIn('"use_inf": True', source)
+        self.assertIn('"target_frame": DEPTH_SCAN_TARGET_FRAME', source)
+        self.assertIn('"queue_size": 1', source)
+        self.assertIn('"max_capture_age_sec": 0.10', source)
+        self.assertEqual(
+            assigned_literal(SYSTEM, "DEPTH_SCAN_CLEARING_ENVELOPE_M"), 3.01
+        )
+        self.assertIn('"range_max": DEPTH_SCAN_CLEARING_ENVELOPE_M', source)
+        self.assertIn('<exec_depend>pointcloud_to_laserscan</exec_depend>',
+                      PACKAGE_XML.read_text(encoding="utf-8"))
         self.assertNotIn("depth_camera_calibrated", source)
         self.assertIn('"safety_require_depth_points": LaunchConfiguration(', source)
         self.assertIn('"use_depth_camera")', source)
@@ -162,14 +175,17 @@ class SystemContractTests(unittest.TestCase):
         for costmap in ("local_costmap", "global_costmap"):
             layer = overlay[costmap][costmap]["ros__parameters"][
                 "obstacle_layer"]
-            self.assertEqual(layer["observation_sources"], "depth_points")
-            self.assertNotIn("scan", layer)
-            self.assertEqual(layer["depth_points"]["topic"], "/smartcar/depth/points")
-            self.assertEqual(layer["depth_points"]["data_type"], "PointCloud2")
-            self.assertEqual(layer["depth_points"]["observation_persistence"], 1.0)
-            self.assertEqual(layer["depth_points"]["expected_update_rate"], 1.0)
-            self.assertEqual(layer["depth_points"]["min_obstacle_height"], 0.05)
-            self.assertEqual(layer["depth_points"]["max_obstacle_height"], 0.30)
+            self.assertEqual(layer["observation_sources"], "depth_scan")
+            self.assertNotIn("depth_points", layer)
+            self.assertEqual(layer["depth_scan"]["topic"], "/smartcar/depth/scan")
+            self.assertEqual(layer["depth_scan"]["data_type"], "LaserScan")
+            self.assertEqual(layer["depth_scan"]["observation_persistence"], 0.0)
+            self.assertEqual(layer["depth_scan"]["expected_update_rate"], 1.0)
+            self.assertTrue(layer["depth_scan"]["clearing"])
+            self.assertTrue(layer["depth_scan"]["marking"])
+            self.assertTrue(layer["depth_scan"]["inf_is_valid"])
+            self.assertEqual(layer["depth_scan"]["obstacle_max_range"], 3.0)
+            self.assertEqual(layer["depth_scan"]["raytrace_max_range"], 3.0)
 
         rules = UDEV_RULES.read_text(encoding="utf-8")
         self.assertIn('ATTR{idVendor}=="05e3", ATTR{idProduct}=="0610"', rules)

@@ -2,7 +2,7 @@
 """sync_to_rdk.py - 本机 <-> RDK X5 工作空间同步（rsync over ssh 封装）。
 
 子命令：
-  push         本机 src/ + config/ -> RDK /root/ros2_ws/{src,config}/（--delete 镜像）
+  push         本机 src/config 和 RDK 运行脚本 -> RDK（源码树 --delete 镜像）
   pull         RDK /root/ros2_ws/src/ -> 本机 src/（反向，慎用）
   pull-waypoints  仅回传 RDK 上现场微调后的语义航点 YAML
   init-vendor  一次性回传官方 origincar 到本机
@@ -41,6 +41,13 @@ LOCAL_SRC = REPO_ROOT / "src"
 LOCAL_CONFIG = REPO_ROOT / "config"
 LOCAL_VENDOR_ORIGINCAR = LOCAL_SRC / "origincar"
 LOCAL_SOURCE_ENV = REPO_ROOT / "scripts" / "source_env.sh"
+RUNTIME_SCRIPT_TARGETS = (
+    (REPO_ROOT / "scripts" / "nav_prepare.sh", "/root/nav_prepare.sh"),
+    (REPO_ROOT / "scripts" / "nav_test.sh", "/root/nav_test.sh"),
+    (REPO_ROOT / "scripts" / "nav_status.py", "/root/nav_status.py"),
+    (REPO_ROOT / "scripts" / "ros_cleanup.sh",
+     f"{REMOTE_WS}/scripts/ros_cleanup.sh"),
+)
 WAYPOINTS_RELATIVE_PATH = Path(
     "src/smartcar_nav2/config/waypoints/default_waypoints.yaml")
 LOCAL_WAYPOINTS = REPO_ROOT / WAYPOINTS_RELATIVE_PATH
@@ -111,6 +118,8 @@ def check_push_safety(path=None):
         return path.is_dir() and any(path.iterdir())
     required = [LOCAL_VENDOR_ORIGINCAR, LOCAL_CONFIG]
     missing = [str(p) for p in required if not (p.is_dir() and any(p.iterdir()))]
+    missing.extend(
+        str(path) for path, _ in RUNTIME_SCRIPT_TARGETS if not path.is_file())
     if missing:
         print(f"错误：关键子树缺失或为空：{missing}，拒绝 push --delete（防清空 RDK）。"
               "请确认本地工作区完整后重试。", file=sys.stderr)
@@ -133,11 +142,16 @@ def ensure_rsync_available():
 
 
 def push_targets():
-    """push 的 (src, dst) 列表。"""
-    return [
+    """push 的源码目录和运行时脚本白名单。"""
+    targets = [
         (str(LOCAL_SRC) + "/", f"{HOST}:{REMOTE_WS}/src/"),
         (str(LOCAL_CONFIG) + "/", f"{HOST}:{REMOTE_WS}/config/"),
     ]
+    targets.extend(
+        (str(path), f"{HOST}:{remote_path}")
+        for path, remote_path in RUNTIME_SCRIPT_TARGETS
+    )
+    return targets
 
 
 def pull_targets():
@@ -156,7 +170,8 @@ def build_parser():
         description="本机 <-> RDK X5 工作空间同步（rsync 封装）")
     sub = parser.add_subparsers(dest="command", required=True)
 
-    p = sub.add_parser("push", help="本机 src/+config/ -> RDK（--delete 镜像）")
+    p = sub.add_parser(
+        "push", help="本机 src/config 和运行脚本 -> RDK（源码树 --delete 镜像）")
     p.add_argument("--dry-run", action="store_true", help="预览不实际传输")
     p.set_defaults(func="push")
 

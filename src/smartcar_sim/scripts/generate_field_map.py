@@ -68,7 +68,6 @@ try:
         load_field_reference,
     )
     from smartcar_tools.field_keepouts import (  # type: ignore[import-not-found]
-        central_c_keepout as _central_c_keepout,
         keepout_bounds as _keepout_bounds,
         simulation_map_bounds as _simulation_map_bounds,
     )
@@ -84,7 +83,6 @@ except ModuleNotFoundError:
         load_field_reference,
     )
     from smartcar_tools.field_keepouts import (  # type: ignore[no-redef]
-        central_c_keepout as _central_c_keepout,
         keepout_bounds as _keepout_bounds,
         simulation_map_bounds as _simulation_map_bounds,
     )
@@ -115,7 +113,7 @@ def map_spec(
     reference: FieldReference,
     config: RoutePlanningConfig | None = None,
 ) -> MapSpec:
-    """Build a PGM extent with a lethal exterior ring around the field."""
+    """Build the finite PGM extent around the B-zone-only keepout mask."""
     settings = config or load_route_planning_config()
     bounds = _simulation_map_bounds(reference, settings)
     return MapSpec(
@@ -127,19 +125,11 @@ def map_spec(
     )
 
 
-def central_c_keepout(
-    reference: FieldReference,
-    config: RoutePlanningConfig | None = None,
-) -> Bounds2D:
-    """Return the shared C-zone core that routes must circumnavigate."""
-    return _central_c_keepout(reference, config)
-
-
 def keepout_bounds(
     reference: FieldReference,
     config: RoutePlanningConfig | None = None,
 ) -> tuple[Bounds2D, ...]:
-    """Return the physical field and permanent keepouts painted into the PGM."""
+    """Return the B-zone-only static keepouts painted into the PGM."""
     return _keepout_bounds(reference, config)
 
 

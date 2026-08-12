@@ -1,13 +1,13 @@
-schema_version: 7
+schema_version: 8
 name: shared_route_planning_constraints
 
 # This file is the shared tuning surface for the waypoint editor preflight
 # and the simulation keepout-map generator. sim_tune.sh projects these exact
 # dimensions into simulation Nav2. It is not a SLAM/localization map.
-# The physical car measured about 0.20 m at the proven 0.70 rad command.
-# Keep 0.22 m as the planning/preflight lower bound instead of using that
-# measurement limit directly.
-minimum_turning_radius_m: 0.22
+# The 0.189 m wheelbase and verified 0.70 rad steering cap give a geometric
+# lower bound of 0.2244 m. Keep 0.23 m for the planner/preflight floor so the
+# path remains feasible without relying on downstream steering saturation.
+minimum_turning_radius_m: 0.23
 
 # Gazebo has a separately constrained Ackermann model. This value is
 # synchronized only into the simulation Nav2 overlay; it remains independently
@@ -24,12 +24,6 @@ runtime_footprint:
   width_m: 0.13
   center_x_from_base_footprint_m: 0.0841
   padding_m: 0.03
-
-# The central C-zone core forces a loop, while retaining a traversable lane
-# around it. Values are measured inward from field_geometry.yaml's inner ring.
-c_zone_keepout:
-  horizontal_inset_m: 0.80
-  vertical_inset_m: 0.15
 
 preflight:
   grid_resolution_m: 0.10
@@ -54,10 +48,13 @@ simulation_keepout:
   # cells allowed the controller to track a path just outside the visible
   # field edge before the filter could react.
   map_resolution_m: 0.025
-  # The PGM extends beyond the playable field by this amount and paints that
-  # outer ring lethal. It prevents Nav2 from using unmodelled space around
-  # the field as a shortcut while leaving P at (0, 0) initially valid.
+  # Keep an image margin around the field without creating an artificial
+  # boundary wall. Only the B-zone forbidden areas are static keepouts.
   boundary_padding_m: 0.25
+  # KeepoutFilter runs after Nav2's regular inflation layer. Give the B-zone
+  # forbidden areas their own static clearance; no other prior-map wall is
+  # painted or expanded.
+  b_zone_inflation_m: 0.05
   # Cost preference around the simulation-only KeepoutFilter mask. This is
   # separate from the collision footprint: filters own their lethal cells.
   # A 0.05 m lidar-slice cone with a 0.30 m total inflation radius leaves a

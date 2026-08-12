@@ -106,11 +106,16 @@ class TestTargets(unittest.TestCase):
                 "os.environ", {"SMARTCAR_RDK_HOST": "operator@10.0.0.2"}):
             self.assertEqual(sync.resolve_rdk_host(), "operator@10.0.0.2")
 
-    def test_push_targets_src_and_config(self):
+    def test_push_targets_include_runtime_scripts(self):
         dsts = [t[1] for t in sync.push_targets()]
         self.assertTrue(any(d.endswith("/src/") for d in dsts))
         self.assertTrue(any(d.endswith("/config/") for d in dsts))
         self.assertTrue(all(d.startswith(sync.HOST) for d in dsts))
+        self.assertIn(f"{sync.HOST}:/root/nav_prepare.sh", dsts)
+        self.assertIn(f"{sync.HOST}:/root/nav_test.sh", dsts)
+        self.assertIn(f"{sync.HOST}:/root/nav_status.py", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/ros_cleanup.sh", dsts)
 
     def test_init_vendor_pulls_origincar_only(self):
         t = sync.init_vendor_targets()

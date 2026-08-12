@@ -7,44 +7,40 @@ local_costmap:
   local_costmap:
     ros__parameters:
       obstacle_layer:
-        observation_sources: "depth_points"
-        depth_points:
-          topic: /smartcar/depth/points
-          data_type: PointCloud2
-          # Keep the latest valid observation across one occasional depth-frame
-          # gap. The relay rejects delayed captures, so persistence never makes
-          # an old transport frame appear current.
-          observation_persistence: 1.0
+        observation_sources: "depth_scan"
+        depth_scan:
+          # pointcloud_to_laserscan projects Aurora's 0.14-0.16 m horizontal
+          # slice into a forward-only LaserScan. Empty beams publish +Inf, so
+          # ObstacleLayer gets explicit free-space rays after an obstacle is
+          # removed instead of retaining the prior PointCloud2 endpoint.
+          topic: /smartcar/depth/scan
+          data_type: LaserScan
+          observation_persistence: 0.0
           expected_update_rate: 1.0
           clearing: true
           marking: true
           obstacle_max_range: 3.0
           obstacle_min_range: 0.25
-          raytrace_max_range: 3.5
+          raytrace_max_range: 3.0
           raytrace_min_range: 0.25
-          min_obstacle_height: 0.05
-          # The Aurora's raised-field reflection is consistently above the
-          # vehicle collision envelope. Keep low cones and boards, but reject
-          # those overhead returns before they can occupy the 2D costmap.
-          max_obstacle_height: 0.30
+          inf_is_valid: true
 
 global_costmap:
   global_costmap:
     ros__parameters:
       obstacle_layer:
-        observation_sources: "depth_points"
-        depth_points:
-          topic: /smartcar/depth/points
-          data_type: PointCloud2
-          # Keep this timing contract identical to the local costmap.
-          observation_persistence: 1.0
+        observation_sources: "depth_scan"
+        depth_scan:
+          # Keep the forward free-space clearing contract identical to the
+          # local costmap.
+          topic: /smartcar/depth/scan
+          data_type: LaserScan
+          observation_persistence: 0.0
           expected_update_rate: 1.0
           clearing: true
           marking: true
           obstacle_max_range: 3.0
           obstacle_min_range: 0.25
-          raytrace_max_range: 3.5
+          raytrace_max_range: 3.0
           raytrace_min_range: 0.25
-          min_obstacle_height: 0.05
-          # Keep this vertical gate identical to the local costmap.
-          max_obstacle_height: 0.30
+          inf_is_valid: true

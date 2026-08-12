@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 
-SCHEMA_VERSION = 7
+SCHEMA_VERSION = 8
 CONFIG_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
 
 
@@ -28,12 +28,6 @@ except ModuleNotFoundError:  # pragma: no cover - source-only unit tests.
 
 class RoutePlanningConfigError(ValueError):
     """Raised when the shared route-planning YAML is invalid."""
-
-
-@dataclass(frozen=True)
-class CZoneKeepoutConfig:
-    horizontal_inset_m: float
-    vertical_inset_m: float
 
 
 @dataclass(frozen=True)
@@ -107,6 +101,7 @@ class PreflightConfig:
 class SimulationKeepoutConfig:
     map_resolution_m: float
     boundary_padding_m: float
+    b_zone_inflation_m: float
     costmap_inflation_radius_m: float
 
 
@@ -117,7 +112,6 @@ class RoutePlanningConfig:
     minimum_turning_radius_m: float
     simulation_minimum_turning_radius_m: float
     runtime_footprint: RuntimeFootprintConfig
-    c_zone_keepout: CZoneKeepoutConfig
     preflight: PreflightConfig
     simulation_keepout: SimulationKeepoutConfig
 
@@ -245,7 +239,6 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             "minimum_turning_radius_m",
             "simulation_minimum_turning_radius_m",
             "runtime_footprint",
-            "c_zone_keepout",
             "preflight",
             "simulation_keepout",
         },
@@ -258,12 +251,6 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
     if not isinstance(root["name"], str) or not root["name"].strip():
         raise RoutePlanningConfigError("route planning name must be a non-empty string")
 
-    c_zone = _mapping(root["c_zone_keepout"], "c_zone_keepout")
-    _exact_fields(
-        c_zone,
-        {"horizontal_inset_m", "vertical_inset_m"},
-        "c_zone_keepout",
-    )
     footprint = _mapping(root["runtime_footprint"], "runtime_footprint")
     _exact_fields(
         footprint,
@@ -295,6 +282,7 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
         {
             "map_resolution_m",
             "boundary_padding_m",
+            "b_zone_inflation_m",
             "costmap_inflation_radius_m",
         },
         "simulation_keepout",
@@ -321,16 +309,6 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             ),
             padding_m=_nonnegative_number(
                 footprint["padding_m"], "runtime_footprint.padding_m"
-            ),
-        ),
-        c_zone_keepout=CZoneKeepoutConfig(
-            horizontal_inset_m=_nonnegative_number(
-                c_zone["horizontal_inset_m"],
-                "c_zone_keepout.horizontal_inset_m",
-            ),
-            vertical_inset_m=_nonnegative_number(
-                c_zone["vertical_inset_m"],
-                "c_zone_keepout.vertical_inset_m",
             ),
         ),
         preflight=PreflightConfig(
@@ -384,6 +362,10 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             boundary_padding_m=_positive_number(
                 simulation["boundary_padding_m"],
                 "simulation_keepout.boundary_padding_m",
+            ),
+            b_zone_inflation_m=_positive_number(
+                simulation["b_zone_inflation_m"],
+                "simulation_keepout.b_zone_inflation_m",
             ),
             costmap_inflation_radius_m=_positive_number(
                 simulation["costmap_inflation_radius_m"],
