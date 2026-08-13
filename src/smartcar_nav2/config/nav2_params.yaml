@@ -115,6 +115,8 @@ controller_server:
       stateful: false
     FollowPath:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
+      # Global nominal speed. Nav2's curvature and live-costmap regulation
+      # reduce it automatically where the path or obstacle costs require.
       desired_linear_vel: 0.60
       # Keep the effective RPP tracking lookahead fixed at 0.50 m. Velocity
       # scaling remains enabled, but identical bounds prevent it from changing

@@ -11,6 +11,7 @@ SOURCE_ENV=/root/source_env.sh
 WORKSPACE=/home/sunrise/ros2_ws
 WP="$WORKSPACE/src/smartcar_nav2/config/waypoints/nav_only.yaml"
 STATUS_TOOL=/root/nav_status.py
+BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"
 STATE_DIR=/tmp/smartcar_nav
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
 LOG_DIR="$RUNTIME_DIR/smartcar_nav"
@@ -27,6 +28,38 @@ set +u
 source "$SOURCE_ENV"
 set -u
 cd "$WORKSPACE"
+
+source_fingerprint() {
+  find "$WORKSPACE/src" \
+    -type f \
+    ! -path '*/.git/*' \
+    ! -path '*/__pycache__/*' \
+    ! -name '*.pyc' \
+    ! -name '*.bak' \
+    ! -name '*.orig' \
+    -print0 \
+    | sort -z \
+    | xargs -0r sha256sum \
+    | sha256sum \
+    | awk '{print $1}'
+}
+
+require_prepared_workspace() {
+  local prepared current
+  if [[ ! -r "$BUILD_FINGERPRINT" ]]; then
+    echo "missing $BUILD_FINGERPRINT; run /root/nav_prepare.sh"
+    exit 2
+  fi
+  prepared=$(tr -d '[:space:]' < "$BUILD_FINGERPRINT")
+  current=$(source_fingerprint)
+  if [[ -z "$prepared" || "$prepared" != "$current" ]]; then
+    echo "RDK source differs from the prepared build; run /root/nav_prepare.sh"
+    exit 2
+  fi
+}
+
+# Do not launch against stale install artifacts after a source-only sync.
+require_prepared_workspace
 
 # ---- 参数解析 ----
 GO=false
@@ -117,8 +150,8 @@ start_rviz() {
   echo "  ✓ RViz PID: $RVIZ_PID"
 }
 
-# nav_prepare.sh owns cleanup and build. This entry only starts the prepared
-# stack, checks it, and optionally resets then starts the route.
+# nav_prepare.sh owns cleanup and build. This entry verifies that preparation,
+# then starts the prepared stack, checks it, and optionally starts the route.
 test -x "$STATUS_TOOL" || {
   echo "missing $STATUS_TOOL; run /root/nav_prepare.sh"
   exit 2

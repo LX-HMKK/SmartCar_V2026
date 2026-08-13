@@ -93,6 +93,8 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
 ```
 
+`nav_test.sh` 还会校验当前 `src/` 指纹是否与 `nav_prepare.sh` 写入的准备指纹一致。源码同步后未重新准备时，它会拒绝启动，防止旧 `install/` 产物掩盖当前代码。
+
 不带 `--go` 时只进入急停锁存的就绪状态。`--go` 在本次明确运动授权、物理急停可用且车辆已在 P 点朝 `+X` 摆位后，健康检查通过即按“急停锁存复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序发车。`--wheel-only` 只用于定位对照。`--c-zone-direction=clockwise` 在启动时仅内存镜像已确认的 C 区约束；省略时默认 `counterclockwise`，不写入 YAML，也不在运行中切换。`ros_cleanup.sh` 先结束 `nav_test.sh` 记录的导航和 RViz PID，再清理已知导航残留；它不会使用宽泛进程匹配或清理航点编辑器。任何运动仍须另行取得该次明确授权。
 
 发车前必须人工将车辆放在 P 原点、车头朝 `+X`；软件 `reset` 不能替代物理复位。路线所有段均由

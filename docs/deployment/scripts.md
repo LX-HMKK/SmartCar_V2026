@@ -126,6 +126,10 @@ Aurora 初始化稳定；核心状态正常后才启动 RViz。普通启动保�
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 ```
 
+启动前会校验 `src/` 与 `.smartcar_nav_prepare_fingerprint` 一致；若刚执行过
+`sync_to_rdk.py push` 而未运行准备构建，它会拒绝启动，避免误用旧的 `install/` 产物。执行
+`bash /root/nav_prepare.sh`，或使用 `bash scripts/nav_deploy.sh` 完成同步和准备后再启动。
+
 它会启动实体 Aurora 相机，因此需要本次实体相机授权。以下两个命令还会在状态检查后复位、解除
 软件急停并发车，必须先取得本次非零运动授权，确认物理急停可用，并将车人工放在 P 原点、车头朝
 `+X`：

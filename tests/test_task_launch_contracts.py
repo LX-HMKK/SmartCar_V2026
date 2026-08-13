@@ -362,6 +362,20 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertFalse(parameters["use_rotate_to_heading"])
         self.assertFalse(parameters["allow_reversing"])
 
+    def test_physical_navigation_speed_cap_is_consistent(self):
+        parameters = yaml.safe_load(
+            (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        )
+        controller = parameters["controller_server"]["ros__parameters"]
+        smoother = parameters["velocity_smoother"]["ros__parameters"]
+        safety = yaml.safe_load((
+            ROOT / "src" / "smartcar_safety" / "config" / "safety.yaml"
+        ).read_text(encoding="utf-8"))["safety_node"]["ros__parameters"]
+
+        self.assertEqual(float(controller["FollowPath"]["desired_linear_vel"]), 0.60)
+        self.assertEqual(float(smoother["max_velocity"][0]), 0.60)
+        self.assertEqual(float(safety["max_linear_speed_mps"]), 0.60)
+
     def test_collision_failure_immediately_enters_native_back_up_recovery(self):
         controller = yaml.safe_load(
             (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
@@ -545,6 +559,9 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("safety_emergency_stop_on_start:=true", source)
         self.assertNotIn("safety_emergency_stop_on_start:=false", source)
         self.assertIn('STATUS_TOOL=/root/nav_status.py', source)
+        self.assertIn('BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"', source)
+        self.assertIn('require_prepared_workspace', source)
+        self.assertIn('RDK source differs from the prepared build', source)
         self.assertIn('STATUS_ARGS=(--timeout 60)', source)
         self.assertIn('hold_started_stack', source)
         self.assertIn('nohup ros2 launch smartcar_bringup', source)
@@ -563,7 +580,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertLess(reset, release)
         self.assertLess(release, start)
         self.assertIn('banner "等待人工发车"', source)
-        self.assertNotIn("source_fingerprint", source)
+        self.assertIn("source_fingerprint", source)
         self.assertNotIn("nav2_params_fixed.yaml", source)
         self.assertNotIn("ros_cleanup", source)
 
@@ -588,6 +605,11 @@ class TaskLaunchContractTests(unittest.TestCase):
             prepare_source,
         )
         self.assertIn('find "$WORKSPACE/src"', prepare_source)
+        self.assertIn('find "$WORKSPACE/src"', source)
+        self.assertLess(
+            source.index("require_prepared_workspace"),
+            source.index('nohup ros2 launch smartcar_bringup'),
+        )
         self.assertIn("python3 \"$STATUS_TOOL\"", source)
         self.assertIn("startup health did not become ready", source)
         self.assertLess(
