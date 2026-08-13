@@ -11,10 +11,15 @@ namespace smartcar_safety {
 using ActionUuid = std::array<std::uint8_t, 16>;
 using TwistComponents = std::array<double, 6>;
 
+// Mission recovery may only use this native Nav2 BackUp speed. Configurations
+// may lower it, but can never raise the command boundary above this cap.
+constexpr double kForwardRecoveryMaxReverseSpeed{0.15};
+
 enum class MotionDirection : std::uint8_t {
   Stop = 0,
   Forward = 1,
   Reverse = 2,
+  ForwardRecovery = 3,
 };
 
 enum class DirectionGuardPhase : std::uint8_t {
@@ -25,8 +30,9 @@ enum class DirectionGuardPhase : std::uint8_t {
 };
 
 struct DirectionGuardConfig {
-  double candidate_timeout_sec{0.15};
-  double permit_timeout_sec{0.25};
+  double candidate_timeout_sec{0.40};
+  // Zero disables lease-expiry as an in-motion stop condition.
+  double permit_timeout_sec{0.0};
   double prepare_timeout_sec{5.0};
   double raw_odom_timeout_sec{0.25};
   double stop_settle_sec{0.25};
@@ -34,6 +40,8 @@ struct DirectionGuardConfig {
   double stop_angular_speed_threshold{0.05};
   double zero_epsilon{1.0e-6};
   double direction_epsilon{1.0e-4};
+  double forward_recovery_max_reverse_speed{
+      kForwardRecoveryMaxReverseSpeed};
 };
 
 struct LeaseIdentity {
@@ -84,6 +92,8 @@ private:
   bool candidate_has_only_supported_axes(
       const TwistComponents &candidate) const;
   bool direction_is_allowed(double linear_x) const;
+  std::optional<std::string> forward_recovery_command_warning(
+      const TwistComponents &candidate) const;
   bool raw_odom_ready(double now_sec) const;
   bool prepared_expired(double now_sec) const;
   bool active_expired(double now_sec);

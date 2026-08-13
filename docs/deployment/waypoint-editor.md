@@ -26,3 +26,13 @@ ros2 run smartcar_tools waypoint_viz --ros-args -p waypoints_file:=<yaml>
 
 编辑器和离线预检不产生 Nav2 路径，也不授权实车运动。运行时路径只能由 Nav2 根据实时 costmap
 规划；禁止连接器、手工弧线、路径后处理、控制器补偿和航点/障碍专用阈值。
+
+`through_ids` 中的 `via` 点只在规划段开始时传给 Nav2 的 `ComputePathThroughPoses` 作为有序路径
+规划约束，随后只用一次 `FollowPath` 跟踪已生成的整段路径。它们不构成到达判定或停车点。每个规划段
+只能在非 `via` 的 `end_id` 完成，`FollowPath` 的到达检测只针对这个段末端。
+
+每个导航动作唯一的失败恢复例外是路径跟踪失败或不可达时的一次原生 Nav2 直线 `BackUp`：距离 `0.20 m`、
+速度上限 `0.15 m/s`，然后以实时 costmap 重算当前动作一次。对有 `via` 约束的动作，成功后才由
+`RemovePassedGoals` 清除已通过的规划约束；该节点不参与到达、停车、任务完成或航点判定。不得连续恢复、
+反向规划或重投已通过的 `via` 点。方向门若收到超限或带转向的回退命令，只拒绝该命令并记录警告，保持前进
+任务许可，不锁存停车。

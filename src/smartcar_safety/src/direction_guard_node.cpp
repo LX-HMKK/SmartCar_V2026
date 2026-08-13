@@ -81,8 +81,8 @@ bool odom_twist_is_finite(const geometry_msgs::msg::Twist &message) {
 class DirectionGuardNode : public rclcpp::Node {
 public:
   DirectionGuardNode() : Node("direction_guard") {
-    declare_parameter("candidate_timeout_sec", 0.15);
-    declare_parameter("permit_timeout_sec", 0.25);
+    declare_parameter("candidate_timeout_sec", 0.40);
+    declare_parameter("permit_timeout_sec", 0.0);
     declare_parameter("prepare_timeout_sec", 5.0);
     declare_parameter("raw_odom_timeout_sec", 0.25);
     declare_parameter("stop_settle_sec", 0.25);
@@ -90,6 +90,8 @@ public:
     declare_parameter("stop_angular_speed_threshold", 0.05);
     declare_parameter("zero_epsilon", 1.0e-6);
     declare_parameter("direction_epsilon", 1.0e-4);
+    declare_parameter("forward_recovery_max_reverse_speed",
+                      smartcar_safety::kForwardRecoveryMaxReverseSpeed);
     declare_parameter("publish_frequency_hz", 20.0);
 
     DirectionGuardConfig config;
@@ -108,6 +110,8 @@ public:
         get_parameter("stop_angular_speed_threshold").as_double();
     config.zero_epsilon = get_parameter("zero_epsilon").as_double();
     config.direction_epsilon = get_parameter("direction_epsilon").as_double();
+    config.forward_recovery_max_reverse_speed =
+        get_parameter("forward_recovery_max_reverse_speed").as_double();
     guard_ = std::make_unique<DirectionGuard>(config, make_boot_epoch());
     guard_->stop(now_sec());
 
@@ -289,6 +293,16 @@ private:
     std::lock_guard<std::mutex> lock(status_mutex_);
     if (last_status_.has_value() && last_status_.value() == status) {
       return;
+    }
+    if (status.rfind("fault_", 0) == 0) {
+      RCLCPP_ERROR(get_logger(),
+                   "direction guard latched %s; motion remains blocked",
+                   status.c_str());
+    } else if (status.rfind("warning_", 0) == 0) {
+      RCLCPP_WARN(get_logger(),
+                  "direction guard rejected recovery command: %s; "
+                  "forward mission lease remains active",
+                  status.c_str());
     }
     std_msgs::msg::String message;
     message.data = status;

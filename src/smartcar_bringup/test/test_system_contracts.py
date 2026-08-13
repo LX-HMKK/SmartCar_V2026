@@ -75,6 +75,7 @@ class SystemContractTests(unittest.TestCase):
             "qr_handoff_test_mode": "false",
             "use_sim_time": "false",
             "nav_autostart": "true",
+            "nav2_lifecycle_manager_delay_sec": "20.0",
             "safety_emergency_stop_on_start": "false",
         }
         for name, expected in expected_defaults.items():
@@ -99,6 +100,9 @@ class SystemContractTests(unittest.TestCase):
         )
         self.assertIn(
             '"autostart": LaunchConfiguration("nav_autostart")', source)
+        self.assertIn(
+            '"lifecycle_manager_delay_sec": LaunchConfiguration(', source)
+        self.assertIn('"nav2_lifecycle_manager_delay_sec")', source)
         self.assertNotIn('"use_waypoint_follower"', source)
         self.assertIn(
             '"autostart_mission": LaunchConfiguration("autostart_mission")',

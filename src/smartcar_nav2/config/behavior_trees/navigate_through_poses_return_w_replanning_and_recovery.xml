@@ -1,20 +1,14 @@
-<!-- Native Nav2 planning and tracking through points to P. -->
+<!-- One native BackUp recovery may replan the remaining constraint path. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="5" name="NavigateReturnRecovery">
-      <PipelineSequence name="NavigateReturnWithReplanning">
-        <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
-          <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
-          <ClearEntireCostmap name="ClearGlobalCostmap-ReturnContext" service_name="global_costmap/clear_entirely_global_costmap"/>
-        </RecoveryNode>
-        <RecoveryNode number_of_retries="1" name="FollowReturnPath">
-          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="return_goal_checker"/>
-          <ClearEntireCostmap name="ClearLocalCostmap-ReturnContext" service_name="local_costmap/clear_entirely_local_costmap"/>
-        </RecoveryNode>
-      </PipelineSequence>
-      <Sequence name="ClearReturnCostmapsRecovery">
-        <ClearEntireCostmap name="ClearLocalCostmap-ReturnSubtree" service_name="local_costmap/clear_entirely_local_costmap"/>
-        <ClearEntireCostmap name="ClearGlobalCostmap-ReturnSubtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+    <RecoveryNode number_of_retries="1" name="ReplanOnceAfterNativeBackUp">
+      <Sequence name="PlanThenFollowReturnThroughPath">
+        <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+        <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="return_goal_checker"/>
+      </Sequence>
+      <Sequence name="NativeBackUpAndDiscardPassedPlanningConstraints">
+        <BackUp backup_dist="0.20" backup_speed="0.15" time_allowance="4.0"/>
+        <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
       </Sequence>
     </RecoveryNode>
   </BehaviorTree>

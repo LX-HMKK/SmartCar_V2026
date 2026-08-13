@@ -1,20 +1,19 @@
-<!-- Native Nav2 planning and tracking through the explicit route points. -->
+<!--
+  Plan one segment through constraints and track it. On one navigation failure,
+  run the native bounded BackUp, discard only passed planning constraints, and
+  recompute the remaining segment once. RemovePassedGoals never completes a
+  mission waypoint; FollowPath still owns endpoint arrival.
+-->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="5" name="NavigateRecovery">
-      <PipelineSequence name="NavigateWithReplanning">
-        <RecoveryNode number_of_retries="1" name="ComputePathThroughPoses">
-          <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
-          <ClearEntireCostmap name="ClearGlobalCostmap-Context" service_name="global_costmap/clear_entirely_global_costmap"/>
-        </RecoveryNode>
-        <RecoveryNode number_of_retries="1" name="FollowPath">
-          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="goal_checker"/>
-          <ClearEntireCostmap name="ClearLocalCostmap-Context" service_name="local_costmap/clear_entirely_local_costmap"/>
-        </RecoveryNode>
-      </PipelineSequence>
-      <Sequence name="ClearCostmapsRecovery">
-        <ClearEntireCostmap name="ClearLocalCostmap-Subtree" service_name="local_costmap/clear_entirely_local_costmap"/>
-        <ClearEntireCostmap name="ClearGlobalCostmap-Subtree" service_name="global_costmap/clear_entirely_global_costmap"/>
+    <RecoveryNode number_of_retries="1" name="ReplanOnceAfterNativeBackUp">
+      <Sequence name="PlanThenFollowThroughPath">
+        <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
+        <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="goal_checker"/>
+      </Sequence>
+      <Sequence name="NativeBackUpAndDiscardPassedPlanningConstraints">
+        <BackUp backup_dist="0.20" backup_speed="0.15" time_allowance="4.0"/>
+        <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
       </Sequence>
     </RecoveryNode>
   </BehaviorTree>

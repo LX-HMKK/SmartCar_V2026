@@ -92,15 +92,9 @@ echo "[tune] Local source: ${source_root}"
 echo "[tune] Runtime nav_only.yaml: ${waypoints_file}"
 echo "[tune] Depth obstacle mode: ${use_depth_obstacles}"
 echo "[tune] Runtime nav_only.yaml SHA256: $(file_sha256 "$waypoints_file")"
-echo "[tune] Regenerating simulation keepout map from shared route_planning.yaml..."
-PYTHONPATH="${source_root}/smartcar_tools${PYTHONPATH:+:${PYTHONPATH}}" \
-    python3 "${source_root}/smartcar_sim/scripts/generate_field_map.py" \
-        --geometry "${source_root}/smartcar_tools/config/routes/field_geometry.yaml" \
-        --route-planning-config "${source_root}/smartcar_tools/config/routes/route_planning.yaml" \
-        --maps-dir "${source_root}/smartcar_sim/maps"
 python3 "${source_root}/smartcar_sim/scripts/sync_route_planning.py" \
     --route-planning-config "${source_root}/smartcar_tools/config/routes/route_planning.yaml" \
-    --keepout-overlay "${source_root}/smartcar_sim/config/nav2_keepout_filter.yaml"
+    --simulation-overlay "${source_root}/smartcar_sim/config/nav2_simulation.yaml"
 
 source "${workspace}/src/smartcar_sim/scripts/sim_env.sh"
 cleanup_script="${workspace}/src/smartcar_sim/scripts/sim_cleanup.sh"
@@ -148,8 +142,6 @@ for run_index in $(seq 1 "$loop_count"); do
         "$snapshot_dir/"
     cp "$waypoints_file" "$snapshot_dir/nav_only.yaml"
     cp "${source_root}/smartcar_tools/config/routes/route_planning.yaml" "$snapshot_dir/"
-    cp "${source_root}/smartcar_sim/maps/field_map.pgm" "$snapshot_dir/"
-    cp "${source_root}/smartcar_sim/maps/field_map.yaml" "$snapshot_dir/"
     cp "${source_root}/smartcar_nav2/config/behavior_trees/"*.xml "$snapshot_dir/"
 
     if [ "$headless" = true ]; then

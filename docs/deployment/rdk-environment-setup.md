@@ -8,18 +8,19 @@ RDK、启动实体相机、解除急停、发布非零速度或进行实车运�
 | 网络 | SSH 目标 | 说明 |
 | --- | --- | --- |
 | 有线 | `root@192.168.128.10` | 同步工具的默认目标。 |
-| 无线 | `root@172.16.24.164` | 当前 DHCP 地址，无固定 IP；变更后更新环境变量。 |
+| 无线 | `root@172.16.24.170` | 当前 DHCP 地址，无固定 IP；变更后更新环境变量。 |
 
 ```bash
 # 有线
 ssh root@192.168.128.10
 
 # 无线：当前 DHCP 地址；变更后替换该 IP
-export SMARTCAR_RDK_HOST=root@172.16.24.164
+export SMARTCAR_RDK_HOST=root@172.16.24.170
 ssh "$SMARTCAR_RDK_HOST"
 ```
 
-RDK 工作空间为 `/root/ros2_ws`，环境入口为 `~/source_env.sh`。进入 RDK 后先执行：
+RDK 工作空间为 `/home/sunrise/ros2_ws`，环境入口为 `~/source_env.sh`。迁移前的
+`/root/ros2_ws` 仅保留作回退副本，不再作为部署或运行目标。进入 RDK 后先执行：
 
 ```bash
 source ~/source_env.sh
@@ -50,7 +51,7 @@ python3 scripts/sync_to_rdk.py pull-waypoints
 
 ```bash
 source ~/source_env.sh
-cd /root/ros2_ws
+cd /home/sunrise/ros2_ws
 colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 ```
 
@@ -65,25 +66,33 @@ colcon build --symlink-install --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 cd /home/zyh/SmartCar_V2026
 bash scripts/nav_deploy.sh
 ssh root@192.168.128.10
-bash /root/nav_test.sh
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 ```
 
 无线时将上例的 SSH 目标替换为 `$SMARTCAR_RDK_HOST`。`nav_deploy.sh` 会在本机推送
 `src/config` 和运行脚本、先备份 RDK 的 `src/config`，再远程执行 `nav_prepare.sh` 的定向清理和
-7 包增量构建。它不启动相机或车辆。`nav_test.sh` 只启动系统和 RViz，并固定使用
+依赖闭包增量构建。它不启动相机或车辆。`nav_test.sh` 只启动系统和 RViz，并固定使用
 `nav_only.yaml`，同时显式设置：
 
 ```text
 autostart_mission:=false
 safety_emergency_stop_on_start:=true
 use_camera:=false
+camera_driver:=aurora
+use_depth_camera:=true
 use_vision:=false
 ```
 
-`nav_test.sh` 不会同步、清理或构建。它会并行启动 RViz，并用单个状态进程汇总 Nav2 四个 lifecycle、
-task、急停、depth points/scan 和两张 costmap；需要完整静态预检时传入 `--verify`。它只让系统进入急停锁存的就绪状态，不自动开始任务、不解除急停，也不改变运动门禁。不要
-执行会自动解除急停或自动发车的历史脚本；不得把 `--p-to-a`、`--p-to-c1`、受看护前缀或短距离
-选项当作默认启动方式，任何运动均须另行取得该次明确授权。
+`nav_test.sh` 不会同步、清理或构建。它固定启动 Aurora 深度避障和 RViz，并用单个状态进程检查 Nav2 lifecycle、task、急停、depth points/scan 与两张 costmap。运行入口只有：
+
+```bash
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --wheel-only
+bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
+```
+
+不带 `--go` 时只进入急停锁存的就绪状态。`--go` 在本次明确运动授权、物理急停可用且车辆已在 P 点朝 `+X` 摆位后，健康检查通过即按“急停锁存复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序发车。`--wheel-only` 只用于定位对照。`ros_cleanup.sh` 先结束 `nav_test.sh` 记录的导航和 RViz PID，再清理已知导航残留；它不会使用宽泛进程匹配或清理航点编辑器。任何运动仍须另行取得该次明确授权。
 
 发车前必须人工将车辆放在 P 原点、车头朝 `+X`；软件 `reset` 不能替代物理复位。路线所有段均由
 Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接路线、绕障规则或专用导航阈值。
@@ -92,7 +101,7 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 
 | 项目 | 当前值 |
 | --- | --- |
-| 路线 | 全正向 `P -> A -> via_1 -> via_2 -> via_3 -> C1 -> via_4 -> via_5 -> P` |
+| 路线 | 全正向 `P -> A -> via_1 -> via_2 -> via_3 -> via_6 -> C1 -> via_4 -> via_5 -> via_7 -> P` |
 | 路线文件 | `default_waypoints.yaml` 与 `nav_only.yaml` 完全共用航点 ID、顺序、坐标、姿态、方向、profile 和 `planning_segments`；仅 A/C1 任务类型不同。 |
 | 路线状态 | 两份路线均为 `calibrated: false`。当前全正向纯导航路线已通过 LiDAR 无障碍现场基础通行性验证；深度相机的动态障碍感知仍需单独验证。 |
 | 任务 profile | A、C1 为 `precise`；P 为 `standard`。 |
@@ -111,7 +120,7 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 | 转向标定 | scale `1.0`，offset `0.0 rad`，最大已标定命令 `0.70 rad` |
 
 普通 launch 的 `emergency_stop_on_start` 默认是 `false`，不能作为现场启动依据；受保护的
-`/root/nav_test.sh` 会覆盖为 `true`。全部运动命令必须经过：
+`/home/sunrise/ros2_ws/scripts/nav_test.sh` 会覆盖为 `true`。全部运动命令必须经过：
 
 ```text
 velocity_smoother -> direction_guard -> smartcar_safety -> /ackermann_cmd

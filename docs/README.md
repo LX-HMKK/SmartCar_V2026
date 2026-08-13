@@ -8,9 +8,10 @@
 - [航点编辑与授权](deployment/waypoint-editor.md)：航点展示、授权与双 YAML 同步规则。
 - [本机 Gazebo 仿真](deployment/local-simulation.md)：纯导航仿真与结果验证。
 - [RDK 部署与现场流程](deployment/rdk-environment-setup.md)：同步、构建、急停和实体设备检查。
+- [`scripts/` 使用手册](deployment/scripts.md)：本机仿真、RDK 同步、构建、启动与清理脚本。
 - [场地与诊断工具](reference/field-tools.md)：场地参考、航点编辑和独立诊断入口。
 
-当前路线始终为全正向 P→A→`via_1`→`via_2`→`via_3`→C1→`via_4`→`via_5`→P。
+当前路线始终为全正向 P→A→`via_1`→`via_2`→`via_3`→`via_6`→C1→`via_4`→`via_5`→`via_7`→P。
 实车 `default_waypoints.yaml` 与仿真 `nav_only.yaml` 共享全部几何和分段，仅 A/C1 的任务类型不同。
 任何航点修改都必须先在 RViz 展示并取得用户同意。
 

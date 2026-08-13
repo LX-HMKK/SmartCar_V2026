@@ -1,8 +1,8 @@
-"""Versioned tuning shared by route preflight and field keepout rendering.
+"""Versioned tuning shared by route preflight and simulation Nav2.
 
 The waypoint editor deliberately does not parse Nav2's large parameter file.
 Instead this small document owns the geometry and motion constraints which both
-the editor's local preflight and the shared Nav2 keepout mask can represent.
+the editor's local preflight and the simulation Nav2 overlay can represent.
 """
 
 from __future__ import annotations
@@ -16,7 +16,7 @@ from typing import Any, Mapping
 import yaml
 
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 CONFIG_RELATIVE_PATH = Path("config") / "routes" / "route_planning.yaml"
 
 
@@ -98,11 +98,8 @@ class PreflightConfig:
 
 
 @dataclass(frozen=True)
-class SimulationKeepoutConfig:
-    map_resolution_m: float
-    boundary_padding_m: float
-    b_zone_inflation_m: float
-    costmap_inflation_radius_m: float
+class SimulationCostmapConfig:
+    inflation_radius_m: float
 
 
 @dataclass(frozen=True)
@@ -113,7 +110,7 @@ class RoutePlanningConfig:
     simulation_minimum_turning_radius_m: float
     runtime_footprint: RuntimeFootprintConfig
     preflight: PreflightConfig
-    simulation_keepout: SimulationKeepoutConfig
+    simulation_costmap: SimulationCostmapConfig
 
 
 def _mapping(value: Any, label: str) -> Mapping[str, Any]:
@@ -240,7 +237,7 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
             "simulation_minimum_turning_radius_m",
             "runtime_footprint",
             "preflight",
-            "simulation_keepout",
+            "simulation_costmap",
         },
         "route planning document",
     )
@@ -276,16 +273,11 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
         },
         "preflight",
     )
-    simulation = _mapping(root["simulation_keepout"], "simulation_keepout")
+    simulation = _mapping(root["simulation_costmap"], "simulation_costmap")
     _exact_fields(
         simulation,
-        {
-            "map_resolution_m",
-            "boundary_padding_m",
-            "b_zone_inflation_m",
-            "costmap_inflation_radius_m",
-        },
-        "simulation_keepout",
+        {"inflation_radius_m"},
+        "simulation_costmap",
     )
 
     result = RoutePlanningConfig(
@@ -354,22 +346,10 @@ def load_route_planning_config(path: str | Path | None = None) -> RoutePlanningC
                 "preflight.max_expansions_per_leg",
             ),
         ),
-        simulation_keepout=SimulationKeepoutConfig(
-            map_resolution_m=_positive_number(
-                simulation["map_resolution_m"],
-                "simulation_keepout.map_resolution_m",
-            ),
-            boundary_padding_m=_positive_number(
-                simulation["boundary_padding_m"],
-                "simulation_keepout.boundary_padding_m",
-            ),
-            b_zone_inflation_m=_positive_number(
-                simulation["b_zone_inflation_m"],
-                "simulation_keepout.b_zone_inflation_m",
-            ),
-            costmap_inflation_radius_m=_positive_number(
-                simulation["costmap_inflation_radius_m"],
-                "simulation_keepout.costmap_inflation_radius_m",
+        simulation_costmap=SimulationCostmapConfig(
+            inflation_radius_m=_positive_number(
+                simulation["inflation_radius_m"],
+                "simulation_costmap.inflation_radius_m",
             ),
         ),
     )

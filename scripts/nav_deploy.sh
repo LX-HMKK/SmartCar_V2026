@@ -1,6 +1,6 @@
 #!/bin/bash
 # Deploy source/config plus the runtime scripts, then run the separate RDK
-# cleanup and seven-package build. This never starts a camera or motion.
+# cleanup and dependency-closure build. This never starts a camera or motion.
 set -euo pipefail
 
 REPO_ROOT=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
@@ -25,7 +25,7 @@ if $DRY_RUN; then
 fi
 
 backup=$(ssh -o BatchMode=yes -o ConnectTimeout=8 "$TARGET" \
-  'set -e; mkdir -p /root/nav_backups; path=/root/nav_backups/pre_nav_deploy_$(date +%Y%m%d_%H%M%S).tar.gz; tar -C /root/ros2_ws -czf "$path" src config; printf "%s" "$path"')
+  'set -e; mkdir -p /root/nav_backups; path=/root/nav_backups/pre_nav_deploy_$(date +%Y%m%d_%H%M%S).tar.gz; tar -C /home/sunrise/ros2_ws -czf "$path" src config; printf "%s" "$path"')
 echo "RDK backup: $backup"
 SMARTCAR_RDK_HOST="$TARGET" python3 scripts/sync_to_rdk.py push
 ssh -o BatchMode=yes -o ConnectTimeout=8 "$TARGET" 'bash /root/nav_prepare.sh'

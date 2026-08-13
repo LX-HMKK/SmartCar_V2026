@@ -16,19 +16,6 @@ Visualization Manager:
       Color: 125; 125; 125
       Enabled: true
 
-    # ── Prior-map keepout mask ──
-    - Class: rviz_default_plugins/Map
-      Name: KeepoutMask
-      Topic:
-        Depth: 5
-        Durability Policy: Transient Local
-        Reliability Policy: Reliable
-        Value: /keepout_filter_mask
-      Color Scheme: costmap
-      Alpha: 0.7
-      Draw Behind: false
-      Enabled: true
-
     # ── Robot Model ──
     - Class: rviz_default_plugins/RobotModel
       Name: RobotModel

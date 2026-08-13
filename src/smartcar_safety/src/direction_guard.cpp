@@ -36,7 +36,7 @@ DirectionGuard::DirectionGuard(DirectionGuardConfig config,
     : config_(std::move(config)), boot_epoch_(boot_epoch) {
   require_positive_finite("candidate_timeout_sec",
                           config_.candidate_timeout_sec);
-  require_positive_finite("permit_timeout_sec", config_.permit_timeout_sec);
+  require_nonnegative_finite("permit_timeout_sec", config_.permit_timeout_sec);
   require_positive_finite("prepare_timeout_sec", config_.prepare_timeout_sec);
   require_positive_finite("raw_odom_timeout_sec",
                           config_.raw_odom_timeout_sec);
@@ -48,6 +48,13 @@ DirectionGuard::DirectionGuard(DirectionGuardConfig config,
   require_nonnegative_finite("zero_epsilon", config_.zero_epsilon);
   require_nonnegative_finite("direction_epsilon",
                              config_.direction_epsilon);
+  require_positive_finite("forward_recovery_max_reverse_speed",
+                          config_.forward_recovery_max_reverse_speed);
+  if (config_.forward_recovery_max_reverse_speed >
+      kForwardRecoveryMaxReverseSpeed) {
+    throw std::invalid_argument(
+        "forward_recovery_max_reverse_speed exceeds native BackUp cap");
+  }
   if (boot_epoch_ == 0) {
     throw std::invalid_argument("boot_epoch must be nonzero");
   }
@@ -74,7 +81,8 @@ PrepareMotionResult DirectionGuard::prepare(MotionDirection direction,
     return result;
   }
   if (direction != MotionDirection::Forward &&
-      direction != MotionDirection::Reverse) {
+      direction != MotionDirection::Reverse &&
+      direction != MotionDirection::ForwardRecovery) {
     result.status = "direction_invalid";
     return result;
   }
@@ -110,8 +118,11 @@ PrepareMotionResult DirectionGuard::prepare(MotionDirection direction,
   activated_at_.reset();
   last_permit_at_.reset();
   active_candidate_seen_ = false;
-  status_ = direction == MotionDirection::Forward ? "prepared_forward"
-                                                  : "prepared_reverse";
+  status_ = direction == MotionDirection::Forward
+                ? "prepared_forward"
+                : direction == MotionDirection::ForwardRecovery
+                      ? "prepared_forward_recovery"
+                      : "prepared_reverse";
 
   result.success = true;
   result.status = status_;
@@ -160,8 +171,11 @@ GuardOperationResult DirectionGuard::activate(const LeaseIdentity &identity,
     last_candidate_.reset();
     last_candidate_at_.reset();
   }
-  status_ = direction_ == MotionDirection::Forward ? "active_forward"
-                                                   : "active_reverse";
+  status_ = direction_ == MotionDirection::Forward
+                ? "active_forward"
+                : direction_ == MotionDirection::ForwardRecovery
+                      ? "active_forward_recovery"
+                      : "active_reverse";
   return {true, status_};
 }
 
@@ -234,12 +248,24 @@ TwistComponents DirectionGuard::on_candidate(const TwistComponents &candidate,
     latch_fault("fault_unsupported_twist");
     return zero_command();
   }
+  if (const auto warning = forward_recovery_command_warning(candidate);
+      warning.has_value()) {
+    // Reject only this malformed BackUp sample. The enclosing forward lease
+    // stays active so Nav2 can emit its next valid command.
+    status_ = warning.value();
+    last_candidate_ = zero_command();
+    active_candidate_seen_ = false;
+    return zero_command();
+  }
   if (!direction_is_allowed(candidate[0])) {
     latch_fault("fault_wrong_direction");
     return zero_command();
   }
   if (phase_ != DirectionGuardPhase::Active) {
     return zero_command();
+  }
+  if (status_.rfind("warning_", 0) == 0) {
+    status_ = "active_forward_recovery";
   }
   if (candidate_is_zero(candidate)) {
     // VelocitySmoother may become silent after publishing an explicit zero
@@ -315,6 +341,11 @@ TwistComponents DirectionGuard::evaluate(double now_sec) {
     latch_fault("fault_wrong_direction");
     return zero_command();
   }
+  if (const auto warning = forward_recovery_command_warning(candidate);
+      warning.has_value()) {
+    status_ = warning.value();
+    return zero_command();
+  }
   if (std::abs(candidate[0]) <= config_.direction_epsilon) {
     return zero_command();
   }
@@ -382,7 +413,28 @@ bool DirectionGuard::direction_is_allowed(double linear_x) const {
   if (direction_ == MotionDirection::Reverse) {
     return linear_x <= config_.direction_epsilon;
   }
+  if (direction_ == MotionDirection::ForwardRecovery) {
+    return linear_x >= -config_.forward_recovery_max_reverse_speed;
+  }
   return false;
+}
+
+std::optional<std::string> DirectionGuard::forward_recovery_command_warning(
+    const TwistComponents &candidate) const {
+  if (direction_ != MotionDirection::ForwardRecovery) {
+    return std::nullopt;
+  }
+  const double linear_x = candidate[0];
+  if (linear_x >= -config_.direction_epsilon) {
+    return std::nullopt;
+  }
+  if (linear_x < -config_.forward_recovery_max_reverse_speed) {
+    return "warning_recovery_reverse_speed_rejected";
+  }
+  if (std::abs(candidate[5]) > config_.zero_epsilon) {
+    return "warning_recovery_reverse_turn_rejected";
+  }
+  return std::nullopt;
 }
 
 bool DirectionGuard::raw_odom_ready(double now_sec) const {
@@ -399,11 +451,6 @@ bool DirectionGuard::prepared_expired(double now_sec) const {
 }
 
 bool DirectionGuard::active_expired(double now_sec) {
-  if (!last_permit_at_.has_value() || now_sec < last_permit_at_.value() ||
-      now_sec - last_permit_at_.value() > config_.permit_timeout_sec) {
-    latch_fault("fault_permit_timeout");
-    return true;
-  }
   if (!activated_at_.has_value() || now_sec < activated_at_.value()) {
     latch_fault("fault_candidate_timeout");
     return true;

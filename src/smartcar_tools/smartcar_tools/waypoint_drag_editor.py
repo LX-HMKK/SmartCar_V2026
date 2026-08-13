@@ -27,7 +27,14 @@ from ament_index_python.packages import get_package_share_directory
 import matplotlib
 matplotlib.use("Qt5Agg")
 from matplotlib import font_manager
-import matplotlib.pyplot as plt
+try:
+    import matplotlib.pyplot as plt
+except ImportError:
+    # Source-level contracts import the editor in a display-less environment.
+    # Keep Qt as the desktop default while allowing non-interactive checks to
+    # inspect the route model without opening an editor window.
+    matplotlib.use("Agg", force=True)
+    import matplotlib.pyplot as plt
 from matplotlib.backend_bases import MouseButton
 from matplotlib.widgets import Button, RadioButtons, TextBox
 import rclpy
@@ -47,7 +54,6 @@ from smartcar_tools.field_reference import (
     Point2D,
     load_field_reference,
 )
-from smartcar_tools.field_keepouts import keepout_bounds
 from smartcar_task.planning_segments import (
     PlanningSegment,
     PlanningSegmentError,
@@ -134,10 +140,10 @@ def _preflight_message(message: str) -> str:
     )
     if message.endswith(continuous_suffix):
         leg = message.removesuffix(continuous_suffix)
-        return f"{leg}：连续途经路线未找到满足静态禁区与最小转弯半径的候选"
+        return f"{leg}：连续途经路线未找到满足场地边界与最小转弯半径的候选"
     if message.endswith(": no collision-free minimum-radius route"):
         leg = message.removesuffix(": no collision-free minimum-radius route")
-        return f"{leg}：离线几何预检未找到满足静态禁区与最小转弯半径的候选"
+        return f"{leg}：离线几何预检未找到满足场地边界与最小转弯半径的候选"
     if message.endswith(": position-only; preflight leaves heading free"):
         waypoint_id = message.removesuffix(
             ": position-only; preflight leaves heading free"
@@ -223,14 +229,13 @@ class DragEditor:
         self._ax.tick_params(colors="#888")
 
         self._draw_field_ref()
-        self._draw_keepout_reference()
 
         # controls hint
         self._hint = self._ax.text(
             0.5, -0.06,
             "灰色虚线：航点参考约束（非 Nav2 路径）  |  彩色线：离线几何预检（非 Nav2 路径）\n"
             "左键拖动：移动点  |  滚轮：调朝向/缩放  |  右键拖动：平移  |  "
-            "右侧：分段与约束  |  新增途经点后点击场地  |  点击“几何预检”：检查静态禁区与最小转弯半径  |  Ctrl+S：保存",
+            "右侧：分段与约束  |  新增途经点后点击场地  |  点击“几何预检”：检查场地边界与最小转弯半径  |  Ctrl+S：保存",
             transform=self._ax.transAxes, fontsize=7, color="#666",
             ha="center", va="top",
         )
@@ -362,18 +367,6 @@ class DragEditor:
                 zorder=1, alpha=0.8,
             )
 
-    def _draw_keepout_reference(self):
-        """Show the B-zone-only static KeepoutFilter constraints."""
-        for bounds in keepout_bounds(self._field_ref):
-            self._ax.add_patch(plt.Rectangle(
-                (bounds.x_min, bounds.y_min), bounds.width, bounds.height,
-                facecolor="#F0443818",
-                edgecolor="#D26A63",
-                linewidth=0.7,
-                linestyle="--",
-                zorder=2,
-            ))
-
     # ── route-segment panel and model ──────────────────────────────────
 
     def _current_segment(self):
@@ -492,7 +485,7 @@ class DragEditor:
         else:
             self._route_definition_valid = True
             self._set_route_status(
-                "路线已修改：点击“几何预检”检查静态禁区与最小转弯半径；"
+                "路线已修改：点击“几何预检”检查场地边界与最小转弯半径；"
                 "结果不等同于 Nav2 实际路径"
             )
         if redraw:

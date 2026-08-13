@@ -56,8 +56,8 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertTrue(all(segment.direction == "forward" for segment in segments))
         self.assertEqual([[waypoint.id for waypoint in action] for action in actions], [
             ["a_task_observe"],
-            ["via_1", "via_2", "via_3", "c_corner_1"],
-            ["via_4", "via_5", "p_finish"],
+            ["via_1", "via_2", "via_3", "via_6", "c_corner_1"],
+            ["via_4", "via_5", "via_7", "p_finish"],
         ])
         self.assertTrue(all(
             waypoint.direction == "forward"
@@ -81,11 +81,11 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual(default_segments, nav_segments)
         self.assertEqual(
             [waypoint.task for waypoint in default_waypoints],
-            ["start", "qr", "via", "via", "via", "vlm", "via", "via", "return"],
+            ["start", "qr", "via", "via", "via", "via", "vlm", "via", "via", "via", "return"],
         )
         self.assertEqual(
             [waypoint.task for waypoint in nav_waypoints],
-            ["start", "nav", "via", "via", "via", "nav", "via", "via", "return"],
+            ["start", "nav", "via", "via", "via", "via", "nav", "via", "via", "via", "return"],
         )
 
     def test_forward_precise_endpoint_is_the_only_nonstandard_through_shape(self):
@@ -103,6 +103,33 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertEqual([[item.id for item in action] for action in actions], [
             ["via", "qr"], ["p_finish"],
         ])
+
+    def test_via_waypoints_can_only_be_planning_constraints(self):
+        waypoints = (
+            waypoint("p_start", "start", 0.0),
+            waypoint("via", "via", 1.0),
+            waypoint("nav_through", "nav", 2.0),
+            waypoint("nav_end", "nav", 3.0),
+            waypoint("p_finish", "return", 0.0),
+        )
+        via_as_endpoint = (
+            PlanningSegment("first", "forward", "p_start", "via"),
+            PlanningSegment(
+                "return", "forward", "via", "p_finish", ("nav_through",)
+            ),
+        )
+        with self.assertRaisesRegex(PlanningSegmentError, "end_id must not be a via"):
+            materialize_navigation_segments(waypoints, via_as_endpoint)
+
+        non_via_as_through = (
+            PlanningSegment(
+                "first", "forward", "p_start", "nav_end",
+                ("via", "nav_through"),
+            ),
+            PlanningSegment("return", "forward", "nav_end", "p_finish"),
+        )
+        with self.assertRaisesRegex(PlanningSegmentError, "must reference a via"):
+            materialize_navigation_segments(waypoints, non_via_as_through)
 
     def test_reverse_segment_is_rejected_before_navigation(self):
         waypoints = (

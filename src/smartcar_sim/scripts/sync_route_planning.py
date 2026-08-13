@@ -30,7 +30,7 @@ SOURCE_ROOT = Path(os.environ.get("SMARTCAR_SRC", str(SCRIPT.parents[2])))
 DEFAULT_ROUTE_PLANNING = (
     SOURCE_ROOT / "smartcar_tools" / "config" / "routes" / "route_planning.yaml"
 )
-DEFAULT_KEEPOUT_OVERLAY = SOURCE_ROOT / "smartcar_sim" / "config" / "nav2_keepout_filter.yaml"
+DEFAULT_SIMULATION_OVERLAY = SOURCE_ROOT / "smartcar_sim" / "config" / "nav2_simulation.yaml"
 
 
 def _load_route_planning(path: Path):
@@ -121,7 +121,7 @@ def _write_atomic(path: Path, content: str) -> None:
 
 def synchronize(
     route_planning_file: Path,
-    keepout_overlay_file: Path,
+    simulation_overlay_file: Path,
     *,
     check: bool = False,
 ) -> bool:
@@ -135,16 +135,16 @@ def synchronize(
     )
     targets = (
         (
-            keepout_overlay_file,
+            simulation_overlay_file,
             {
                 "controller_server.ros__parameters.FollowPath.regulated_linear_scaling_min_radius": radius,
                 "planner_server.ros__parameters.GridBased.minimum_turning_radius": radius,
                 "local_costmap.local_costmap.ros__parameters.footprint": footprint_text,
                 "local_costmap.local_costmap.ros__parameters.footprint_padding": footprint.padding_m,
-                "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_keepout.costmap_inflation_radius_m,
+                "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_costmap.inflation_radius_m,
                 "global_costmap.global_costmap.ros__parameters.footprint": footprint_text,
                 "global_costmap.global_costmap.ros__parameters.footprint_padding": footprint.padding_m,
-                "global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_keepout.costmap_inflation_radius_m,
+                "global_costmap.global_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_costmap.inflation_radius_m,
             },
         ),
     )
@@ -165,7 +165,7 @@ def parse_args() -> argparse.Namespace:
         "--route-planning-config", type=Path, default=DEFAULT_ROUTE_PLANNING
     )
     parser.add_argument(
-        "--keepout-overlay", type=Path, default=DEFAULT_KEEPOUT_OVERLAY
+        "--simulation-overlay", type=Path, default=DEFAULT_SIMULATION_OVERLAY
     )
     parser.add_argument(
         "--check",
@@ -180,7 +180,7 @@ def main() -> int:
     try:
         changed = synchronize(
             args.route_planning_config,
-            args.keepout_overlay,
+            args.simulation_overlay,
             check=args.check,
         )
     except (OSError, ValueError, KeyError, TypeError, yaml.YAMLError) as error:

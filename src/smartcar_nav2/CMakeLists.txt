@@ -23,26 +23,6 @@ install(FILES "${CMAKE_CURRENT_BINARY_DIR}/config/nav2_params_fixed.yaml"
   DESTINATION "share/${PROJECT_NAME}/config"
 )
 
-# The versioned field mask is rendered from the official geometry and shared
-# by the editor and Gazebo.  Install a build-time copy with the production
-# Nav2 package so the real stack can enforce field rules without treating it
-# as a localization map or depending on a simulator installation.
-set(SMARTCAR_KEEPOUT_MAP_DIR
-  "${CMAKE_CURRENT_SOURCE_DIR}/../smartcar_sim/maps"
-)
-set(SMARTCAR_KEEPOUT_MAP_FILES
-  "${SMARTCAR_KEEPOUT_MAP_DIR}/field_map.pgm"
-  "${SMARTCAR_KEEPOUT_MAP_DIR}/field_map.yaml"
-)
-foreach(SMARTCAR_KEEPOUT_MAP_FILE IN LISTS SMARTCAR_KEEPOUT_MAP_FILES)
-  if(NOT EXISTS "${SMARTCAR_KEEPOUT_MAP_FILE}")
-    message(FATAL_ERROR "Required field keepout artifact is missing: ${SMARTCAR_KEEPOUT_MAP_FILE}")
-  endif()
-endforeach()
-install(FILES ${SMARTCAR_KEEPOUT_MAP_FILES}
-  DESTINATION "share/${PROJECT_NAME}/maps"
-)
-
 set(SMARTCAR_NAV2_BEHAVIOR_TREE_FILES
   config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml
   config/behavior_trees/navigate_through_poses_return_w_replanning_and_recovery.xml
@@ -56,7 +36,7 @@ install(FILES ${SMARTCAR_NAV2_BEHAVIOR_TREE_FILES}
   DESTINATION "share/${PROJECT_NAME}/config/behavior_trees"
 )
 
-install(DIRECTORY launch config maps
+install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
   PATTERN "nav2_params_fixed.yaml" EXCLUDE
   PATTERN "behavior_trees" EXCLUDE

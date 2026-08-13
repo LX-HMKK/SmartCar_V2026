@@ -4,7 +4,9 @@
 
 ## 软件里程碑
 
-当前软件基线包含可选 RF2O、一条三个显式 planning segment、九个航点约束的全正向路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与纯导航 `nav_only.yaml` 共享完全相同的点位和分段：P→A、A→`via_1`→`via_2`→`via_3`→C1、C1→`via_4`→`via_5`→P；仅 A/C1 的任务类型分别为 `qr`/`vlm` 与 `nav`。A 与 C1 使用 `precise` profile，P 终点使用 `standard` profile，且两份 YAML 均保持 `calibrated: false`。运行路径一律由 Nav2 基于实时 costmap 规划，不存在强制路线或点位专用阈值。当前路线尚未完成 Gazebo、RDK 或实体车辆验证。文档入口见 [docs/README.md](docs/README.md)。
+当前软件基线包含可选 RF2O、一条三个显式 planning segment、11 个航点约束的全正向路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与纯导航 `nav_only.yaml` 共享完全相同的点位和分段：P→A、A→`via_1`→`via_2`→`via_3`→`via_6`→C1、C1→`via_4`→`via_5`→`via_7`→P；仅 A/C1 的任务类型分别为 `qr`/`vlm` 与 `nav`。A 与 C1 使用 `precise` profile，P 终点使用 `standard` profile，且两份 YAML 均保持 `calibrated: false`。运行路径一律由 Nav2 基于实时 costmap 规划，不存在强制路线、先验墙体或点位专用阈值。当前全正向纯导航路线已完成 LiDAR 无障碍现场基础通行性验证；深度相机动态障碍物感知、QR/VLM 语义任务和 Gazebo 验证仍需分别验证。文档入口见 [docs/README.md](docs/README.md)。
+
+所有根目录 `scripts/` 的用途、命令和副作用见 [脚本使用手册](docs/deployment/scripts.md)。
 
 ## 当前边界
 
@@ -30,7 +32,7 @@
 
 - RDK X5 8G，TROS ROS 2 Humble，环境入口由 `~/source_env.sh` 统一提供。
 - OriginCar 阿克曼底盘，`/odom`、`/imu/data_raw` 和可选 `/odom_laser` 经 EKF 输出 `/odom_combined`。
-- YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；实体运行不使用静态地图、AMCL 或 SLAM。规则场地 keepout PGM 由独立 `map_server` 提供给实体和仿真的 KeepoutFilter，作为禁行约束而非定位地图。
+- YDLIDAR Tmini Plus 发布 `/scan`，同时供 obstacle/inflation costmap 和可选 RF2O 连续扫描匹配使用；实体运行不使用静态地图、AMCL、SLAM 或先验场地墙体约束。Nav2 仅依据实时 costmap 观测规划。
 - 导航固定使用单一 Smac Hybrid `DUBIN` planner；活动路线使用正向行为树。保留的反向 BT 仅接受全程严格反向、无 cusp、曲率和端点均合规的路径，未被当前路线使用。
 - 速度链为 `/cmd_vel_nav -> /cmd_vel_candidate -> direction_guard -> /cmd_vel -> smartcar_safety -> /ackermann_cmd`。方向门默认 STOP，错误方向或过期租约只能得到完整零输出。
 - Madgwick `/imu/data` 和 URDF 车型发布默认关闭；它们不在 Nav2 costmap、EKF 或安全门的必需数据链上。
@@ -102,7 +104,7 @@ python scripts/sync_to_rdk.py setup
 ```bash
 ssh root@<RDK_IP>
 source ~/source_env.sh
-cd /root/ros2_ws
+cd /home/sunrise/ros2_ws
 colcon build --symlink-install \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo
 colcon test-result --delete-yes
@@ -118,7 +120,7 @@ colcon test-result --all --verbose
 
 ```bash
 source ~/source_env.sh
-cd /root/ros2_ws
+cd /home/sunrise/ros2_ws
 colcon test --packages-select smartcar_bringup
 colcon test-result --test-result-base build/smartcar_bringup --verbose
 ```
@@ -143,16 +145,32 @@ ros2 launch smartcar_bringup smartcar_system.launch.py \
 
 规则图参考层只用于 RViz 看图量点，不发布 `/map`、不参与定位或 costmap。当前路线不能直接视为实测路线，也不能凭软件测试解除运动门禁。完整的分段、途经点、无朝向、预检、保存和仿真同步流程见 [`docs/deployment/waypoint-editor.md`](docs/deployment/waypoint-editor.md)。
 
-无视觉导航测试使用已部署的 `/root/nav_test.sh`。它只启动、写入已人工摆位的原点并打开 RViz，明确设置 `autostart_mission:=false` 与 `safety_emergency_stop_on_start:=true`，不会自动发车。源代码或配置变更后，先在本机运行独立部署入口；它同步、备份并执行 RDK 的定向清理和构建，不启动实体设备：
+无视觉导航测试使用已部署的 `/home/sunrise/ros2_ws/scripts/nav_test.sh`。普通调用只启动栈和 RViz，保持急停锁存；`--go` 在健康检查通过后按“复位 -> 解除软件急停 -> 启动任务”顺序发车。源代码或配置变更后，先在本机运行独立部署入口；它同步、备份并执行 RDK 的定向清理和构建，不启动实体设备：
 
 ```bash
 cd /home/zyh/SmartCar_V2026
 bash scripts/nav_deploy.sh
 ssh root@<RDK_IP>
-bash /root/nav_test.sh
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 ```
 
-LiDAR 无障碍实测已确认当前全正向纯导航路线的基础通行性，不必为深度模式重复该验收。深度测试使用受看护短测入口：它在急停锁存下完成准备和健康检查，并在本次明确运动授权、人工急停和 P 点摆位已确认后，为指定短前缀一次性传入运行确认。深度模式待验证的是动态障碍物在 costmap 的标记/清障及 Nav2 实时重规划，不是重复航点或固定外参标定。
+LiDAR 无障碍实测已确认当前全正向纯导航路线的基础通行性，不必为深度模式重复该验收。深度模式待验证的是动态障碍物在 costmap 的标记/清障及 Nav2 实时重规划，不是重复航点或固定外参标定。
+
+已取得当次实体运动授权且车辆已在 P 点、车头朝 `+X` 摆正时，完整受看护路线直接执行：
+
+```bash
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go
+```
+
+该选项只会在状态检查通过后自动复位并发车；不带该选项的普通调用始终保持急停锁存。
+
+纯轮式里程计为临时诊断对照，不是默认定位配置。确认同一轮运动授权、物理急停和 P 点摆位后，可用下面的完整路线命令比较 IMU 融合与纯轮式的回零误差：
+
+```bash
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --wheel-only
+```
+
+`--wheel-only` 只将定位 profile 切换为 `wheel_only`；不改变实时 costmap、Nav2 路径规划或速度安全链。省略它始终使用默认 `wheel_imu`。
 
 真实相机默认使用 USB 驱动和 `/image`；Aurora 和 MIPI 保留为备选。系统会把解析后的
 `image_topic` 同时交给 vision 服务和任务按需启动的 zbar，因此切换驱动或显式覆盖话题时
@@ -168,13 +186,13 @@ Aurora 930 深度避障使用独立的显式入口：
 
 ```bash
 bash scripts/nav_deploy.sh
-bash /root/nav_test.sh --depth-camera
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 ```
 
 该模式关闭 YDLIDAR 与 RF2O，仅保留轮式里程计和 IMU EKF 导航。中继会校验 source frame、
 点云布局、有限的浮点 XYZ 样本和采集时间；Aurora 930 1.7.2 的时间戳会乘以 `1000` 后再供 TF
 查询。两个 Nav2 costmap 订阅 `/smartcar/depth/scan`；转换器仅生成相机前向视场内的扫描，并对空束发布 `+Inf`，使障碍移走后产生明确 clearing 射线。safety 看门狗继续只订阅原始 `/smartcar/depth/points`。
-脚本在保持急停锁存的状态下验证点云、两个 costmap 参数和 KeepoutFilter。
+脚本在保持急停锁存的状态下验证点云与两个实时 costmap 参数。
 深度相机固定在前轮正上方、离地 `0.15 m`、水平朝前，其外参是已确认的结构约束，不设外参标定门禁。
 深度模式以 `10 Hz` 请求 Aurora IR/depth，relay 上限为 `12 Hz`；relay 保留校正后的采集时间戳，
 并拒绝超龄云。两个 costmap 的扫描 `observation_persistence=0.0 s`、`expected_update_rate=1.0 s`，深度 safety 心跳为 `1.0 s`；这些时限不能使超龄云变为有效云。点云 frame、清障和动态障碍物避让
@@ -206,7 +224,7 @@ ros2 service call /smartcar/safety/emergency_stop \
 录包只读取话题，不会产生运动命令：
 
 ```bash
-ros2 bag record -o /root/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
+ros2 bag record -o /home/sunrise/ros2_ws/bags/$(date +%Y%m%d-%H%M%S) \
   /scan /odom /odom_laser /odom_combined /imu/data_raw /imu/data \
   /cmd_vel_nav /cmd_vel_candidate /cmd_vel /cmd_vel_safe \
   /ackermann_cmd /PowerVoltage \

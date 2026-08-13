@@ -13,6 +13,7 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 from smartcar_task.mission import OperationResult  # noqa: E402
 from smartcar_task.protocols import (  # noqa: E402
     MOTION_FORWARD,
+    MOTION_FORWARD_RECOVERY,
     MotionDirectionProtocol,
     MotionLease,
     classify_follow_waypoints_result,
@@ -62,8 +63,8 @@ class ProtocolTests(unittest.TestCase):
             "navigation_status_6",
         )
 
-    def test_behavior_tree_selection_only_supports_forward_profiles(self):
-        self.assertEqual(motion_direction(), MOTION_FORWARD)
+    def test_behavior_tree_selection_uses_bounded_forward_recovery_profile(self):
+        self.assertEqual(motion_direction(), MOTION_FORWARD_RECOVERY)
         self.assertEqual(
             navigation_behavior_tree("standard", "precise.xml", "transit.xml"),
             "",
@@ -82,7 +83,11 @@ class ProtocolTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "must not be empty"):
             navigation_behavior_tree("precise", "", "transit.xml")
 
-    def test_motion_lease_rejects_nonforward_direction(self):
+    def test_motion_lease_allows_only_forward_and_bounded_recovery(self):
+        self.assertEqual(
+            MotionLease(MOTION_FORWARD_RECOVERY, 1, object()).direction,
+            MOTION_FORWARD_RECOVERY,
+        )
         with self.assertRaisesRegex(ValueError, "unknown motion direction"):
             MotionLease(2, 1, object())
 

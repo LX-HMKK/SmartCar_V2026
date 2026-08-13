@@ -417,6 +417,8 @@ class RosNavigator:
         self._terminal_generation = None
         self._terminal_response = None
         self._poisoned = False
+        self._renew_warning_status = None
+        self._renew_warning_at = None
 
     def wait_ready(self, timeout_sec):
         with self._condition:
@@ -701,15 +703,7 @@ class RosNavigator:
                     False, "navigation_timeout_cancel_unconfirmed")
             renewed = self._renew_motion(generation)
             if not renewed.success:
-                terminal = self.cancel()
-                if terminal:
-                    stopped, _response = self._consume_terminal(generation)
-                    if not stopped.success:
-                        return stopped
-                    return renewed
-                self._detach_navigation(generation)
-                return OperationResult(
-                    False, f"{renewed.status}:cancel_unconfirmed")
+                self._warn_renewal_failure(renewed)
             next_renew = time.monotonic() + self._renew_period_sec
 
         stopped, response = self._consume_terminal(generation)
@@ -804,10 +798,24 @@ class RosNavigator:
                     return OperationResult(False, "direction_stale_generation")
                 lease = self._current_identity
             result = self._motion_protocol.renew(lease)
-            if not result.success:
-                with self._condition:
-                    self._poisoned = True
             return result
+
+    def _warn_renewal_failure(self, result):
+        """Record renewal transport failures without revoking Nav2 motion."""
+        now = time.monotonic()
+        status = str(result.status)
+        if (
+            status == self._renew_warning_status
+            and self._renew_warning_at is not None
+            and now - self._renew_warning_at < 5.0
+        ):
+            return
+        self._node.get_logger().warning(
+            f"direction renewal unavailable ({status}); continuing under "
+            "candidate-command watchdog",
+        )
+        self._renew_warning_status = status
+        self._renew_warning_at = now
 
     def _revoke_motion(self, generation):
         with self._guard_call_lock:
@@ -1363,8 +1371,8 @@ class TaskNode(Node):
             _nav2_behavior_tree_path(
                 "navigate_through_poses_return_w_replanning_and_recovery.xml"),
         )
-        self.declare_parameter("direction_service_timeout_sec", 0.08)
-        self.declare_parameter("direction_lease_timeout_sec", 0.25)
+        self.declare_parameter("direction_service_timeout_sec", 0.20)
+        self.declare_parameter("direction_lease_timeout_sec", 0.0)
         self.declare_parameter("direction_prepare_timeout_sec", 1.0)
         self.declare_parameter("direction_prepare_retry_period_sec", 0.02)
         self.declare_parameter("direction_renew_period_sec", 0.10)
@@ -1527,7 +1535,7 @@ class TaskNode(Node):
         self._io_group = ReentrantCallbackGroup()
         self._service_group = MutuallyExclusiveCallbackGroup()
         self._output = RosOutput(self)
-        direction_lease_timeout = _positive_finite(
+        direction_lease_timeout = _nonnegative_finite(
             "direction_lease_timeout_sec",
             self.get_parameter("direction_lease_timeout_sec").value,
         )
@@ -1539,12 +1547,13 @@ class TaskNode(Node):
             "direction_renew_period_sec",
             self.get_parameter("direction_renew_period_sec").value,
         )
-        if direction_service_timeout >= direction_lease_timeout:
-            raise ValueError(
-                "direction_service_timeout_sec must be below lease timeout")
-        if direction_renew_period >= direction_lease_timeout:
-            raise ValueError(
-                "direction_renew_period_sec must be below lease timeout")
+        if direction_lease_timeout > 0.0:
+            if direction_service_timeout >= direction_lease_timeout:
+                raise ValueError(
+                    "direction_service_timeout_sec must be below lease timeout")
+            if direction_renew_period >= direction_lease_timeout:
+                raise ValueError(
+                    "direction_renew_period_sec must be below lease timeout")
         self._direction_guard = RosDirectionGuard(
             self,
             self._io_group,

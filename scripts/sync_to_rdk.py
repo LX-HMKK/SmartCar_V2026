@@ -3,7 +3,7 @@
 
 子命令：
   push         本机 src/config 和 RDK 运行脚本 -> RDK（源码树 --delete 镜像）
-  pull         RDK /root/ros2_ws/src/ -> 本机 src/（反向，慎用）
+  pull         RDK /home/sunrise/ros2_ws/src/ -> 本机 src/（反向，慎用）
   pull-waypoints  仅回传 RDK 上现场微调后的语义航点 YAML
   init-vendor  一次性回传官方 origincar 到本机
   setup        scp source_env.sh 到 RDK ~/
@@ -33,7 +33,7 @@ def resolve_rdk_host():
 
 
 HOST = resolve_rdk_host()
-REMOTE_WS = "/root/ros2_ws"
+REMOTE_WS = "/home/sunrise/ros2_ws"
 REMOTE_VENDOR_ORIGINCAR = "/userdata/dev_ws/src/origincar"
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -44,6 +44,8 @@ LOCAL_SOURCE_ENV = REPO_ROOT / "scripts" / "source_env.sh"
 RUNTIME_SCRIPT_TARGETS = (
     (REPO_ROOT / "scripts" / "nav_prepare.sh", "/root/nav_prepare.sh"),
     (REPO_ROOT / "scripts" / "nav_test.sh", "/root/nav_test.sh"),
+    (REPO_ROOT / "scripts" / "nav_test.sh",
+     f"{REMOTE_WS}/scripts/nav_test.sh"),
     (REPO_ROOT / "scripts" / "nav_status.py", "/root/nav_status.py"),
     (REPO_ROOT / "scripts" / "ros_cleanup.sh",
      f"{REMOTE_WS}/scripts/ros_cleanup.sh"),

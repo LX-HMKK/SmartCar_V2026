@@ -3,22 +3,16 @@
 set -euo pipefail
 
 SOURCE_ENV=/root/source_env.sh
-WORKSPACE=/root/ros2_ws
+WORKSPACE=/home/sunrise/ros2_ws
 COLCON_PARALLEL_WORKERS=8
 BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"
 
 source_fingerprint() {
-  # Hash every package build input. Runtime launch and cleanup scripts are
-  # deployed independently and do not require a seven-package rebuild.
-  find \
-    "$WORKSPACE/src/smartcar_common" \
-    "$WORKSPACE/src/smartcar_interfaces" \
-    "$WORKSPACE/src/smartcar_safety" \
-    "$WORKSPACE/src/smartcar_nav2" \
-    "$WORKSPACE/src/smartcar_task" \
-    "$WORKSPACE/src/smartcar_bringup" \
-    "$WORKSPACE/src/smartcar_vision" \
+  # A fresh workspace must not depend on packages left in a previous overlay.
+  # Hash the full source tree so every dependency change requires preparation.
+  find "$WORKSPACE/src" \
     -type f \
+    ! -path '*/.git/*' \
     ! -path '*/__pycache__/*' \
     ! -name '*.pyc' \
     ! -name '*.bak' \
@@ -39,9 +33,9 @@ bash "$WORKSPACE/scripts/ros_cleanup.sh"
 
 colcon build --symlink-install \
   --parallel-workers "$COLCON_PARALLEL_WORKERS" \
-  --packages-select smartcar_common smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision \
+  --packages-up-to smartcar_bringup smartcar_vision \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  --allow-overriding smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision
+  --allow-overriding ackermann_msgs smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision
 
 source_fingerprint > "$BUILD_FINGERPRINT"
 echo "Prepared fingerprint: $(cat "$BUILD_FINGERPRINT")"

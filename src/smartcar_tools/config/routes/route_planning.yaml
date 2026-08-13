@@ -1,8 +1,8 @@
-schema_version: 8
+schema_version: 9
 name: shared_route_planning_constraints
 
 # This file is the shared tuning surface for the waypoint editor preflight
-# and the simulation keepout-map generator. sim_tune.sh projects these exact
+# and the simulation Nav2 overlay. sim_tune.sh projects these exact
 # dimensions into simulation Nav2. It is not a SLAM/localization map.
 # The 0.189 m wheelbase and verified 0.70 rad steering cap give a geometric
 # lower bound of 0.2244 m. Keep 0.23 m for the planner/preflight floor so the
@@ -43,21 +43,8 @@ preflight:
   terminal_connector_sample_step_m: 0.025
   max_expansions_per_leg: 30000
 
-simulation_keepout:
-  # Keep the mask finer than the padded footprint sweep. The old 0.10 m
-  # cells allowed the controller to track a path just outside the visible
-  # field edge before the filter could react.
-  map_resolution_m: 0.025
-  # Keep an image margin around the field without creating an artificial
-  # boundary wall. Only the B-zone forbidden areas are static keepouts.
-  boundary_padding_m: 0.25
-  # KeepoutFilter runs after Nav2's regular inflation layer. Give the B-zone
-  # forbidden areas their own static clearance; no other prior-map wall is
-  # painted or expanded.
-  b_zone_inflation_m: 0.05
-  # Cost preference around the simulation-only KeepoutFilter mask. This is
-  # separate from the collision footprint: filters own their lethal cells.
-  # A 0.05 m lidar-slice cone with a 0.30 m total inflation radius leaves a
-  # 0.10 m soft preference outside the physical cone. Collision still uses
-  # the padded footprint independently of this soft cost preference.
-  costmap_inflation_radius_m: 0.30
+simulation_costmap:
+  # This generic Nav2 obstacle-cost preference applies only to current Gazebo
+  # sensor observations. It is independent of vehicle collision geometry and
+  # does not represent a prior-map wall or wall-specific clearance.
+  inflation_radius_m: 0.30

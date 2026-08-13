@@ -337,6 +337,10 @@ class Mission:
             for waypoint in segment[:-1]
         ):
             return "navigation_segment_semantic_boundary"
+        if any(waypoint.task != "via" for waypoint in segment[:-1]):
+            return "navigation_segment_intermediate_not_via"
+        if segment[-1].task == "via":
+            return "navigation_segment_endpoint_is_via"
         if len(segment) > 1:
             nonstandard = any(
                 getattr(waypoint, "goal_profile", "standard") != "standard"

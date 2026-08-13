@@ -254,6 +254,8 @@ def _navigation_actions(context):
         launch_arguments={
             "use_sim_time": LaunchConfiguration("use_sim_time"),
             "autostart": LaunchConfiguration("nav_autostart"),
+            "lifecycle_manager_delay_sec": LaunchConfiguration(
+                "nav2_lifecycle_manager_delay_sec"),
             "nav2_params_overlay_file": overlay,
             "allow_params_overlay": allow_params_overlay,
         }.items(),
@@ -442,6 +444,7 @@ def generate_launch_description():
     use_base = LaunchConfiguration("use_base")
     use_lidar = LaunchConfiguration("use_lidar")
     use_laser_odometry = LaunchConfiguration("use_laser_odometry")
+    localization_profile = LaunchConfiguration("localization_profile")
     use_imu_filter = LaunchConfiguration("use_imu_filter")
     use_robot_description = LaunchConfiguration("use_robot_description")
     use_safety = LaunchConfiguration("use_safety")
@@ -500,6 +503,7 @@ def generate_launch_description():
             "use_base": use_base,
             "use_lidar": use_lidar,
             "use_laser_odometry": use_laser_odometry,
+            "localization_profile": localization_profile,
             "use_imu_filter": use_imu_filter,
             "use_robot_description": use_robot_description,
             "laser_odometry_config_file": LaunchConfiguration(
@@ -567,6 +571,12 @@ def generate_launch_description():
         DeclareLaunchArgument("use_lidar", default_value="true"),
         DeclareLaunchArgument(
             "use_laser_odometry", default_value="false"),
+        DeclareLaunchArgument(
+            "localization_profile", default_value="wheel_imu",
+            description=(
+                "wheel_imu fuses wheel and gyro yaw rates; wheel_only "
+                "loads no IMU sensor into the EKF"),
+        ),
         DeclareLaunchArgument("use_safety", default_value="true"),
         DeclareLaunchArgument("use_imu_filter", default_value="false"),
         DeclareLaunchArgument(
@@ -592,6 +602,13 @@ def generate_launch_description():
             "qr_handoff_test_mode", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("nav_autostart", default_value="true"),
+        DeclareLaunchArgument(
+            "nav2_lifecycle_manager_delay_sec", default_value="20.0",
+            description=(
+                "Delay physical Nav2 lifecycle activation until Aurora startup "
+                "has settled"
+            ),
+        ),
         DeclareLaunchArgument("safety_require_scan", default_value="true"),
         DeclareLaunchArgument("safety_require_odom", default_value="true"),
         DeclareLaunchArgument(

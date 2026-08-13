@@ -158,7 +158,7 @@ class TestWaypointEditorContract(unittest.TestCase):
             "几何预检",
             "保存路线",
             "保存已阻止",
-            "C 区禁区",
+            "场地边界与最小转弯半径",
             "write_waypoints_atomic",
             "validate_waypoints",
             "create_publisher",

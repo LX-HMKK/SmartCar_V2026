@@ -87,7 +87,7 @@ class NavStatusContracts(unittest.TestCase):
         )
 
         rendered = nav_status.summary(snapshot)
-        for token in ("nav2=0/4", "safety=emergency_stop", "task=IDLE",
+        for token in ("nav2=0/5", "safety=emergency_stop", "task=IDLE",
                       "costmaps=1/1", "points=2", "scan=2",
                       "capture_age=0.080s"):
             self.assertIn(token, rendered)

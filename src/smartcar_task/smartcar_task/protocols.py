@@ -9,6 +9,7 @@ from smartcar_task.mission import OperationResult
 STATUS_SUCCEEDED = 4
 STATUS_CANCELED = 5
 MOTION_FORWARD = 1
+MOTION_FORWARD_RECOVERY = 3
 
 
 def classify_follow_waypoints_result(status, missed_waypoints):
@@ -34,7 +35,8 @@ def classify_navigate_to_pose_result(status):
 
 
 def motion_direction():
-    return MOTION_FORWARD
+    """Permit forward tracking plus Nav2's bounded native BackUp recovery."""
+    return MOTION_FORWARD_RECOVERY
 
 
 def navigation_behavior_tree(
@@ -68,7 +70,7 @@ class MotionLease:
     lease_id: int = 0
 
     def __post_init__(self):
-        if self.direction != MOTION_FORWARD:
+        if self.direction not in {MOTION_FORWARD, MOTION_FORWARD_RECOVERY}:
             raise ValueError("unknown motion direction")
         if int(self.generation) <= 0:
             raise ValueError("motion generation must be positive")

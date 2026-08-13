@@ -36,6 +36,7 @@ def generate_launch_description():
     use_base = LaunchConfiguration('use_base')
     use_lidar = LaunchConfiguration('use_lidar')
     use_laser_odometry = LaunchConfiguration('use_laser_odometry')
+    localization_profile = LaunchConfiguration('localization_profile')
     use_imu_filter = LaunchConfiguration('use_imu_filter')
     use_robot_description = LaunchConfiguration('use_robot_description')
     use_safety = LaunchConfiguration('use_safety')
@@ -99,6 +100,7 @@ def generate_launch_description():
             'input_topic': chassis_input_topic,
             'skip_converter': skip_converter,
             'use_sim_time': use_sim_time,
+            'localization_profile': localization_profile,
             'use_imu_filter': use_imu_filter,
             'use_robot_description': use_robot_description,
             'laser_frame': laser_frame,
@@ -147,6 +149,8 @@ def generate_launch_description():
         DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument(
             'use_laser_odometry', default_value='false'),
+        DeclareLaunchArgument(
+            'localization_profile', default_value='wheel_imu'),
         DeclareLaunchArgument(
             'laser_odometry_config_file',
             default_value=os.path.join(

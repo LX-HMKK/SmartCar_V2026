@@ -6,6 +6,7 @@ import yaml
 
 
 ROOT = Path(__file__).resolve().parents[1]
+AGENTS = ROOT / "AGENTS.md"
 PACKAGE = ROOT / "src" / "smartcar_task"
 NODE = PACKAGE / "smartcar_task" / "task_node.py"
 MISSION = PACKAGE / "smartcar_task" / "mission.py"
@@ -16,10 +17,12 @@ TASK_CONFIG = PACKAGE / "config" / "task.yaml"
 NAV_TEST = ROOT / "scripts" / "nav_test.sh"
 NAV_PREPARE = ROOT / "scripts" / "nav_prepare.sh"
 NAV_STATUS = ROOT / "scripts" / "nav_status.py"
+ROS_CLEANUP = ROOT / "scripts" / "ros_cleanup.sh"
 SYSTEM = ROOT / "src" / "smartcar_bringup" / "launch" / "smartcar_system.launch.py"
 NAV2_CONFIG = ROOT / "src" / "smartcar_nav2" / "config"
 NAV2_BEHAVIOR_TREES = NAV2_CONFIG / "behavior_trees"
 NAV2_CMAKE = ROOT / "src" / "smartcar_nav2" / "CMakeLists.txt"
+NAV2_LAUNCH = ROOT / "src" / "smartcar_nav2" / "launch" / "navigation_launch.py"
 DIRECTION_GUARD_CONFIG = (
     ROOT / "src" / "smartcar_safety" / "config" / "direction_guard.yaml"
 )
@@ -97,6 +100,40 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("Nav2GoalFactory", node_source)
         self.assertNotIn("FollowWaypoints", source)
 
+    def test_via_waypoints_are_planning_only_not_arrival_targets(self):
+        rules = AGENTS.read_text(encoding="utf-8")
+        planning = (PACKAGE / "smartcar_task" / "planning_segments.py").read_text(
+            encoding="utf-8")
+        mission = MISSION.read_text(encoding="utf-8")
+        self.assertIn("明确拒绝参与到达判定", rules)
+        self.assertIn("不得作为 `end_id`", rules)
+        self.assertIn("ComputePathThroughPoses", rules)
+        self.assertIn("FollowPath", rules)
+        self.assertIn("end_id must not be a via waypoint", planning)
+        self.assertIn("must reference a via waypoint", planning)
+        self.assertIn("navigation_segment_intermediate_not_via", mission)
+        self.assertIn("navigation_segment_endpoint_is_via", mission)
+        self.assertIn("self._navigator.navigate_through(segment)", mission)
+        for filename in (
+            "navigate_through_poses_w_replanning_and_recovery.xml",
+            "navigate_through_poses_precise_w_replanning_and_recovery.xml",
+            "navigate_through_poses_return_w_replanning_and_recovery.xml",
+            "navigate_through_poses_transit_w_replanning_and_recovery.xml",
+        ):
+            tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
+            self.assertIn("ComputePathThroughPoses goals=\"{goals}\"", tree)
+            self.assertEqual(tree.count("<FollowPath "), 1)
+            self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
+            self.assertIn('RecoveryNode number_of_retries="1"', tree)
+            self.assertEqual(tree.count("<BackUp "), 1)
+            self.assertIn('backup_dist="0.20"', tree)
+            self.assertIn('backup_speed="0.15"', tree)
+            self.assertEqual(tree.count("<RemovePassedGoals "), 1)
+            self.assertNotIn("PipelineSequence", tree)
+            self.assertNotIn("Spin", tree)
+            self.assertNotIn("Wait", tree)
+            self.assertNotIn("DriveOnHeading", tree)
+
     def test_behavior_tree_paths_are_resolved_from_the_installed_nav2_package(self):
         parameters = yaml.safe_load(
             TASK_CONFIG.read_text(encoding="utf-8")
@@ -120,7 +157,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertNotIn("reverse_behavior_tree", source)
         self.assertNotIn("reverse_handoff", source)
 
-    def test_nav2_installs_only_native_forward_behavior_trees(self):
+    def test_nav2_installs_only_native_forward_trees_with_bounded_recovery(self):
         expected = {
             "navigate_to_pose_w_replanning_and_recovery.xml",
             "navigate_to_pose_precise_w_replanning_and_recovery.xml",
@@ -141,7 +178,6 @@ class TaskLaunchContractTests(unittest.TestCase):
             "Reverse",
             "Spin",
             "Wait",
-            "BackUp",
             "DriveOnHeading",
         )
         for tree in NAV2_BEHAVIOR_TREES.glob("*.xml"):
@@ -153,12 +189,44 @@ class TaskLaunchContractTests(unittest.TestCase):
             )
             for token in forbidden:
                 self.assertNotIn(token, source)
+            self.assertIn('RecoveryNode number_of_retries="1"', source)
+            self.assertEqual(source.count("<BackUp "), 1)
+            self.assertIn('backup_dist="0.20"', source)
+            self.assertIn('backup_speed="0.15"', source)
+            self.assertNotIn("PipelineSequence", source)
+        through_trees = (
+            "navigate_through_poses_w_replanning_and_recovery.xml",
+            "navigate_through_poses_precise_w_replanning_and_recovery.xml",
+            "navigate_through_poses_transit_w_replanning_and_recovery.xml",
+            "navigate_through_poses_return_w_replanning_and_recovery.xml",
+        )
+        for filename in through_trees:
+            tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
+            self.assertEqual(tree.count("<BackUp "), 1)
+            self.assertIn('backup_speed="0.15"', tree)
+            self.assertEqual(tree.count("<RemovePassedGoals "), 1)
+        for filename in (
+            "navigate_to_pose_w_replanning_and_recovery.xml",
+            "navigate_to_pose_precise_w_replanning_and_recovery.xml",
+            "navigate_to_pose_transit_w_replanning_and_recovery.xml",
+        ):
+            tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
+            self.assertNotIn("RemovePassedGoals", tree)
         cmake = NAV2_CMAKE.read_text(encoding="utf-8")
         for token in (*forbidden[:4], "ForwardOnlyRPP"):
             self.assertNotIn(token, cmake)
         params = (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
-        for token in ("nav2_spin", "nav2_wait", "nav2_back_up", "nav2_drive_on_heading"):
+        for token in ("nav2_spin", "nav2_wait", "nav2_drive_on_heading"):
             self.assertNotIn(token, params)
+        self.assertIn("nav2_back_up_action_bt_node", params)
+        self.assertIn("nav2_remove_passed_goals_action_bt_node", params)
+        self.assertIn('behavior_plugins: ["backup"]', params)
+        self.assertIn("min_velocity: [-0.15", params)
+        launch = NAV2_LAUNCH.read_text(encoding="utf-8")
+        self.assertIn("'behavior_server',", launch)
+        self.assertIn("package='nav2_behaviors'", launch)
+        self.assertIn("executable='behavior_server'", launch)
+        self.assertIn("('cmd_vel', 'cmd_vel_nav')", launch)
 
     def test_follow_path_keeps_an_approach_lookahead_floor(self):
         parameters = yaml.safe_load(
@@ -171,10 +239,23 @@ class TaskLaunchContractTests(unittest.TestCase):
             * float(parameters["lookahead_time"])
         )
         self.assertTrue(parameters["use_velocity_scaled_lookahead_dist"])
+        self.assertEqual(float(parameters["lookahead_dist"]), 0.50)
+        self.assertEqual(minimum, 0.50)
+        self.assertEqual(float(parameters["max_lookahead_dist"]), 0.50)
         self.assertGreaterEqual(minimum, approach)
         self.assertLessEqual(minimum, float(parameters["max_lookahead_dist"]))
         self.assertFalse(parameters["use_rotate_to_heading"])
         self.assertFalse(parameters["allow_reversing"])
+
+    def test_costmaps_use_the_configured_inflation_radius(self):
+        parameters = yaml.safe_load(
+            (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        )
+        for name in ("local_costmap", "global_costmap"):
+            inflation = parameters[name][name]["ros__parameters"][
+                "inflation_layer"
+            ]
+            self.assertEqual(float(inflation["inflation_radius"]), 0.25)
 
     def test_precise_terminal_profile_keeps_tight_position_and_valid_yaw(self):
         parameters = yaml.safe_load(
@@ -198,21 +279,28 @@ class TaskLaunchContractTests(unittest.TestCase):
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertIn('goal_checker_id="precise_goal_checker"', tree)
 
-    def test_direction_renewal_fits_the_guard_permit_window(self):
+    def test_direction_renewal_is_diagnostic_when_lease_expiry_is_disabled(self):
         task = yaml.safe_load(TASK_CONFIG.read_text(encoding="utf-8"))[
             "task_node"]["ros__parameters"]
         guard = yaml.safe_load(
             DIRECTION_GUARD_CONFIG.read_text(encoding="utf-8")
         )["direction_guard"]["ros__parameters"]
 
-        permit = float(guard["permit_timeout_sec"])
-        self.assertEqual(float(task["direction_lease_timeout_sec"]), permit)
-        self.assertLess(float(task["direction_service_timeout_sec"]), permit)
-        self.assertLess(float(task["direction_renew_period_sec"]), permit)
-        self.assertLess(
-            float(task["direction_service_timeout_sec"])
-            + float(task["direction_renew_period_sec"]),
-            permit,
+        self.assertEqual(float(guard["permit_timeout_sec"]), 0.0)
+        self.assertEqual(float(task["direction_lease_timeout_sec"]), 0.0)
+        self.assertEqual(float(task["direction_renew_period_sec"]), 0.10)
+        self.assertEqual(float(task["direction_service_timeout_sec"]), 0.20)
+        source = NODE.read_text(encoding="utf-8")
+        self.assertIn("def _warn_renewal_failure(self, result):", source)
+        self.assertIn(
+            'f"direction renewal unavailable ({status}); continuing under "',
+            source,
+        )
+        self.assertIn("continuing under", source)
+        self.assertNotIn("return renewed", source)
+        self.assertIn(
+            'self.declare_parameter("direction_lease_timeout_sec", 0.0)',
+            source,
         )
 
     def test_navigation_failure_is_single_attempt_by_default(self):
@@ -262,7 +350,6 @@ class TaskLaunchContractTests(unittest.TestCase):
 
     def test_supervised_navigation_modes_are_pure_and_explicit(self):
         source = NODE.read_text(encoding="utf-8")
-        script = NAV_TEST.read_text(encoding="utf-8")
         self.assertIn('self.declare_parameter("supervised_p_to_a_only", False)', source)
         self.assertIn('self.declare_parameter("supervised_p_to_c1_only", False)', source)
         self.assertIn("SUPERVISED_P_TO_A_SEGMENT_ID", source)
@@ -272,14 +359,6 @@ class TaskLaunchContractTests(unittest.TestCase):
             '"nav", "via", "via", "via", "via", "nav",',
             source.replace("\n", " "),
         )
-        self.assertIn("--supervised-p-to-a", script)
-        self.assertIn("--supervised-p-to-c1", script)
-        self.assertIn("--supervised-full-route", script)
-        self.assertIn('"$END_SEGMENT_ID" != "p_to_qr"', script)
-        self.assertIn('"$END_SEGMENT_ID" != "qr_to_vlm"', script)
-        self.assertIn("if $SUPERVISED_P_TO_A || $SUPERVISED_P_TO_C1 || $SUPERVISED_FULL_ROUTE; then", script)
-        self.assertIn("supervised_full_route:=true", script)
-        self.assertIn("RESET_ORIGIN=true", script)
         system_source = SYSTEM.read_text(encoding="utf-8")
         self.assertIn("supervised navigation route requires:", system_source)
         self.assertIn('"supervised_full_route", default_value="false"', system_source)
@@ -307,78 +386,114 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn('"use_camera"', system_launch)
         self.assertIn('"use_vision"', system_launch)
 
-    def test_navigation_test_script_stays_latched_at_startup(self):
+    def test_navigation_test_script_has_only_compact_start_and_go_entries(self):
         source = NAV_TEST.read_text(encoding="utf-8")
-        self.assertNotIn("--autostart", source)
+        self.assertIn(
+            "bash /home/sunrise/ros2_ws/scripts/nav_test.sh "
+            "[--go] [--wheel-only]",
+            source,
+        )
+        self.assertIn("--go) GO=true", source)
+        self.assertIn("--wheel-only) WHEEL_ONLY=true", source)
+        for retired_option in (
+            "--autostart", "--supervised-p-to-a", "--supervised-p-to-c1",
+            "--supervised-full-route", "--short-drive", "--verify",
+            "--no-depth-camera", "--reset-origin", "--p-to-a", "--p-to-c1",
+            "setsid",
+        ):
+            self.assertNotIn(retired_option, source)
         self.assertIn("autostart_mission:=false", source)
         self.assertIn("safety_emergency_stop_on_start:=true", source)
         self.assertNotIn("safety_emergency_stop_on_start:=false", source)
-        self.assertIn("if $SUPERVISED_P_TO_A", source)
-        self.assertIn("supervised_p_to_a_only:=true", source)
-        self.assertIn("--short-drive 必须选择受看护 P→A 或 P→C1 前缀", source)
         self.assertIn('STATUS_TOOL=/root/nav_status.py', source)
         self.assertIn('STATUS_ARGS=(--timeout 60)', source)
         self.assertIn('hold_started_stack', source)
-        self.assertIn('nohup setsid ros2 launch smartcar_bringup', source)
-        self.assertIn('safety_emergency_stop_on_start:=true', source)
-        self.assertNotIn('safety/emergency_stop std_srvs/srv/SetBool "{data: false}"', source)
+        self.assertIn('nohup ros2 launch smartcar_bringup', source)
+        self.assertIn('nohup rviz2 -d', source)
+        self.assertIn('WHEEL_ONLY=false', source)
+        self.assertIn('LOCALIZATION_PROFILE_ARG="localization_profile:=wheel_imu"', source)
+        self.assertIn('LOCALIZATION_PROFILE_ARG="localization_profile:=wheel_only"', source)
+        self.assertIn('$EXTRA_ARGS $LOCALIZATION_PROFILE_ARG', source)
+        self.assertIn('set_software_emergency_stop false', source)
+        self.assertIn('/smartcar/task/start', source)
+        self.assertIn('re_latch_after_transition_failure', source)
+        reset = source.index('ros2 service call /smartcar/task/reset')
+        release = source.index('set_software_emergency_stop false')
+        start = source.index('ros2 service call /smartcar/task/start')
+        self.assertLess(reset, release)
+        self.assertLess(release, start)
+        self.assertIn('banner "等待人工发车"', source)
+        self.assertNotIn("source_fingerprint", source)
+        self.assertNotIn("nav2_params_fixed.yaml", source)
+        self.assertNotIn("ros_cleanup", source)
 
-    def test_navigation_test_script_requires_live_obstacle_avoidance(self):
+    def test_navigation_test_script_uses_depth_status_before_go(self):
         source = NAV_TEST.read_text(encoding="utf-8")
+        status_source = NAV_STATUS.read_text(encoding="utf-8")
         prepare_source = NAV_PREPARE.read_text(encoding="utf-8")
-        self.assertIn("verify_obstacle_avoidance", source)
-        self.assertIn("obstacle_layer.enabled", source)
-        self.assertIn("obstacle_layer.observation_sources", source)
-        self.assertIn(
-            'expected_sources="String value is: depth_scan"', source)
-        self.assertIn("if $DEPTH_CAMERA; then", source)
-        self.assertIn("obstacle_layer.scan.topic", source)
-        self.assertIn("obstacle_layer.scan.observation_persistence", source)
-        self.assertIn("obstacle_layer.scan.min_obstacle_height", source)
-        self.assertIn("obstacle_layer.scan.max_obstacle_height", source)
-        self.assertIn("obstacle_layer.scan.inf_is_valid", source)
-        self.assertIn("obstacle_layer.depth_scan.topic", source)
-        self.assertIn('LIDAR_ARGS="use_lidar:=false"', source)
+        self.assertIn("use_depth_camera:=true", source)
         self.assertIn("aurora_ir_fps:=10 aurora_rgb_fps:=10", source)
-        self.assertIn(
-            '"obstacle_layer.depth_scan.observation_persistence" '
-            '"Double value is: 0.0"',
-            source,
-        )
-        self.assertIn("obstacle_layer.depth_scan.inf_is_valid", source)
-        self.assertIn(
-            '"depth_points_timeout_sec" "Double value is: 1.0"',
-            source,
-        )
-        self.assertIn("inflation_layer.enabled", source)
-        self.assertIn("ros2 param get --no-daemon", source)
-        self.assertIn("ros2 topic echo --no-daemon", source)
-        self.assertIn("for attempt in 1 2 3 4 5 6", source)
-        self.assertIn("The status is transient-local", source)
-        self.assertIn("--verify", source)
-        self.assertIn("fast startup status passed", source)
+        self.assertIn("--depth-camera", source)
+        self.assertIn('expected_source = "depth_scan"', status_source)
+        self.assertIn("obstacle_layer.observation_sources", status_source)
+        self.assertIn("obstacle_layer.depth_scan.topic", status_source)
+        self.assertIn("/local_costmap/costmap_raw", status_source)
+        self.assertIn("/global_costmap/costmap_raw", status_source)
         self.assertNotIn("colcon build", source)
-        self.assertNotIn('bash "$WORKSPACE/scripts/ros_cleanup.sh"', source)
         self.assertIn("COLCON_PARALLEL_WORKERS=8", prepare_source)
         self.assertIn('--parallel-workers "$COLCON_PARALLEL_WORKERS"', prepare_source)
         self.assertIn("ros_cleanup", prepare_source)
-        self.assertIn("--packages-select smartcar_common smartcar_interfaces", prepare_source)
         self.assertIn(
-            "/local_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
-        self.assertIn(
-            "/global_costmap/costmap_raw nav2_msgs/msg/Costmap", source)
-        self.assertIn(
-            "/local_costmap/costmap nav_msgs/msg/OccupancyGrid", source)
-        self.assertIn(
-            "/global_costmap/costmap nav_msgs/msg/OccupancyGrid", source)
-        self.assertIn("避障感知未就绪；急停保持锁存", source)
+            "--packages-up-to smartcar_bringup smartcar_vision",
+            prepare_source,
+        )
+        self.assertIn('find "$WORKSPACE/src"', prepare_source)
         self.assertIn("python3 \"$STATUS_TOOL\"", source)
         self.assertIn("startup health did not become ready", source)
-        self.assertIn("start_rviz", source)
-        self.assertLess(source.index("start_rviz"), source.index("python3 \"$STATUS_TOOL\""))
-        self.assertIn("cleanup_launch", source)
-        self.assertIn("source changed after prepare", source)
+        self.assertLess(
+            source.index("python3 \"$STATUS_TOOL\""),
+            source.rindex("start_rviz"),
+        )
+        self.assertNotIn('--rviz-pid "$RVIZ_PID"', source)
         self.assertTrue(NAV_STATUS.is_file())
+
+    def test_ros_cleanup_targets_only_recorded_or_navigation_processes(self):
+        source = ROS_CLEANUP.read_text(encoding="utf-8")
+        self.assertIn("STATE_DIR=/tmp/smartcar_nav", source)
+        self.assertIn('stop_saved_process "$STATE_DIR/launch.pid"', source)
+        self.assertIn('stop_saved_process "$STATE_DIR/rviz.pid"', source)
+        self.assertIn('"ros2 launch smartcar_bringup smartcar_system.launch.py"', source)
+        self.assertIn('"navigation.rviz"', source)
+        self.assertIn("/proc/$pid/cmdline", source)
+        self.assertIn('kill -TERM "$pid"', source)
+        self.assertIn('for _ in 1 2 3 4 5', source)
+        self.assertIn('kill -KILL "$pid"', source)
+        for node in (
+            "ekf_node", "controller_server", "planner_server",
+            "behavior_server", "bt_navigator", "velocity_smoother",
+            "lifecycle_manager", "safety_node_cpp", "direction_guard_node",
+            "origincar_base_node", "aurora930_node", "task_node",
+            "depth_pointcloud_relay", "pointcloud_to_laserscan_node",
+        ):
+            self.assertIn(node, source)
+        # Linux truncates this executable's comm name to "lifecycle_manag",
+        # so pgrep -x lifecycle_manager alone cannot clear stale managers.
+        self.assertIn(
+            "'/nav2_lifecycle_manager/lifecycle_manager'", source)
+        self.assertIn(
+            "'/tf2_ros/static_transform_publisher.*__node:="
+            "(base_to_link|base_to_gyro|link_to_laser|"
+            "link_to_depth_camera_sensor)'", source)
+        self.assertIn(
+            "'/smartcar_tools/(field_reference_node|waypoint_viz)'", source)
+        self.assertIn("remove_stale_fastdds_ports", source)
+        self.assertIn('fuser -s "$port"', source)
+        self.assertIn('rm -f -- "$port"', source)
+        for unsafe_or_unrelated in (
+            "setsid", "pkill -f", "ros2 daemon", "waypoint_editor",
+            "\n    rviz2",
+        ):
+            self.assertNotIn(unsafe_or_unrelated, source)
 
     def test_planner_lookup_cache_is_bounded_to_the_field_scale(self):
         parameters = yaml.safe_load(

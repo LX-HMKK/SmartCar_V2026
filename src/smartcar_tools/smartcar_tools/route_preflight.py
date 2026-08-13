@@ -1,9 +1,9 @@
 """Offline geometric preflight for the waypoint editor.
 
 This is a small heading-aware lattice planner.  It runs entirely in the
-editor process, honors the same B-wall/C-core keepouts as the simulation mask,
-uses the vehicle's minimum turning radius, and treats every pass-through point
-as an ordered waypoint constraint.  It intentionally does not invoke Nav2:
+editor process, checks field boundaries and vehicle geometry, uses the vehicle's
+minimum turning radius, and treats every pass-through point as an ordered
+waypoint constraint.  It intentionally does not invoke Nav2:
 there is no live costmap, current robot pose, controller state, or guarantee
 that the generated geometric candidate matches Nav2's ``/plan``.
 """
@@ -18,8 +18,7 @@ from typing import Any, Iterable, Sequence
 from smartcar_task.route_geometry import materialize_free_yaws
 from smartcar_task.waypoints import is_heading_locked
 
-from smartcar_tools.field_keepouts import keepout_mask_bounds
-from smartcar_tools.field_reference import Bounds2D, FieldReference, Point2D
+from smartcar_tools.field_reference import FieldReference, Point2D
 from smartcar_task.planning_segments import (
     PlanningSegment,
     materialize_navigation_segments,
@@ -155,39 +154,11 @@ class LatticePreflightPlanner:
         self._field = reference.field
         self._config = config or load_route_planning_config()
         self._preflight = self._config.preflight
-        # KeepoutFilter consumes PGM cells, not mathematical lines. Matching
-        # those cell edges avoids clearing a route inside its final black cell.
-        self._keepouts = keepout_mask_bounds(reference, self._config)
 
     @property
     def config(self) -> RoutePlanningConfig:
         """Return the exact shared configuration used for this preflight."""
         return self._config
-
-    def _intersects_keepout(self, pose: Pose2D, bounds: Bounds2D) -> bool:
-        """Test the padded Nav2 OBB against one axis-aligned mask rectangle."""
-        footprint = self._config.runtime_footprint
-        half_length = footprint.padded_half_length_m
-        half_width = footprint.padded_half_width_m
-        cosine = math.cos(pose.yaw)
-        sine = math.sin(pose.yaw)
-        delta_x = bounds.center.x - pose.x
-        delta_y = bounds.center.y - pose.y
-        obstacle_half_x = bounds.width / 2.0
-        obstacle_half_y = bounds.height / 2.0
-
-        # Separating-axis test for an oriented robot rectangle vs an AABB.
-        if abs(delta_x) > obstacle_half_x + half_length * abs(cosine) + half_width * abs(sine):
-            return False
-        if abs(delta_y) > obstacle_half_y + half_length * abs(sine) + half_width * abs(cosine):
-            return False
-        local_x = delta_x * cosine + delta_y * sine
-        local_y = -delta_x * sine + delta_y * cosine
-        if abs(local_x) > half_length + obstacle_half_x * abs(cosine) + obstacle_half_y * abs(sine):
-            return False
-        if abs(local_y) > half_width + obstacle_half_x * abs(sine) + obstacle_half_y * abs(cosine):
-            return False
-        return True
 
     def _is_free(self, x: float, y: float, yaw: float = 0.0) -> bool:
         if not all(math.isfinite(value) for value in (x, y, yaw)):
@@ -210,10 +181,7 @@ class LatticePreflightPlanner:
             and y + extent_y <= self._field.y_max
         ):
             return False
-        pose = Pose2D(x, y, yaw)
-        return not any(
-            self._intersects_keepout(pose, obstacle) for obstacle in self._keepouts
-        )
+        return True
 
     def _state_key(self, pose: Pose2D) -> tuple[int, int, int]:
         resolution = self._preflight.grid_resolution_m

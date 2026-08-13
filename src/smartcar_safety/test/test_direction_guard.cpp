@@ -19,7 +19,7 @@ using smartcar_safety::TwistComponents;
 DirectionGuardConfig test_config() {
   DirectionGuardConfig config;
   config.candidate_timeout_sec = 0.20;
-  config.permit_timeout_sec = 0.30;
+  config.permit_timeout_sec = 0.0;
   config.prepare_timeout_sec = 1.00;
   config.raw_odom_timeout_sec = 0.20;
   config.stop_settle_sec = 0.10;
@@ -27,6 +27,7 @@ DirectionGuardConfig test_config() {
   config.stop_angular_speed_threshold = 0.05;
   config.zero_epsilon = 1.0e-6;
   config.direction_epsilon = 1.0e-4;
+  config.forward_recovery_max_reverse_speed = 0.15;
   return config;
 }
 
@@ -64,7 +65,10 @@ LeaseIdentity prepare_and_activate(DirectionGuard &guard,
   const LeaseIdentity identity{prepared.boot_epoch, prepared.lease_id,
                                generation, action_uuid};
   const double signed_speed =
-      direction == MotionDirection::Forward ? 0.1 : -0.1;
+      (direction == MotionDirection::Forward ||
+       direction == MotionDirection::ForwardRecovery)
+          ? 0.1
+          : -0.1;
   expect_zero(guard.on_candidate(command(signed_speed), start + 0.13));
   guard.on_raw_odom(command(0.0), true, start + 0.13);
   const auto activated = guard.activate(identity, start + 0.14);
@@ -180,6 +184,69 @@ TEST(DirectionGuardTest, ForwardLeasePreservesAngularSignForCandidateAndReplay) 
   EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
 }
 
+TEST(DirectionGuardTest, ForwardRecoveryLeaseAllowsOnlyCappedNativeBackUp) {
+  DirectionGuard guard(test_config(), 42);
+  const auto identity = prepare_and_activate(
+      guard, MotionDirection::ForwardRecovery, 1, uuid(1), 0.0);
+
+  EXPECT_EQ(guard.on_candidate(command(0.12, 0.2), 0.15),
+            command(0.12, 0.2));
+  EXPECT_EQ(guard.on_candidate(command(-0.15), 0.16), command(-0.15));
+  EXPECT_EQ(guard.evaluate(0.17), command(-0.15));
+  EXPECT_TRUE(guard.renew(identity, 0.18).success);
+}
+
+TEST(DirectionGuardTest, ForwardRecoveryRejectsAnySpeedBeyondNativeBackUpCap) {
+  DirectionGuard guard(test_config(), 42);
+  prepare_and_activate(guard, MotionDirection::ForwardRecovery, 1, uuid(1),
+                       0.0);
+
+  expect_zero(guard.on_candidate(command(-0.150001), 0.15));
+  EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
+  EXPECT_EQ(guard.status(), "warning_recovery_reverse_speed_rejected");
+  EXPECT_EQ(guard.on_candidate(command(0.12, 0.2), 0.16),
+            command(0.12, 0.2));
+  EXPECT_EQ(guard.status(), "active_forward_recovery");
+}
+
+TEST(DirectionGuardTest, ForwardRecoveryDoesNotLatchOnRepeatedReverse) {
+  DirectionGuard guard(test_config(), 42);
+  prepare_and_activate(guard, MotionDirection::ForwardRecovery, 1, uuid(1),
+                       0.0);
+
+  EXPECT_EQ(guard.on_candidate(command(-0.15), 0.15), command(-0.15));
+  expect_zero(guard.on_candidate(command(0.0), 0.16));
+  EXPECT_EQ(guard.on_candidate(command(-0.10), 0.17), command(-0.10));
+  EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
+}
+
+TEST(DirectionGuardTest, ForwardRecoveryRejectsTurningWhileBackingUp) {
+  DirectionGuard guard(test_config(), 42);
+  prepare_and_activate(guard, MotionDirection::ForwardRecovery, 1, uuid(1),
+                       0.0);
+
+  expect_zero(guard.on_candidate(command(-0.10, 0.01), 0.15));
+  EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
+  EXPECT_EQ(guard.status(), "warning_recovery_reverse_turn_rejected");
+  EXPECT_EQ(guard.on_candidate(command(0.10), 0.16), command(0.10));
+}
+
+TEST(DirectionGuardTest, ForwardRecoveryDoesNotLatchOnElapsedReverseTime) {
+  DirectionGuard guard(test_config(), 42);
+  prepare_and_activate(guard, MotionDirection::ForwardRecovery, 1, uuid(1),
+                       0.0);
+
+  EXPECT_EQ(guard.on_candidate(command(-0.10), 0.15), command(-0.10));
+  EXPECT_EQ(guard.on_candidate(command(-0.10), 4.66), command(-0.10));
+  EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
+}
+
+TEST(DirectionGuardTest, ForwardRecoveryCapCannotExceedNativeBackUpCap) {
+  auto config = test_config();
+  config.forward_recovery_max_reverse_speed = 0.151;
+  EXPECT_THROW(DirectionGuard(config, 42), std::invalid_argument);
+}
+
 TEST(DirectionGuardTest, WrongDirectionLatchesAndHoldsFullZero) {
   DirectionGuard guard(test_config(), 42);
   const auto identity = prepare_and_activate(
@@ -239,7 +306,7 @@ TEST(DirectionGuardTest, RawOdomGapResetsContinuousStopDwell) {
   EXPECT_TRUE(guard.stop_ready(0.36));
 }
 
-TEST(DirectionGuardTest, CandidateAndPermitTimeoutsLatch) {
+TEST(DirectionGuardTest, CandidateTimeoutLatchesWhenLeaseExpiryIsDisabled) {
   {
     DirectionGuard guard(test_config(), 42);
     const auto identity = prepare_and_activate(
@@ -252,8 +319,10 @@ TEST(DirectionGuardTest, CandidateAndPermitTimeoutsLatch) {
     DirectionGuard guard(test_config(), 42);
     prepare_and_activate(guard, MotionDirection::Reverse, 1, uuid(1), 0.0);
     guard.on_candidate(command(-0.1), 0.30);
-    expect_zero(guard.evaluate(0.45));
-    EXPECT_EQ(guard.status(), "fault_permit_timeout");
+    EXPECT_EQ(guard.evaluate(0.45), command(-0.1));
+    EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
+    expect_zero(guard.evaluate(0.51));
+    EXPECT_EQ(guard.status(), "fault_candidate_timeout");
   }
 }
 

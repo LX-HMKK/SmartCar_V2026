@@ -13,6 +13,7 @@ planning_segments:
   - via_1
   - via_2
   - via_3
+  - via_6
 - id: return_to_p
   direction: forward
   start_id: c_corner_1
@@ -20,6 +21,7 @@ planning_segments:
   through_ids:
   - via_4
   - via_5
+  - via_7
 waypoints:
 - id: p_start
   frame_id: odom_combined
@@ -40,8 +42,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.3659794280888047
-      y: 0.51564510939511
+      x: 3.6885612733268998
+      y: 0.8151041666666672
       z: 0.0
     orientation:
       x: 0.0
@@ -51,12 +53,13 @@ waypoints:
   task: qr
   direction: forward
   goal_profile: precise
+  heading_mode: locked
 - id: via_1
   frame_id: odom_combined
   pose:
     position:
-      x: 1.990071488899615
-      y: 2.5497506435006443
+      x: 1.993278937419563
+      y: 1.6677023005148015
       z: 0.0
   task: via
   direction: forward
@@ -65,8 +68,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.48548654681467207
-      y: 2.987129987129989
+      x: 1.9585801761583017
+      y: 2.882158944658946
       z: 0.0
   task: via
   direction: forward
@@ -75,8 +78,18 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.43300102557915077
-      y: 3.9901866151866168
+      x: 0.5061891690797939
+      y: 2.8970298423423433
+      z: 0.0
+  task: via
+  direction: forward
+  goal_profile: standard
+- id: via_6
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 0.5309739985521236
+      y: 3.982605373230375
       z: 0.0
   task: via
   direction: forward
@@ -96,6 +109,7 @@ waypoints:
   task: vlm
   direction: forward
   goal_profile: precise
+  heading_mode: locked
 - id: via_4
   frame_id: odom_combined
   pose:
@@ -110,8 +124,18 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 1.9842397643178904
-      y: 2.4214527027027035
+      x: 1.9784080397361654
+      y: 2.7731056949806963
+      z: 0.0
+  task: via
+  direction: forward
+  goal_profile: standard
+- id: via_7
+  frame_id: odom_combined
+  pose:
+    position:
+      x: 1.9982359033140287
+      y: 1.7321428571428579
       z: 0.0
   task: via
   direction: forward

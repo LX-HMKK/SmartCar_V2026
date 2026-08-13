@@ -164,6 +164,21 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(result.status, "navigation_segment_semantic_boundary")
         self.assertEqual(self.navigator.calls, [])
 
+    def test_rejects_non_via_intermediates_and_via_endpoints_before_navigation(self):
+        mission = self.make_mission()
+        nav = waypoint("nav", "nav", 1.0)
+        finish = waypoint("p_finish", "return", 2.0)
+        result = mission.execute(
+            (waypoint("p", "start", 0.0), nav, finish), ((nav, finish),))
+        self.assertEqual(result.status, "navigation_segment_intermediate_not_via")
+        self.assertEqual(self.navigator.through_calls, [])
+
+        mission = self.make_mission()
+        via = waypoint("via", "via", 1.0)
+        result = mission.execute((waypoint("p", "start", 0.0), via), ((via,),))
+        self.assertEqual(result.status, "navigation_segment_endpoint_is_via")
+        self.assertEqual(self.navigator.calls, [])
+
     def test_navigation_failure_does_not_reissue_the_same_goal(self):
         navigator = FakeNavigator([
             OperationResult(False, "planner_failed"),

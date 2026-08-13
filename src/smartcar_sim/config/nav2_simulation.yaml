@@ -1,9 +1,9 @@
-# Simulation-only overlay. The real base parameters also load the field
-# KeepoutFilter; this file only overrides simulation-specific tuning.
+# Simulation-only Nav2 overlay. It adds local Gazebo tuning without a static
+# map or wall-specific clearance.
 # Gazebo's model uses a 0.189 m wheelbase and a 1.00 rad inner-wheel limit.
 # This permits the requested 0.22 m rear-axle radius. The real chain now uses
 # the same conservative lower bound after a measured approximately 0.20 m
-# physical circle; simulation-only controller and keepout tuning stay local.
+# physical circle; simulation-only controller and costmap tuning stay local.
 controller_server:
   ros__parameters:
     # Stop before the physical 0.12 m precise-terminal verification limit.
@@ -85,23 +85,9 @@ local_costmap:
       # overlay without ever changing the real-vehicle costmap parameters.
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
-      # The field PGM stays available as an RViz reference, but it is not a
-      # simulated navigation constraint. Only current Gazebo sensor returns
-      # feed obstacle/inflation cost in this mode.
-      # Nav2 1.1.20 cannot deserialize an empty string-array parameter.
-      # Keep the plugin declared but disabled, which prevents it from
-      # applying the field PGM to this simulation costmap.
-      filters: ["keepout_filter"]
-      keepout_filter:
-        enabled: false
-      # The official B-zone opening is 1.0 m wide. The vehicle's padded
-      # half-width is 0.095 m, so the real-system 0.55 m inflation radius
-      # would mark the entire simulated opening impassable. Gazebo's 0.05 m
-      # lidar-slice cone model uses a 0.30 m total inflation radius instead,
-      # without changing the real-vehicle configuration. It is not the robot
-      # collision envelope: the footprint sweep owns collision acceptance
-      # independently of this InflationLayer setting.
-      # The scalar is synchronized from route_planning.yaml.
+      # This is generic preference around current obstacle observations, not
+      # a collision envelope or a prior-map clearance. The scalar is
+      # synchronized from route_planning.yaml.
       inflation_layer:
         inflation_radius: 0.30
       obstacle_layer:
@@ -130,12 +116,6 @@ global_costmap:
       transform_tolerance: 0.10
       footprint: "[[0.2191, 0.065], [0.2191, -0.065], [-0.2191, -0.065], [-0.2191, 0.065]]"
       footprint_padding: 0.03
-      # Keep the static field PGM out of simulated navigation costmaps.
-      # See the local costmap note above: this plugin is present only to
-      # satisfy the non-empty parameter contract and remains disabled.
-      filters: ["keepout_filter"]
-      keepout_filter:
-        enabled: false
       inflation_layer:
         inflation_radius: 0.30
       obstacle_layer:

@@ -180,7 +180,8 @@ class PlanningSegmentTests(unittest.TestCase):
                         or abs(norm - 1.0) <= 1.0e-6
                     )
                 else:
-                    self.assertEqual(item.orientation, (0.0, 0.0, 0.0, 0.0))
+                    self.assertFalse(is_zero_quaternion(item.orientation))
+                    self.assertAlmostEqual(norm, 1.0)
 
     def test_segments_materialize_an_ordered_semantic_route(self):
         source = mission_waypoints()
@@ -283,7 +284,7 @@ class PlanningSegmentTests(unittest.TestCase):
                 )
                 self.assert_position_only_orientation_contract(executable)
 
-    def test_local_preflight_finds_open_space_and_rejects_keepout_center(self):
+    def test_local_preflight_checks_field_bounds_without_a_prior_wall_map(self):
         planner = LatticePreflightPlanner(load_field_reference(GEOMETRY_FILE))
         open_path = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(1.0, 0.0, 0.0))
         self.assertIsNotNone(open_path)
@@ -291,15 +292,15 @@ class PlanningSegmentTests(unittest.TestCase):
         self.assertGreater(len(points), 2)
         self.assertGreater(expanded, 0)
 
-        blocked = planner.plan(Pose2D(0.0, 0.0, 0.0), Pose2D(2.0, 3.5, 0.0))
-        self.assertIsNone(blocked)
+        self.assertTrue(planner._is_free(1.0, 2.0, 0.0))
+        self.assertFalse(planner._is_free(-0.6, 0.0, 0.0))
 
     def test_transit_heading_remains_free_in_preflight(self):
         source = (
             Waypoint(
                 frame_id="odom_combined",
                 position=(-0.1, 0.0, 0.0),
-                orientation=(0.0, 0.0, 1.0, 0.0),
+                orientation=(0.0, 0.0, 0.0, 1.0),
                 task="start",
                 direction="forward",
                 id="start",
@@ -309,7 +310,7 @@ class PlanningSegmentTests(unittest.TestCase):
                 position=(0.7, 0.0, 0.0),
                 orientation=(0.0, 0.0, 0.0, 0.0),
                 task="via",
-                direction="reverse",
+                direction="forward",
                 id="middle",
             ),
             Waypoint(
@@ -317,12 +318,12 @@ class PlanningSegmentTests(unittest.TestCase):
                 position=(1.5, 0.0, 0.0),
                 orientation=(0.0, 0.0, 1.0, 0.0),
                 task="return",
-                direction="reverse",
+                direction="forward",
                 id="end",
             ),
         )
         segment = PlanningSegment(
-            "joint_reverse", "reverse", "start", "end", ("middle",)
+            "joint_forward", "forward", "start", "end", ("middle",)
         )
 
         report = preflight_route(
@@ -372,7 +373,7 @@ class PlanningSegmentTests(unittest.TestCase):
     def test_preflight_preserves_adjacent_transit_action_boundaries(self):
         source = (
             waypoint("p_start", "start", 0.0, 0.0),
-            waypoint("middle", "via", 0.8, 0.0),
+            waypoint("middle", "nav", 0.8, 0.0),
             waypoint("p_finish", "return", 0.0, 0.0),
         )
         segments = (
@@ -423,7 +424,7 @@ class PlanningSegmentTests(unittest.TestCase):
     def test_preflight_failure_is_bounded_to_its_explicit_action(self):
         source = (
             waypoint("p_start", "start", 0.0, 0.0),
-            waypoint("middle", "via", 0.8, 0.0),
+            waypoint("middle", "nav", 0.8, 0.0),
             waypoint("p_finish", "return", 0.0, 0.0),
         )
         segments = (
@@ -483,12 +484,12 @@ class PlanningSegmentTests(unittest.TestCase):
                 (
                     "a_task_observe",
                     ("qr_to_vlm",),
-                    ("via_1", "via_2", "via_3", "c_corner_1"),
+                    ("via_1", "via_2", "via_3", "via_6", "c_corner_1"),
                 ),
                 (
                     "c_corner_1",
                     ("return_to_p",),
-                    ("via_4", "via_5", "p_finish"),
+                    ("via_4", "via_5", "via_7", "p_finish"),
                 ),
             ],
         )
@@ -549,7 +550,8 @@ class PlanningSegmentTests(unittest.TestCase):
                 ("a_task_observe", "via_1"),
                 ("via_1", "via_2"),
                 ("via_2", "via_3"),
-                ("via_3", "c_corner_1"),
+                ("via_3", "via_6"),
+                ("via_6", "c_corner_1"),
             ],
         )
         return_to_p = next(
@@ -561,7 +563,8 @@ class PlanningSegmentTests(unittest.TestCase):
             [
                 ("c_corner_1", "via_4"),
                 ("via_4", "via_5"),
-                ("via_5", "p_finish"),
+                ("via_5", "via_7"),
+                ("via_7", "p_finish"),
             ],
         )
 
@@ -576,10 +579,10 @@ class PlanningSegmentTests(unittest.TestCase):
             item for item in segments
             if item.id == "return_to_p"
         )
-        self.assertEqual(return_to_p.through_ids, ("via_4", "via_5"))
+        self.assertEqual(return_to_p.through_ids, ("via_4", "via_5", "via_7"))
         self.assertEqual(
             [waypoint.id for waypoint in source if waypoint.task == "via"],
-            ["via_1", "via_2", "via_3", "via_4", "via_5"],
+            ["via_1", "via_2", "via_3", "via_6", "via_4", "via_5", "via_7"],
         )
 
 

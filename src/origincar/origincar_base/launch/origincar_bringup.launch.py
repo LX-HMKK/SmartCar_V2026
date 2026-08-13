@@ -4,20 +4,61 @@ from pathlib import Path
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, IncludeLaunchDescription
-from launch.conditions import IfCondition, UnlessCondition
+from launch.actions import (
+    DeclareLaunchArgument,
+    IncludeLaunchDescription,
+    OpaqueFunction,
+)
+from launch.conditions import IfCondition
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
 
+def _as_bool(context, name):
+    value = LaunchConfiguration(name).perform(context).strip().lower()
+    if value in ('true', '1'):
+        return True
+    if value in ('false', '0'):
+        return False
+    raise RuntimeError(f'{name} must be true or false')
+
+
+def _ekf_actions(context):
+    """Select the estimator inputs while retaining one EKF TF owner."""
+    if _as_bool(context, 'carto_slam'):
+        return []
+
+    profile = LaunchConfiguration('localization_profile').perform(
+        context).strip().lower()
+    config_dir = Path(get_package_share_directory('origincar_base')) / 'config'
+    profile_files = {
+        'wheel_imu': str(config_dir / 'ekf.yaml'),
+        'wheel_only': str(config_dir / 'ekf_wheel_only.yaml'),
+    }
+    try:
+        parameter_file = profile_files[profile]
+    except KeyError:
+        raise RuntimeError(
+            'localization_profile must be wheel_imu or wheel_only') from None
+
+    return [Node(
+        package='robot_localization',
+        executable='ekf_node',
+        name='ekf_filter_node',
+        parameters=[
+            parameter_file,
+            {'use_sim_time': LaunchConfiguration('use_sim_time')},
+        ],
+        remappings=[('odometry/filtered', 'odom_combined')],
+    )]
+
+
 def generate_launch_description():
     bringup_dir = get_package_share_directory('origincar_base')
     launch_dir = os.path.join(bringup_dir, 'launch')
-    ekf_config = Path(bringup_dir, 'config', 'ekf.yaml')
     imu_config = Path(bringup_dir, 'config', 'imu.yaml')
 
-    carto_slam = LaunchConfiguration('carto_slam')
     skip_converter = LaunchConfiguration('skip_converter')
     input_topic = LaunchConfiguration('input_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
@@ -54,6 +95,11 @@ def generate_launch_description():
             'input_topic', default_value='/cmd_vel_safe',
             description='Twist input topic for chassis conversion'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument(
+            'localization_profile', default_value='wheel_imu',
+            description=(
+                'wheel_imu fuses wheel and gyro yaw rates; wheel_only '
+                'loads no IMU sensor into the EKF')),
         DeclareLaunchArgument('use_imu_filter', default_value='false'),
         DeclareLaunchArgument('use_robot_description', default_value='false'),
         DeclareLaunchArgument('laser_frame', default_value='laser'),
@@ -146,13 +192,7 @@ def generate_launch_description():
         executable='imu_filter_madgwick_node',
         parameters=[imu_config, {'use_sim_time': use_sim_time}],
     )
-    robot_ekf = Node(
-        condition=UnlessCondition(carto_slam),
-        package='robot_localization',
-        executable='ekf_node',
-        parameters=[ekf_config, {'use_sim_time': use_sim_time}],
-        remappings=[('odometry/filtered', 'odom_combined')],
-    )
+    robot_ekf = OpaqueFunction(function=_ekf_actions)
     joint_state_publisher = Node(
         condition=IfCondition(use_robot_description),
         package='joint_state_publisher',

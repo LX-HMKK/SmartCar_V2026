@@ -70,6 +70,7 @@ class VisionServiceInterfaceContractTests(unittest.TestCase):
                 [
                     "uint8 FORWARD=1",
                     "uint8 REVERSE=2",
+                    "uint8 FORWARD_RECOVERY=3",
                     "uint8 direction",
                     "uint64 generation",
                     "unique_identifier_msgs/UUID action_uuid",

@@ -9,6 +9,14 @@ import yaml
 ROOT = Path(__file__).resolve().parents[1]
 BASE_PACKAGE = ROOT / "src" / "origincar" / "origincar_base"
 EKF_FILE = BASE_PACKAGE / "config" / "ekf.yaml"
+WHEEL_ONLY_EKF_FILE = BASE_PACKAGE / "config" / "ekf_wheel_only.yaml"
+ORIGINCAR_BRINGUP_FILE = BASE_PACKAGE / "launch" / "origincar_bringup.launch.py"
+SMARTCAR_BRINGUP_FILE = (
+    ROOT / "src" / "smartcar_bringup" / "launch" / "smartcar_bringup.launch.py"
+)
+SMARTCAR_SYSTEM_FILE = (
+    ROOT / "src" / "smartcar_bringup" / "launch" / "smartcar_system.launch.py"
+)
 BASE_LAUNCH_FILE = BASE_PACKAGE / "launch" / "base_serial.launch.py"
 BASE_HEADER_FILE = BASE_PACKAGE / "include" / "origincar_base" / "origincar_base.h"
 CALIBRATION_HEADER_FILE = (
@@ -65,6 +73,11 @@ def ekf_parameters():
     return config["ekf_filter_node"]["ros__parameters"]
 
 
+def wheel_only_ekf_parameters():
+    config = yaml.safe_load(WHEEL_ONLY_EKF_FILE.read_text(encoding="utf-8"))
+    return config["ekf_filter_node"]["ros__parameters"]
+
+
 class EkfContractTests(unittest.TestCase):
     def test_frames_timeout_and_tf_owner_are_exact(self):
         params = ekf_parameters()
@@ -113,6 +126,48 @@ class EkfContractTests(unittest.TestCase):
         self.assertTrue(all(math.isfinite(float(value)) for value in covariance))
         for index in range(15):
             self.assertGreaterEqual(float(covariance[index * 15 + index]), 1e-3)
+
+    def test_wheel_only_is_a_standalone_copy_without_imu_input(self):
+        wheel_imu = ekf_parameters()
+        wheel_only = wheel_only_ekf_parameters()
+        expected = {
+            key: value for key, value in wheel_imu.items()
+            if not key.startswith("imu")
+        }
+        self.assertEqual(wheel_only, expected)
+        self.assertFalse(any(key.startswith("imu") for key in wheel_only))
+
+
+class LocalizationProfileLaunchContractTests(unittest.TestCase):
+    def test_vendor_bringup_selects_one_complete_ekf_config(self):
+        source = ORIGINCAR_BRINGUP_FILE.read_text(encoding="utf-8")
+        self.assertIn("'wheel_imu': str(config_dir / 'ekf.yaml')", source)
+        self.assertIn(
+            "'wheel_only': str(config_dir / 'ekf_wheel_only.yaml')", source)
+        self.assertIn("parameter_file = profile_files[profile]", source)
+        self.assertIn("parameters=[\n            parameter_file,", source)
+        self.assertNotIn("parameter_files.append(", source)
+        self.assertIn(
+            "localization_profile must be wheel_imu or wheel_only", source)
+
+    def test_profile_defaults_and_forwarding_are_explicit(self):
+        sources = (
+            ("vendor", ORIGINCAR_BRINGUP_FILE),
+            ("bringup", SMARTCAR_BRINGUP_FILE),
+            ("system", SMARTCAR_SYSTEM_FILE),
+        )
+        for name, path in sources:
+            with self.subTest(source=name):
+                source = path.read_text(encoding="utf-8")
+                self.assertRegex(
+                    source,
+                    r"[\"']localization_profile[\"'], "
+                    r"default_value=[\"']wheel_imu[\"']",
+                )
+        bringup = SMARTCAR_BRINGUP_FILE.read_text(encoding="utf-8")
+        system = SMARTCAR_SYSTEM_FILE.read_text(encoding="utf-8")
+        self.assertIn("'localization_profile': localization_profile", bringup)
+        self.assertIn('"localization_profile": localization_profile', system)
 
 
 class BaseDriverContractTests(unittest.TestCase):

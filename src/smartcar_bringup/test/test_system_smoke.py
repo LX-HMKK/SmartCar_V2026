@@ -42,6 +42,7 @@ FIXTURE_ARGUMENT = "--system-smoke-fixture"
 MANAGED_NODES = (
     "controller_server",
     "planner_server",
+    "behavior_server",
     "bt_navigator",
     "velocity_smoother",
 )

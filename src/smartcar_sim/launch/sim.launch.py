@@ -45,7 +45,7 @@ from launch.actions import (
     ExecuteProcess,
 )
 from launch.conditions import IfCondition, UnlessCondition
-from launch.event_handlers import OnProcessExit, OnProcessStart, OnShutdown
+from launch.event_handlers import OnProcessExit, OnShutdown
 from launch.events import Shutdown
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from launch.substitutions import (
@@ -53,8 +53,7 @@ from launch.substitutions import (
     PathJoinSubstitution,
     PythonExpression,
 )
-from launch_ros.actions import LifecycleNode, Node
-from launch_ros.event_handlers import OnStateTransition
+from launch_ros.actions import Node
 from launch_ros.parameter_descriptions import ParameterValue
 from ament_index_python.packages import get_package_share_directory
 
@@ -231,8 +230,7 @@ def generate_launch_description():
     # /scan while every range is the lidar minimum and /odom_combined never
     # appears.
     # This short-lived process only observes /clock, /odom_combined and /scan;
-    # its successful exit is the launch-level prerequisite for the keepout
-    # stack and Nav2 below.
+    # its successful exit is the launch-level prerequisite for Nav2 below.
     sensor_preflight = Node(
         package="smartcar_sim",
         executable="sim_sensor_preflight.py",
@@ -294,71 +292,6 @@ def generate_launch_description():
     # the vehicle stack; it does not emulate physical motion leases.
     # In simulation, we bypass this and let Nav2 control velocity directly.
 
-    # ── Prior-map keepout stack ──
-    # The PGM is a mask, not a localization map. CostmapFilterInfoServer turns
-    # it into a KeepoutFilter contract for both Nav2 costmaps. This keeps static
-    # route constraints simulation-only and avoids the static-layer startup race.
-    map_file = os.path.join(pkg_sim, "maps", "field_map.yaml")
-    keepout_mask_server = Node(
-        package="nav2_map_server",
-        executable="map_server",
-        name="keepout_mask_server",
-        parameters=[{
-            "use_sim_time": True,
-            "yaml_filename": map_file,
-            "frame_id": "odom_combined",
-            "topic_name": "/keepout_filter_mask",
-        }],
-        output="screen",
-    )
-    keepout_filter_info_server = LifecycleNode(
-        package="nav2_map_server",
-        executable="costmap_filter_info_server",
-        namespace="",
-        name="keepout_filter_info_server",
-        parameters=[{
-            "use_sim_time": True,
-            "type": 0,
-            "filter_info_topic": "/keepout_filter_info",
-            "mask_topic": "/keepout_filter_mask",
-            "base": 0.0,
-            "multiplier": 1.0,
-        }],
-        output="screen",
-    )
-    keepout_lifecycle_manager = Node(
-        package="nav2_lifecycle_manager",
-        executable="lifecycle_manager",
-        name="lifecycle_manager_keepout",
-        parameters=[{
-            "use_sim_time": True,
-            "autostart": True,
-            # Gazebo and RViz can briefly starve this process during startup.
-            # Leave enough room for the first bond heartbeat before resetting
-            # the filter servers.
-            "bond_timeout": 20.0,
-            "node_names": [
-                "keepout_mask_server",
-                "keepout_filter_info_server",
-            ],
-        }],
-        output="screen",
-    )
-    keepout_lifecycle_after_servers = RegisterEventHandler(
-        OnProcessStart(
-            target_action=keepout_filter_info_server,
-            # The manager does not retry a node that was absent at its first
-            # autostart pass. Under Gazebo startup load one launch cycle is
-            # occasionally not enough for Fast DDS service discovery, which
-            # leaves the filter stack inactive and prevents Nav2 from starting.
-            # Give both lifecycle services a deterministic readiness window.
-            on_start=[TimerAction(
-                period=3.0,
-                actions=[keepout_lifecycle_manager],
-            )],
-        )
-    )
-
     # ── Safety bypass: simulation doesn't need safety_node ──
     # cmd_vel chain: controller → /cmd_vel_nav → velocity_smoother → /cmd_vel_candidate → bridge → Gazebo
     # No direction_guard or safety_node (both block velocity without real hardware)
@@ -367,8 +300,8 @@ def generate_launch_description():
     nav2_fixed_params = PathJoinSubstitution([
         pkg_nav2, "config", "nav2_params_fixed.yaml"
     ])
-    nav2_keepout_overlay = PathJoinSubstitution([
-        pkg_sim, "config", "nav2_keepout_filter.yaml"
+    nav2_simulation_overlay = PathJoinSubstitution([
+        pkg_sim, "config", "nav2_simulation.yaml"
     ])
     nav2_depth_obstacle_overlay = PathJoinSubstitution([
         pkg_nav2, "config", "depth_camera_obstacle_overlay.yaml"
@@ -402,9 +335,9 @@ def generate_launch_description():
         nonlocal active_nav2_params
         nonlocal generated_nav2_params
 
-        keepout_overlay_path = Path(nav2_keepout_overlay.perform(context))
-        active_nav2_overlay = keepout_overlay_path
-        overlays = [keepout_overlay_path]
+        simulation_overlay_path = Path(nav2_simulation_overlay.perform(context))
+        active_nav2_overlay = simulation_overlay_path
+        overlays = [simulation_overlay_path]
         if _as_bool(context, "use_depth_obstacles"):
             # The Gazebo fixture emits PointCloud2 on the same topic as the
             # Aurora relay. The depth overlay replaces /scan so the fixture
@@ -459,9 +392,6 @@ def generate_launch_description():
                 "use_sim_time": "true",
                 "nav2_params_file": str(params_path),
                 "nav2_params_overlay_file": "",
-                # sim.launch owns the same keepout servers itself, with a
-                # simulator-specific lifecycle/sensor readiness gate.
-                "use_keepout_filter": "false",
                 # Let the verified helper below issue STARTUP only after the
                 # lifecycle manager has created and warmed its Fast DDS
                 # response readers. Autostart can race controller plugin
@@ -518,8 +448,7 @@ def generate_launch_description():
         output="screen",
         condition=IfCondition(use_depth_obstacles),
     )
-    # A lifecycle manager can reactivate the filter after a transient startup
-    # delay. Launch Nav2 exactly once: repeating this include creates duplicate
+    # Launch Nav2 exactly once: repeating this include creates duplicate
     # controller/planner nodes that fight over the same lifecycle services.
     nav2_started = False
 
@@ -531,14 +460,6 @@ def generate_launch_description():
             raise RuntimeError("sim Nav2 parameters were not prepared before Nav2")
         nav2_started = True
         return [make_nav2_launch(active_nav2_params), nav2_lifecycle_startup]
-
-    nav2_after_keepout = RegisterEventHandler(
-        OnStateTransition(
-            target_lifecycle_node=keepout_filter_info_server,
-            goal_state="active",
-            entities=[OpaqueFunction(function=launch_nav2_once)],
-        )
-    )
 
     def start_after_nav2_lifecycle(event, context):
         """Release the optional route only after verified Nav2 activation."""
@@ -606,15 +527,13 @@ def generate_launch_description():
     )
 
     def start_after_sensor_tf_preflight(event, context):
-        """Release keepout and Nav2 only after scan-time TF is proven live."""
+        """Release Nav2 only after scan-time TF is proven live."""
         if event.returncode == 0:
             return [
                 LogInfo(msg=(
-                    "[sim] scan-time TF preflight passed; starting keepout "
-                    "and Nav2"
+                    "[sim] scan-time TF preflight passed; starting Nav2"
                 )),
-                keepout_mask_server,
-                keepout_filter_info_server,
+                OpaqueFunction(function=launch_nav2_once),
             ]
         return [
             LogInfo(msg=(
@@ -725,11 +644,8 @@ def generate_launch_description():
         field_reference,
         auto_train_exit,
         nav2_lifecycle_startup_exit,
-        # Start the mask lifecycle stack after Gazebo begins publishing /clock.
-        # Nav2 itself is released only after the sensor preflight and
-        # filter-info activation both succeed.
-        nav2_after_keepout,
-        keepout_lifecycle_after_servers,
+        # Nav2 is released only after the sensor and scan-time TF preflights
+        # prove live obstacle observations are usable.
         # RViz 延迟 8s 启动（等 Gazebo + odom_combined TF frame 就绪）
         # 修复原因：原 5s 在 Gazebo 启动耗时长时不够，/clock 未发布
         # → RViz 一直停在 "No tf data. Fixed frame [odom_combined] does not exist"

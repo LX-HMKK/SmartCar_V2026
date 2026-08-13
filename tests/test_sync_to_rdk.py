@@ -84,7 +84,9 @@ class TestEnsureLocalDestParent(unittest.TestCase):
 
     def test_remote_noop(self):
         # 远程路径不应触碰本地文件系统，无异常即通过
-        sync.ensure_local_dest_parent("root@192.168.128.10:/root/ros2_ws/src/")
+        sync.ensure_local_dest_parent(
+            "root@192.168.128.10:/home/sunrise/ros2_ws/src/"
+        )
 
 
 class TestRsyncAvailable(unittest.TestCase):
@@ -113,6 +115,8 @@ class TestTargets(unittest.TestCase):
         self.assertTrue(all(d.startswith(sync.HOST) for d in dsts))
         self.assertIn(f"{sync.HOST}:/root/nav_prepare.sh", dsts)
         self.assertIn(f"{sync.HOST}:/root/nav_test.sh", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_test.sh", dsts)
         self.assertIn(f"{sync.HOST}:/root/nav_status.py", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/ros_cleanup.sh", dsts)

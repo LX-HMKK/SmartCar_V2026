@@ -208,9 +208,9 @@ class SimPerceptionMonitor(Node):
         self.declare_parameter("min_landmark_ids", 3)
         self.declare_parameter("diagnostic_period_sec", 0.5)
         self.declare_parameter("require_a_zone_probe", True)
-        # The default track keeps this area free in the keepout PGM and places
-        # its movable cone obstacles inside it. A lethal match here therefore
-        # proves a real scan return was marked by the obstacle layer.
+        # The default track places movable cone obstacles in this area. A
+        # lethal match here therefore proves a real scan return was marked by
+        # the obstacle layer rather than by a prior map.
         self.declare_parameter(
             "a_zone_probe_bounds", [0.45, 3.15, 0.10, 1.25])
 

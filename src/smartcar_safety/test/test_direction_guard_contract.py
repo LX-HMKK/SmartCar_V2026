@@ -33,23 +33,54 @@ class DirectionGuardContractTests(unittest.TestCase):
             "fault_unsupported_twist",
             "fault_wrong_direction",
             "fault_candidate_timeout",
-            "fault_permit_timeout",
         ):
             self.assertIn(reason, source)
         self.assertIn("phase_ = DirectionGuardPhase::Faulted", source)
         self.assertIn("direction_ = MotionDirection::Stop", source)
 
-    def test_defaults_leave_renewal_timing_margin(self):
+    def test_defaults_disable_lease_expiry_but_keep_command_freshness(self):
         parameters = yaml.safe_load(CONFIG.read_text(encoding="utf-8"))[
             "direction_guard"
         ]["ros__parameters"]
         self.assertEqual(parameters["publish_frequency_hz"], 20.0)
-        self.assertLess(
-            parameters["candidate_timeout_sec"],
-            parameters["permit_timeout_sec"],
-        )
-        self.assertLessEqual(parameters["permit_timeout_sec"], 0.30)
+        self.assertEqual(parameters["candidate_timeout_sec"], 0.40)
+        self.assertEqual(parameters["permit_timeout_sec"], 0.0)
+        self.assertEqual(parameters["forward_recovery_max_reverse_speed"], 0.15)
+        self.assertNotIn("forward_recovery_max_reverse_duration_sec", parameters)
         self.assertGreater(parameters["stop_settle_sec"], 0.0)
+        source = CORE.read_text(encoding="utf-8")
+        self.assertNotIn('latch_fault("fault_permit_timeout")', source)
+        self.assertIn('latch_fault("fault_candidate_timeout")', source)
+
+    def test_forward_recovery_is_capped_at_the_guard_boundary(self):
+        header = (PACKAGE_ROOT / "include" / "smartcar_safety" /
+                  "direction_guard.hpp").read_text(encoding="utf-8")
+        core = CORE.read_text(encoding="utf-8")
+        self.assertIn("ForwardRecovery = 3", header)
+        self.assertIn("kForwardRecoveryMaxReverseSpeed{0.15}", header)
+        self.assertIn("forward_recovery_max_reverse_speed", header)
+        self.assertIn("exceeds native BackUp cap", core)
+        self.assertIn("MotionDirection::ForwardRecovery", core)
+        self.assertIn("warning_recovery_reverse_speed_rejected", core)
+        self.assertIn("warning_recovery_reverse_turn_rejected", core)
+        self.assertNotIn("fault_recovery_reverse_replayed", core)
+        self.assertNotIn("fault_recovery_reverse_timeout", core)
+        self.assertNotIn("forward_recovery_max_reverse_duration_sec", core)
+        node = NODE.read_text(encoding="utf-8")
+        self.assertIn('declare_parameter("forward_recovery_max_reverse_speed"', node)
+        self.assertIn("config.forward_recovery_max_reverse_speed", node)
+
+    def test_node_logs_the_latched_fault_reason_before_later_stop_handling(self):
+        source = NODE.read_text(encoding="utf-8")
+        self.assertIn('status.rfind("fault_", 0) == 0', source)
+        self.assertIn("RCLCPP_ERROR(get_logger()", source)
+        self.assertIn("direction guard latched %s", source)
+
+    def test_node_logs_recovery_command_rejections_without_latching(self):
+        source = NODE.read_text(encoding="utf-8")
+        self.assertIn('status.rfind("warning_", 0) == 0', source)
+        self.assertIn("RCLCPP_WARN(get_logger()", source)
+        self.assertIn("forward mission lease remains active", source)
 
     def test_launch_starts_only_the_cpp_guard(self):
         source = LAUNCH.read_text(encoding="utf-8")

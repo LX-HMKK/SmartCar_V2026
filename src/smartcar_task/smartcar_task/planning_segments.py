@@ -183,6 +183,16 @@ def validate_planning_segments(
             raise PlanningSegmentError(
                 f"{PLANNING_SEGMENTS_KEY}[{index}] must start at the previous segment end"
             )
+        if getattr(indexed[segment.end_id], "task", "") == "via":
+            raise PlanningSegmentError(
+                f"{PLANNING_SEGMENTS_KEY}[{index}].end_id must not be a via waypoint"
+            )
+        for through_index, waypoint_id in enumerate(segment.through_ids):
+            if getattr(indexed[waypoint_id], "task", "") != "via":
+                raise PlanningSegmentError(
+                    f"{PLANNING_SEGMENTS_KEY}[{index}].through_ids["
+                    f"{through_index}] must reference a via waypoint"
+                )
 
     if candidates[0].start_id != items[0].id:
         raise PlanningSegmentError("first planning segment must start at the start waypoint")
@@ -291,13 +301,13 @@ def materialize_navigation_segments(
 ) -> tuple[tuple[Any, ...], ...]:
     """Return one bounded Nav2 action per explicit planning segment.
 
-    A planning segment is both the editable route model and the costmap
-    replanning boundary.  Combining same-direction regions into one long
-    ``NavigateThroughPoses`` request lets remote geometry alter the heading
-    chosen for the first corridor, while a rolling costmap cannot yet observe
-    obstacles at the far end.  Each segment still uses ThroughPoses for its
-    ordinary intermediate constraints, so those points remain pass-through
-    goals rather than one action per waypoint.
+    A planning segment is both the editable route model and one costmap
+    planning boundary. Combining same-direction regions into one long
+    ``NavigateThroughPoses`` request produces one complete path from the
+    current costmap. Its ordinary intermediate constraints are submitted only
+    to ``ComputePathThroughPoses`` at segment start. ``FollowPath`` then
+    tracks that fixed path without resubmitting ``via`` points; it uses the
+    action's final endpoint for arrival detection, never a ``via`` point.
     """
     indexed = _waypoint_index(waypoints)
     checked = validate_planning_segments(segments, waypoints)
