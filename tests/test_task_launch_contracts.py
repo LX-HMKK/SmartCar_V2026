@@ -372,9 +372,9 @@ class TaskLaunchContractTests(unittest.TestCase):
             ROOT / "src" / "smartcar_safety" / "config" / "safety.yaml"
         ).read_text(encoding="utf-8"))["safety_node"]["ros__parameters"]
 
-        self.assertEqual(float(controller["FollowPath"]["desired_linear_vel"]), 0.60)
-        self.assertEqual(float(smoother["max_velocity"][0]), 0.60)
-        self.assertEqual(float(safety["max_linear_speed_mps"]), 0.60)
+        self.assertEqual(float(controller["FollowPath"]["desired_linear_vel"]), 0.30)
+        self.assertEqual(float(smoother["max_velocity"][0]), 0.30)
+        self.assertEqual(float(safety["max_linear_speed_mps"]), 0.30)
 
     def test_collision_failure_immediately_enters_native_back_up_recovery(self):
         controller = yaml.safe_load(
@@ -398,7 +398,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             inflation = parameters[name][name]["ros__parameters"][
                 "inflation_layer"
             ]
-            self.assertEqual(float(inflation["inflation_radius"]), 0.3)
+            self.assertEqual(float(inflation["inflation_radius"]), 0.42)
 
     def test_precise_terminal_profile_keeps_tight_position_and_valid_yaw(self):
         parameters = yaml.safe_load(

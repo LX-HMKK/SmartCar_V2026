@@ -117,7 +117,7 @@ controller_server:
       plugin: "nav2_regulated_pure_pursuit_controller::RegulatedPurePursuitController"
       # Global nominal speed. Nav2's curvature and live-costmap regulation
       # reduce it automatically where the path or obstacle costs require.
-      desired_linear_vel: 0.60
+      desired_linear_vel: 0.30
       # Keep the effective RPP tracking lookahead fixed at 0.50 m. Velocity
       # scaling remains enabled, but identical bounds prevent it from changing
       # the configured forward tracking horizon.
@@ -182,7 +182,7 @@ local_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        inflation_radius: 0.3
+        inflation_radius: 0.42
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
 
@@ -223,7 +223,7 @@ global_costmap:
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
-        inflation_radius: 0.3
+        inflation_radius: 0.42
         cost_scaling_factor: 5.0
       always_send_full_costmap: true
 
@@ -312,7 +312,7 @@ velocity_smoother:
     # command before the downstream direction guard.
     scale_velocities: true
     feedback: "OPEN_LOOP"
-    max_velocity: [0.60, 0.0, 1.3636363636363635]
+    max_velocity: [0.30, 0.0, 1.3636363636363635]
     # The only negative command source is Nav2's finite native BackUp recovery.
     min_velocity: [-0.15, 0.0, -1.3636363636363635]
     max_accel: [0.5, 0.0, 1.0]

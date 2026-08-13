@@ -186,7 +186,7 @@ class SystemContractTests(unittest.TestCase):
         self.assertIs(depth["measured"], True)
         self.assertEqual(depth["child"], "depth_camera_link_1")
         self.assertEqual(depth["xyz"], [0.0599, 0.0, 0.12])
-        self.assertEqual(depth["rpy"], [1.5708, 0.0, 1.5708])
+        self.assertEqual(depth["rpy"], [-1.5708, 0.0, -1.5708])
         self.assertNotIn("depth_camera_calibrated", config["motion_gates"])
 
         overlay = yaml.safe_load(DEPTH_OVERLAY.read_text(encoding="utf-8"))
@@ -414,6 +414,10 @@ class SystemContractTests(unittest.TestCase):
             ("depth_camera_x", "depth_camera_y", "depth_camera_z"),
             (str(value) for value in depth_camera["xyz"]),
         ))
+        expected_depth_camera.update(dict(zip(
+            ("depth_camera_roll", "depth_camera_pitch", "depth_camera_yaw"),
+            (str(value) for value in depth_camera["rpy"]),
+        )))
 
         for name, expected in {**expected_base, **expected_laser}.items():
             with self.subTest(name=name):

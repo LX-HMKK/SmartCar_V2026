@@ -72,9 +72,9 @@ extrinsics:
     parent: base_link
     child: depth_camera_link_1
     xyz: [0.0599, 0.0, 0.12]
-    # Aurora driver frame: x left, y up, z forward. Map it into base_link
-    # (x forward, y left, z up).
-    rpy: [1.5708, 0.0, 1.5708]
+    # Aurora's physical frame after the camera was turned upright: x right,
+    # y down, z forward. Map it into base_link (x forward, y left, z up).
+    rpy: [-1.5708, 0.0, -1.5708]
 
 calibration:
   longitudinal_velocity_scale: 1.03
