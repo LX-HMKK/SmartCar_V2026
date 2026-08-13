@@ -25,3 +25,6 @@ __pycache__/
 tune_logs/
 /frames_*.gv
 /frames_*.pdf
+
+# Local cloud credentials. This file is intentionally never packaged.
+/config/volcengine_ark.local.yaml

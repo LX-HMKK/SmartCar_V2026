@@ -1,9 +1,8 @@
-"""CLI adapter for Volcengine Ark's OpenAI-compatible vision API."""
+"""CLI adapter for Volcengine Ark's OpenAI-compatible Responses API."""
 import argparse
 import base64
 import json
 import math
-import os
 from pathlib import Path
 import socket
 import sys
@@ -11,11 +10,14 @@ from urllib import error as urlerror
 from urllib import parse as urlparse
 from urllib import request as urlrequest
 
+import yaml
+
 
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-DEFAULT_MODEL = "doubao-1-5-vision-pro-32k-250115"
-DEFAULT_API_KEY_ENV = "ARK_API_KEY"
-FALLBACK_API_KEY_ENV = "DOUBAO_KEY"
+DEFAULT_MODEL = "doubao-seed-2-0-lite-260428"
+LOCAL_CREDENTIALS_RELATIVE_PATH = (
+    Path("config") / "volcengine_ark.local.yaml"
+)
 MAX_IMAGE_BYTES = 5 * 1024 * 1024
 MAX_RESPONSE_BYTES = 1024 * 1024
 
@@ -46,7 +48,7 @@ def _positive_timeout(value):
     return timeout
 
 
-def _chat_completions_url(base_url):
+def _responses_url(base_url):
     value = str(base_url).strip().rstrip("/")
     parsed = urlparse.urlsplit(value)
     if (
@@ -58,13 +60,13 @@ def _chat_completions_url(base_url):
         or parsed.fragment
     ):
         raise VolcengineVlmError("invalid_base_url")
-    if parsed.path.endswith("/chat/completions"):
+    if parsed.path.endswith("/responses"):
         return value
-    return value + "/chat/completions"
+    return value + "/responses"
 
 
 def build_payload(image_bytes, prompt, model, max_tokens):
-    """Build the Ark chat-completions request without exposing credentials."""
+    """Build an Ark Responses request without exposing credentials."""
     if not isinstance(image_bytes, bytes) or not image_bytes:
         raise VolcengineVlmError("image_empty")
     if len(image_bytes) > MAX_IMAGE_BYTES:
@@ -85,44 +87,73 @@ def build_payload(image_bytes, prompt, model, max_tokens):
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return {
         "model": model,
-        "messages": [{
+        "input": [{
             "role": "user",
             "content": [
-                {"type": "text", "text": prompt},
                 {
-                    "type": "image_url",
-                    "image_url": {
-                        "url": "data:image/jpeg;base64," + encoded,
-                    },
+                    "type": "input_image",
+                    "image_url": "data:image/jpeg;base64," + encoded,
                 },
+                {"type": "input_text", "text": prompt},
             ],
         }],
-        "max_tokens": token_limit,
-        "temperature": 0.1,
+        "max_output_tokens": token_limit,
     }
 
 
 def extract_description(response):
-    """Extract either string or typed text content from an Ark response."""
-    try:
-        content = response["choices"][0]["message"]["content"]
-    except (KeyError, IndexError, TypeError) as error:
-        raise VolcengineVlmError("response_missing_content") from error
-
-    if isinstance(content, str):
-        description = content.strip()
-    elif isinstance(content, list):
-        description = "".join(
-            str(item.get("text", ""))
-            for item in content
-            if isinstance(item, dict)
-            and item.get("type") in ("text", "output_text")
-        ).strip()
-    else:
-        description = ""
+    """Extract text from an Ark Responses result."""
+    description = ""
+    if isinstance(response, dict):
+        output_text = response.get("output_text")
+        if isinstance(output_text, str):
+            description = output_text.strip()
+        if not description:
+            output = response.get("output")
+            if isinstance(output, list):
+                description = "".join(
+                    str(content.get("text", ""))
+                    for item in output
+                    if isinstance(item, dict)
+                    for content in item.get("content", ())
+                    if isinstance(content, dict)
+                    and content.get("type") in ("output_text", "text")
+                ).strip()
     if not description:
         raise VolcengineVlmError("response_empty_content")
     return description
+
+
+def _credentials_file():
+    """Find the ignored root-config credential YAML from source or colcon installs."""
+    candidates = [Path.cwd() / LOCAL_CREDENTIALS_RELATIVE_PATH]
+    module_path = Path(__file__).resolve()
+    candidates.extend(
+        parent / LOCAL_CREDENTIALS_RELATIVE_PATH
+        for parent in (module_path.parent, *module_path.parents)
+    )
+    return next((path for path in candidates if path.is_file()), None)
+
+
+def _load_api_key():
+    credentials_file = _credentials_file()
+    if credentials_file is None:
+        raise VolcengineVlmError("credentials_file_missing")
+    try:
+        document = yaml.safe_load(
+            credentials_file.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise VolcengineVlmError("credentials_file_invalid") from error
+    if not isinstance(document, dict):
+        raise VolcengineVlmError("credentials_file_invalid")
+    ark = document.get("ark")
+    api_key = ark.get("api_key") if isinstance(ark, dict) else None
+    if not isinstance(api_key, str):
+        raise VolcengineVlmError("credentials_file_invalid")
+    api_key = api_key.strip()
+    if not api_key:
+        raise VolcengineVlmError("missing_api_key")
+    return api_key
 
 
 def request_description(
@@ -150,7 +181,7 @@ def request_description(
         payload, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
     request = urlrequest.Request(
-        _chat_completions_url(base_url),
+        _responses_url(base_url),
         data=encoded_payload,
         headers={
             "Authorization": "Bearer " + api_key,
@@ -199,29 +230,24 @@ def _parser():
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--model")
     parser.add_argument("--base-url")
-    parser.add_argument("--api-key-env", default=DEFAULT_API_KEY_ENV)
     parser.add_argument("--timeout-sec", type=float, default=7.0)
     parser.add_argument("--max-tokens", type=int, default=256)
     return parser
 
 
-def main(argv=None, environ=None, stdout=None, stderr=None, opener=None):
+def main(argv=None, stdout=None, stderr=None, opener=None):
     """Run the CLI; injectable streams and opener keep tests offline."""
-    environ = os.environ if environ is None else environ
     stdout = sys.stdout if stdout is None else stdout
     stderr = sys.stderr if stderr is None else stderr
     arguments = _parser().parse_args(argv)
-    key_name = str(arguments.api_key_env).strip()
-    api_key = str(environ.get(key_name, "")).strip()
-    if not api_key and key_name == DEFAULT_API_KEY_ENV:
-        api_key = str(environ.get(FALLBACK_API_KEY_ENV, "")).strip()
-    if not api_key:
-        print(f"missing_api_key:{key_name}", file=stderr)
+    try:
+        api_key = _load_api_key()
+    except VolcengineVlmError as error:
+        print(str(error), file=stderr)
         return 2
 
-    model = arguments.model or environ.get("VOLC_ARK_MODEL", DEFAULT_MODEL)
-    base_url = arguments.base_url or environ.get(
-        "VOLC_ARK_BASE_URL", DEFAULT_BASE_URL)
+    model = arguments.model or DEFAULT_MODEL
+    base_url = arguments.base_url or DEFAULT_BASE_URL
     try:
         description = request_description(
             image_path=arguments.image,

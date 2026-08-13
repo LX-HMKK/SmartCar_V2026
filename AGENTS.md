@@ -9,8 +9,8 @@
 - 实车语义路线 `default_waypoints.yaml` 与仿真纯导航路线 `nav_only.yaml` 必须使用同一张路线：航点 ID、顺序、坐标、姿态、方向、profile 和 `planning_segments` 必须一致。两者仅可在 A/C1 的任务类型上不同：`qr`/`vlm` 与 `nav`。
 - 禁止助手、脚本、预检、仿真结果或任何自动化逻辑擅自新增、删除、移动、重命名航点，或改动姿态、方向、profile、分段和经过约束。不得为绕过规划或测试失败添加连接点。
 - 任何航点修改必须先在 RViz 航点编辑器中向用户展示拟议路线和点位，并取得用户对该次具体修改的明确同意。获准后才可同步两份 YAML，并运行航点同步合同测试。
-- 仿真与实车的每一段都只能由 Nav2 基于实时 costmap 规划。禁止强制路径、连接器、手工弧线、路径后处理、点位专用绕障、控制器补偿或任何人为路径引导。
-- 经过点（`task: via`、`through_ids`）只作为 Nav2 `ComputePathThroughPoses` 的有序路径规划约束，明确拒绝参与到达判定、停车、任务完成或分段终点。`via` 不得作为 `end_id`，`FollowPath` 的到达检测只能针对该段非 `via` 的最终端点。每段正常情况下只允许在开始时基于实时 costmap 计算一次完整路径，随后单次 `FollowPath` 跟踪该路径；跟踪期间 `RemovePassedGoals` 只持久清理已通过的队首规划约束，不参与到达判定。唯一例外是路径跟踪失败或不可达后的原生 Nav2 脱困：每段最多 3 次直线 `BackUp`（每次 `0.20 m`、速度不超过 `0.15 m/s`），每次随后只用剩余规划约束重算当前段；它不构成到达、停车或任务完成，也不重投已清理的 `via`。`RemovePassedGoals` 的半径仅是 Nav2 通用队首裁剪规则，不保证拓扑意义上的通过。
+- 仿真与实车的每一段都只能由 Nav2 基于实时 costmap 规划。禁止强制路径、连接器、手工弧线、离线或固定路径后处理、点位专用绕障、控制器补偿或任何人为路径引导。本次用户明确授权的窄例外仅为：当前 `ComputePathThroughPoses` 结果可先删除连续重合 pose，再交给原生 Nav2 `SmoothPath`/`ConstrainedSmoother`；平滑器必须使用实时 costmap 并开启完整 footprint 碰撞检查，结果只供该次 `FollowPath` 使用，不得落盘、复用、写死或改动 YAML、航点和分段。
+- 经过点（`task: via`、`through_ids`）只作为 Nav2 `ComputePathThroughPoses` 的有序路径规划约束，明确拒绝参与到达判定、停车、任务完成或分段终点。`via` 不得作为 `end_id`，`FollowPath` 的到达检测只能针对该段非 `via` 的最终端点。每段正常情况下只允许在开始时基于实时 costmap 计算一次完整路径，随后先执行上述原生实时平滑，再由单次 `FollowPath` 跟踪其结果；平滑可在实时 costmap 和碰撞约束下自然切过 `via` 的边缘，但不改变其规划约束或到达语义。跟踪期间 `RemovePassedGoals` 只持久清理已通过的队首规划约束，不参与到达判定。唯一例外是路径跟踪失败或不可达后的原生 Nav2 脱困：每段最多 3 次直线 `BackUp`（每次 `0.20 m`、速度不超过 `0.15 m/s`），每次随后只用剩余规划约束重算当前段并重新执行上述实时平滑；它不构成到达、停车或任务完成，也不重投已清理的 `via`。`RemovePassedGoals` 的半径仅是 Nav2 通用队首裁剪规则，不保证拓扑意义上的通过。
 - 到达、碰撞、速度、曲率、规划和恢复阈值只能使用 Nav2 的通用配置。禁止按分段、航点或障碍设置专用阈值或放宽阈值掩盖失败。
 - 运动链必须经过 `velocity_smoother -> direction_guard -> smartcar_safety -> /ackermann_cmd`。不得绕过方向门或 safety，禁止直接发布底盘 Twist/Ackermann。
 - 导航固定使用已标定的 IMU+轮式里程计；EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。深度点云仅用于 Nav2 obstacle/inflation costmap，不做 SLAM 或静态地图定位。

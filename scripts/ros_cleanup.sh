@@ -66,7 +66,7 @@ rmdir "$STATE_DIR" 2>/dev/null || true
 TARGET_PIDS=$( {
   collect_by_name \
     ekf_node controller_server planner_server behavior_server bt_navigator \
-    velocity_smoother lifecycle_manager safety_node_cpp direction_guard_node \
+    smoother_server velocity_smoother lifecycle_manager safety_node_cpp direction_guard_node \
     origincar_base_node aurora930_node task_node depth_pointcloud_relay \
     pointcloud_to_laserscan_node
   collect_by_command \

@@ -42,6 +42,7 @@ FIXTURE_ARGUMENT = "--system-smoke-fixture"
 MANAGED_NODES = (
     "controller_server",
     "planner_server",
+    "smoother_server",
     "behavior_server",
     "bt_navigator",
     "velocity_smoother",
@@ -146,6 +147,7 @@ def generate_test_description():
                     "use_safety": "true",
                     "safety_emergency_stop_on_start": "true",
                     "use_nav": "true",
+                    "allow_synthetic_obstacle_source": "true",
                     "nav_autostart": "false",
                     "use_camera": "false",
                     "use_vision": "true",

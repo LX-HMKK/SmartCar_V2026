@@ -6,6 +6,23 @@ if(NOT CMAKE_CXX_STANDARD)
 endif()
 
 find_package(ament_cmake REQUIRED)
+find_package(behaviortree_cpp_v3 REQUIRED)
+find_package(nav_msgs REQUIRED)
+
+add_library(smartcar_remove_duplicate_path_points_bt_node SHARED
+  src/remove_duplicate_path_points_action.cpp
+)
+target_compile_definitions(smartcar_remove_duplicate_path_points_bt_node PRIVATE
+  BT_PLUGIN_EXPORT
+)
+target_include_directories(smartcar_remove_duplicate_path_points_bt_node PUBLIC
+  $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
+  $<INSTALL_INTERFACE:include>
+)
+ament_target_dependencies(smartcar_remove_duplicate_path_points_bt_node
+  behaviortree_cpp_v3
+  nav_msgs
+)
 # Nav2 1.1.20 (TROS Humble): RewrittenYaml chain silently drops controller
 # params in favour of YDLIDAR defaults, causing "No critics defined for
 # FollowPath".  Work around by configuring a pre-resolved copy with the active
@@ -40,6 +57,16 @@ install(DIRECTORY launch config
   DESTINATION share/${PROJECT_NAME}
   PATTERN "nav2_params_fixed.yaml" EXCLUDE
   PATTERN "behavior_trees" EXCLUDE
+)
+
+install(DIRECTORY include/
+  DESTINATION include
+)
+
+install(TARGETS smartcar_remove_duplicate_path_points_bt_node
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
 )
 
 if(BUILD_TESTING)

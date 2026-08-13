@@ -15,12 +15,15 @@ import launch
 import launch_testing
 import launch_testing.actions
 from ament_index_python.packages import get_package_share_directory
+from geometry_msgs.msg import PoseStamped
 from launch.actions import ExecuteProcess, IncludeLaunchDescription, TimerAction
 from launch.launch_description_sources import PythonLaunchDescriptionSource
 from lifecycle_msgs.msg import State
+from nav2_msgs.action import ComputePathThroughPoses, SmoothPath
 from lifecycle_msgs.srv import GetState
-from nav_msgs.msg import Odometry
+from nav_msgs.msg import Odometry, Path
 import rclpy
+from rclpy.action import ActionClient
 from rclpy.qos import qos_profile_sensor_data
 from sensor_msgs.msg import LaserScan
 from geometry_msgs.msg import TransformStamped, Twist
@@ -31,6 +34,7 @@ FIXTURE_ARGUMENT = "--nav2-test-fixture"
 MANAGED_NODES = (
     "controller_server",
     "planner_server",
+    "smoother_server",
     "behavior_server",
     "bt_navigator",
     "velocity_smoother",
@@ -239,6 +243,84 @@ class TestSmartcarNav2Lifecycle(unittest.TestCase):
             message.angular.y,
             message.angular.z,
         )
+
+    @staticmethod
+    def _pose(x, y, yaw):
+        pose = PoseStamped()
+        pose.header.frame_id = "odom_combined"
+        pose.pose.position.x = x
+        pose.pose.position.y = y
+        pose.pose.orientation.z = math.sin(yaw / 2.0)
+        pose.pose.orientation.w = math.cos(yaw / 2.0)
+        return pose
+
+    def _action_result(self, client, goal, timeout_sec):
+        self.assertTrue(client.wait_for_server(timeout_sec=5.0))
+        send_goal = client.send_goal_async(goal)
+        rclpy.spin_until_future_complete(
+            self.node, send_goal, timeout_sec=timeout_sec
+        )
+        self.assertTrue(send_goal.done(), "action goal was not accepted in time")
+        goal_handle = send_goal.result()
+        self.assertIsNotNone(goal_handle)
+        assert goal_handle is not None
+        self.assertTrue(goal_handle.accepted, "action goal was rejected")
+
+        result = goal_handle.get_result_async()
+        rclpy.spin_until_future_complete(
+            self.node, result, timeout_sec=timeout_sec
+        )
+        self.assertTrue(result.done(), "action did not produce a result in time")
+        wrapped_result = result.result()
+        self.assertIsNotNone(wrapped_result)
+        assert wrapped_result is not None
+        self.assertEqual(wrapped_result.status, 4)
+        return wrapped_result.result
+
+    def test_through_plan_can_be_deduplicated_and_smoothed_without_tracking(self):
+        self._wait_for_managed_nodes_active()
+        planner = ActionClient(
+            self.node,
+            ComputePathThroughPoses,
+            "/compute_path_through_poses",
+        )
+        smoother = ActionClient(self.node, SmoothPath, "/smooth_path")
+        try:
+            plan_goal = ComputePathThroughPoses.Goal()
+            plan_goal.goals = [
+                self._pose(0.50, 0.00, 0.0),
+                self._pose(1.00, 0.50, math.pi / 2.0),
+            ]
+            plan_goal.planner_id = "GridBased"
+            plan_goal.use_start = False
+            raw_path = self._action_result(planner, plan_goal, 10.0).path
+            self.assertGreaterEqual(len(raw_path.poses), 2)
+
+            deduplicated_path = Path()
+            deduplicated_path.header = raw_path.header
+            for pose in raw_path.poses:
+                if (
+                    not deduplicated_path.poses
+                    or deduplicated_path.poses[-1].pose.position.x
+                    != pose.pose.position.x
+                    or deduplicated_path.poses[-1].pose.position.y
+                    != pose.pose.position.y
+                ):
+                    deduplicated_path.poses.append(pose)
+            self.assertGreaterEqual(len(deduplicated_path.poses), 2)
+
+            smooth_goal = SmoothPath.Goal()
+            smooth_goal.path = deduplicated_path
+            smooth_goal.smoother_id = "constrained_smoother"
+            smooth_goal.max_smoothing_duration.nanosec = 200_000_000
+            smooth_goal.check_for_collisions = True
+            smoothed_path = self._action_result(
+                smoother, smooth_goal, 10.0
+            ).path
+            self.assertGreaterEqual(len(smoothed_path.poses), 2)
+        finally:
+            self.node.destroy_client(planner)
+            self.node.destroy_client(smoother)
 
     def test_all_managed_nodes_become_active(self):
         self._wait_for_managed_nodes_active()

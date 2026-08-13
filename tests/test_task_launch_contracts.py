@@ -24,6 +24,7 @@ NAV2_CONFIG = ROOT / "src" / "smartcar_nav2" / "config"
 NAV2_BEHAVIOR_TREES = NAV2_CONFIG / "behavior_trees"
 NAV2_CMAKE = ROOT / "src" / "smartcar_nav2" / "CMakeLists.txt"
 NAV2_LAUNCH = ROOT / "src" / "smartcar_nav2" / "launch" / "navigation_launch.py"
+NAV2_PACKAGE_XML = ROOT / "src" / "smartcar_nav2" / "package.xml"
 DIRECTION_GUARD_CONFIG = (
     ROOT / "src" / "smartcar_safety" / "config" / "direction_guard.yaml"
 )
@@ -52,12 +53,25 @@ class TaskLaunchContractTests(unittest.TestCase):
 
         primary, recovery_actions = recovery
         self.assertEqual(primary.tag, "Sequence")
-        self.assertEqual(len(primary), 2)
-        initial_plan, tracking = primary
+        self.assertEqual(len(primary), 4)
+        initial_plan, deduplicate, smooth_path, tracking = primary
         self.assertEqual(initial_plan.tag, "ComputePathThroughPoses")
         self.assertEqual(initial_plan.attrib["goals"], "{goals}")
-        self.assertEqual(initial_plan.attrib["path"], "{path}")
+        self.assertEqual(initial_plan.attrib["path"], "{raw_path}")
         self.assertEqual(initial_plan.attrib["planner_id"], "GridBased")
+        self.assertEqual(deduplicate.tag, "RemoveDuplicatePathPoints")
+        self.assertEqual(deduplicate.attrib["input_path"], "{raw_path}")
+        self.assertEqual(deduplicate.attrib["output_path"], "{deduplicated_path}")
+        self.assertEqual(smooth_path.tag, "SmoothPath")
+        self.assertEqual(
+            smooth_path.attrib["unsmoothed_path"], "{deduplicated_path}")
+        self.assertEqual(smooth_path.attrib["smoothed_path"], "{path}")
+        self.assertEqual(
+            smooth_path.attrib["smoother_id"], "constrained_smoother")
+        self.assertEqual(
+            smooth_path.attrib["max_smoothing_duration"], "0.20")
+        self.assertEqual(
+            smooth_path.attrib["check_for_collisions"], "true")
         self.assertEqual(tracking.tag, "PipelineSequence")
         self.assertEqual([child.tag for child in tracking], [
             "RemovePassedGoals", "FollowPath"])
@@ -163,6 +177,9 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("明确拒绝参与到达判定", rules)
         self.assertIn("不得作为 `end_id`", rules)
         self.assertIn("ComputePathThroughPoses", rules)
+        self.assertIn("ConstrainedSmoother", rules)
+        self.assertIn("完整 footprint 碰撞检查", rules)
+        self.assertIn("不得落盘、复用、写死", rules)
         self.assertIn("FollowPath", rules)
         self.assertIn("end_id must not be a via waypoint", planning)
         self.assertIn("must reference a via waypoint", planning)
@@ -172,6 +189,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         for filename in THROUGH_POSES_TREES:
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertIn("ComputePathThroughPoses goals=\"{goals}\"", tree)
+            self.assertEqual(tree.count("<RemoveDuplicatePathPoints "), 1)
+            self.assertEqual(tree.count("<SmoothPath "), 1)
             self.assertEqual(tree.count("<FollowPath "), 1)
             self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
             self.assertIn('RecoveryNode number_of_retries="3"', tree)
@@ -246,14 +265,20 @@ class TaskLaunchContractTests(unittest.TestCase):
             self.assertIn('backup_speed="0.15"', source)
             if tree.name in THROUGH_POSES_TREES:
                 self.assertIn("PipelineSequence", source)
+                self.assertEqual(source.count("<RemoveDuplicatePathPoints "), 1)
+                self.assertEqual(source.count("<SmoothPath "), 1)
             else:
                 self.assertNotIn("PipelineSequence", source)
+                self.assertNotIn("<RemoveDuplicatePathPoints ", source)
+                self.assertNotIn("<SmoothPath ", source)
         for filename in THROUGH_POSES_TREES:
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertEqual(tree.count("<BackUp "), 1)
             self.assertIn('backup_speed="0.15"', tree)
             self.assertEqual(tree.count("<RemovePassedGoals "), 2)
             self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
+            self.assertEqual(tree.count("<RemoveDuplicatePathPoints "), 1)
+            self.assertEqual(tree.count("<SmoothPath "), 1)
             self._assert_through_poses_recovery_tree(filename)
         for filename in (
             "navigate_to_pose_w_replanning_and_recovery.xml",
@@ -271,6 +296,8 @@ class TaskLaunchContractTests(unittest.TestCase):
             self.assertNotIn(token, params)
         self.assertIn("nav2_back_up_action_bt_node", params)
         self.assertIn("nav2_remove_passed_goals_action_bt_node", params)
+        self.assertIn("nav2_smooth_path_action_bt_node", params)
+        self.assertIn("smartcar_remove_duplicate_path_points_bt_node", params)
         parsed_params = yaml.safe_load(params_file.read_text(encoding="utf-8"))
         for navigator in (
             "bt_navigator",
@@ -280,9 +307,37 @@ class TaskLaunchContractTests(unittest.TestCase):
                 "plugin_lib_names"
             ]
             self.assertIn("nav2_pipeline_sequence_bt_node", plugin_lib_names)
+            self.assertIn("nav2_smooth_path_action_bt_node", plugin_lib_names)
+            self.assertIn(
+                "smartcar_remove_duplicate_path_points_bt_node",
+                plugin_lib_names,
+            )
+        smoother = parsed_params["smoother_server"]["ros__parameters"]
+        self.assertEqual(smoother["smoother_plugins"], ["constrained_smoother"])
+        constrained = smoother["constrained_smoother"]
+        self.assertEqual(
+            constrained["plugin"],
+            "nav2_constrained_smoother/ConstrainedSmoother",
+        )
+        self.assertFalse(constrained["reversing_enabled"])
+        self.assertEqual(float(constrained["minimum_turning_radius"]), 0.23)
+        self.assertFalse(parsed_params["planner_server"]["ros__parameters"]
+                         ["GridBased"]["smooth_path"])
+        nav2_package = NAV2_PACKAGE_XML.read_text(encoding="utf-8")
+        self.assertIn("<exec_depend>nav2_smoother</exec_depend>", nav2_package)
+        self.assertIn(
+            "<exec_depend>nav2_constrained_smoother</exec_depend>",
+            nav2_package,
+        )
+        self.assertIn(
+            "smartcar_remove_duplicate_path_points_bt_node", cmake)
+        self.assertIn("remove_duplicate_path_points_action.cpp", cmake)
         self.assertIn('behavior_plugins: ["backup"]', params)
         self.assertIn("min_velocity: [-0.15", params)
         launch = NAV2_LAUNCH.read_text(encoding="utf-8")
+        self.assertIn("'smoother_server',", launch)
+        self.assertIn("package='nav2_smoother'", launch)
+        self.assertIn("executable='smoother_server'", launch)
         self.assertIn("'behavior_server',", launch)
         self.assertIn("package='nav2_behaviors'", launch)
         self.assertIn("executable='behavior_server'", launch)
@@ -307,6 +362,20 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertFalse(parameters["use_rotate_to_heading"])
         self.assertFalse(parameters["allow_reversing"])
 
+    def test_collision_failure_immediately_enters_native_back_up_recovery(self):
+        controller = yaml.safe_load(
+            (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        )["controller_server"]["ros__parameters"]
+
+        # RPP raises NoValidControl for its live-costmap collision prediction.
+        # Zero tolerance lets FollowPath fail immediately, so the existing
+        # RecoveryNode takes the bounded native BackUp path rather than
+        # emitting a controller-side zero-velocity hold.
+        self.assertEqual(float(controller["failure_tolerance"]), 0.0)
+        self.assertTrue(controller["FollowPath"]["use_collision_detection"])
+        for filename in THROUGH_POSES_TREES:
+            self._assert_through_poses_recovery_tree(filename)
+
     def test_costmaps_use_the_configured_inflation_radius(self):
         parameters = yaml.safe_load(
             (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
@@ -315,7 +384,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             inflation = parameters[name][name]["ros__parameters"][
                 "inflation_layer"
             ]
-            self.assertEqual(float(inflation["inflation_radius"]), 0.25)
+            self.assertEqual(float(inflation["inflation_radius"]), 0.3)
 
     def test_precise_terminal_profile_keeps_tight_position_and_valid_yaw(self):
         parameters = yaml.safe_load(
@@ -541,7 +610,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn('kill -KILL "$pid"', source)
         for node in (
             "ekf_node", "controller_server", "planner_server",
-            "behavior_server", "bt_navigator", "velocity_smoother",
+            "smoother_server", "behavior_server", "bt_navigator",
+            "velocity_smoother",
             "lifecycle_manager", "safety_node_cpp", "direction_guard_node",
             "origincar_base_node", "aurora930_node", "task_node",
             "depth_pointcloud_relay", "pointcloud_to_laserscan_node",

@@ -231,6 +231,11 @@ class SharedRoutePlanningTests(unittest.TestCase):
             ["minimum_turning_radius"],
             0.21,
         )
+        self.assertEqual(
+            overlay["smoother_server"]["ros__parameters"]
+            ["constrained_smoother"]["minimum_turning_radius"],
+            0.21,
+        )
         controller = overlay["controller_server"]["ros__parameters"]
         follow_path = controller["FollowPath"]
         self.assertEqual(

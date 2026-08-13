@@ -314,11 +314,22 @@ def _validate_configuration(context):
         raise RuntimeError("use_base requires use_safety")
     use_lidar = _as_bool(context, "use_lidar")
     use_depth_camera = _as_bool(context, "use_depth_camera")
+    allow_synthetic_obstacle_source = _as_bool(
+        context, "allow_synthetic_obstacle_source")
     if _as_bool(context, "use_nav") and not (
         use_lidar or use_depth_camera
     ):
-        raise RuntimeError(
-            "use_nav requires use_lidar=true or use_depth_camera=true")
+        synthetic_fixture_is_safe = (
+            allow_synthetic_obstacle_source
+            and not _as_bool(context, "use_base")
+            and _as_bool(context, "use_safety")
+            and _as_bool(context, "safety_emergency_stop_on_start")
+            and not _as_bool(context, "autostart_mission")
+        )
+        if not synthetic_fixture_is_safe:
+            raise RuntimeError(
+                "use_nav requires use_lidar=true or use_depth_camera=true "
+                "(except a base-off, e-stop-latched synthetic test fixture)")
     if _as_bool(context, "use_laser_odometry"):
         required = [
             name for name in ("use_base", "use_lidar")
@@ -578,8 +589,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "localization_profile", default_value="wheel_imu",
             description=(
-                "wheel_imu fuses wheel and gyro yaw rates; wheel_only "
-                "loads no IMU sensor into the EKF"),
+                "wheel_imu fuses wheel translation with gyro yaw rate; "
+                "wheel_only loads no IMU sensor into the EKF"),
         ),
         DeclareLaunchArgument("use_safety", default_value="true"),
         DeclareLaunchArgument("use_imu_filter", default_value="false"),
@@ -587,6 +598,13 @@ def generate_launch_description():
             "use_robot_description", default_value="false"
         ),
         DeclareLaunchArgument("use_nav", default_value="true"),
+        DeclareLaunchArgument(
+            "allow_synthetic_obstacle_source", default_value="false",
+            description=(
+                "Hardware-free Nav2 smoke fixture only; requires base off, "
+                "startup emergency stop, and mission autostart off"
+            ),
+        ),
         DeclareLaunchArgument("use_camera", default_value="true"),
         DeclareLaunchArgument("use_vision", default_value="true"),
         DeclareLaunchArgument("use_depth_camera", default_value="false"),

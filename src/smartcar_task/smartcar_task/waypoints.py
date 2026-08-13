@@ -25,8 +25,9 @@ ALLOWED_GOAL_PROFILES = frozenset({
 ALLOWED_HEADING_MODES = frozenset({"free", "locked"})
 # These are the only mission positions whose physical base-frame heading is
 # authored by the operator. The return point is deliberately position-only:
-# a forward-only Ackermann vehicle must stop when it reaches P, rather than
-# driving past P to chase an infeasible final yaw.
+# a forward-only Ackermann vehicle stops at the editable return target instead
+# of driving past it to chase an infeasible final yaw. The physical reset point
+# remains the fixed P start origin below.
 HEADING_LOCKED_TASKS = frozenset({"start", "qr", "vlm"})
 ORIGIN_TOLERANCE = 1e-9
 QUATERNION_NORM_TOLERANCE = 1e-3
@@ -305,8 +306,6 @@ def validate_waypoints(waypoints):
         waypoints[0]
     ):
         raise ValueError("start must match the P-zone origin and face +X")
-    if not _is_origin_position(waypoints[-1]):
-        raise ValueError("return must match the P-zone origin")
     return waypoints
 
 

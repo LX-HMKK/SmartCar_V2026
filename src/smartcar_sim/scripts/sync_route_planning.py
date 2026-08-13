@@ -139,6 +139,7 @@ def synchronize(
             {
                 "controller_server.ros__parameters.FollowPath.regulated_linear_scaling_min_radius": radius,
                 "planner_server.ros__parameters.GridBased.minimum_turning_radius": radius,
+                "smoother_server.ros__parameters.constrained_smoother.minimum_turning_radius": radius,
                 "local_costmap.local_costmap.ros__parameters.footprint": footprint_text,
                 "local_costmap.local_costmap.ros__parameters.footprint_padding": footprint.padding_m,
                 "local_costmap.local_costmap.ros__parameters.inflation_layer.inflation_radius": config.simulation_costmap.inflation_radius_m,

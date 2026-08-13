@@ -14,6 +14,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -80,7 +81,7 @@ public:
     declare_parameter("odom_throttle_interval_sec", 0.05);
     declare_parameter("minimum_voltage", 0.0);
     declare_parameter("voltage_timeout_sec", 1.0);
-    declare_parameter("max_linear_speed_mps", 0.30);
+    declare_parameter("max_linear_speed_mps", 0.60);
     declare_parameter("publish_frequency_hz", 20.0);
     declare_parameter("require_scan", true);
     declare_parameter("require_odom", true);
@@ -94,8 +95,9 @@ public:
     declare_parameter("steering_calibration_max_hold_sec", 15.0);
     declare_parameter("emergency_stop_on_start", false);
 
-    // Construct the guard.
-    guard_ = smartcar_safety::SafetyGuard(
+    // Construct the guard from the declared parameters (the YAML is the
+    // authoritative source for the linear-speed cap).
+    guard_ = std::make_unique<smartcar_safety::SafetyGuard>(
         get_parameter("command_timeout_sec").as_double(),
         get_parameter("scan_timeout_sec").as_double(),
         get_parameter("odom_timeout_sec").as_double(),
@@ -110,7 +112,7 @@ public:
         get_parameter("require_depth_points").as_bool());
 
     if (get_parameter("emergency_stop_on_start").as_bool()) {
-      guard_.set_emergency_stop(true);
+      guard_->set_emergency_stop(true);
     }
 
     double frequency_hz = get_parameter("publish_frequency_hz").as_double();
@@ -199,7 +201,7 @@ public:
     double now = now_sec();
     {
       std::lock_guard<std::mutex> lock(mutex_);
-      auto result = guard_.evaluate(now);
+      auto result = guard_->evaluate(now);
       publish_status_if_changed(result);
     }
   }
@@ -220,9 +222,9 @@ private:
       steering_calibration_.reset();
       last_command_components_.reset();
       last_command_message_.reset();
-      guard_.mark_command_invalid();
+      guard_->mark_command_invalid();
       publish_zero_command();
-    } else if (!guard_.mark_command(now, components[0])) {
+    } else if (!guard_->mark_command(now, components[0])) {
       steering_calibration_.reset();
       last_command_components_.reset();
       last_command_message_.reset();
@@ -235,14 +237,14 @@ private:
       last_command_components_ = components;
       last_command_message_ = twist_from_components(components);
     }
-    auto result = guard_.evaluate(now);
+    auto result = guard_->evaluate(now);
     publish_status_if_changed(result);
   }
 
   void on_scan() {
     std::lock_guard<std::mutex> lock(mutex_);
     double now = now_sec();
-    guard_.mark_scan(now);
+    guard_->mark_scan(now);
   }
 
   void on_odom() {
@@ -253,7 +255,7 @@ private:
       return;
     }
     last_odom_processed_at_ = now;
-    guard_.mark_odom(now);
+    guard_->mark_odom(now);
   }
 
   void on_raw_odom() {
@@ -264,19 +266,19 @@ private:
       return;
     }
     last_raw_odom_processed_at_ = now;
-    guard_.mark_raw_odom(now);
+    guard_->mark_raw_odom(now);
   }
 
   void on_depth_points() {
     std::lock_guard<std::mutex> lock(mutex_);
-    guard_.mark_depth_points(now_sec());
+    guard_->mark_depth_points(now_sec());
   }
 
   void on_voltage(const Float32::SharedPtr msg) {
     std::lock_guard<std::mutex> lock(mutex_);
     double now = now_sec();
-    guard_.mark_voltage(msg->data, now);
-    auto result = guard_.evaluate(now);
+    guard_->mark_voltage(msg->data, now);
+    auto result = guard_->evaluate(now);
     publish_status_if_changed(result);
   }
 
@@ -286,11 +288,11 @@ private:
     if (request->data) {
       steering_calibration_.reset();
     } else {
-      guard_.clear_command_speed_limit_fault();
+      guard_->clear_command_speed_limit_fault();
     }
-    guard_.set_emergency_stop(request->data);
+    guard_->set_emergency_stop(request->data);
     double now = now_sec();
-    auto result = guard_.evaluate(now);
+    auto result = guard_->evaluate(now);
     publish_status_if_changed(result);
     response->success = true;
     response->message = request->data
@@ -330,7 +332,7 @@ private:
       return;
     }
 
-    const auto verdict = guard_.evaluate(now);
+    const auto verdict = guard_->evaluate(now);
     if (!verdict.allowed) {
       response->success = false;
       response->status = "steering_calibration_safety_blocked:" +
@@ -357,7 +359,7 @@ private:
     {
       std::lock_guard<std::mutex> lock(mutex_);
       double now = now_sec();
-      result = guard_.evaluate(now);
+      result = guard_->evaluate(now);
       if (result.allowed && last_command_message_.has_value()) {
         command = last_command_message_.value();
       } else {
@@ -428,8 +430,7 @@ private:
     last_status_reason_ = reason;
   }
 
-  smartcar_safety::SafetyGuard guard_{0.30, 0.35, 0.35, 0.25, 0.0, 1.0,
-                                       0.30, true, true, true};
+  std::unique_ptr<smartcar_safety::SafetyGuard> guard_;
   double wheelbase_;
   double max_steering_angle_;
   std::string ackermann_frame_id_;

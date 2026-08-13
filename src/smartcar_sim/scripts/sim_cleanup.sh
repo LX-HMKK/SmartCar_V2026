@@ -37,7 +37,7 @@ if [ "$kill_processes" = true ]; then
     target_pids=""
     process_names=(
         rviz2 parameter_bridge static_transform_publisher
-        controller_server planner_server bt_navigator velocity_smoother
+        controller_server planner_server smoother_server bt_navigator velocity_smoother
         lifecycle_manager ros2_daemon
     )
     for process_name in "${process_names[@]}"; do

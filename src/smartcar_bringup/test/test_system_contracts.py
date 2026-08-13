@@ -137,7 +137,15 @@ class SystemContractTests(unittest.TestCase):
         source = SYSTEM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(SYSTEM, "use_depth_camera"), "false")
         self.assertIn(
-            'use_nav requires use_lidar=true or use_depth_camera=true', source)
+            'use_nav requires use_lidar=true or use_depth_camera=true ', source)
+        self.assertEqual(
+            launch_default(SYSTEM, "allow_synthetic_obstacle_source"),
+            "false",
+        )
+        self.assertIn("synthetic_fixture_is_safe", source)
+        self.assertIn('and _as_bool(context, "use_safety")', source)
+        self.assertIn('"safety_emergency_stop_on_start"', source)
+        self.assertIn('not _as_bool(context, "autostart_mission")', source)
         self.assertIn('executable="depth_pointcloud_relay"', source)
         self.assertIn('package="pointcloud_to_laserscan"', source)
         self.assertIn('executable="pointcloud_to_laserscan_node"', source)

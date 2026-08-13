@@ -33,6 +33,8 @@ from rclpy.node import Node
 MANAGED_NODES = (
     "controller_server",
     "planner_server",
+    "smoother_server",
+    "behavior_server",
     "bt_navigator",
     "velocity_smoother",
 )

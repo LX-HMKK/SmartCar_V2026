@@ -32,6 +32,13 @@ EXPECTED_ODOM_CONFIG = [
     False, False, False,
     False, False, False,
     True, True, False,
+    False, False, False,
+    False, False, False,
+]
+EXPECTED_WHEEL_ONLY_ODOM_CONFIG = [
+    False, False, False,
+    False, False, False,
+    True, True, False,
     False, False, True,
     False, False, False,
 ]
@@ -93,7 +100,7 @@ class EkfContractTests(unittest.TestCase):
         source = BASE_SOURCE_FILE.read_text(encoding="utf-8")
         self.assertNotIn("sendTransform", source)
 
-    def test_wheel_imu_and_optional_laser_measurements_are_fused(self):
+    def test_wheel_imu_uses_wheel_translation_and_imu_yaw_rate(self):
         params = ekf_parameters()
         self.assertEqual(params["odom0"], "/odom")
         self.assertEqual(params["odom0_config"], EXPECTED_ODOM_CONFIG)
@@ -127,14 +134,9 @@ class EkfContractTests(unittest.TestCase):
         for index in range(15):
             self.assertGreaterEqual(float(covariance[index * 15 + index]), 1e-3)
 
-    def test_wheel_only_is_a_standalone_copy_without_imu_input(self):
-        wheel_imu = ekf_parameters()
+    def test_wheel_only_retains_its_wheel_yaw_rate_control(self):
         wheel_only = wheel_only_ekf_parameters()
-        expected = {
-            key: value for key, value in wheel_imu.items()
-            if not key.startswith("imu")
-        }
-        self.assertEqual(wheel_only, expected)
+        self.assertEqual(wheel_only["odom0_config"], EXPECTED_WHEEL_ONLY_ODOM_CONFIG)
         self.assertFalse(any(key.startswith("imu") for key in wheel_only))
 
 

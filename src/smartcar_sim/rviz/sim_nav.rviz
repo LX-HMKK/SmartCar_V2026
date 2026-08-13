@@ -98,16 +98,16 @@ Visualization Manager:
       Line Width: 0.04
       Enabled: true
 
-    # RPP's transformed window is the current tracking subset, unlike the
+    # RPP's received path window is the current tracking subset, unlike the
     # planner's global candidate topic. Humble does not publish /local_plan
     # for this controller plugin.
     - Class: rviz_default_plugins/Path
-      Name: Controller Tracking Window (/transformed_global_plan)
+      Name: Controller Tracking Window (/received_global_plan)
       Topic:
         Depth: 5
         Durability Policy: Volatile
         Reliability Policy: Reliable
-        Value: /transformed_global_plan
+        Value: /received_global_plan
       Color: 255; 200; 0
       Line Width: 0.06
       Enabled: true

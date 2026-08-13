@@ -16,10 +16,10 @@ DRAG_EDITOR = PACKAGE_ROOT / "smartcar_tools" / "waypoint_drag_editor.py"
 PREFLIGHT = PACKAGE_ROOT / "smartcar_tools" / "route_preflight.py"
 FIELD_REFERENCE = PACKAGE_ROOT / "smartcar_tools" / "field_reference_node.py"
 
-GLOBAL_PATH_NAME = "Actual Nav2 Global Path (/plan)"
-LOCAL_PATH_NAME = "Actual Nav2 Local Path (/local_plan)"
+GLOBAL_PATH_NAME = "Planner Candidate Path (/plan)"
+TRACKING_PATH_NAME = "Controller Tracking Path (/received_global_plan)"
 SIM_CANDIDATE_PATH_NAME = "Planner Candidate Path (/plan)"
-SIM_TRACKING_PATH_NAME = "Controller Tracking Window (/transformed_global_plan)"
+SIM_TRACKING_PATH_NAME = "Controller Tracking Window (/received_global_plan)"
 REFERENCE_NAME = "Waypoint Reference Constraints (not a Nav2 path)"
 
 
@@ -32,19 +32,27 @@ class RouteVisualizationContracts(unittest.TestCase):
     def test_navigation_rviz_distinguishes_nav2_paths_from_waypoint_constraints(self):
         navigation = yaml.safe_load(NAVIGATION_RVIZ.read_text(encoding="utf-8"))
         global_path = display_by_topic(navigation, "/plan")
-        local_path = display_by_topic(navigation, "/local_plan")
+        tracking_path = display_by_topic(
+            navigation, "/received_global_plan")
         reference = display_by_topic(navigation, "/smartcar/waypoints/markers")
 
         self.assertEqual(global_path["Class"], "rviz_default_plugins/Path")
         self.assertEqual(global_path["Name"], GLOBAL_PATH_NAME)
-        self.assertEqual(local_path["Class"], "rviz_default_plugins/Path")
-        self.assertEqual(local_path["Name"], LOCAL_PATH_NAME)
+        self.assertEqual(tracking_path["Class"], "rviz_default_plugins/Path")
+        self.assertEqual(tracking_path["Name"], TRACKING_PATH_NAME)
+        self.assertFalse(any(
+            display.get("Topic", {}).get("Value") in {
+                "/local_plan", "/transformed_plan",
+                "/transformed_global_plan",
+            }
+            for display in navigation["Visualization Manager"]["Displays"]
+        ))
         self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
         self.assertEqual(reference["Name"], REFERENCE_NAME)
 
         simulation = yaml.safe_load(SIM_RVIZ.read_text(encoding="utf-8"))
         candidate = display_by_topic(simulation, "/plan")
-        tracking = display_by_topic(simulation, "/transformed_global_plan")
+        tracking = display_by_topic(simulation, "/received_global_plan")
         reference = display_by_topic(
             simulation, "/smartcar/waypoints/markers")
 
@@ -92,16 +100,24 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertEqual(reference["Class"], "rviz_default_plugins/MarkerArray")
         self.assertEqual(reference["Name"], REFERENCE_NAME)
 
-    def test_offline_preflight_copy_does_not_claim_nav2_reachability(self):
+    def test_editor_shows_only_waypoint_constraints_not_offline_paths(self):
         waypoint_viz = WAYPOINT_VIZ.read_text(encoding="utf-8")
         drag_editor = DRAG_EDITOR.read_text(encoding="utf-8")
         preflight = PREFLIGHT.read_text(encoding="utf-8")
 
         self.assertIn("Nav2-generated ``/plan``", waypoint_viz)
         self.assertIn("``/local_plan``", waypoint_viz)
-        self.assertIn("离线几何预检", drag_editor)
         self.assertIn("非 Nav2 路径", drag_editor)
-        self.assertNotIn('"路径规划"', drag_editor)
+        self.assertIn("运行时路径由 Nav2 实时规划", drag_editor)
+        self.assertIn("CONSTRAINT_COLOR", drag_editor)
+        for offline_path_token in (
+            "RoutePreflight",
+            "preflight_route",
+            "_recheck_route",
+            "离线几何预检",
+            "self._segment_artists",
+        ):
+            self.assertNotIn(offline_path_token, drag_editor)
         self.assertIn("Offline geometric preflight", preflight)
         self.assertIn("not a Nav2 planning or reachability result", preflight)
 

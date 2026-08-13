@@ -2,14 +2,14 @@
 
 Mouse:
   - drag a waypoint circle to move it
-  - scroll a QR/VLM/P waypoint to rotate it (±5 degrees per tick)
+  - scroll a QR/VLM waypoint to rotate it (±5 degrees per tick)
   - click a waypoint to select it (highlighted ring)
   - click empty space to deselect
 
 Keyboard:
   - Ctrl+S          save to YAML
   - Ctrl+Z          undo last move
-  - R / Shift+R     rotate selected QR/VLM/P waypoint ±15 degrees
+  - R / Shift+R     rotate selected QR/VLM waypoint ±15 degrees
   - Delete / Escape deselect
 
 Usage:
@@ -62,7 +62,6 @@ from smartcar_task.planning_segments import (
     planning_segments_document,
     validate_planning_segments,
 )
-from smartcar_tools.route_preflight import RoutePreflight, preflight_route
 from visualization_msgs.msg import Marker, MarkerArray
 
 # ── colours ────────────────────────────────────────────────────────────────
@@ -82,9 +81,8 @@ LINE_COLOR = "#26D9F2"
 PANEL_BG = "#20242A"
 PANEL_INPUT = "#2C323B"
 PANEL_TEXT = "#E7EBF0"
-PATH_OK = "#32D583"
-PATH_FAILED = "#F97066"
-PATH_PENDING = "#A6B0BF"
+STATUS_ERROR = "#F97066"
+CONSTRAINT_COLOR = "#A6B0BF"
 DRAG_THRESHOLD_M = 0.01
 
 DIRECTION_LABELS = {
@@ -133,25 +131,6 @@ def _endpoint_label(target: str) -> str:
     return ENDPOINT_LABELS[target]
 
 
-def _preflight_message(message: str) -> str:
-    """Convert offline geometric-preflight diagnostics into UI-facing Chinese."""
-    continuous_suffix = (
-        ": no collision-free minimum-radius route in continuous ThroughPoses action"
-    )
-    if message.endswith(continuous_suffix):
-        leg = message.removesuffix(continuous_suffix)
-        return f"{leg}：连续途经路线未找到满足场地边界与最小转弯半径的候选"
-    if message.endswith(": no collision-free minimum-radius route"):
-        leg = message.removesuffix(": no collision-free minimum-radius route")
-        return f"{leg}：离线几何预检未找到满足场地边界与最小转弯半径的候选"
-    if message.endswith(": position-only; preflight leaves heading free"):
-        waypoint_id = message.removesuffix(
-            ": position-only; preflight leaves heading free"
-        )
-        return f"{waypoint_id}：位置约束，预检不施加朝向"
-    return message
-
-
 def _yaw_from_quaternion(orientation):
     qx, qy, qz, qw = orientation
     return math.atan2(2.0 * (qw * qz + qx * qy), 1.0 - 2.0 * (qy * qy + qz * qz))
@@ -190,9 +169,8 @@ class DragEditor:
         self._adding_through = False
         self._add_through_button: Button | None = None
         self._status_text = None
-        self._preflight: RoutePreflight | None = None
         self._route_definition_valid: bool | None = None
-        self._route_status = "尚未运行离线几何预检：可先编辑，完成后点击“几何预检”"
+        self._route_status = "路线定义已加载：可编辑并保存"
         self._lock = threading.Lock()
 
         # ── load field reference (same data as RViz overlay) ────────────
@@ -213,7 +191,7 @@ class DragEditor:
         # Keep the field unframed and reserve a fixed right-hand route panel.
         self._fig = plt.figure(figsize=(15.2, max(8.8, 11.0 * data_h / data_w)))
         self._ax = self._fig.add_axes([0.055, 0.105, 0.585, 0.84])
-        self._fig.canvas.manager.set_window_title("航点分段编辑器（离线几何预检） - SmartCar")
+        self._fig.canvas.manager.set_window_title("航点分段编辑器 - SmartCar")
         self._panel_axes = []
         self._panel_widgets = []
 
@@ -233,9 +211,9 @@ class DragEditor:
         # controls hint
         self._hint = self._ax.text(
             0.5, -0.06,
-            "灰色虚线：航点参考约束（非 Nav2 路径）  |  彩色线：离线几何预检（非 Nav2 路径）\n"
-            "左键拖动：移动点  |  滚轮：调朝向/缩放  |  右键拖动：平移  |  "
-            "右侧：分段与约束  |  新增途经点后点击场地  |  点击“几何预检”：检查场地边界与最小转弯半径  |  Ctrl+S：保存",
+            "灰色虚线：航点参考约束（非 Nav2 路径）\n"
+            "左键拖动：移动点（P 起点除外）  |  滚轮：调朝向/缩放  |  右键拖动：平移  |  "
+            "右侧：分段与约束  |  新增途经点后点击场地  |  Ctrl+S：保存",
             transform=self._ax.transAxes, fontsize=7, color="#666",
             ha="center", va="top",
         )
@@ -244,7 +222,6 @@ class DragEditor:
         self._scatter = None
         self._arrows = {}
         self._line = None
-        self._segment_artists = []
         self._labels = []
         self._sel_ring = None
         self._blit_background = None
@@ -451,11 +428,9 @@ class DragEditor:
             self._fig.canvas.draw_idle()
 
     def _route_status_color(self):
-        if self._preflight is not None and self._preflight.feasible:
-            return PATH_OK
-        if self._preflight is not None or self._route_definition_valid is False:
-            return PATH_FAILED
-        return PATH_PENDING
+        if self._route_definition_valid is False:
+            return STATUS_ERROR
+        return CONSTRAINT_COLOR
 
     def _refresh_add_through_button(self, redraw=True):
         """Update the one-click placement mode without rebuilding its widget."""
@@ -472,8 +447,7 @@ class DragEditor:
             self._fig.canvas.draw_idle()
 
     def _mark_route_changed(self, redraw=True, rebuild_panel=False):
-        """Refresh route invariants without running the offline geometric preflight."""
-        self._preflight = None
+        """Refresh the editable route's structural invariants."""
         try:
             checked = validate_planning_segments(self._segments, self._waypoints)
             route = materialize_route(self._waypoints, checked)
@@ -485,47 +459,8 @@ class DragEditor:
         else:
             self._route_definition_valid = True
             self._set_route_status(
-                "路线已修改：点击“几何预检”检查场地边界与最小转弯半径；"
-                "结果不等同于 Nav2 实际路径"
+                "路线定义有效：保存后由 Nav2 根据实时 costmap 规划"
             )
-        if redraw:
-            self._redraw()
-        if rebuild_panel:
-            self._build_route_panel()
-
-    def _recheck_route(self, redraw=True, rebuild_panel=False):
-        """Run the offline geometric preflight; it does not execute Nav2 planning."""
-        try:
-            checked = validate_planning_segments(self._segments, self._waypoints)
-            route = materialize_route(self._waypoints, checked)
-            validate_waypoints(route)
-            self._route_definition_valid = True
-            self._preflight = preflight_route(
-                self._field_ref, self._waypoints, checked
-            )
-            failed = [segment for segment in self._preflight.segments if not segment.feasible]
-            if failed:
-                self._set_route_status(
-                    "离线几何预检未通过（非 Nav2 结果）："
-                    + _preflight_message(failed[0].message)
-                )
-            else:
-                total = sum(segment.length_m for segment in self._preflight.segments)
-                warning = (
-                    "\n提示：" + _preflight_message(self._preflight.warnings[0])
-                    if self._preflight.warnings else ""
-                )
-                self._set_route_status(
-                    f"离线几何预检通过：{len(checked)} 编辑段，总长 {total:.1f} 米"
-                    "（同向途经点按连续动作检查）"
-                    "（仅静态几何，不代表 Nav2 实际路径）"
-                    + warning
-                )
-        except (PlanningSegmentError, ValueError) as error:
-            self._preflight = None
-            self._route_definition_valid = False
-            self._node.get_logger().error(f"Route validation error: {error}")
-            self._set_route_status(f"路线定义有误：{error}")
         if redraw:
             self._redraw()
         if rebuild_panel:
@@ -721,11 +656,7 @@ class DragEditor:
             0.0, 0.98, self._route_status, color=self._route_status_color(),
             fontsize=6.8, va="top", wrap=True,
         )
-        recheck_axis = self._new_panel_axis([0.675, 0.005, 0.145, 0.035])
-        self._style_button(Button(
-            recheck_axis, "几何预检", color=PANEL_INPUT, hovercolor="#3C4654"
-        )).on_clicked(lambda _event: self._recheck_route(rebuild_panel=True))
-        save_axis = self._new_panel_axis([0.835, 0.005, 0.145, 0.035])
+        save_axis = self._new_panel_axis([0.675, 0.005, 0.305, 0.035])
         self._style_button(Button(
             save_axis, "保存路线", color="#176F4D", hovercolor="#248D63"
         )).on_clicked(lambda _event: self._save())
@@ -858,12 +789,7 @@ class DragEditor:
 
     def _create_through_at(self, x, y):
         segment = self._current_segment()
-        field = self._field_ref.field
         if segment is None:
-            return
-        if not (field.x_min <= x <= field.x_max and field.y_min <= y <= field.y_max):
-            self._set_route_status("新途经点必须落在比赛场地内")
-            self._refresh_add_through_button()
             return
         waypoint_id = self._next_via_id()
         self._push_history()
@@ -1106,7 +1032,7 @@ class DragEditor:
         waypoint = self._waypoints[index]
         locked = (
             " [位置锁定]"
-            if index in (0, len(self._waypoints) - 1)
+            if index == 0
             else ""
         )
         heading = (
@@ -1137,11 +1063,6 @@ class DragEditor:
             zorder=6,
             length_includes_head=True,
         )
-
-    def _clear_preflight_artists(self):
-        for artist in self._segment_artists:
-            artist.remove()
-        self._segment_artists.clear()
 
     def _refresh_selected_ring(self):
         if self._selected is None:
@@ -1235,8 +1156,8 @@ class DragEditor:
         ys = [w.position[1] for w in self._waypoints]
         colors = [TASK_COLORS.get(w.task, DEFAULT_COLOR) for w in self._waypoints]
 
-        # The muted line is the user-declared waypoint constraint order, not
-        # Nav2 output.  Colored lines below are offline geometric candidates.
+        # This line is the user-declared waypoint constraint order, not Nav2
+        # output. Runtime paths come only from Nav2's live costmap planning.
         if self._line is not None:
             self._line.remove()
         waypoint_by_id = {waypoint.id: waypoint for waypoint in self._waypoints}
@@ -1244,46 +1165,8 @@ class DragEditor:
         self._line, = self._ax.plot(
             route_xs,
             route_ys,
-            color=PATH_PENDING, linewidth=1.0, linestyle=":", alpha=0.75, zorder=3,
+            color=CONSTRAINT_COLOR, linewidth=1.0, linestyle=":", alpha=0.75, zorder=3,
         )
-
-        self._clear_preflight_artists()
-        if self._preflight is not None:
-            for index, report in enumerate(self._preflight.segments):
-                points = report.points
-                color = PATH_OK if report.feasible else PATH_FAILED
-                linestyle = "--" if report.direction == "reverse" else "-"
-                if points:
-                    line, = self._ax.plot(
-                        [point.x for point in points],
-                        [point.y for point in points],
-                        color=color, linewidth=2.4, linestyle=linestyle,
-                        alpha=0.92, zorder=4,
-                    )
-                    self._segment_artists.append(line)
-                    anchor = points[0]
-                else:
-                    segment = self._segments[index]
-                    constrained = [
-                        waypoint_by_id[waypoint_id]
-                        for waypoint_id in segment.route_ids
-                    ]
-                    line, = self._ax.plot(
-                        [waypoint.position[0] for waypoint in constrained],
-                        [waypoint.position[1] for waypoint in constrained],
-                        color=color, linewidth=2.0, linestyle=":", alpha=0.9, zorder=4,
-                    )
-                    self._segment_artists.append(line)
-                    anchor = Point2D(
-                        constrained[0].position[0], constrained[0].position[1]
-                    )
-                marker = "离线预检通过" if report.feasible else "离线预检阻塞"
-                label = self._ax.annotate(
-                    f"第 {index + 1} 段 {marker} {report.length_m:.1f} 米",
-                    (anchor.x, anchor.y - 0.16), fontsize=6.7,
-                    color=color, ha="center", va="top", zorder=7,
-                )
-                self._segment_artists.append(label)
 
         # scatter plot (draggable circles)
         if self._scatter is not None:
@@ -1374,7 +1257,7 @@ class DragEditor:
                 s.color.r = 1.0; s.color.g = 1.0; s.color.b = 0.2; s.color.a = 1.0
             else:
                 s.color.r = r; s.color.g = g; s.color.b = b
-                s.color.a = 0.7 if i in (0, len(self._waypoints)-1) else 1.0
+                s.color.a = 0.7 if i == 0 else 1.0
             msg.markers.append(s)
 
             if not is_zero_quaternion(display_waypoint.orientation):
@@ -1401,7 +1284,7 @@ class DragEditor:
             l.pose.orientation.w = 1.0
             l.scale.z = 0.10
             l.color.r = l.color.g = l.color.b = 1.0; l.color.a = 1.0
-            lock_mark = " [位置锁定]" if i in (0, len(self._waypoints)-1) else ""
+            lock_mark = " [位置锁定]" if i == 0 else ""
             heading_mark = (
                 " [位置约束]"
                 if not self._uses_authored_heading(w)
@@ -1423,7 +1306,10 @@ class DragEditor:
     def _find_waypoint(self, event):
         if event.inaxes is not self._ax or event.xdata is None or event.ydata is None:
             return None
-        for i, w in enumerate(self._waypoints):
+        # p_finish starts on top of p_start. Prefer the later route point so
+        # the editable return target can be picked before it is moved away.
+        for i in reversed(range(len(self._waypoints))):
+            w = self._waypoints[i]
             dx = event.xdata - w.position[0]
             dy = event.ydata - w.position[1]
             if math.hypot(dx, dy) < 0.15:
@@ -1458,9 +1344,9 @@ class DragEditor:
                     self._pick_target, self._waypoints[idx].id
                 )
                 return
-            if idx in (0, len(self._waypoints) - 1):
+            if idx == 0:
                 self._node.get_logger().info(
-                    f"航点 [{idx}] 位置已锁定（起点/返回点），不能移动"
+                    "P 起点位置已锁定，不能移动"
                 )
                 self._selected = idx
                 self._update_selection_artists()
@@ -1503,13 +1389,6 @@ class DragEditor:
                 return
             self._push_history()
             self._drag_moved = True
-            if self._preflight is not None:
-                # The cached field must be rebuilt once without the old
-                # preflight lines before the live pointer preview begins.
-                self._preflight = None
-                self._route_definition_valid = None
-                self._route_status = "点位已移动；松开鼠标后点击“几何预检”"
-                self._redraw()
         self._update_drag_preview(event.xdata, event.ydata)
 
     def _on_release(self, event):
@@ -1676,14 +1555,6 @@ class DragEditor:
         self._node.get_logger().info("已撤销上一步修改")
 
     def _save(self):
-        if self._preflight is None:
-            self._set_route_status("保存已阻止：请先点击“几何预检”")
-            self._build_route_panel()
-            return
-        if not self._preflight.feasible:
-            self._set_route_status("保存已阻止：请先修正全部红色分段，再点击“几何预检”")
-            self._build_route_panel()
-            return
         try:
             with self._lock:
                 checked = validate_planning_segments(self._segments, self._waypoints)
@@ -1716,7 +1587,7 @@ class DragEditor:
         self._selected = None
         self._dragging = None
         self._selected_through = None
-        self._route_status = "航点与规划分段已保存"
+        self._route_status = "航点与规划分段已保存；运行时路径由 Nav2 实时规划"
         self._redraw()
         self._build_route_panel()
         self._publish_markers()

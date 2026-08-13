@@ -105,7 +105,7 @@ class WaypointTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "requires an authored orientation"):
                 load_waypoints(self.write_document(directory, document))
 
-    def test_requires_p_origin_and_positive_x_start_heading(self):
+    def test_requires_p_origin_and_positive_x_start_heading_but_allows_return_offset(self):
         document = waypoint_document()
         document["waypoints"][0]["pose"]["orientation"]["w"] = 0.0
         document["waypoints"][0]["pose"]["orientation"]["z"] = 1.0
@@ -114,10 +114,16 @@ class WaypointTests(unittest.TestCase):
                 load_waypoints(self.write_document(directory, document))
 
         document = waypoint_document()
-        document["waypoints"][-1]["pose"]["position"]["x"] = 0.1
+        document["waypoints"][0]["pose"]["position"]["x"] = 0.1
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(ValueError, "P-zone origin"):
                 load_waypoints(self.write_document(directory, document))
+
+        document = waypoint_document()
+        document["waypoints"][-1]["pose"]["position"]["x"] = 0.1
+        with tempfile.TemporaryDirectory() as directory:
+            loaded = load_waypoints(self.write_document(directory, document))
+        self.assertEqual(loaded[-1].position, (0.1, 0.0, 0.0))
 
     def test_atomic_write_preserves_unconstrained_transit_as_yaml_omission(self):
         points = validate_waypoints((
@@ -125,7 +131,7 @@ class WaypointTests(unittest.TestCase):
             Waypoint("odom_combined", (1.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), "qr", id="a"),
             Waypoint("odom_combined", (1.5, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0), "via", id="via"),
             Waypoint("odom_combined", (2.0, 0.0, 0.0), (0.0, 0.0, 0.0, 1.0), "vlm", id="c"),
-            Waypoint("odom_combined", (0.0, 0.0, 0.0), (0.0, 0.0, 0.0, 0.0), "return", id="p_finish"),
+            Waypoint("odom_combined", (0.12, -0.04, 0.0), (0.0, 0.0, 0.0, 0.0), "return", id="p_finish"),
         ))
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "round_trip.yaml"
@@ -134,6 +140,10 @@ class WaypointTests(unittest.TestCase):
         self.assertFalse(serialized["calibrated"])
         self.assertNotIn("orientation", serialized["waypoints"][2]["pose"])
         self.assertNotIn("orientation", serialized["waypoints"][-1]["pose"])
+        self.assertEqual(
+            serialized["waypoints"][-1]["pose"]["position"],
+            {"x": 0.12, "y": -0.04, "z": 0.0},
+        )
 
 
 if __name__ == "__main__":

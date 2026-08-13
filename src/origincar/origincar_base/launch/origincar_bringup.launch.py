@@ -98,8 +98,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             'localization_profile', default_value='wheel_imu',
             description=(
-                'wheel_imu fuses wheel and gyro yaw rates; wheel_only '
-                'loads no IMU sensor into the EKF')),
+                'wheel_imu fuses wheel translation with gyro yaw rate; '
+                'wheel_only loads no IMU sensor into the EKF')),
         DeclareLaunchArgument('use_imu_filter', default_value='false'),
         DeclareLaunchArgument('use_robot_description', default_value='false'),
         DeclareLaunchArgument('laser_frame', default_value='laser'),

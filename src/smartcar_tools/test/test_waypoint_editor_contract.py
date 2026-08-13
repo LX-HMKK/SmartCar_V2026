@@ -126,7 +126,7 @@ class TestWaypointEditorContract(unittest.TestCase):
         self.assertNotIn("waypoint_editor_node", setup_source)
         self.assertNotIn("interactive_markers", manifest)
 
-    def test_drag_editor_exposes_segment_controls_and_local_preflight(self):
+    def test_drag_editor_exposes_segment_controls_and_structural_validation(self):
         source = DRAG_EDITOR.read_text(encoding="utf-8")
         model_source = WAYPOINT_MODEL.read_text(encoding="utf-8")
         ast.parse(source)
@@ -137,7 +137,6 @@ class TestWaypointEditorContract(unittest.TestCase):
             "planning_segments_document",
             "validate_planning_segments",
             "materialize_route",
-            "preflight_route",
             "RadioButtons",
             "TextBox",
             "路径分段",
@@ -155,28 +154,51 @@ class TestWaypointEditorContract(unittest.TestCase):
             "运行时由代价地图选朝向",
             "materialize_free_yaws",
             "is_heading_locked",
-            "几何预检",
             "保存路线",
-            "保存已阻止",
-            "场地边界与最小转弯半径",
             "write_waypoints_atomic",
             "validate_waypoints",
             "create_publisher",
             "_mark_route_changed",
             "event.inaxes is not self._ax",
+            "路线定义有效：保存后由 Nav2 根据实时 costmap 规划",
+            "运行时路径由 Nav2 实时规划",
         ):
             self.assertIn(token, source)
-        self.assertEqual(source.count("self._recheck_route("), 1)
+        for removed_preflight_token in (
+            "RoutePreflight",
+            "preflight_route",
+            "_recheck_route",
+            "几何预检",
+            "场地边界与最小转弯半径",
+        ):
+            self.assertNotIn(removed_preflight_token, source)
         self.assertIn('matplotlib.use("Qt5Agg")', source)
         self.assertLess(
             source.index('matplotlib.use("Qt5Agg")'),
             source.index("import matplotlib.pyplot as plt"),
         )
         self.assertNotIn("/mnt/c/Windows/Fonts", source)
-        self.assertIn("route = materialize_route(self._waypoints, self._segments)", source)
+        self.assertIn("route = materialize_route(self._waypoints, checked)", source)
         self.assertIn("orientation=(0.0, 0.0, 0.0, 0.0)", source)
         self.assertNotIn("自动路线切线", source)
         self.assertIn('root["calibrated"] = False', model_source)
+
+    def test_drag_editor_prefers_editable_finish_over_overlapping_start(self):
+        module = ast.parse(DRAG_EDITOR.read_text(encoding="utf-8"))
+        editor = next(
+            node for node in module.body
+            if isinstance(node, ast.ClassDef) and node.name == "DragEditor"
+        )
+        methods = {
+            node.name: ast.unparse(node)
+            for node in editor.body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+        self.assertIn("reversed(range(len(self._waypoints)))", methods["_find_waypoint"])
+        self.assertIn("if idx == 0", methods["_on_press"])
+        self.assertNotIn("len(self._waypoints) - 1", methods["_on_press"])
+        self.assertIn("P 起点位置已锁定", methods["_on_press"])
 
     def test_qt_draw_callback_only_captures_the_blit_background(self):
         """A Qt paint callback must not recursively request another repaint."""

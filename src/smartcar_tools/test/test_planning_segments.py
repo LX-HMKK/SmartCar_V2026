@@ -7,6 +7,8 @@ import threading
 import unittest
 from unittest import mock
 
+from matplotlib.backend_bases import MouseButton
+
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
@@ -125,6 +127,83 @@ class DragEditorDeletionTests(unittest.TestCase):
         self.assertEqual(validate_waypoints(route), route)
         editor._mark_route_changed.assert_called_once_with(rebuild_panel=True)
         editor._publish_markers.assert_called_once_with()
+
+
+class DragEditorPointerTests(unittest.TestCase):
+    def test_overlapping_p_points_drag_finish_while_start_stays_locked(self):
+        editor = DragEditor.__new__(DragEditor)
+        editor._waypoints = list(mission_waypoints())
+        editor._segments = []
+        editor._ax = object()
+        editor._adding_through = False
+        editor._pick_target = None
+        editor._panning = False
+        editor._pan_start = None
+        editor._selected = None
+        editor._dragging = None
+        editor._drag_start = None
+        editor._drag_moved = False
+        editor._drag_preview_position = None
+        editor._history = []
+        editor._lock = threading.Lock()
+        editor._node = mock.Mock()
+        editor._update_selection_artists = mock.Mock()
+        editor._update_drag_preview = mock.Mock(
+            side_effect=lambda x, y: setattr(
+                editor, "_drag_preview_position", (x, y)
+            )
+        )
+        editor._mark_route_changed = mock.Mock()
+        editor._publish_markers = mock.Mock()
+        editor._hide_drag_preview = mock.Mock()
+        editor._blit_dynamic_artists = mock.Mock()
+
+        origin_press = mock.Mock(
+            inaxes=editor._ax, xdata=0.0, ydata=0.0, button=MouseButton.LEFT
+        )
+        self.assertEqual(editor._find_waypoint(origin_press), len(editor._waypoints) - 1)
+
+        editor._on_press(origin_press)
+        self.assertEqual(editor._dragging, len(editor._waypoints) - 1)
+        self.assertEqual(editor._selected, len(editor._waypoints) - 1)
+
+        editor._on_motion(mock.Mock(
+            inaxes=editor._ax, xdata=0.25, ydata=-0.10
+        ))
+        editor._on_release(mock.Mock(inaxes=editor._ax))
+        self.assertEqual(editor._waypoints[-1].position, (0.25, -0.10, 0.0))
+        self.assertEqual(editor._waypoints[0].position, (0.0, 0.0, 0.0))
+
+        editor._on_press(origin_press)
+        self.assertEqual(editor._selected, 0)
+        self.assertIsNone(editor._dragging)
+
+
+class DragEditorThroughPointTests(unittest.TestCase):
+    def test_creating_a_through_point_is_not_limited_to_field_bounds(self):
+        editor = DragEditor.__new__(DragEditor)
+        editor._waypoints = list(mission_waypoints())
+        editor._segments = [
+            PlanningSegment("p_to_qr", "forward", "p_start", "qr"),
+        ]
+        editor._selected_segment = 0
+        editor._selected_through = None
+        editor._selected = None
+        editor._adding_through = True
+        editor._history = []
+        editor._lock = threading.Lock()
+        editor._set_route_status = mock.Mock()
+        editor._refresh_add_through_button = mock.Mock()
+        editor._mark_route_changed = mock.Mock()
+        editor._publish_markers = mock.Mock()
+
+        editor._create_through_at(-0.6, 4.6)
+
+        created = next(item for item in editor._waypoints if item.id == "via_1")
+        self.assertEqual(created.position, (-0.6, 4.6, 0.0))
+        self.assertEqual(editor._segments[0].through_ids, ("via_1",))
+        self.assertFalse(editor._adding_through)
+        editor._mark_route_changed.assert_called_once_with(rebuild_panel=True)
 
 
 class DragEditorDirectionTests(unittest.TestCase):

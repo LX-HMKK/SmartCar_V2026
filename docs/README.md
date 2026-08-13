@@ -44,8 +44,11 @@ smartcar_task -> Nav2 -> /cmd_vel_nav -> velocity_smoother
 -> direction_guard -> smartcar_safety -> /ackermann_cmd -> 底盘
 ```
 
-每一段路线均由 Nav2 根据实时 obstacle/inflation costmap 规划。不得绕过方向门或 safety，
-也不得以手工路径、点位专用阈值或控制器补偿替代规划。
+每一段路线均由 Nav2 根据实时 obstacle/inflation costmap 规划。有 `via` 约束的段先由
+`ComputePathThroughPoses` 生成当前路径，去除连续重合 pose 后交给原生
+`ConstrainedSmoother`；它使用实时 costmap 和完整 footprint 碰撞检查，结果仅供本次
+`FollowPath` 跟踪，不会保存、复用或写入路线 YAML。不得绕过方向门或 safety，也不得以
+手工路径、点位专用阈值或控制器补偿替代规划。
 
 ### 定位与感知
 

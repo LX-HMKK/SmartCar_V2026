@@ -95,30 +95,33 @@ Visualization Manager:
       Topic:
         Durability Policy: Transient Local
         Value: /local_costmap/costmap
+    # This is ComputePath*'s raw candidate.  SmoothPath does not overwrite
+    # this diagnostic publisher.
     - Class: rviz_default_plugins/Path
-      Color: 25; 255; 0
+      Color: 160; 160; 160
       Enabled: true
       Line Style: Lines
       Line Width: 0.03
-      Name: Actual Nav2 Global Path (/plan)
+      Name: Planner Candidate Path (/plan)
       Topic:
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
         Value: /plan
+    # Regulated Pure Pursuit republishes the current window of the path it is
+    # actually tracking here. For through-pose actions its source is the BT
+    # SmoothPath result, not the raw /plan candidate above.
     - Class: rviz_default_plugins/Path
-      Color: 255; 120; 0
-      Enabled: true
-      Line Style: Lines
-      Line Width: 0.04
-      Name: Actual Nav2 Local Path (/local_plan)
-      Topic:
-        Value: /local_plan
-    - Class: rviz_default_plugins/Path
-      Color: 255; 200; 50
+      Color: 255; 200; 0
       Enabled: true
       Line Style: Lines
       Line Width: 0.05
-      Name: Transformed Plan
+      Name: Controller Tracking Path (/received_global_plan)
       Topic:
-        Value: /transformed_plan
+        Depth: 5
+        Durability Policy: Volatile
+        Reliability Policy: Reliable
+        Value: /received_global_plan
     - Class: rviz_default_plugins/MarkerArray
       Enabled: true
       Name: Waypoint Reference Constraints (not a Nav2 path)

@@ -50,7 +50,7 @@ class SafetyNode(Node):
         self.declare_parameter("odom_timeout_sec", 0.35)
         self.declare_parameter("minimum_voltage", 0.0)
         self.declare_parameter("voltage_timeout_sec", 1.0)
-        self.declare_parameter("max_linear_speed_mps", 0.30)
+        self.declare_parameter("max_linear_speed_mps", 0.60)
         self.declare_parameter("publish_frequency_hz", 20.0)
         self.declare_parameter("require_scan", True)
         self.declare_parameter("require_odom", True)
@@ -183,8 +183,8 @@ class SafetyNode(Node):
 
     def _on_odom(self, _serialized_message):
         # Throttle: effective watchdog window = odom_timeout + throttle_interval + timer_period.
-        # At the configured 0.30 m/s limit, worst-case watchdog travel is
-        # ~135 mm, within the configured safety margins.
+        # At the configured 0.60 m/s limit, worst-case watchdog travel is
+        # ~270 mm, within the configured safety margins.
         now = self._now_sec()
         if (self._last_odom_processed_at is not None
                 and now - self._last_odom_processed_at < self._odom_throttle_interval):

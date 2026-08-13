@@ -4,13 +4,13 @@
 
 ## 软件里程碑
 
-当前软件基线包含可选 RF2O、一条三个显式 planning segment、11 个航点约束的全正向路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与纯导航 `nav_only.yaml` 共享完全相同的点位和分段：P→A、A→`via_1`→`via_2`→`via_3`→`via_6`→C1、C1→`via_4`→`via_5`→`via_7`→P；仅 A/C1 的任务类型分别为 `qr`/`vlm` 与 `nav`。A 与 C1 使用 `precise` profile，P 终点使用 `standard` profile，且两份 YAML 均保持 `calibrated: false`。运行路径一律由 Nav2 基于实时 costmap 规划，不存在强制路线、先验墙体或点位专用阈值。当前全正向纯导航路线已完成 LiDAR 无障碍现场基础通行性验证；深度相机动态障碍物感知、QR/VLM 语义任务和 Gazebo 验证仍需分别验证。文档入口见 [docs/README.md](docs/README.md)。
+当前软件基线包含可选 RF2O、一条三个显式 planning segment、11 个航点约束的全正向路线、官方规则图参考层、可拖拽分段航点编辑器，以及语音/二维码/图生文三个独立媒体入口。实车 `default_waypoints.yaml` 与纯导航 `nav_only.yaml` 共享完全相同的点位和分段：P→A、A→`via_1`→`via_2`→`via_3`→`via_6`→C1、C1→`via_4`→`via_5`→`via_7`→P；仅 A/C1 的任务类型分别为 `qr`/`vlm` 与 `nav`。A 与 C1 使用 `precise` profile，P 终点使用 `standard` profile，且两份 YAML 均保持 `calibrated: false`。运行路径一律由 Nav2 基于实时 costmap 规划；有经过点的段仅在当前规划结果上执行原生 `ConstrainedSmoother` 的碰撞检查平滑，结果只交给本次 `FollowPath`，不写死、不保存、不改动路线 YAML。不存在强制路线、先验墙体或点位专用阈值。当前全正向纯导航路线已完成 LiDAR 无障碍现场基础通行性验证；深度相机动态障碍物感知、QR/VLM 语义任务和 Gazebo 验证仍需分别验证。文档入口见 [docs/README.md](docs/README.md)。
 
 所有根目录 `scripts/` 的用途、命令和副作用见 [脚本使用手册](docs/deployment/scripts.md)。
 
 ## 当前边界
 
-软件代码已经覆盖底盘安全门、后置方向门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。RDK 合成传感器 smoke 已验证 BT 插件可加载、四个 Nav2 lifecycle 节点可激活、未授权的非零候选速度无法越过方向门，并确认无物理底盘输出消费者。
+软件代码已经覆盖底盘安全门、后置方向门、轮速与 IMU 标定、EKF、Nav2 阿克曼导航、二维码/VLM 服务、五子任务状态机和一键系统启动。RDK 合成传感器 smoke 已验证 BT 插件可加载、六个 Nav2 lifecycle 节点可激活、未授权的非零候选速度无法越过方向门，并确认无物理底盘输出消费者。
 
 以下项目仍是部署或实车门槛，不应被代码测试结果替代：
 
@@ -116,7 +116,7 @@ colcon test-result --all --verbose
 
 ## 无硬件 smoke
 
-`smartcar_bringup` 的 launch test 使用合成 `/scan`、`/odom`、`/odom_combined` 和静态 TF，关闭底盘、LiDAR、实体相机和语音节点，并在 Nav2 激活前锁存急停。它验证 `controller_server`、`planner_server`、`bt_navigator`、`velocity_smoother` 四个 lifecycle 节点、vision/task 服务、任务 `IDLE`、硬件节点隔离和 `/cmd_vel_safe` 精确全零。`smartcar_nav2` 的独立 launch test 还验证未授权非零 `/cmd_vel_candidate` 在 `/cmd_vel` 与 `/cmd_vel_safe` 上始终为零。
+`smartcar_bringup` 的 launch test 使用合成 `/scan`、`/odom`、`/odom_combined` 和静态 TF，关闭底盘、LiDAR、实体相机和语音节点，并在 Nav2 激活前锁存急停。它验证 `controller_server`、`planner_server`、`smoother_server`、`behavior_server`、`bt_navigator`、`velocity_smoother` 六个 lifecycle 节点、vision/task 服务、任务 `IDLE`、硬件节点隔离和 `/cmd_vel_safe` 精确全零。`smartcar_nav2` 的独立 launch test 还验证未授权非零 `/cmd_vel_candidate` 在 `/cmd_vel` 与 `/cmd_vel_safe` 上始终为零。
 
 ```bash
 source ~/source_env.sh

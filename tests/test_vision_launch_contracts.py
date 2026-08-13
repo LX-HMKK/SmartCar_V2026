@@ -112,6 +112,7 @@ class VisionLaunchContractTests(unittest.TestCase):
             "launch",
             "launch_ros",
             "python3-opencv",
+            "python3-yaml",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
         self.assertIn("depth_pointcloud_relay", SETUP_FILE.read_text(encoding="utf-8"))
@@ -143,8 +144,8 @@ class VisionLaunchContractTests(unittest.TestCase):
         self.assertNotIn("api_key", config_source.lower())
 
         cli_source = VOLCENGINE_CLI.read_text(encoding="utf-8")
-        self.assertIn("ARK_API_KEY", cli_source)
-        self.assertIn("DOUBAO_KEY", cli_source)
+        self.assertIn("volcengine_ark.local.yaml", cli_source)
+        self.assertIn("credentials_file_missing", cli_source)
         self.assertIn("https://ark.cn-beijing.volces.com/api/v3", cli_source)
         setup_source = SETUP_FILE.read_text(encoding="utf-8")
         self.assertIn("volcengine_vlm_cli", setup_source)

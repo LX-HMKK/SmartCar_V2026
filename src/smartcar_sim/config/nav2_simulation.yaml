@@ -67,6 +67,13 @@ planner_server:
       # checking or the planner's reachable state space.
       lookup_table_size: 6.0
 
+smoother_server:
+  ros__parameters:
+    constrained_smoother:
+      # Keep the simulator's live smoothing constraint aligned with its
+      # simulation-only Hybrid-A* radius. sync_route_planning.py owns this.
+      minimum_turning_radius: 0.22
+
 local_costmap:
   local_costmap:
     ros__parameters:

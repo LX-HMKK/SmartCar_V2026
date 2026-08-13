@@ -13,6 +13,8 @@ vision_node:
       - "{image}"
       - --prompt
       - "{prompt}"
+      - --model
+      - doubao-seed-2-0-lite-260428
       - --timeout-sec
       - "7.0"
       - --max-tokens
