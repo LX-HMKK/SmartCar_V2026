@@ -60,7 +60,7 @@ class SafetyNode(Node):
         self.declare_parameter("depth_points_timeout_sec", 1.0)
         self.declare_parameter("depth_points_topic", "/smartcar/depth/points")
         self.declare_parameter("odom_throttle_interval_sec", 0.05)
-        self.declare_parameter("wheelbase", 0.189)
+        self.declare_parameter("wheelbase", 0.144)
         self.declare_parameter("max_steering_angle", 0.70)
         self.declare_parameter("ackermann_frame_id", "odom_combined")
         self.declare_parameter("allow_steering_calibration", False)

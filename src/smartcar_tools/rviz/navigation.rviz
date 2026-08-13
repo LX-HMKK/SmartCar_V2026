@@ -144,7 +144,7 @@ Visualization Manager:
   Global Options:
     Background Color: 32; 34; 38
     Fixed Frame: odom_combined
-    Frame Rate: 20
+    Frame Rate: 10
   Name: root
   Tools:
     - Class: rviz_default_plugins/Interact

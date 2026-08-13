@@ -1,12 +1,15 @@
-<!-- One native BackUp recovery may replan the remaining constraint path. -->
+<!-- Up to three native BackUp recoveries replan only remaining constraints. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="1" name="ReplanOnceAfterNativeBackUp">
-      <Sequence name="PlanThenFollowPreciseThroughPath">
+    <RecoveryNode number_of_retries="3" name="ReplanRemainingGoalsAfterNativeBackUp">
+      <Sequence name="PlanThenTrackPreciseThroughPath">
         <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
-        <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="precise_goal_checker"/>
+        <PipelineSequence name="TrackPreciseThroughPathAndPersistPassedConstraints">
+          <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="precise_goal_checker"/>
+        </PipelineSequence>
       </Sequence>
-      <Sequence name="NativeBackUpAndDiscardPassedPlanningConstraints">
+      <Sequence name="NativeBackUpAndPruneRemainingConstraints">
         <BackUp backup_dist="0.20" backup_speed="0.15" time_allowance="4.0"/>
         <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
       </Sequence>

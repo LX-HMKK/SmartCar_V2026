@@ -284,6 +284,7 @@ def _task_actions(context):
         launch_arguments={
             "use_sim_time": LaunchConfiguration("use_sim_time"),
             "waypoints_file": LaunchConfiguration("waypoints_file"),
+            "c_zone_direction": LaunchConfiguration("c_zone_direction"),
             "autostart_mission": LaunchConfiguration("autostart_mission"),
             "navigation_test_end_segment_id": LaunchConfiguration(
                 "navigation_test_end_segment_id"),
@@ -472,10 +473,10 @@ def generate_launch_description():
         "camera_x": "0.1205",
         "camera_z": "0.11",
     }
-    # The base_footprint origin is the rear axle. The reported installation is
-    # directly above the front axle (wheelbase 0.189 m), 0.15 m above ground.
+    # base_footprint is the rear axle and base_link is 0.0841 m forward. The
+    # Aurora is directly above the front axle at x=0.144 m, 0.15 m above ground.
     depth_camera_extrinsic_defaults = {
-        "depth_camera_x": "0.1049",
+        "depth_camera_x": "0.0599",
         "depth_camera_z": "0.1200",
         # Aurora driver frame: x left, y up, z forward. Convert it to
         # base_link (x forward, y left, z up).
@@ -548,7 +549,10 @@ def generate_launch_description():
         package="smartcar_tools",
         executable="waypoint_viz",
         name="waypoint_viz",
-        parameters=[{"waypoints_file": waypoints_file}],
+        parameters=[{
+            "waypoints_file": waypoints_file,
+            "c_zone_direction": LaunchConfiguration("c_zone_direction"),
+        }],
         output="screen",
         condition=IfCondition(use_visualization),
     )
@@ -627,6 +631,8 @@ def generate_launch_description():
                 "default_waypoints.yaml",
             ]),
         ),
+        DeclareLaunchArgument(
+            "c_zone_direction", default_value="counterclockwise"),
         DeclareLaunchArgument(
             "laser_odometry_config_file",
             default_value=PathJoinSubstitution([

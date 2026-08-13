@@ -336,7 +336,7 @@ def _normalized_delta(first: float, second: float) -> float:
 
 def analyze_samples(
     samples: Sequence[CircleSample],
-    wheelbase_m: float = 0.189,
+    wheelbase_m: float = 0.144,
     skipped_rows: int = 0,
 ) -> CircleAnalysis:
     """Compute steady-state turning metrics from valid recorded samples."""
@@ -469,7 +469,7 @@ def analyze_samples(
     )
 
 
-def analyze_csv(csv_path: str, wheelbase_m: float = 0.189) -> CircleAnalysis:
+def analyze_csv(csv_path: str, wheelbase_m: float = 0.144) -> CircleAnalysis:
     """Load and analyze a CSV without propagating malformed-input errors."""
 
     samples, skipped_rows, errors = load_samples(Path(csv_path))
@@ -554,7 +554,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         "--csv", required=True, help="CSV recorded during the circle drive"
     )
     parser.add_argument(
-        "--wheelbase", type=float, default=0.189, help="wheelbase in metres"
+        "--wheelbase", type=float, default=0.144, help="wheelbase in metres"
     )
     args = parser.parse_args(argv)
 

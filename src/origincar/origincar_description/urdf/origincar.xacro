@@ -3,14 +3,14 @@
 <robot name="mycar" xmlns:xacro="http://wiki.ros.org/xacro">
 
   <xacro:property name="PI" value="3.1415926"/>
-  <xacro:property name="Track" value="0.1682"/>
-  <xacro:property name="WheelBase" value="0.189"/>
+  <xacro:property name="Track" value="0.162"/>
+  <xacro:property name="WheelBase" value="0.144"/>
   <xacro:property name="WheelLen" value="0.025"/>
 
   <link name="base_link">
     <visual>
       <geometry>
-        <box size="0.276 ${WheelBase-WheelLen} 0.08"/>
+        <box size="0.276 0.164 0.08"/>
       </geometry>
       <origin xyz="0 0 ${0.08/2+0.03}" rpy="0 0 0"/>
       <material name="rgba(102,10,10,1)">
@@ -22,7 +22,7 @@
   <link name="board_link">
     <visual>
       <geometry>
-        <box size="0.200 ${WheelBase-WheelLen} ${0.150-0.08}"/>
+        <box size="0.200 0.164 ${0.150-0.08}"/>
       </geometry>
       <origin xyz="0 0 ${(0.150-0.08)/2}" rpy="0 0 0"/>
       <material name="rgba(246,152,152,1)">
@@ -72,7 +72,9 @@
   <joint name="down_left_joint" type="continuous">
     <parent link="base_link" />
     <child link="down_left_Link" />
-    <origin xyz="${-Track/2} ${WheelBase/2} ${0.03}" rpy="0 0 0" /> 
+    <!-- X is forward; WheelBase is the front-to-rear axle spacing and
+         Track is the left-to-right wheel spacing. -->
+    <origin xyz="${-WheelBase/2} ${Track/2} ${0.03}" rpy="0 0 0" />
     <axis xyz="0 1 0" />
   </joint>
 
@@ -91,7 +93,7 @@
   <joint name="down_right_joint" type="continuous">
     <parent link="base_link" />
     <child link="down_right_Link" />
-    <origin xyz="${-Track/2} ${-WheelBase/2} ${0.03}" rpy="0 0 0" /> 
+    <origin xyz="${-WheelBase/2} ${-Track/2} ${0.03}" rpy="0 0 0" />
     <axis xyz="0 -1 0" />
   </joint>
 
@@ -110,7 +112,7 @@
   <joint name="up_left_joint" type="continuous">
     <parent link="base_link" />
     <child  link="up_left_Link" />
-    <origin xyz="${Track/2} ${WheelBase/2} ${0.03}" rpy="0 0 0" /> 
+    <origin xyz="${WheelBase/2} ${Track/2} ${0.03}" rpy="0 0 0" />
     <axis xyz="0 1 0" />
   </joint>
 
@@ -129,7 +131,7 @@
   <joint name="up_right_joint" type="continuous">
     <parent link="base_link" />
     <child link="up_right_Link" />
-    <origin xyz="${Track/2} ${-WheelBase/2} ${0.03}" rpy="0 0 0" /> 
+    <origin xyz="${WheelBase/2} ${-Track/2} ${0.03}" rpy="0 0 0" />
     <axis  xyz="0 -1 0" />
   </joint>
 </robot>

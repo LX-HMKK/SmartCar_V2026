@@ -13,7 +13,7 @@ from ackermann_math import ackermann_command
 class CmdVel2AckermannDriveNode(Node):
     def __init__(self):
         super().__init__('cmd_vel_to_ackermann_drive')
-        self.wheelbase = self.declare_parameter('wheelbase', 0.189).value
+        self.wheelbase = self.declare_parameter('wheelbase', 0.144).value
         self.max_steering_angle = self.declare_parameter(
             'max_steering_angle', 0.70
         ).value

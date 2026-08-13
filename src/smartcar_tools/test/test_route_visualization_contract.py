@@ -82,7 +82,7 @@ class RouteVisualizationContracts(unittest.TestCase):
 
         self.assertEqual(
             navigation["Visualization Manager"]["Global Options"]["Frame Rate"],
-            20,
+            10,
         )
 
     def test_editor_reference_display_is_not_named_as_a_nav2_path(self):
@@ -113,6 +113,18 @@ class RouteVisualizationContracts(unittest.TestCase):
         self.assertIn("self._reload_if_changed(force=True)", waypoint_viz)
         self.assertIn("mtime_ns == self._last_mtime_ns", waypoint_viz)
         self.assertIn("DurabilityPolicy.TRANSIENT_LOCAL", waypoint_viz)
+
+    def test_waypoint_viz_uses_the_task_c_zone_transform(self):
+        waypoint_viz = WAYPOINT_VIZ.read_text(encoding="utf-8")
+        self.assertIn(
+            "from smartcar_task.c_zone_direction import apply_c_zone_direction",
+            waypoint_viz,
+        )
+        self.assertIn(
+            "authored = apply_c_zone_direction(authored, c_zone_direction)",
+            waypoint_viz,
+        )
+        self.assertIn('declare_parameter("c_zone_direction", "counterclockwise")', waypoint_viz)
 
     def test_previews_keep_transit_headings_free(self):
         waypoint_viz = WAYPOINT_VIZ.read_text(encoding="utf-8")

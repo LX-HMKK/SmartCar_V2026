@@ -68,7 +68,7 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 1.9585801761583017
+      x: 2.0414198238416983
       y: 2.882158944658946
       z: 0.0
   task: via
@@ -78,7 +78,7 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.5061891690797939
+      x: 3.493810830920206
       y: 2.8970298423423433
       z: 0.0
   task: via
@@ -88,7 +88,7 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.5309739985521236
+      x: 3.469026001447876
       y: 3.982605373230375
       z: 0.0
   task: via
@@ -98,14 +98,14 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.197238477316604
+      x: 0.802761522683396
       y: 3.9960183397683418
       z: 0.0
     orientation:
       x: 0.0
       y: 0.0
-      z: 0.0
-      w: 1.0
+      z: 1.0
+      w: 0.0
   task: vlm
   direction: forward
   goal_profile: precise
@@ -114,7 +114,7 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.197238477316604
+      x: 0.802761522683396
       y: 2.9463079150579166
       z: 0.0
   task: via
@@ -124,7 +124,7 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 1.9784080397361654
+      x: 2.021591960263835
       y: 2.7731056949806963
       z: 0.0
   task: via

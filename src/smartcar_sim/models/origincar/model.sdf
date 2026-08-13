@@ -2,7 +2,7 @@
 <sdf version="1.8">
 <model name="origincar">
   <!-- OriginCar Ackermann robot for Gazebo Fortress
-       Dimensions: wheelbase=0.189m, track=0.189m, wheel_r=0.03m
+       Dimensions: wheelbase=0.144m, track=0.162m, wheel_r=0.03m
        Rear-axle origin (base_footprint) -->
 
   <!-- ===== BASE FOOTPRINT (rear axle, origin) ===== -->
@@ -98,7 +98,7 @@
 
   <!-- ===== STEERING KNUCKLES (invisible) ===== -->
   <link name="up_left_steer_link">
-    <pose>0.1049 0.0945 0.03 0 0 0</pose>
+    <pose>0.144 0.081 0.03 0 0 0</pose>
     <inertial>
       <mass>0.001</mass>
       <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>
@@ -106,7 +106,7 @@
   </link>
 
   <link name="up_right_steer_link">
-    <pose>0.1049 -0.0945 0.03 0 0 0</pose>
+    <pose>0.144 -0.081 0.03 0 0 0</pose>
     <inertial>
       <mass>0.001</mass>
       <inertia><ixx>0.00001</ixx><iyy>0.00001</iyy><izz>0.00001</izz></inertia>
@@ -116,7 +116,7 @@
   <!-- ===== WHEELS ===== -->
   <!-- Rear-left -->
   <link name="down_left_Link">
-    <pose>-0.0841 0.0945 0.03 0 0 0</pose>
+    <pose>0 0.081 0.03 0 0 0</pose>
     <inertial>
       <mass>0.05</mass>
       <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
@@ -137,7 +137,7 @@
 
   <!-- Rear-right -->
   <link name="down_right_Link">
-    <pose>-0.0841 -0.0945 0.03 0 0 0</pose>
+    <pose>0 -0.081 0.03 0 0 0</pose>
     <inertial>
       <mass>0.05</mass>
       <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
@@ -159,7 +159,7 @@
     <!-- Keep the rolling link coincident with its steering knuckle. A zero
          model-frame pose pins this front tyre at the rear-axle origin after
          physics starts, which creates a false three-wheel contact model. -->
-    <pose>0.1049 0.0945 0.03 0 0 0</pose>
+    <pose>0.144 0.081 0.03 0 0 0</pose>
     <inertial>
       <mass>0.05</mass>
       <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
@@ -178,7 +178,7 @@
 
   <!-- Front-right wheel -->
   <link name="up_right_Link">
-    <pose>0.1049 -0.0945 0.03 0 0 0</pose>
+    <pose>0.144 -0.081 0.03 0 0 0</pose>
     <inertial>
       <mass>0.05</mass>
       <inertia><ixx>0.0001</ixx><iyy>0.00005</iyy><izz>0.0001</izz></inertia>
@@ -265,13 +265,13 @@
     <left_steering_joint>up_left_steer_joint</left_steering_joint>
     <right_steering_joint>up_right_steer_joint</right_steering_joint>
     <!-- Fortress consumes steering_limit, not max_steering_angle. It converts
-         that virtual angle to R=L/sin(limit), so 1.04 rad is required to
-         admit the requested 0.22 m rear-axle radius. The resulting inner
-         wheel angle is still below the physical +/-1.0 rad joint limit. -->
-    <kingpin_width>0.189</kingpin_width>
-    <steering_limit>1.04</steering_limit>
-    <wheel_base>0.189</wheel_base>
-    <wheel_separation>0.189</wheel_separation>
+         that virtual angle to R=L/sin(limit). With the confirmed 0.144 m
+         wheelbase, 0.714 rad admits the conservative 0.22 m rear-axle
+         radius; the resulting inner wheel angle stays below +/-1.0 rad. -->
+    <kingpin_width>0.162</kingpin_width>
+    <steering_limit>0.714</steering_limit>
+    <wheel_base>0.144</wheel_base>
+    <wheel_separation>0.162</wheel_separation>
     <wheel_radius>0.03</wheel_radius>
     <!-- Do not configure min/max_velocity here. Fortress applies these values
          to both linear and angular Twist components; max_velocity=0.30 would

@@ -2,6 +2,7 @@ task_node:
   ros__parameters:
     autostart_mission: false
     navigation_test_end_segment_id: ""
+    c_zone_direction: counterclockwise
     waypoints_calibrated: false
     extrinsics_calibrated: false
     steering_calibrated: false

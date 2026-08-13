@@ -16,6 +16,7 @@ from rclpy.node import Node
 from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
 from geometry_msgs.msg import Point
 from smartcar_task.route_geometry import materialize_free_yaws
+from smartcar_task.c_zone_direction import apply_c_zone_direction
 from smartcar_task.waypoints import (
     is_zero_quaternion,
     load_waypoint_document,
@@ -49,7 +50,7 @@ def _yaw_quaternion(yaw_rad):
     return (0.0, 0.0, math.sin(half), math.cos(half))
 
 
-def load_waypoints(path):
+def load_waypoints(path, c_zone_direction="counterclockwise"):
     """Return validated display tuples including stable waypoint IDs.
 
     Each tuple: (frame_id, x, y, yaw, task, waypoint_id, has_heading).
@@ -58,6 +59,7 @@ def load_waypoints(path):
     no direction arrow for them.
     """
     document, authored = load_waypoint_document(path)
+    authored = apply_c_zone_direction(authored, c_zone_direction)
     segments = load_planning_segments(document, authored)
     executable = materialize_free_yaws(materialize_route(authored, segments))
     return [
@@ -80,6 +82,7 @@ class WaypointVizNode(Node):
     def __init__(self):
         super().__init__("waypoint_viz")
         self.declare_parameter("waypoints_file", "")
+        self.declare_parameter("c_zone_direction", "counterclockwise")
         self.declare_parameter("reload_interval_sec", 0.0)
         self.declare_parameter("marker_topic", MARKER_TOPIC)
 
@@ -123,7 +126,10 @@ class WaypointVizNode(Node):
         if not force and mtime_ns == self._last_mtime_ns:
             return
         try:
-            self._waypoints = load_waypoints(self._waypoints_file)
+            self._waypoints = load_waypoints(
+                self._waypoints_file,
+                self.get_parameter("c_zone_direction").value,
+            )
         except (OSError, ValueError) as error:
             self.get_logger().error(
                 f"Cannot load waypoint reference file {self._waypoints_file}: {error}"

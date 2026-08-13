@@ -66,7 +66,7 @@ class SteeringCircleAnalyzeTests(unittest.TestCase):
         self.assertAlmostEqual(analysis.circle_center_m[1], -0.4, places=6)
         self.assertAlmostEqual(
             analysis.gyro_effective_steering_rad,
-            math.atan(0.189 / 0.5),
+            math.atan(0.144 / 0.5),
             places=6,
         )
         self.assertIn("R_gyro = 0.5000 m", format_report(analysis))

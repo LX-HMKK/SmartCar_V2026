@@ -89,10 +89,11 @@ use_vision:=false
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --wheel-only
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
 ```
 
-不带 `--go` 时只进入急停锁存的就绪状态。`--go` 在本次明确运动授权、物理急停可用且车辆已在 P 点朝 `+X` 摆位后，健康检查通过即按“急停锁存复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序发车。`--wheel-only` 只用于定位对照。`ros_cleanup.sh` 先结束 `nav_test.sh` 记录的导航和 RViz PID，再清理已知导航残留；它不会使用宽泛进程匹配或清理航点编辑器。任何运动仍须另行取得该次明确授权。
+不带 `--go` 时只进入急停锁存的就绪状态。`--go` 在本次明确运动授权、物理急停可用且车辆已在 P 点朝 `+X` 摆位后，健康检查通过即按“急停锁存复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序发车。`--wheel-only` 只用于定位对照。`--c-zone-direction=clockwise` 在启动时仅内存镜像已确认的 C 区约束；省略时默认 `counterclockwise`，不写入 YAML，也不在运行中切换。`ros_cleanup.sh` 先结束 `nav_test.sh` 记录的导航和 RViz PID，再清理已知导航残留；它不会使用宽泛进程匹配或清理航点编辑器。任何运动仍须另行取得该次明确授权。
 
 发车前必须人工将车辆放在 P 原点、车头朝 `+X`；软件 `reset` 不能替代物理复位。路线所有段均由
 Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接路线、绕障规则或专用导航阈值。
@@ -112,7 +113,7 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 | Aurora 深度模式 | `10 Hz` IR/depth，relay 上限 `12 Hz`；校正 Aurora 固件采集时间戳后发布 `/smartcar/depth/points`。 |
 | 深度有效距离 | 转换后的前向 `/smartcar/depth/scan`、障碍标记与 clearing 均限制在 `3.0 m` 内。 |
 | 深度观测时窗 | relay 将相机同高切片转换为前向 `/smartcar/depth/scan`；local/global costmap `observation_persistence=0.0 s`、`expected_update_rate=1.0 s`、`inf_is_valid=true`，使空束清除已移走障碍；safety 原始点云心跳 `1.0 s`。 |
-| 轮距/最大转角 | `0.189 m` / `0.70 rad` |
+| 轴距/最大转角 | `0.144 m` / `0.70 rad` |
 | 最大线速度 | `0.30 m/s` |
 | 最低电压 | `10.0 V` |
 | 速度标定 | `longitudinal_velocity_scale: 1.03` |

@@ -21,7 +21,7 @@ safety_node:
     depth_points_topic: /smartcar/depth/points
     # The direct-pass-through firmware and ground-circle test verified the
     # 0.70 rad command. This is intentionally below no untested command range.
-    wheelbase: 0.189
+    wheelbase: 0.144
     max_steering_angle: 0.70
     # Disabled by default. When explicitly armed, the bounded service lets the
     # safety node itself hold a zero-speed steering angle for wheel measurement.

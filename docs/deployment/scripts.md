@@ -133,9 +133,13 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 ```bash
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --wheel-only
+bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 ```
 
 `--wheel-only` 仅将 EKF 切到轮式里程计对照配置；默认始终是 `wheel_imu`。
+`--c-zone-direction` 在启动时一次性选择 C 区方向：默认 `counterclockwise` 使用已确认
+路线；`clockwise` 仅在内存中按 C 区 `x=2.0 m` 中线镜像已确认约束，YAML、航点 ID、顺序和
+规划分段不变。RViz 与任务节点使用同一选择；运行中不会切换。
 
 ### `nav_status.py`
 

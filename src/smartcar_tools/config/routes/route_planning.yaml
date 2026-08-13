@@ -4,9 +4,9 @@ name: shared_route_planning_constraints
 # This file is the shared tuning surface for the waypoint editor preflight
 # and the simulation Nav2 overlay. sim_tune.sh projects these exact
 # dimensions into simulation Nav2. It is not a SLAM/localization map.
-# The 0.189 m wheelbase and verified 0.70 rad steering cap give a geometric
-# lower bound of 0.2244 m. Keep 0.23 m for the planner/preflight floor so the
-# path remains feasible without relying on downstream steering saturation.
+# The 0.144 m wheelbase and verified 0.70 rad steering cap give a geometric
+# lower bound of 0.1710 m. Keep the conservative 0.23 m planner/preflight
+# floor so the path remains feasible without relying on steering saturation.
 minimum_turning_radius_m: 0.23
 
 # Gazebo has a separately constrained Ackermann model. This value is

@@ -58,7 +58,7 @@ def generate_launch_description():
             default_value='true',
             description='Use Ackermann command conversion when true'
         ),
-        DeclareLaunchArgument('wheelbase', default_value='0.189'),
+        DeclareLaunchArgument('wheelbase', default_value='0.144'),
         DeclareLaunchArgument('max_steering_angle', default_value='0.70'),
         DeclareLaunchArgument('command_timeout_sec', default_value='0.35'),
         DeclareLaunchArgument('max_integration_dt_sec', default_value='0.25'),

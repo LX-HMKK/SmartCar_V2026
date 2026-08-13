@@ -37,6 +37,7 @@ from smartcar_task.mission import (
     MissionConfig,
     OperationResult,
 )
+from smartcar_task.c_zone_direction import apply_c_zone_direction
 from smartcar_task.navigation_goals import Nav2GoalFactory
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
@@ -1323,6 +1324,7 @@ class TaskNode(Node):
     def __init__(self):
         super().__init__("task_node")
         self.declare_parameter("waypoints_file", "")
+        self.declare_parameter("c_zone_direction", "counterclockwise")
         self.declare_parameter("waypoints_calibrated", False)
         self.declare_parameter("extrinsics_calibrated", False)
         self.declare_parameter("steering_calibrated", False)
@@ -1404,6 +1406,10 @@ class TaskNode(Node):
         try:
             waypoint_document, authored_waypoints = load_waypoint_document(
                 waypoints_file
+            )
+            authored_waypoints = apply_c_zone_direction(
+                authored_waypoints,
+                self.get_parameter("c_zone_direction").value,
             )
             self._waypoint_document_calibrated = (
                 waypoint_document.get("calibrated") is True

@@ -131,13 +131,27 @@ class SafetyLaunchContractTests(unittest.TestCase):
         params = yaml.safe_load(SAFETY_CONFIG.read_text(encoding="utf-8"))["safety_node"][
             "ros__parameters"
         ]
-        self.assertAlmostEqual(params["wheelbase"], 0.189)
+        self.assertAlmostEqual(params["wheelbase"], 0.144)
         self.assertAlmostEqual(params["max_steering_angle"], 0.70)
 
         for node in (CPP_SAFETY_NODE, PYTHON_SAFETY_NODE):
             with self.subTest(node=node.name):
                 source = node.read_text(encoding="utf-8")
+                self.assertIn('"wheelbase", 0.144', source)
                 self.assertIn('"max_steering_angle", 0.70', source)
+
+    def test_legacy_converter_uses_the_same_measured_wheelbase(self):
+        tree = source_tree(BASE_SERIAL)
+        self.assertEqual(launch_argument_default(tree, "wheelbase"), "0.144")
+        source = (
+            REPOSITORY_ROOT
+            / "src"
+            / "origincar"
+            / "origincar_base"
+            / "scripts"
+            / "cmd_vel_to_ackermann_drive.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("declare_parameter('wheelbase', 0.144)", source)
 
     def test_safety_launch_exposes_required_raw_odom_switch(self):
         tree = source_tree(SMARTCAR_SAFETY_LAUNCH)

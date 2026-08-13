@@ -19,6 +19,13 @@ def generate_launch_description():
             description="Semantic waypoint YAML file",
         ),
         DeclareLaunchArgument(
+            "c_zone_direction",
+            default_value="counterclockwise",
+            description=(
+                "C-zone route direction: counterclockwise uses the reviewed "
+                "YAML; clockwise mirrors its reviewed C-zone constraints in memory"),
+        ),
+        DeclareLaunchArgument(
             "task_config_file",
             default_value=PathJoinSubstitution([
                 FindPackageShare("smartcar_task"),
@@ -126,6 +133,7 @@ def generate_launch_description():
                 LaunchConfiguration("task_config_file"),
                 {
                     "waypoints_file": LaunchConfiguration("waypoints_file"),
+                    "c_zone_direction": LaunchConfiguration("c_zone_direction"),
                     "waypoints_calibrated": LaunchConfiguration(
                         "waypoints_calibrated"),
                     "extrinsics_calibrated": LaunchConfiguration(

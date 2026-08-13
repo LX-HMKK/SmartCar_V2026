@@ -1,6 +1,6 @@
 # Simulation-only Nav2 overlay. It adds local Gazebo tuning without a static
 # map or wall-specific clearance.
-# Gazebo's model uses a 0.189 m wheelbase and a 1.00 rad inner-wheel limit.
+# Gazebo's model uses a 0.144 m wheelbase and a 1.00 rad inner-wheel limit.
 # This permits the requested 0.22 m rear-axle radius. The real chain now uses
 # the same conservative lower bound after a measured approximately 0.20 m
 # physical circle; simulation-only controller and costmap tuning stay local.

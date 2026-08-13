@@ -72,6 +72,7 @@ class SystemContractTests(unittest.TestCase):
             "autostart_mission": "false",
             "supervised_p_to_a_only": "false",
             "supervised_p_to_c1_only": "false",
+            "c_zone_direction": "counterclockwise",
             "qr_handoff_test_mode": "false",
             "use_sim_time": "false",
             "nav_autostart": "true",
@@ -98,6 +99,11 @@ class SystemContractTests(unittest.TestCase):
             '"waypoints_file": LaunchConfiguration("waypoints_file")',
             source,
         )
+        self.assertIn(
+            '"c_zone_direction": LaunchConfiguration("c_zone_direction")',
+            source,
+        )
+        self.assertIn('"c_zone_direction": LaunchConfiguration("c_zone_direction"),', source)
         self.assertIn(
             '"autostart": LaunchConfiguration("nav_autostart")', source)
         self.assertIn(
@@ -171,7 +177,7 @@ class SystemContractTests(unittest.TestCase):
         depth = config["extrinsics"]["link_to_depth_camera"]
         self.assertIs(depth["measured"], True)
         self.assertEqual(depth["child"], "depth_camera_link_1")
-        self.assertEqual(depth["xyz"], [0.1049, 0.0, 0.12])
+        self.assertEqual(depth["xyz"], [0.0599, 0.0, 0.12])
         self.assertEqual(depth["rpy"], [1.5708, 0.0, 1.5708])
         self.assertNotIn("depth_camera_calibrated", config["motion_gates"])
 
@@ -371,10 +377,14 @@ class SystemContractTests(unittest.TestCase):
         base = config["extrinsics"]["base_to_link"]
         laser = config["extrinsics"]["link_to_laser"]
         camera = config["extrinsics"]["link_to_camera"]
+        depth_camera = config["extrinsics"]["link_to_depth_camera"]
 
         extrinsic_defaults = assigned_literal(SYSTEM, "extrinsic_defaults")
         camera_defaults = assigned_literal(
             SYSTEM, "camera_extrinsic_defaults"
+        )
+        depth_camera_defaults = assigned_literal(
+            SYSTEM, "depth_camera_extrinsic_defaults"
         )
         expected_base = dict(zip(
             ("base_x", "base_y", "base_z"),
@@ -392,6 +402,10 @@ class SystemContractTests(unittest.TestCase):
             ("camera_x", "camera_y", "camera_z"),
             (str(value) for value in camera["xyz"]),
         ))
+        expected_depth_camera = dict(zip(
+            ("depth_camera_x", "depth_camera_y", "depth_camera_z"),
+            (str(value) for value in depth_camera["xyz"]),
+        ))
 
         for name, expected in {**expected_base, **expected_laser}.items():
             with self.subTest(name=name):
@@ -399,6 +413,16 @@ class SystemContractTests(unittest.TestCase):
         for name, expected in expected_camera.items():
             with self.subTest(name=name):
                 self.assertEqual(camera_defaults.get(name, "0.0"), expected)
+        for name, expected in expected_depth_camera.items():
+            with self.subTest(name=name):
+                self.assertAlmostEqual(
+                    float(depth_camera_defaults.get(name, "0.0")),
+                    float(expected),
+                )
+        self.assertAlmostEqual(
+            base["xyz"][0] + depth_camera["xyz"][0],
+            config["calibration"]["wheelbase"],
+        )
         self.assertEqual(
             launch_default(SYSTEM, "gyro_z_bias"),
             str(config["calibration"]["gyro_z_bias"]),

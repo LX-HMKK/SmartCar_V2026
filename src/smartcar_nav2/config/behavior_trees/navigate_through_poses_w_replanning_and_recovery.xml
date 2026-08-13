@@ -1,17 +1,22 @@
 <!--
-  Plan one segment through constraints and track it. On one navigation failure,
-  run the native bounded BackUp, discard only passed planning constraints, and
-  recompute the remaining segment once. RemovePassedGoals never completes a
-  mission waypoint; FollowPath still owns endpoint arrival.
+  Plan a segment once, then track it. While tracking, retain only the remaining
+  ordered planning constraints. On each of at most three failures, run the
+  native bounded BackUp, prune again, and let the recovery node replan only
+  those remaining goals.
+  RemovePassedGoals never completes a mission waypoint; FollowPath still owns
+  endpoint arrival.
 -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="1" name="ReplanOnceAfterNativeBackUp">
-      <Sequence name="PlanThenFollowThroughPath">
+    <RecoveryNode number_of_retries="3" name="ReplanRemainingGoalsAfterNativeBackUp">
+      <Sequence name="PlanThenTrackThroughPath">
         <ComputePathThroughPoses goals="{goals}" path="{path}" planner_id="GridBased"/>
-        <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="goal_checker"/>
+        <PipelineSequence name="TrackThroughPathAndPersistPassedConstraints">
+          <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
+          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="goal_checker"/>
+        </PipelineSequence>
       </Sequence>
-      <Sequence name="NativeBackUpAndDiscardPassedPlanningConstraints">
+      <Sequence name="NativeBackUpAndPruneRemainingConstraints">
         <BackUp backup_dist="0.20" backup_speed="0.15" time_allowance="4.0"/>
         <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
       </Sequence>

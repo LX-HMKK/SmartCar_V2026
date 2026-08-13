@@ -87,7 +87,7 @@ public:
     declare_parameter("require_raw_odom", true);
     declare_parameter("require_depth_points", false);
     declare_parameter("depth_points_topic", "/smartcar/depth/points");
-    declare_parameter("wheelbase", 0.189);
+    declare_parameter("wheelbase", 0.144);
     declare_parameter("max_steering_angle", 0.70);
     declare_parameter("ackermann_frame_id", "odom_combined");
     declare_parameter("allow_steering_calibration", false);

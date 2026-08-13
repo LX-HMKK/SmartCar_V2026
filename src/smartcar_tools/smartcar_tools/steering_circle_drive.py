@@ -283,7 +283,7 @@ def parse_arguments(args=None):
                         help="CSV output path")
     parser.add_argument("--rate", type=float, default=20.0,
                         help="command/record rate in Hz (maximum 50)")
-    parser.add_argument("--wheelbase", type=float, default=0.189,
+    parser.add_argument("--wheelbase", type=float, default=0.144,
                         help="wheelbase used for Twist curvature conversion")
     parser.add_argument("--yes", action="store_true",
                         help="required confirmation for real vehicle motion")

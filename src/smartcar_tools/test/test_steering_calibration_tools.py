@@ -28,15 +28,15 @@ MANIFEST = PACKAGE_ROOT / "package.xml"
 class SteeringCalibrationMathTests(unittest.TestCase):
     def test_circle_request_is_bounded_to_the_verified_release_limits(self):
         self.assertEqual(
-            validate_circle_request(0.30, 0.15, 20.0, 20.0, 0.189),
-            (0.30, 0.15, 20.0, 20.0, 0.189),
+            validate_circle_request(0.30, 0.15, 20.0, 20.0, 0.144),
+            (0.30, 0.15, 20.0, 20.0, 0.144),
         )
         for angle, speed, duration, rate, wheelbase in (
-            (0.0, 0.15, 20.0, 20.0, 0.189),
-            (MAX_STEERING_ANGLE_RAD + 0.01, 0.15, 20.0, 20.0, 0.189),
-            (0.30, MAX_CIRCLE_SPEED_MPS + 0.01, 20.0, 20.0, 0.189),
-            (0.30, 0.15, 0.0, 20.0, 0.189),
-            (0.30, 0.15, 20.0, 0.0, 0.189),
+            (0.0, 0.15, 20.0, 20.0, 0.144),
+            (MAX_STEERING_ANGLE_RAD + 0.01, 0.15, 20.0, 20.0, 0.144),
+            (0.30, MAX_CIRCLE_SPEED_MPS + 0.01, 20.0, 20.0, 0.144),
+            (0.30, 0.15, 0.0, 20.0, 0.144),
+            (0.30, 0.15, 20.0, 0.0, 0.144),
             (0.30, 0.15, 20.0, 20.0, 0.0),
         ):
             with self.subTest(angle=angle, speed=speed):
@@ -54,10 +54,10 @@ class SteeringCalibrationMathTests(unittest.TestCase):
 
     def test_twist_curvature_converts_back_to_the_requested_steering(
             self):
-        angular = angular_velocity_for_steering(0.15, 0.30, 0.189)
-        self.assertAlmostEqual(math.atan(0.189 * angular / 0.15), 0.30)
+        angular = angular_velocity_for_steering(0.15, 0.30, 0.144)
+        self.assertAlmostEqual(math.atan(0.144 * angular / 0.15), 0.30)
         with self.assertRaises(ValueError):
-            angular_velocity_for_steering(0.0, 0.30, 0.189)
+            angular_velocity_for_steering(0.0, 0.30, 0.144)
 
 
 class SteeringCalibrationCommandContracts(unittest.TestCase):

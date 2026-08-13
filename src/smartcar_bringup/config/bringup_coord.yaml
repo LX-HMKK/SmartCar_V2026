@@ -61,15 +61,17 @@ extrinsics:
     xyz: [0.1205, 0.0, 0.11]
     rpy: [0.0, 0.0, 0.0]
   link_to_depth_camera:
-    # Aurora 930 is mounted directly over the front axle. Its reported height
-    # is 0.15 m above ground, so this transform is relative to base_link
-    # (base_link is 0.03 m above base_footprint). Point-cloud orientation and
+    # Aurora 930 is mounted directly over the front axle. base_footprint is
+    # the rear axle and base_link is 0.0841 m forward, so 0.0599 m here yields
+    # a 0.144 m rear-axle-to-camera offset. Its reported height is 0.15 m above
+    # ground, so this transform is relative to base_link (which is 0.03 m
+    # above base_footprint). Point-cloud orientation and
     # obstacle coverage still requires a live point-cloud check before motion,
     # but its fixed physical pose is an accepted structural constraint.
     measured: true
     parent: base_link
     child: depth_camera_link_1
-    xyz: [0.1049, 0.0, 0.12]
+    xyz: [0.0599, 0.0, 0.12]
     # Aurora driver frame: x left, y up, z forward. Map it into base_link
     # (x forward, y left, z up).
     rpy: [1.5708, 0.0, 1.5708]
@@ -81,7 +83,7 @@ calibration:
   steering_command_scale: 1.0
   steering_command_offset_rad: 0.0
   max_calibrated_steering_command_rad: 0.70
-  wheelbase: 0.189
+  wheelbase: 0.144
   max_steering_angle: 0.70
 
 motion_gates:

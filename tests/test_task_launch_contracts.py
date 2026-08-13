@@ -1,6 +1,7 @@
 """Static contracts for smartcar_task ROS wiring and reset ordering."""
 from pathlib import Path
 import unittest
+import xml.etree.ElementTree as ET
 
 import yaml
 
@@ -26,9 +27,63 @@ NAV2_LAUNCH = ROOT / "src" / "smartcar_nav2" / "launch" / "navigation_launch.py"
 DIRECTION_GUARD_CONFIG = (
     ROOT / "src" / "smartcar_safety" / "config" / "direction_guard.yaml"
 )
+THROUGH_POSES_TREES = (
+    "navigate_through_poses_w_replanning_and_recovery.xml",
+    "navigate_through_poses_precise_w_replanning_and_recovery.xml",
+    "navigate_through_poses_return_w_replanning_and_recovery.xml",
+    "navigate_through_poses_transit_w_replanning_and_recovery.xml",
+)
 
 
 class TaskLaunchContractTests(unittest.TestCase):
+    def _assert_through_poses_recovery_tree(self, filename):
+        source = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
+        root = ET.fromstring(source)
+        behavior_tree = root.find("./BehaviorTree")
+        self.assertIsNotNone(behavior_tree)
+        assert behavior_tree is not None
+
+        top_level = list(behavior_tree)
+        self.assertEqual(len(top_level), 1)
+        recovery = top_level[0]
+        self.assertEqual(recovery.tag, "RecoveryNode")
+        self.assertEqual(recovery.attrib["number_of_retries"], "3")
+        self.assertEqual(len(recovery), 2)
+
+        primary, recovery_actions = recovery
+        self.assertEqual(primary.tag, "Sequence")
+        self.assertEqual(len(primary), 2)
+        initial_plan, tracking = primary
+        self.assertEqual(initial_plan.tag, "ComputePathThroughPoses")
+        self.assertEqual(initial_plan.attrib["goals"], "{goals}")
+        self.assertEqual(initial_plan.attrib["path"], "{path}")
+        self.assertEqual(initial_plan.attrib["planner_id"], "GridBased")
+        self.assertEqual(tracking.tag, "PipelineSequence")
+        self.assertEqual([child.tag for child in tracking], [
+            "RemovePassedGoals", "FollowPath"])
+        continuous_prune, follow_path = tracking
+        self.assertEqual(continuous_prune.attrib["input_goals"], "{goals}")
+        self.assertEqual(continuous_prune.attrib["output_goals"], "{goals}")
+        self.assertEqual(continuous_prune.attrib["radius"], "0.40")
+        self.assertEqual(continuous_prune.attrib["global_frame"], "odom_combined")
+        self.assertEqual(
+            continuous_prune.attrib["robot_base_frame"], "base_footprint")
+        self.assertEqual(follow_path.tag, "FollowPath")
+        self.assertEqual(follow_path.attrib["path"], "{path}")
+
+        self.assertEqual(recovery_actions.tag, "Sequence")
+        self.assertEqual([child.tag for child in recovery_actions], [
+            "BackUp", "RemovePassedGoals"])
+        backup, recovery_prune = recovery_actions
+        self.assertEqual(backup.attrib["backup_dist"], "0.20")
+        self.assertEqual(backup.attrib["backup_speed"], "0.15")
+        self.assertEqual(recovery_prune.attrib["input_goals"], "{goals}")
+        self.assertEqual(recovery_prune.attrib["output_goals"], "{goals}")
+        self.assertEqual(recovery_prune.attrib["radius"], "0.40")
+        self.assertEqual(recovery_prune.attrib["global_frame"], "odom_combined")
+        self.assertEqual(
+            recovery_prune.attrib["robot_base_frame"], "base_footprint")
+
     def test_package_declares_direct_runtime_dependencies(self):
         source = PACKAGE_XML.read_text(encoding="utf-8")
         for dependency in (
@@ -114,25 +169,21 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("navigation_segment_intermediate_not_via", mission)
         self.assertIn("navigation_segment_endpoint_is_via", mission)
         self.assertIn("self._navigator.navigate_through(segment)", mission)
-        for filename in (
-            "navigate_through_poses_w_replanning_and_recovery.xml",
-            "navigate_through_poses_precise_w_replanning_and_recovery.xml",
-            "navigate_through_poses_return_w_replanning_and_recovery.xml",
-            "navigate_through_poses_transit_w_replanning_and_recovery.xml",
-        ):
+        for filename in THROUGH_POSES_TREES:
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertIn("ComputePathThroughPoses goals=\"{goals}\"", tree)
             self.assertEqual(tree.count("<FollowPath "), 1)
             self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
-            self.assertIn('RecoveryNode number_of_retries="1"', tree)
+            self.assertIn('RecoveryNode number_of_retries="3"', tree)
             self.assertEqual(tree.count("<BackUp "), 1)
             self.assertIn('backup_dist="0.20"', tree)
             self.assertIn('backup_speed="0.15"', tree)
-            self.assertEqual(tree.count("<RemovePassedGoals "), 1)
-            self.assertNotIn("PipelineSequence", tree)
+            self.assertEqual(tree.count("<RemovePassedGoals "), 2)
+            self.assertIn("PipelineSequence", tree)
             self.assertNotIn("Spin", tree)
             self.assertNotIn("Wait", tree)
             self.assertNotIn("DriveOnHeading", tree)
+            self._assert_through_poses_recovery_tree(filename)
 
     def test_behavior_tree_paths_are_resolved_from_the_installed_nav2_package(self):
         parameters = yaml.safe_load(
@@ -189,22 +240,21 @@ class TaskLaunchContractTests(unittest.TestCase):
             )
             for token in forbidden:
                 self.assertNotIn(token, source)
-            self.assertIn('RecoveryNode number_of_retries="1"', source)
+            self.assertIn('RecoveryNode number_of_retries="3"', source)
             self.assertEqual(source.count("<BackUp "), 1)
             self.assertIn('backup_dist="0.20"', source)
             self.assertIn('backup_speed="0.15"', source)
-            self.assertNotIn("PipelineSequence", source)
-        through_trees = (
-            "navigate_through_poses_w_replanning_and_recovery.xml",
-            "navigate_through_poses_precise_w_replanning_and_recovery.xml",
-            "navigate_through_poses_transit_w_replanning_and_recovery.xml",
-            "navigate_through_poses_return_w_replanning_and_recovery.xml",
-        )
-        for filename in through_trees:
+            if tree.name in THROUGH_POSES_TREES:
+                self.assertIn("PipelineSequence", source)
+            else:
+                self.assertNotIn("PipelineSequence", source)
+        for filename in THROUGH_POSES_TREES:
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertEqual(tree.count("<BackUp "), 1)
             self.assertIn('backup_speed="0.15"', tree)
-            self.assertEqual(tree.count("<RemovePassedGoals "), 1)
+            self.assertEqual(tree.count("<RemovePassedGoals "), 2)
+            self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
+            self._assert_through_poses_recovery_tree(filename)
         for filename in (
             "navigate_to_pose_w_replanning_and_recovery.xml",
             "navigate_to_pose_precise_w_replanning_and_recovery.xml",
@@ -215,11 +265,21 @@ class TaskLaunchContractTests(unittest.TestCase):
         cmake = NAV2_CMAKE.read_text(encoding="utf-8")
         for token in (*forbidden[:4], "ForwardOnlyRPP"):
             self.assertNotIn(token, cmake)
-        params = (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        params_file = NAV2_CONFIG / "nav2_params.yaml"
+        params = params_file.read_text(encoding="utf-8")
         for token in ("nav2_spin", "nav2_wait", "nav2_drive_on_heading"):
             self.assertNotIn(token, params)
         self.assertIn("nav2_back_up_action_bt_node", params)
         self.assertIn("nav2_remove_passed_goals_action_bt_node", params)
+        parsed_params = yaml.safe_load(params_file.read_text(encoding="utf-8"))
+        for navigator in (
+            "bt_navigator",
+            "bt_navigator_navigate_through_poses_rclcpp_node",
+        ):
+            plugin_lib_names = parsed_params[navigator]["ros__parameters"][
+                "plugin_lib_names"
+            ]
+            self.assertIn("nav2_pipeline_sequence_bt_node", plugin_lib_names)
         self.assertIn('behavior_plugins: ["backup"]', params)
         self.assertIn("min_velocity: [-0.15", params)
         launch = NAV2_LAUNCH.read_text(encoding="utf-8")
@@ -352,6 +412,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         source = NODE.read_text(encoding="utf-8")
         self.assertIn('self.declare_parameter("supervised_p_to_a_only", False)', source)
         self.assertIn('self.declare_parameter("supervised_p_to_c1_only", False)', source)
+        self.assertIn('self.declare_parameter("c_zone_direction", "counterclockwise")', source)
+        self.assertIn("apply_c_zone_direction(", source)
         self.assertIn("SUPERVISED_P_TO_A_SEGMENT_ID", source)
         self.assertIn("SUPERVISED_P_TO_C1_SEGMENT_ID", source)
         self.assertIn("SUPERVISED_PREFIX_TASKS", source)
@@ -363,6 +425,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("supervised navigation route requires:", system_source)
         self.assertIn('"supervised_full_route", default_value="false"', system_source)
         self.assertIn('"supervised_full_route": LaunchConfiguration(', system_source)
+        self.assertIn('"c_zone_direction": LaunchConfiguration(', system_source)
         self.assertIn('"safety_emergency_stop_on_start",', system_source)
         self.assertIn('"use_camera",', system_source)
         self.assertIn('"use_vision",', system_source)
@@ -390,11 +453,18 @@ class TaskLaunchContractTests(unittest.TestCase):
         source = NAV_TEST.read_text(encoding="utf-8")
         self.assertIn(
             "bash /home/sunrise/ros2_ws/scripts/nav_test.sh "
-            "[--go] [--wheel-only]",
+            "[--go] [--wheel-only] [--cw]",
             source,
         )
         self.assertIn("--go) GO=true", source)
         self.assertIn("--wheel-only) WHEEL_ONLY=true", source)
+        self.assertIn("--cw) C_ZONE_DIRECTION=clockwise", source)
+        self.assertIn("C_ZONE_DIRECTION=counterclockwise", source)
+        self.assertIn("--c-zone-direction=clockwise) C_ZONE_DIRECTION=clockwise", source)
+        self.assertIn(
+            "--c-zone-direction=counterclockwise) C_ZONE_DIRECTION=counterclockwise",
+            source,
+        )
         for retired_option in (
             "--autostart", "--supervised-p-to-a", "--supervised-p-to-c1",
             "--supervised-full-route", "--short-drive", "--verify",
@@ -414,6 +484,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn('LOCALIZATION_PROFILE_ARG="localization_profile:=wheel_imu"', source)
         self.assertIn('LOCALIZATION_PROFILE_ARG="localization_profile:=wheel_only"', source)
         self.assertIn('$EXTRA_ARGS $LOCALIZATION_PROFILE_ARG', source)
+        self.assertIn('$C_ZONE_DIRECTION_ARG', source)
         self.assertIn('set_software_emergency_stop false', source)
         self.assertIn('/smartcar/task/start', source)
         self.assertIn('re_latch_after_transition_failure', source)
