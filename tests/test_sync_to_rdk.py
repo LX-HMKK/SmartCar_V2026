@@ -117,6 +117,8 @@ class TestTargets(unittest.TestCase):
         self.assertIn(f"{sync.HOST}:/root/nav_test.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_test.sh", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/media_test.sh", dsts)
         self.assertIn(f"{sync.HOST}:/root/nav_status.py", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/ros_cleanup.sh", dsts)

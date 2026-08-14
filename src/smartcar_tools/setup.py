@@ -41,6 +41,9 @@ setup(
             "speech_probe = smartcar_tools.speech_probe:main",
             "qr_probe = smartcar_tools.qr_probe:main",
             "image_replay_node = smartcar_tools.image_replay_node:main",
+            "rgb_imshow = smartcar_tools.rgb_imshow:main",
+            "competition_output_display = "
+            "smartcar_tools.competition_output_display:main",
             "vlm_display = smartcar_tools.vlm_display:main",
             "waypoint_viz = smartcar_tools.waypoint_viz:main",
             "field_reference_node = smartcar_tools.field_reference_node:main",

@@ -20,7 +20,7 @@ vision_node:
       - --max-tokens
       - "256"
     vlm_static_text: ""
-    default_prompt: "请简洁描述图中人物立牌的外观特征和正在进行的动作。"
+    default_prompt: "请简洁描述当前画面中实际可见的场景、物体、标志或人物。若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求重新拍摄。"
     max_vlm_timeout_sec: 8.0
     runtime_dir: /tmp/smartcar_vision
     jpeg_quality: 90

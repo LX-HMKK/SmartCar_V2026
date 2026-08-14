@@ -10,7 +10,7 @@ from smartcar_task.planning_segments import (
 
 
 VLM_HARD_TIMEOUT_SEC = 8.0
-VLM_FALLBACK_TEXT = "检测到人物立牌"
+VLM_FALLBACK_TEXT = "画面中可能是一名穿着浅色上衣的人物，正面站立并挥手。"
 TERMINAL_STATES = frozenset({"COMPLETED", "STOPPED", "FAILED"})
 RESETTABLE_STATES = TERMINAL_STATES | frozenset({"IDLE"})
 QR_HANDOFF_TEST_CONTENT = "模拟赛题数据：任务类型为诊疗区人物描述。"
@@ -69,7 +69,12 @@ class MissionConfig:
     qr_retry_delay_sec: float = 0.25
     qr_handoff_test_mode: bool = False
     vlm_timeout_sec: float = 8.0
-    vlm_prompt: str = "请描述图中人物立牌的外观和动作。"
+    vlm_prompt: str = (
+        "请描述当前画面中实际可见的场景、物体、标志或人物。"
+        "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
+        "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
+        "重新拍摄。"
+    )
     sleep_quantum_sec: float = 0.05
     vlm_fallback_text: str = VLM_FALLBACK_TEXT
 

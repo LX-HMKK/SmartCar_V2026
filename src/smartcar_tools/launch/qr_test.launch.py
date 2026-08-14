@@ -90,6 +90,8 @@ def _runtime_actions(context):
             "image_topic": source_topic,
             "usb_video_device": LaunchConfiguration(
                 "usb_video_device").perform(context),
+            "aurora_resolution_mode_index": LaunchConfiguration(
+                "aurora_resolution_mode_index").perform(context),
             "config_file": LaunchConfiguration(
                 "config_file").perform(context),
         }.items(),
@@ -104,8 +106,13 @@ def generate_launch_description():
             default_value="camera",
             description="Image source: camera or file",
         ),
-        DeclareLaunchArgument("camera_driver", default_value="usb"),
+        DeclareLaunchArgument("camera_driver", default_value="aurora"),
         DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
+        DeclareLaunchArgument(
+            "aurora_resolution_mode_index",
+            default_value="0",
+            description="Aurora RGB resolution mode index",
+        ),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument("image_file", default_value=""),
         DeclareLaunchArgument(

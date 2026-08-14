@@ -12,15 +12,23 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_tools.image_replay_node import resolve_image_file  # noqa: E402
+from smartcar_tools.competition_output_display import (  # noqa: E402
+    normalize_output_text,
+)
 from smartcar_tools.qr_probe import (  # noqa: E402
     INVALID_ARGUMENT,
     QR_NOT_FOUND,
     SUCCESS,
+    competition_output_text,
     response_exit_code,
 )
 from smartcar_tools.speech_probe import (  # noqa: E402
     SpeechStatusTracker,
     parse_status,
+)
+from smartcar_tools.rgb_imshow import (  # noqa: E402
+    normalize_window_title,
+    should_close,
 )
 from smartcar_tools.vlm_display import (  # noqa: E402
     QApplication,
@@ -82,6 +90,32 @@ class QrProbeTests(unittest.TestCase):
         self.assertEqual(response_exit_code(True, "unexpected"), QR_NOT_FOUND)
         self.assertNotEqual(INVALID_ARGUMENT, QR_NOT_FOUND)
 
+    def test_competition_output_is_limited_to_odd_or_even(self):
+        self.assertEqual(
+            competition_output_text(True, "第3题：奇数", "ok"),
+            "奇数",
+        )
+        self.assertEqual(
+            competition_output_text(True, "偶数", "ok"),
+            "偶数",
+        )
+        self.assertEqual(
+            competition_output_text(True, "9697", "ok"),
+            "奇数",
+        )
+        self.assertEqual(
+            competition_output_text(True, "640", "ok"),
+            "偶数",
+        )
+        self.assertEqual(
+            competition_output_text(True, "第3题", "ok"),
+            "未识别",
+        )
+        self.assertEqual(
+            competition_output_text(False, "奇数", "qr_timeout"),
+            "未识别",
+        )
+
 
 class ImageReplayTests(unittest.TestCase):
     def test_resolve_requires_an_existing_file(self):
@@ -95,6 +129,19 @@ class ImageReplayTests(unittest.TestCase):
             self.assertEqual(resolve_image_file(image), image.resolve())
 
 
+class MediaDisplayTests(unittest.TestCase):
+    def test_imshow_title_and_close_keys_are_explicit(self):
+        self.assertEqual(normalize_window_title(""), "Aurora RGB")
+        self.assertEqual(normalize_window_title("  RGB  "), "RGB")
+        self.assertTrue(should_close(27))
+        self.assertTrue(should_close(ord("q")))
+        self.assertFalse(should_close(ord("a")))
+
+    def test_competition_output_has_a_nonempty_waiting_state(self):
+        self.assertEqual(normalize_output_text(""), "等待比赛输出")
+        self.assertEqual(normalize_output_text("  偶数  "), "偶数")
+
+
 class DisplayStateTests(unittest.TestCase):
     def test_success_fallback_and_failure_are_distinct(self):
         success = DisplayResult(True, False, "描述", "ok", 1.0)
@@ -103,7 +150,9 @@ class DisplayStateTests(unittest.TestCase):
         self.assertEqual(result_kind(success), "success")
         self.assertEqual(result_kind(fallback), "fallback")
         self.assertEqual(result_kind(failure), "failed")
-        self.assertIn("vlm_timeout", result_status_text(fallback))
+        self.assertEqual(result_status_text(success), "生成完成")
+        self.assertEqual(result_status_text(fallback), "生成完成")
+        self.assertEqual(result_status_text(failure), "生成失败")
 
     @unittest.skipUnless(
         QApplication is not None,
@@ -118,8 +167,8 @@ class DisplayStateTests(unittest.TestCase):
         app.processEvents()
         self.assertEqual(window.result_text.toPlainText(), long_text)
         window.finish_request(DisplayResult(
-            True, True, "检测到人物立牌", "vlm_timeout", 8.0))
-        self.assertIn("使用兜底文字", window.status_label.text())
+            True, True, "画面中可能是一名穿着浅色上衣的人物，正面站立并挥手。", "vlm_timeout", 8.0))
+        self.assertEqual(window.status_label.text(), "生成完成 · 8.0 s")
         self.assertTrue(window.trigger_button.isEnabled())
         window.close()
 

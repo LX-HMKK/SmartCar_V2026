@@ -81,7 +81,7 @@ public:
     declare_parameter("odom_throttle_interval_sec", 0.05);
     declare_parameter("minimum_voltage", 0.0);
     declare_parameter("voltage_timeout_sec", 1.0);
-    declare_parameter("max_linear_speed_mps", 0.60);
+    declare_parameter("max_linear_speed_mps", 0.50);
     declare_parameter("publish_frequency_hz", 20.0);
     declare_parameter("require_scan", true);
     declare_parameter("require_odom", true);

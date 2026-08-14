@@ -45,6 +45,10 @@ def _runtime_actions(context):
         LaunchConfiguration("fullscreen").perform(context),
         "fullscreen",
     )
+    auto_request = _as_bool(
+        LaunchConfiguration("auto_request").perform(context),
+        "auto_request",
+    )
     request_timeout = float(LaunchConfiguration(
         "request_timeout_sec").perform(context))
     if not 0.0 < request_timeout <= 8.0:
@@ -115,6 +119,7 @@ def _runtime_actions(context):
             "prompt": LaunchConfiguration("prompt").perform(context),
             "request_timeout_sec": request_timeout,
             "fullscreen": fullscreen,
+            "auto_request": auto_request,
             "use_sim_time": use_sim_time,
         }],
     ))
@@ -138,7 +143,7 @@ def generate_launch_description():
             default_value="camera",
             description="Image source: camera or file",
         ),
-        DeclareLaunchArgument("camera_driver", default_value="usb"),
+        DeclareLaunchArgument("camera_driver", default_value="aurora"),
         DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument("image_file", default_value=""),
@@ -147,10 +152,16 @@ def generate_launch_description():
         DeclareLaunchArgument("publish_rate_hz", default_value="2.0"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("fullscreen", default_value="true"),
+        DeclareLaunchArgument("auto_request", default_value="false"),
         DeclareLaunchArgument("request_timeout_sec", default_value="8.0"),
         DeclareLaunchArgument(
             "prompt",
-            default_value="请简洁描述图中人物立牌的外观特征和动作。",
+            default_value=(
+                "请描述当前画面中实际可见的场景、物体、标志或人物。"
+                "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
+                "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
+                "重新拍摄。"
+            ),
         ),
         DeclareLaunchArgument(
             "config_file",

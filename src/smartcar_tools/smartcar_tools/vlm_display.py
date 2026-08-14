@@ -11,15 +11,11 @@ os.environ.setdefault("DISPLAY", ":0")
 
 try:
     from PyQt5.QtCore import Qt, QTimer, pyqtSignal, QObject
-    from PyQt5.QtGui import QImage, QPixmap
     from PyQt5.QtWidgets import (
         QApplication,
-        QFrame,
-        QHBoxLayout,
         QLabel,
         QMainWindow,
         QPushButton,
-        QSizePolicy,
         QTextEdit,
         QVBoxLayout,
         QWidget,
@@ -49,42 +45,30 @@ def result_kind(result):
 
 
 def result_status_text(result):
-    kind = result_kind(result)
-    labels = {
-        "success": "识别成功",
-        "fallback": "使用兜底文字",
-        "failed": "识别失败",
-    }
-    detail = str(result.status).strip()
-    return labels[kind] + (f" · {detail}" if detail else "")
+    if result_kind(result) == "failed":
+        return "生成失败"
+    return "生成完成"
 
 
 if QApplication is not None:
     class UiBridge(QObject):
-        frame_received = pyqtSignal(object)
         text_received = pyqtSignal(str)
         request_finished = pyqtSignal(object)
+        auto_request = pyqtSignal()
 
 
     class VlmWindow(QMainWindow):
         def __init__(self, bridge, request_callback=None):
             super().__init__()
             self._request_callback = request_callback
-            self._latest_image = None
             self._request_started_at = None
 
             self.setWindowTitle("SmartCar 图生文")
-            self.setMinimumSize(1024, 600)
-            self.resize(1920, 1080)
+            self.setMinimumSize(900, 450)
+            self.resize(1280, 720)
             self.setStyleSheet("""
                 QMainWindow { background: #eef1f4; color: #17212b; }
                 QLabel#title { font-size: 34px; font-weight: 700; }
-                QLabel#video {
-                    background: #111820;
-                    color: #dce4eb;
-                    border: 1px solid #2d3945;
-                    font-size: 24px;
-                }
                 QLabel#status {
                     background: #e8edf1;
                     border-radius: 6px;
@@ -113,50 +97,35 @@ if QApplication is not None:
             """)
 
             root = QWidget(self)
-            layout = QHBoxLayout(root)
-            layout.setContentsMargins(24, 24, 24, 24)
+            layout = QVBoxLayout(root)
+            layout.setContentsMargins(36, 36, 36, 36)
             layout.setSpacing(24)
 
-            self.video_label = QLabel("等待图像")
-            self.video_label.setObjectName("video")
-            self.video_label.setAlignment(Qt.AlignCenter)
-            self.video_label.setMinimumSize(640, 480)
-            self.video_label.setSizePolicy(
-                QSizePolicy.Expanding, QSizePolicy.Expanding)
-            layout.addWidget(self.video_label, 3)
-
-            panel = QFrame()
-            panel.setFrameShape(QFrame.NoFrame)
-            panel_layout = QVBoxLayout(panel)
-            panel_layout.setContentsMargins(0, 0, 0, 0)
-            panel_layout.setSpacing(18)
-
-            title = QLabel("人物描述")
+            title = QLabel("图生文结果")
             title.setObjectName("title")
-            panel_layout.addWidget(title)
+            title.setAlignment(Qt.AlignCenter)
+            layout.addWidget(title)
 
             self.status_label = QLabel("等待触发 · 0.0 s")
             self.status_label.setObjectName("status")
             self.status_label.setWordWrap(True)
-            panel_layout.addWidget(self.status_label)
+            layout.addWidget(self.status_label)
 
             self.result_text = QTextEdit()
             self.result_text.setReadOnly(True)
             self.result_text.setAcceptRichText(False)
             self.result_text.setLineWrapMode(QTextEdit.WidgetWidth)
             self.result_text.setPlainText("等待图生文结果")
-            panel_layout.addWidget(self.result_text, 1)
+            layout.addWidget(self.result_text, 1)
 
             self.trigger_button = QPushButton("生成描述")
             self.trigger_button.clicked.connect(self._request)
-            panel_layout.addWidget(self.trigger_button)
-            layout.addWidget(panel, 2)
+            layout.addWidget(self.trigger_button)
             self.setCentralWidget(root)
 
             self._elapsed_timer = QTimer(self)
             self._elapsed_timer.setInterval(100)
             self._elapsed_timer.timeout.connect(self._update_elapsed)
-            bridge.frame_received.connect(self.set_frame)
             bridge.text_received.connect(self.set_external_text)
             bridge.request_finished.connect(self.finish_request)
 
@@ -194,35 +163,6 @@ if QApplication is not None:
             if text:
                 self.result_text.setPlainText(text)
 
-        def set_frame(self, frame):
-            if frame is None or len(frame.shape) != 3:
-                return
-            height, width, channels = frame.shape
-            if channels != 3:
-                return
-            image = QImage(
-                frame.data,
-                width,
-                height,
-                int(frame.strides[0]),
-                QImage.Format_RGB888,
-            ).copy()
-            self._latest_image = image
-            self._render_image()
-
-        def _render_image(self):
-            if self._latest_image is None:
-                return
-            pixmap = QPixmap.fromImage(self._latest_image).scaled(
-                self.video_label.size(),
-                Qt.KeepAspectRatio,
-                Qt.SmoothTransformation,
-            )
-            self.video_label.setPixmap(pixmap)
-
-        def resizeEvent(self, event):
-            super().resizeEvent(event)
-            self._render_image()
 else:
     UiBridge = None
     VlmWindow = None
@@ -236,7 +176,6 @@ def _positive_timeout(value):
 
 
 def _run(args=None):
-    from cv_bridge import CvBridge
     import rclpy
     from rclpy.executors import MultiThreadedExecutor
     from rclpy.node import Node
@@ -259,9 +198,10 @@ def _run(args=None):
             self.declare_parameter(
                 "service_name", "/smartcar/vision/describe_scene")
             self.declare_parameter(
-                "prompt", "请简洁描述图中人物的外观和动作。")
+                "prompt", "请描述当前画面中实际可见的场景和物体。")
             self.declare_parameter("request_timeout_sec", 8.0)
             self.declare_parameter("fullscreen", True)
+            self.declare_parameter("auto_request", False)
 
             image_topic = str(
                 self.get_parameter("image_topic").value).strip()
@@ -276,12 +216,14 @@ def _run(args=None):
                 self.get_parameter("request_timeout_sec").value)
             self.fullscreen = bool(
                 self.get_parameter("fullscreen").value)
-            self._cv_bridge = CvBridge()
+            self.auto_request = bool(
+                self.get_parameter("auto_request").value)
             self._pending_lock = threading.RLock()
             self._pending = None
             self._pending_timer = None
             self._request_started_at = 0.0
-            self._conversion_warning_emitted = False
+            self._frame_warning_emitted = False
+            self._auto_request_sent = False
 
             self._image_subscription = self.create_subscription(
                 Image,
@@ -301,17 +243,19 @@ def _run(args=None):
                 DescribeScene, service_name)
 
         def _on_image(self, message):
-            try:
-                frame = self._cv_bridge.imgmsg_to_cv2(
-                    message, desired_encoding="rgb8")
-            except Exception as error:
-                if not self._conversion_warning_emitted:
+            if not message.data or message.width <= 0 or message.height <= 0:
+                if not self._frame_warning_emitted:
                     self.get_logger().warning(
-                        "Unable to display camera frame: "
-                        f"{type(error).__name__}")
-                    self._conversion_warning_emitted = True
+                        "Ignoring invalid camera frame before VLM request")
+                    self._frame_warning_emitted = True
                 return
-            qt_bridge.frame_received.emit(frame.copy())
+            if (
+                self.auto_request
+                and not self._auto_request_sent
+                and self._client.service_is_ready()
+            ):
+                self._auto_request_sent = True
+                qt_bridge.auto_request.emit()
 
         def request_description(self):
             started = time.monotonic()
@@ -430,6 +374,7 @@ def _run(args=None):
     rclpy.init(args=args)
     node = DisplayNode()
     window = VlmWindow(qt_bridge, node.request_description)
+    qt_bridge.auto_request.connect(window._request)
     if node.fullscreen:
         window.showFullScreen()
     else:

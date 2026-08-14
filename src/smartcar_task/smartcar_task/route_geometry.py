@@ -42,22 +42,50 @@ def _require_unit_orientation(waypoint: Waypoint) -> None:
 
 
 def _tangent_orientation(route: tuple[Waypoint, ...], index: int) -> tuple[float, ...]:
-    """Return a unit yaw from the next usable route chord, then the previous."""
+    """Return a unit yaw from the two-sided route tangent when available."""
     origin_x, origin_y, _origin_z = route[index].position
-    for candidate in route[index + 1:]:
-        dx = candidate.position[0] - origin_x
-        dy = candidate.position[1] - origin_y
-        if math.hypot(dx, dy) > _POSITION_EPSILON:
-            yaw = math.atan2(dy, dx)
-            return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
+    previous = None
     for candidate in reversed(route[:index]):
         dx = origin_x - candidate.position[0]
         dy = origin_y - candidate.position[1]
         if math.hypot(dx, dy) > _POSITION_EPSILON:
-            yaw = math.atan2(dy, dx)
-            return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
-    raise RouteGeometryError(
-        f"{route[index].id}: position-only waypoint has no route tangent")
+            previous = candidate
+            break
+
+    following = None
+    for candidate in route[index + 1:]:
+        dx = candidate.position[0] - origin_x
+        dy = candidate.position[1] - origin_y
+        if math.hypot(dx, dy) > _POSITION_EPSILON:
+            following = candidate
+            break
+
+    fallback_dx = fallback_dy = None
+    if previous is not None and following is not None:
+        dx = following.position[0] - previous.position[0]
+        dy = following.position[1] - previous.position[1]
+        # A U-turn can put the adjacent route points at the same position,
+        # leaving no two-sided tangent. Preserve a valid forward pose from
+        # the outgoing route chord for this degenerate geometry only.
+        fallback_dx = following.position[0] - origin_x
+        fallback_dy = following.position[1] - origin_y
+    elif following is not None:
+        dx = following.position[0] - origin_x
+        dy = following.position[1] - origin_y
+    elif previous is not None:
+        dx = origin_x - previous.position[0]
+        dy = origin_y - previous.position[1]
+    else:
+        raise RouteGeometryError(
+            f"{route[index].id}: position-only waypoint has no route tangent")
+
+    if math.hypot(dx, dy) <= _POSITION_EPSILON:
+        if fallback_dx is None:
+            raise RouteGeometryError(
+                f"{route[index].id}: adjacent route points have no center tangent")
+        dx, dy = fallback_dx, fallback_dy
+    yaw = math.atan2(dy, dx)
+    return (0.0, 0.0, math.sin(yaw / 2.0), math.cos(yaw / 2.0))
 
 
 def materialize_free_yaws(waypoints: Sequence[Waypoint]) -> tuple[Waypoint, ...]:

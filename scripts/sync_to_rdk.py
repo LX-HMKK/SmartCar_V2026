@@ -46,6 +46,8 @@ RUNTIME_SCRIPT_TARGETS = (
     (REPO_ROOT / "scripts" / "nav_test.sh", "/root/nav_test.sh"),
     (REPO_ROOT / "scripts" / "nav_test.sh",
      f"{REMOTE_WS}/scripts/nav_test.sh"),
+    (REPO_ROOT / "scripts" / "media_test.sh",
+     f"{REMOTE_WS}/scripts/media_test.sh"),
     (REPO_ROOT / "scripts" / "nav_status.py", "/root/nav_status.py"),
     (REPO_ROOT / "scripts" / "ros_cleanup.sh",
      f"{REMOTE_WS}/scripts/ros_cleanup.sh"),

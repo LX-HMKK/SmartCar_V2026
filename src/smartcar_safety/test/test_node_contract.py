@@ -138,7 +138,7 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
                 self.assertIn("publish_zero_command", source)
                 self.assertIn("clear_command_speed_limit_fault", source)
         config = CONFIG_SOURCE.read_text(encoding="utf-8")
-        self.assertIn("max_linear_speed_mps: 0.30", config)
+        self.assertIn("max_linear_speed_mps: 0.50", config)
 
         cpp_source = CPP_NODE_SOURCE.read_text(encoding="utf-8")
         self.assertIn("publish_ackermann(zero_command_)", cpp_source)

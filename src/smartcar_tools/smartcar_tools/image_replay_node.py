@@ -24,7 +24,7 @@ def main(args=None):
     from cv_bridge import CvBridge
     import rclpy
     from rclpy.node import Node
-    from rclpy.qos import qos_profile_sensor_data
+    from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import Image
 
     class ImageReplayNode(Node):
@@ -53,8 +53,16 @@ def main(args=None):
             self._message = CvBridge().cv2_to_imgmsg(
                 frame, encoding="bgr8")
             self._message.header.frame_id = frame_id
+            # zbar_ros requests a reliable image subscription. A reliable,
+            # volatile replay publisher is also compatible with best-effort
+            # image subscribers such as the vision service.
+            image_qos = QoSProfile(
+                depth=10,
+                reliability=ReliabilityPolicy.RELIABLE,
+                durability=DurabilityPolicy.VOLATILE,
+            )
             self._publisher = self.create_publisher(
-                Image, image_topic, qos_profile_sensor_data)
+                Image, image_topic, image_qos)
             self._timer = self.create_timer(1.0 / rate, self._publish)
             self.get_logger().info(
                 f"Replaying {image_file} on {image_topic} at {rate:.2f} Hz")

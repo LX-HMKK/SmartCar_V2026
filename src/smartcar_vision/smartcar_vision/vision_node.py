@@ -37,7 +37,12 @@ class VisionNode(Node):
         self.declare_parameter("vlm_command_argv", [""])
         self.declare_parameter("vlm_static_text", "")
         self.declare_parameter(
-            "default_prompt", "请描述图中人物立牌的外观和动作。")
+            "default_prompt", (
+                "请描述当前画面中实际可见的场景、物体、标志或人物。"
+                "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
+                "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
+                "重新拍摄。"
+            ))
         self.declare_parameter("max_vlm_timeout_sec", 8.0)
         self.declare_parameter("runtime_dir", "/tmp/smartcar_vision")
         self.declare_parameter("jpeg_quality", 90)

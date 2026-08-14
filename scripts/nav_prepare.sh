@@ -33,9 +33,9 @@ bash "$WORKSPACE/scripts/ros_cleanup.sh"
 
 colcon build --symlink-install \
   --parallel-workers "$COLCON_PARALLEL_WORKERS" \
-  --packages-up-to smartcar_bringup smartcar_vision \
+  --packages-up-to smartcar_bringup smartcar_vision smartcar_tools \
   --cmake-args -DCMAKE_BUILD_TYPE=RelWithDebInfo \
-  --allow-overriding ackermann_msgs smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision
+  --allow-overriding ackermann_msgs smartcar_interfaces smartcar_safety smartcar_nav2 smartcar_task smartcar_bringup smartcar_vision smartcar_tools
 
 source_fingerprint > "$BUILD_FINGERPRINT"
 echo "Prepared fingerprint: $(cat "$BUILD_FINGERPRINT")"

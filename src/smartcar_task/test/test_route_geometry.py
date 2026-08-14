@@ -33,7 +33,7 @@ def waypoint(waypoint_id, task, x, y, orientation=(0.0, 0.0, 0.0, 0.0), **kwargs
 
 
 class RouteGeometryTests(unittest.TestCase):
-    def test_transit_waypoints_become_valid_outgoing_tangent_poses(self):
+    def test_transit_waypoints_use_the_two_sided_center_tangent(self):
         route = (
             waypoint("p_start", "start", 0.0, 0.0, quaternion(0.0)),
             waypoint("a", "qr", 1.0, 0.0, quaternion(0.2), goal_profile="precise"),
@@ -46,8 +46,10 @@ class RouteGeometryTests(unittest.TestCase):
         self.assertEqual(materialized[0].orientation, route[0].orientation)
         self.assertEqual(materialized[1].orientation, route[1].orientation)
         self.assertEqual(materialized[3].orientation, route[3].orientation)
-        self.assertAlmostEqual(materialized[2].orientation[2], 0.0, places=6)
-        self.assertAlmostEqual(materialized[2].orientation[3], 1.0, places=6)
+        self.assertAlmostEqual(
+            materialized[2].orientation[2], math.sin(math.pi / 8.0), places=6)
+        self.assertAlmostEqual(
+            materialized[2].orientation[3], math.cos(math.pi / 8.0), places=6)
         self.assertAlmostEqual(
             math.sqrt(sum(value * value for value in materialized[-1].orientation)),
             1.0,
@@ -61,6 +63,16 @@ class RouteGeometryTests(unittest.TestCase):
         materialized = materialize_free_yaws(route)
         self.assertAlmostEqual(materialized[-1].orientation[2], math.sin(math.pi / 4.0))
         self.assertAlmostEqual(materialized[-1].orientation[3], math.cos(math.pi / 4.0))
+
+    def test_overlapping_adjacent_points_fall_back_to_outgoing_tangent(self):
+        route = (
+            waypoint("p_start", "start", 0.0, 0.0, quaternion(0.0)),
+            waypoint("via", "via", 1.0, 0.0),
+            waypoint("c", "vlm", 0.0, 0.0, quaternion(math.pi), goal_profile="precise"),
+        )
+        materialized = materialize_free_yaws(route)
+        self.assertAlmostEqual(materialized[1].orientation[2], 1.0)
+        self.assertAlmostEqual(materialized[1].orientation[3], 0.0)
 
     def test_explicit_locked_nav_heading_is_preserved(self):
         locked = waypoint(

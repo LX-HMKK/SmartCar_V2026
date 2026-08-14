@@ -145,6 +145,25 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 路线；`clockwise` 仅在内存中按 C 区 `x=2.0 m` 中线镜像已确认约束，YAML、航点 ID、顺序和
 规划分段不变。RViz 与任务节点使用同一选择；运行中不会切换。
 
+### `media_test.sh`
+
+RDK 上的独立 QR/VLM 画面和文字短测。它只启动 Aurora 相机和对应视觉节点，不启动底盘、Nav2、
+任务树或任何运动链。两个入口都固定订阅 Aurora RGB 话题 `/aurora/rgb/image_raw`，不会启动 USB
+或 MIPI 相机，也不会传递或改写 Aurora 深度、IR、点云参数。
+
+```bash
+bash /home/sunrise/ros2_ws/scripts/media_test.sh qr
+bash /home/sunrise/ros2_ws/scripts/media_test.sh vlm
+```
+
+两个模式都会打开 OpenCV `imshow` 的 Aurora RGB 原始画面。`qr` 单独使用 Aurora RGB `640x400`
+模式以提高二维码短测的有效像素，`vlm` 保持默认 Aurora RGB 模式。`qr` 还会打开“QR 比赛输出”UI，持续识别
+并显示 `奇数`、`偶数` 或 `未识别`；调整画面后会继续等待新的二维码结果。关闭该 UI 或按 Ctrl-C
+结束本次 QR 短测。`vlm` 会打开
+图生文比赛输出 UI，收到首个有效 RGB 帧且服务可用后自动请求一次。若画面拍偏或不可确认，提示词和
+服务兜底都会返回通用猜测文字。此脚本会启动实体 Aurora 相机，需要该次相机授权；不产生底盘运动。
+部署了视觉源码改动后，先运行 `/root/nav_prepare.sh` 以重建 `smartcar_tools`。
+
 ### `nav_status.py`
 
 `nav_test.sh` 自动调用的核心启动健康检查器。它检查 Nav2 lifecycle、任务状态、急停、点云、深度
@@ -164,6 +183,6 @@ RDK 清理入口：
 bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
 ```
 
-它先结束 `nav_test.sh` 记录的导航/RViz PID，再清理已知的导航残留节点、该栈的静态 TF 与可视化
-节点；随后只删除无 DDS 进程占用的 Fast DDS 端口文件。不会使用宽泛 `pkill -f`，也不会清理 ROS
+它先结束 `nav_test.sh` 和 `media_test.sh` 记录的 PID，再清理已知的导航、QR/VLM 与 Aurora 视觉
+残留节点；随后只删除无 DDS 进程占用的 Fast DDS 端口文件。不会使用宽泛 `pkill -f`，也不会清理 ROS
 daemon 或航点编辑器。异常时先使用物理急停，再运行该命令。

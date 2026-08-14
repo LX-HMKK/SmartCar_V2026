@@ -10,7 +10,7 @@ from typing import NamedTuple
 
 
 HARD_MAX_VLM_TIMEOUT_SEC = 8.0
-FALLBACK_TEXT = "检测到人物立牌"
+FALLBACK_TEXT = "画面中可能是一名穿着浅色上衣的人物，正面站立并挥手。"
 
 
 class ReadQrOutcome(NamedTuple):

@@ -822,7 +822,9 @@ class DragEditor:
         self._selected = insertion_index
         self._selected_through = insert_at
         self._adding_through = False
-        self._set_route_status(f"已新增无朝向途经点 {waypoint_id}")
+        self._set_route_status(
+            f"已新增位置约束途经点 {waypoint_id}；预览使用相邻点切线"
+        )
         self._mark_route_changed(rebuild_panel=True)
         self._publish_markers()
 

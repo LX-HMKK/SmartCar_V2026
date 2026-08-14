@@ -151,7 +151,7 @@ class TestWaypointEditorContract(unittest.TestCase):
             "上移",
             "下移",
             "位置约束",
-            "运行时由代价地图选朝向",
+            "预览使用相邻点切线",
             "materialize_free_yaws",
             "is_heading_locked",
             "保存路线",
@@ -180,7 +180,7 @@ class TestWaypointEditorContract(unittest.TestCase):
         self.assertNotIn("/mnt/c/Windows/Fonts", source)
         self.assertIn("route = materialize_route(self._waypoints, checked)", source)
         self.assertIn("orientation=(0.0, 0.0, 0.0, 0.0)", source)
-        self.assertNotIn("自动路线切线", source)
+        self.assertIn("materialize_free_yaws(route)", source)
         self.assertIn('root["calibrated"] = False', model_source)
 
     def test_drag_editor_prefers_editable_finish_over_overlapping_start(self):

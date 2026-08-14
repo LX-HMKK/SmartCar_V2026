@@ -19,6 +19,19 @@ def response_exit_code(success, status):
     return QR_NOT_FOUND
 
 
+def competition_output_text(success, content, status):
+    if not bool(success) or str(status) != "ok":
+        return "未识别"
+    value = str(content).strip()
+    if "奇数" in value:
+        return "奇数"
+    if "偶数" in value:
+        return "偶数"
+    if value.isdecimal():
+        return "奇数" if int(value) % 2 else "偶数"
+    return "未识别"
+
+
 def build_parser():
     parser = argparse.ArgumentParser(
         description="Read fresh QR values through /smartcar/vision/read_qr.",
@@ -42,6 +55,11 @@ def build_parser():
         ),
     )
     parser.add_argument("--interval-sec", type=float, default=0.25)
+    parser.add_argument(
+        "--output-topic",
+        default="",
+        help="Publish competition text to this topic after every request",
+    )
     return parser
 
 
@@ -58,6 +76,7 @@ def _run(options, ros_args):
     import rclpy
     from rclpy.node import Node
     from smartcar_interfaces.srv import ReadQr
+    from std_msgs.msg import String
 
     timeout_sec = _finite("timeout-sec", options.timeout_sec)
     wait_sec = _finite("service-wait-sec", options.service_wait_sec)
@@ -67,10 +86,15 @@ def _run(options, ros_args):
         "interval-sec", options.interval_sec, allow_zero=True)
     if options.count < 0:
         raise ValueError("count must be nonnegative")
+    output_topic = str(options.output_topic).strip()
 
     rclpy.init(args=ros_args)
     node = Node("qr_probe")
     client = node.create_client(ReadQr, options.service)
+    output_publisher = (
+        node.create_publisher(String, output_topic, 10)
+        if output_topic else None
+    )
     try:
         if not client.wait_for_service(timeout_sec=wait_sec):
             print("QR service unavailable", file=sys.stderr)
@@ -126,6 +150,12 @@ def _run(options, ros_args):
                         code = response_exit_code(
                             response.success, response.status)
             print(json.dumps(payload, ensure_ascii=False), flush=True)
+            if output_publisher is not None:
+                output_publisher.publish(String(data=competition_output_text(
+                    payload["success"],
+                    payload["content"],
+                    payload["status"],
+                )))
             final_code = max(final_code, code)
             attempts += 1
             if not options.continuous:

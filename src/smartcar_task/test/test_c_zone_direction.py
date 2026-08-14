@@ -75,7 +75,7 @@ class CZoneDirectionTests(unittest.TestCase):
             reflected["via_2"].position[0], 1.9585801761583017,
         )
         self.assertAlmostEqual(
-            reflected["via_3"].position[0], 0.5061891690797939,
+            reflected["via_3"].position[0], 0.48370787081724487,
         )
 
     def test_clockwise_transform_is_an_involution(self):
@@ -86,7 +86,9 @@ class CZoneDirectionTests(unittest.TestCase):
         for original, recovered in zip(self.route, restored):
             with self.subTest(waypoint_id=original.id):
                 self.assertEqual(original.id, recovered.id)
-                self.assertEqual(original.position, recovered.position)
+                for original_value, recovered_value in zip(
+                        original.position, recovered.position):
+                    self.assertAlmostEqual(original_value, recovered_value)
                 self.assertAlmostEqual(
                     math.cos(yaw(original.orientation)),
                     math.cos(yaw(recovered.orientation)),

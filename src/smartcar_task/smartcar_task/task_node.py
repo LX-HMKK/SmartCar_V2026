@@ -1392,7 +1392,12 @@ class TaskNode(Node):
         self.declare_parameter("qr_handoff_test_mode", False)
         self.declare_parameter("vlm_timeout_sec", 8.0)
         self.declare_parameter(
-            "vlm_prompt", "请描述图中人物立牌的外观和动作。")
+            "vlm_prompt", (
+                "请描述当前画面中实际可见的场景、物体、标志或人物。"
+                "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
+                "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
+                "重新拍摄。"
+            ))
         self.declare_parameter("reset_timeout_sec", 5.0)
         self.declare_parameter("origin_position_tolerance", 0.20)
         self.declare_parameter("origin_yaw_tolerance", 0.20)

@@ -37,7 +37,7 @@ class SafetyGuard:
         odom_timeout_sec=0.35,
         minimum_voltage=0.0,
         voltage_timeout_sec=1.0,
-        max_linear_speed_mps=0.60,
+        max_linear_speed_mps=0.50,
         require_scan=True,
         require_odom=True,
         raw_odom_timeout_sec=0.25,

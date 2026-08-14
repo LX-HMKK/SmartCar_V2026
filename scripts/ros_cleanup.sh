@@ -3,6 +3,7 @@
 set -u
 
 STATE_DIR=/tmp/smartcar_nav
+MEDIA_STATE_DIR=/tmp/smartcar_media
 
 stop_saved_process() {
   local pid_file=$1
@@ -62,6 +63,17 @@ stop_saved_process "$STATE_DIR/launch.pid" \
   "ros2 launch smartcar_bringup smartcar_system.launch.py"
 stop_saved_process "$STATE_DIR/rviz.pid" "navigation.rviz"
 rmdir "$STATE_DIR" 2>/dev/null || true
+stop_saved_process "$MEDIA_STATE_DIR/qr_probe.pid" \
+  "ros2 run smartcar_tools qr_probe"
+stop_saved_process "$MEDIA_STATE_DIR/output_display.pid" \
+  "ros2 run smartcar_tools competition_output_display"
+stop_saved_process "$MEDIA_STATE_DIR/rgb_imshow.pid" \
+  "ros2 run smartcar_tools rgb_imshow"
+stop_saved_process "$MEDIA_STATE_DIR/qr_launch.pid" \
+  "ros2 launch smartcar_tools qr_test.launch.py"
+stop_saved_process "$MEDIA_STATE_DIR/vlm_launch.pid" \
+  "ros2 launch smartcar_tools vlm_test.launch.py"
+rmdir "$MEDIA_STATE_DIR" 2>/dev/null || true
 
 TARGET_PIDS=$( {
   collect_by_name \
@@ -73,6 +85,11 @@ TARGET_PIDS=$( {
     '/nav2_lifecycle_manager/lifecycle_manager' \
     '/tf2_ros/static_transform_publisher.*__node:=(base_to_link|base_to_gyro|link_to_laser|link_to_depth_camera_sensor)' \
     '/smartcar_tools/(field_reference_node|waypoint_viz)' \
+    'ros2 run smartcar_tools (rgb_imshow|competition_output_display|vlm_display|qr_probe|image_replay_node)' \
+    '/smartcar_tools/(rgb_imshow|competition_output_display|vlm_display|qr_probe|image_replay_node)' \
+    '/zbar_ros/barcode_reader' \
+    'ros2 launch smartcar_tools (qr_test|vlm_test)\.launch\.py' \
+    'media_test\.sh (qr|vlm)' \
     '/smartcar_(task|safety|vision|nav2|bringup)/' \
     '/origincar_base/' \
     'pointcloud_to_laserscan' \

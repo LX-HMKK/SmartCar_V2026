@@ -372,9 +372,9 @@ class TaskLaunchContractTests(unittest.TestCase):
             ROOT / "src" / "smartcar_safety" / "config" / "safety.yaml"
         ).read_text(encoding="utf-8"))["safety_node"]["ros__parameters"]
 
-        self.assertEqual(float(controller["FollowPath"]["desired_linear_vel"]), 0.30)
-        self.assertEqual(float(smoother["max_velocity"][0]), 0.30)
-        self.assertEqual(float(safety["max_linear_speed_mps"]), 0.30)
+        self.assertEqual(float(controller["FollowPath"]["desired_linear_vel"]), 0.50)
+        self.assertEqual(float(smoother["max_velocity"][0]), 0.50)
+        self.assertEqual(float(safety["max_linear_speed_mps"]), 0.50)
 
     def test_collision_failure_immediately_enters_native_back_up_recovery(self):
         controller = yaml.safe_load(
@@ -398,7 +398,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             inflation = parameters[name][name]["ros__parameters"][
                 "inflation_layer"
             ]
-            self.assertEqual(float(inflation["inflation_radius"]), 0.42)
+            self.assertEqual(float(inflation["inflation_radius"]), 0.30)
 
     def test_precise_terminal_profile_keeps_tight_position_and_valid_yaw(self):
         parameters = yaml.safe_load(
@@ -622,8 +622,18 @@ class TaskLaunchContractTests(unittest.TestCase):
     def test_ros_cleanup_targets_only_recorded_or_navigation_processes(self):
         source = ROS_CLEANUP.read_text(encoding="utf-8")
         self.assertIn("STATE_DIR=/tmp/smartcar_nav", source)
+        self.assertIn("MEDIA_STATE_DIR=/tmp/smartcar_media", source)
         self.assertIn('stop_saved_process "$STATE_DIR/launch.pid"', source)
         self.assertIn('stop_saved_process "$STATE_DIR/rviz.pid"', source)
+        self.assertIn('stop_saved_process "$MEDIA_STATE_DIR/qr_probe.pid"', source)
+        self.assertIn(
+            'stop_saved_process "$MEDIA_STATE_DIR/output_display.pid"',
+            source,
+        )
+        self.assertIn(
+            'stop_saved_process "$MEDIA_STATE_DIR/rgb_imshow.pid"',
+            source,
+        )
         self.assertIn('"ros2 launch smartcar_bringup smartcar_system.launch.py"', source)
         self.assertIn('"navigation.rviz"', source)
         self.assertIn("/proc/$pid/cmdline", source)
@@ -649,6 +659,9 @@ class TaskLaunchContractTests(unittest.TestCase):
             "link_to_depth_camera_sensor)'", source)
         self.assertIn(
             "'/smartcar_tools/(field_reference_node|waypoint_viz)'", source)
+        self.assertIn("'media_test\\.sh (qr|vlm)'", source)
+        self.assertIn("'/zbar_ros/barcode_reader'", source)
+        self.assertIn("image_replay_node", source)
         self.assertIn("remove_stale_fastdds_ports", source)
         self.assertIn('fuser -s "$port"', source)
         self.assertIn('rm -f -- "$port"', source)
