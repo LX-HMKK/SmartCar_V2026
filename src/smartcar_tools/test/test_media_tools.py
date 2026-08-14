@@ -13,6 +13,9 @@ sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_tools.image_replay_node import resolve_image_file  # noqa: E402
 from smartcar_tools.competition_output_display import (  # noqa: E402
+    CompetitionOutputWindow,
+    OutputBridge as CompetitionOutputBridge,
+    competition_start_argv,
     normalize_output_text,
 )
 from smartcar_tools.qr_probe import (  # noqa: E402
@@ -140,6 +143,61 @@ class MediaDisplayTests(unittest.TestCase):
     def test_competition_output_has_a_nonempty_waiting_state(self):
         self.assertEqual(normalize_output_text(""), "等待比赛输出")
         self.assertEqual(normalize_output_text("  偶数  "), "偶数")
+
+    def test_competition_remote_start_uses_fixed_argv(self):
+        self.assertEqual(competition_start_argv(None), ())
+        self.assertEqual(competition_start_argv("  "), ())
+        self.assertEqual(
+            competition_start_argv(" /opt/smartcar/competition_mode.sh "),
+            ("bash", "/opt/smartcar/competition_mode.sh", "start", "--confirm"),
+        )
+
+    @unittest.skipUnless(
+        CompetitionOutputWindow is not None,
+        "PyQt5 is not installed on this test host",
+    )
+    def test_competition_start_button_requires_explicit_authorization(self):
+        app = QApplication.instance() or QApplication(["competition-ui-test"])
+        bridge = CompetitionOutputBridge()
+        disabled_window = CompetitionOutputWindow(
+            bridge,
+            "比赛输出",
+            "等待比赛输出",
+            "等待二维码",
+            "等待二维码后选择",
+            "等待诊疗区描述",
+            "急停锁存",
+            False,
+            "/opt/smartcar/competition_mode.sh",
+        )
+        self.assertFalse(disabled_window.start_button.isEnabled())
+        self.assertEqual(disabled_window._start_command, ())
+        self.assertEqual(
+            disabled_window.c_zone_direction_label.text(),
+            "等待二维码后选择",
+        )
+
+        enabled_window = CompetitionOutputWindow(
+            bridge,
+            "比赛输出",
+            "等待比赛输出",
+            "等待二维码",
+            "等待二维码后选择",
+            "等待诊疗区描述",
+            "急停锁存",
+            True,
+            "/opt/smartcar/competition_mode.sh",
+        )
+        self.assertTrue(enabled_window.start_button.isEnabled())
+        self.assertEqual(
+            enabled_window._start_command,
+            ("bash", "/opt/smartcar/competition_mode.sh", "start", "--confirm"),
+        )
+        enabled_window.set_c_zone_direction("顺时针")
+        self.assertEqual(enabled_window.c_zone_direction_label.text(), "顺时针")
+        enabled_window.close()
+        disabled_window.close()
+        app.processEvents()
 
 
 class DisplayStateTests(unittest.TestCase):

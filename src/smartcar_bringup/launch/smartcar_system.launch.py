@@ -76,6 +76,7 @@ def _vision_and_camera_actions(context):
     use_camera = _as_bool(context, "use_camera")
     use_vision = _as_bool(context, "use_vision")
     use_depth_camera = _as_bool(context, "use_depth_camera")
+    preload_qr_reader = _as_bool(context, "preload_qr_reader")
     if not use_camera and not use_vision and not use_depth_camera:
         return []
 
@@ -106,9 +107,10 @@ def _vision_and_camera_actions(context):
                 "usb_video_device").perform(context),
             "use_camera": "true" if start_camera_driver else "false",
             "use_services": "true" if use_vision else "false",
-            # QR scanning is task-driven: barcode_reader is NOT launched at
-            # system start; task_node starts it on demand at QR waypoints.
-            "use_zbar": "false",
+            # The standard stack starts zbar only at A to conserve CPU.  The
+            # competition entry may explicitly preload it before the referee
+            # starts the clock, so the QR handoff has no process startup cost.
+            "use_zbar": "true" if preload_qr_reader else "false",
             "config_file": LaunchConfiguration(
                 "vision_config_file").perform(context),
             "use_sim_time": LaunchConfiguration(
@@ -294,13 +296,18 @@ def _task_actions(context):
                 "supervised_p_to_c1_only"),
             "supervised_full_route": LaunchConfiguration(
                 "supervised_full_route"),
+            "supervised_competition_mode": LaunchConfiguration(
+                "supervised_competition_mode"),
             "qr_handoff_test_mode": LaunchConfiguration(
                 "qr_handoff_test_mode"),
+            "continue_after_qr_failure": LaunchConfiguration(
+                "continue_after_qr_failure"),
             "use_laser_odometry": LaunchConfiguration("use_laser_odometry"),
             "laser_odometry_calibrated": LaunchConfiguration(
                 "laser_odometry_calibrated"),
             "use_depth_camera": LaunchConfiguration("use_depth_camera"),
             "barcode_reader_image_topic": image_topic,
+            "qr_reader_preloaded": LaunchConfiguration("preload_qr_reader"),
             **{
                 name: LaunchConfiguration(name)
                 for name in MOTION_GATES
@@ -424,6 +431,53 @@ def _validate_configuration(context):
         if missing:
             raise RuntimeError(
                 "qr_handoff_test_mode requires: " + ",".join(missing))
+    if _as_bool(context, "preload_qr_reader"):
+        required = ("use_camera", "use_vision")
+        missing = [name for name in required if not _as_bool(context, name)]
+        if missing:
+            raise RuntimeError(
+                "preload_qr_reader requires: " + ",".join(missing))
+    if _as_bool(context, "supervised_competition_mode"):
+        required_true = (
+            "use_base",
+            "use_safety",
+            "use_nav",
+            "use_task",
+            "nav_autostart",
+            "use_camera",
+            "use_vision",
+            "use_depth_camera",
+            "safety_emergency_stop_on_start",
+            "continue_after_qr_failure",
+            *MOTION_GATES,
+        )
+        required_false = (
+            "use_lidar",
+            "use_laser_odometry",
+            "use_visualization",
+            "use_speech",
+            "autostart_mission",
+            "supervised_p_to_a_only",
+            "supervised_p_to_c1_only",
+            "supervised_full_route",
+            "qr_handoff_test_mode",
+        )
+        invalid = [
+            name for name in required_true if not _as_bool(context, name)
+        ]
+        invalid.extend(
+            name for name in required_false if _as_bool(context, name)
+        )
+        localization_profile = LaunchConfiguration(
+            "localization_profile").perform(context).strip().lower()
+        if localization_profile != "wheel_imu":
+            invalid.append("localization_profile=wheel_imu")
+        if LaunchConfiguration(
+                "navigation_test_end_segment_id").perform(context).strip():
+            invalid.append("navigation_test_end_segment_id=empty")
+        if invalid:
+            raise RuntimeError(
+                "supervised competition mode requires: " + ",".join(invalid))
     if not _as_bool(context, "autostart_mission"):
         return []
     required_components = (
@@ -622,7 +676,11 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "supervised_full_route", default_value="false"),
         DeclareLaunchArgument(
+            "supervised_competition_mode", default_value="false"),
+        DeclareLaunchArgument(
             "qr_handoff_test_mode", default_value="false"),
+        DeclareLaunchArgument(
+            "continue_after_qr_failure", default_value="false"),
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("nav_autostart", default_value="true"),
         DeclareLaunchArgument(
@@ -669,6 +727,7 @@ def generate_launch_description():
             ]),
         ),
         DeclareLaunchArgument("camera_driver", default_value="usb"),
+        DeclareLaunchArgument("preload_qr_reader", default_value="false"),
         DeclareLaunchArgument("aurora_rgb_fps", default_value="10"),
         DeclareLaunchArgument("aurora_ir_fps", default_value="10"),
         DeclareLaunchArgument(

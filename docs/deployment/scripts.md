@@ -145,6 +145,53 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 路线；`clockwise` 仅在内存中按 C 区 `x=2.0 m` 中线镜像已确认约束，YAML、航点 ID、顺序和
 规划分段不变。RViz 与任务节点使用同一选择；运行中不会切换。
 
+### `competition_mode.sh`
+
+比赛入口部署在 `/home/sunrise/ros2_ws/scripts/competition_mode.sh`；`/root/competition_mode.sh`
+是同一文件的兼容入口。`sync_to_rdk.py push` 会同步两份入口，代码或配置变化后仍须先运行
+`nav_prepare.sh`，由构建指纹阻止使用旧的 `install/` 产物。
+
+```bash
+# 收到本次实体相机授权后：挂载所有比赛节点，但不发车
+bash /home/sunrise/ros2_ws/scripts/competition_mode.sh prepare
+
+# 裁判发令且本次非零运动已明确授权后：在“比赛输出”UI按“发车”，
+# 并在确认框中选择“是”
+
+# 只读健康检查；异常时先使用物理急停，再执行停止
+bash /home/sunrise/ros2_ws/scripts/competition_mode.sh status
+bash /home/sunrise/ros2_ws/scripts/competition_mode.sh stop
+```
+
+`prepare` 使用同一个 Aurora 驱动同时提供 RGB 和 depth/point cloud：RGB 供 QR、VLM 服务使用，
+深度仅进入 relay、`pointcloud_to_laserscan` 和 Nav2 双 costmap。它启动 `default_waypoints.yaml`
+的语义任务树、Nav2、方向门和 safety，但强制 `autostart_mission:=false` 和
+`safety_emergency_stop_on_start:=true`。健康检查还要求 QR 与 VLM 服务可用；默认预热模式会额外确认
+ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。它还只检查 RDK 本地
+`config/volcengine_ark.local.yaml` 是否存在且非空，绝不读取或打印密钥；该文件已从同步白名单排除。
+健康检查完成后才启动唯一的“比赛输出”UI；该 UI 同时显示任务状态、QR 奇偶、已选 C 区方向和 VLM 文本。比赛入口固定
+`use_visualization:=false`，不会启动 RViz、OpenCV
+`imshow`、`rgb_imshow`、独立 `qr_test.launch.py` 或 `vlm_test.launch.py`。不要与
+`media_test.sh` 并行运行，以免再次争用 Aurora。
+
+默认会预加载 QR reader，避免 A 点首次识别时再启动进程；可用
+`prepare --lazy-qr` 降低赛前常驻负载，但会把 reader 的启动开销留到 A 点。无论哪种方式，
+`prepare` 完成时软件急停仍锁存。比赛输出 UI 是正常比赛发车入口：裁判发令后点击“发车”，在确认框中
+确认车辆位于 P 原点、车头朝 `+X` 且物理急停可用。该按钮只由比赛入口显式启用，并在 RDK 本地异步调用
+同一 `competition_mode.sh start --confirm` 流程；远程桌面连接可操作该 UI，但不能跳过本次实体相机和
+非零运动的明确授权。`start --confirm` 保留为 UI 不可用时的受看护恢复入口，不能与 UI 发车并行执行。
+无论从哪个入口发车，流程都按“验证 P 原点定位复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序执行。
+
+`prepare` 会拒绝在已有底盘、Nav2、任务、Aurora 或视觉节点运行时再启动，避免旧 ROS 栈的全局话题和
+服务误通过本次健康检查。此时先确认物理急停，再执行 `competition_mode.sh stop` 或按现场流程清理旧栈。
+
+比赛任务在 A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> counterclockwise（逆时针）`，
+`偶数 -> clockwise（顺时针）`，`未识别`、歧义结果或 QR 读取失败均回退
+`counterclockwise（逆时针）`，并继续完整路线返回 P。QR 奇偶和所选方向都会发布到比赛输出 UI。
+该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
+VLM 无有效结果时发布受控的通用描述并继续回到 P。上述降级只覆盖语义任务结果，不能掩盖 Nav2、方向门、
+safety、定位或 costmap 故障；这些故障仍必须停止并按现场流程处理。
+
 ### `media_test.sh`
 
 RDK 上的独立 QR/VLM 画面和文字短测。它只启动 Aurora 相机和对应视觉节点，不启动底盘、Nav2、
@@ -183,6 +230,6 @@ RDK 清理入口：
 bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
 ```
 
-它先结束 `nav_test.sh` 和 `media_test.sh` 记录的 PID，再清理已知的导航、QR/VLM 与 Aurora 视觉
-残留节点；随后只删除无 DDS 进程占用的 Fast DDS 端口文件。不会使用宽泛 `pkill -f`，也不会清理 ROS
-daemon 或航点编辑器。异常时先使用物理急停，再运行该命令。
+它先结束 `nav_test.sh`、`competition_mode.sh` 和 `media_test.sh` 记录的 PID，再清理已知的导航、
+QR/VLM 与 Aurora 视觉残留节点；随后只删除无 DDS 进程占用的 Fast DDS 端口文件。不会使用宽泛
+`pkill -f`，也不会清理 ROS daemon 或航点编辑器。异常时先使用物理急停，再运行该命令。

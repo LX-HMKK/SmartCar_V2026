@@ -3,6 +3,7 @@
 set -u
 
 STATE_DIR=/tmp/smartcar_nav
+COMPETITION_STATE_DIR=/tmp/smartcar_competition
 MEDIA_STATE_DIR=/tmp/smartcar_media
 
 stop_saved_process() {
@@ -63,6 +64,12 @@ stop_saved_process "$STATE_DIR/launch.pid" \
   "ros2 launch smartcar_bringup smartcar_system.launch.py"
 stop_saved_process "$STATE_DIR/rviz.pid" "navigation.rviz"
 rmdir "$STATE_DIR" 2>/dev/null || true
+stop_saved_process "$COMPETITION_STATE_DIR/launch.pid" \
+  "ros2 launch smartcar_bringup smartcar_system.launch.py"
+stop_saved_process "$COMPETITION_STATE_DIR/output_ui.pid" \
+  "ros2 run smartcar_tools competition_output_display"
+rm -f "$COMPETITION_STATE_DIR/qr_reader_preloaded"
+rmdir "$COMPETITION_STATE_DIR" 2>/dev/null || true
 stop_saved_process "$MEDIA_STATE_DIR/qr_probe.pid" \
   "ros2 run smartcar_tools qr_probe"
 stop_saved_process "$MEDIA_STATE_DIR/output_display.pid" \

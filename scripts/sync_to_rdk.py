@@ -46,6 +46,9 @@ RUNTIME_SCRIPT_TARGETS = (
     (REPO_ROOT / "scripts" / "nav_test.sh", "/root/nav_test.sh"),
     (REPO_ROOT / "scripts" / "nav_test.sh",
      f"{REMOTE_WS}/scripts/nav_test.sh"),
+    (REPO_ROOT / "scripts" / "competition_mode.sh", "/root/competition_mode.sh"),
+    (REPO_ROOT / "scripts" / "competition_mode.sh",
+     f"{REMOTE_WS}/scripts/competition_mode.sh"),
     (REPO_ROOT / "scripts" / "media_test.sh",
      f"{REMOTE_WS}/scripts/media_test.sh"),
     (REPO_ROOT / "scripts" / "nav_status.py", "/root/nav_status.py"),
@@ -61,6 +64,9 @@ EXCLUDES = [
     "**/.git/", "build/", "install/", "log/",
     "__pycache__/", "**/.pytest_cache/", "*.pyc", ".vscode/", ".idea/",
     "*.bak", "*.orig",
+    # This ignored RDK-local file contains the Volcengine credential. It must
+    # neither be copied from this workspace nor removed by push --delete.
+    "volcengine_ark.local.yaml",
 ]
 VENDOR_EXCLUDES = [
     "**/.git", "build/", "install/", "log/",

@@ -14,7 +14,7 @@ spec.loader.exec_module(sync)
 class TestExcludes(unittest.TestCase):
     def test_excludes_contains_key_patterns(self):
         for pat in ["**/.git/", "build/", "install/", "log/",
-                    "__pycache__/", "*.pyc"]:
+                    "__pycache__/", "*.pyc", "volcengine_ark.local.yaml"]:
             self.assertIn(pat, sync.EXCLUDES)
 
     def test_build_excludes_produces_pairs(self):
@@ -117,6 +117,9 @@ class TestTargets(unittest.TestCase):
         self.assertIn(f"{sync.HOST}:/root/nav_test.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_test.sh", dsts)
+        self.assertIn(f"{sync.HOST}:/root/competition_mode.sh", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/competition_mode.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/media_test.sh", dsts)
         self.assertIn(f"{sync.HOST}:/root/nav_status.py", dsts)

@@ -37,7 +37,12 @@ from smartcar_task.mission import (
     MissionConfig,
     OperationResult,
 )
-from smartcar_task.c_zone_direction import apply_c_zone_direction
+from smartcar_task.c_zone_direction import (
+    CLOCKWISE,
+    COUNTERCLOCKWISE,
+    apply_c_zone_direction,
+    normalize_c_zone_direction,
+)
 from smartcar_task.navigation_goals import Nav2GoalFactory
 from smartcar_task.planning_segments import (
     PlanningSegmentError,
@@ -90,6 +95,31 @@ def _nav2_behavior_tree_path(filename):
         / "behavior_trees"
         / filename
     )
+
+
+def _materialize_navigation_variant(
+    authored_waypoints,
+    planning_segments,
+    selected_segments,
+):
+    """Build one immutable Nav2 input variant from authored constraints."""
+    ordered_waypoints = materialize_mission_route(
+        authored_waypoints,
+        planning_segments,
+    )
+    materialized_waypoints = materialize_free_yaws(ordered_waypoints)
+    materialized_by_id = {
+        waypoint.id: waypoint for waypoint in materialized_waypoints
+    }
+    authored_navigation_segments = materialize_navigation_segments(
+        authored_waypoints,
+        planning_segments,
+    )
+    navigation_segments = tuple(
+        tuple(materialized_by_id[waypoint.id] for waypoint in segment)
+        for segment in authored_navigation_segments[:len(selected_segments)]
+    )
+    return materialized_waypoints, navigation_segments
 
 
 def _wait_future(future, timeout_sec):
@@ -147,6 +177,12 @@ class RosOutput:
             String, "/smartcar/output/text", 10)
         self._speech_publisher = node.create_publisher(
             String, "/smartcar/output/speech", 10)
+        self._qr_publisher = node.create_publisher(
+            String, "/smartcar/output/qr", 10)
+        self._vlm_publisher = node.create_publisher(
+            String, "/smartcar/output/vlm", 10)
+        self._c_zone_direction_publisher = node.create_publisher(
+            String, "/smartcar/output/c_zone_direction", 10)
 
     def publish_state(self, state):
         self._state_publisher.publish(String(data=str(state)))
@@ -156,6 +192,15 @@ class RosOutput:
 
     def publish_speech(self, value):
         self._speech_publisher.publish(String(data=str(value)))
+
+    def publish_qr(self, value):
+        self._qr_publisher.publish(String(data=str(value)))
+
+    def publish_vlm(self, value):
+        self._vlm_publisher.publish(String(data=str(value)))
+
+    def publish_c_zone_direction(self, value):
+        self._c_zone_direction_publisher.publish(String(data=str(value)))
 
 
 class RosDirectionGuard:
@@ -1013,10 +1058,14 @@ class RosVision:
             callback_group=callback_group,
         )
         self._reader_process = None
+        self._reader_preloaded = bool(node.get_parameter(
+            "qr_reader_preloaded").value)
         reader_startup = node.get_parameter("qr_reader_startup_sec").value
         self._reader_startup_sec = float(reader_startup)
 
     def _ensure_reader(self):
+        if self._reader_preloaded:
+            return
         if self._reader_process is not None and self._reader_process.poll() is None:
             return
         # If the old process exited but was never waited on, reap it first
@@ -1043,6 +1092,8 @@ class RosVision:
         time.sleep(self._reader_startup_sec)
 
     def _stop_reader(self):
+        if self._reader_preloaded:
+            return
         if self._reader_process is None:
             return
         self._node.get_logger().info("Stopping barcode_reader")
@@ -1325,6 +1376,7 @@ class TaskNode(Node):
         super().__init__("task_node")
         self.declare_parameter("waypoints_file", "")
         self.declare_parameter("c_zone_direction", "counterclockwise")
+        self.declare_parameter("supervised_competition_mode", False)
         self.declare_parameter("waypoints_calibrated", False)
         self.declare_parameter("extrinsics_calibrated", False)
         self.declare_parameter("steering_calibrated", False)
@@ -1389,6 +1441,7 @@ class TaskNode(Node):
         self.declare_parameter("qr_timeout_sec", 3.0)
         self.declare_parameter("qr_retries", 1)
         self.declare_parameter("qr_retry_delay_sec", 0.25)
+        self.declare_parameter("continue_after_qr_failure", False)
         self.declare_parameter("qr_handoff_test_mode", False)
         self.declare_parameter("vlm_timeout_sec", 8.0)
         self.declare_parameter(
@@ -1402,19 +1455,33 @@ class TaskNode(Node):
         self.declare_parameter("origin_position_tolerance", 0.20)
         self.declare_parameter("origin_yaw_tolerance", 0.20)
         self.declare_parameter("qr_reader_startup_sec", 2.0)
+        self.declare_parameter("qr_reader_preloaded", False)
         self.declare_parameter("barcode_reader_image_topic", "/image")
 
         waypoints_file = str(
             self.get_parameter("waypoints_file").value).strip()
         if not waypoints_file:
             raise ValueError("waypoints_file must be provided")
+        self._supervised_competition_mode = bool(self.get_parameter(
+            "supervised_competition_mode").value)
         try:
-            waypoint_document, authored_waypoints = load_waypoint_document(
+            waypoint_document, source_waypoints = load_waypoint_document(
                 waypoints_file
             )
-            authored_waypoints = apply_c_zone_direction(
-                authored_waypoints,
+            selected_c_zone_direction = normalize_c_zone_direction(
                 self.get_parameter("c_zone_direction").value,
+            )
+            if (
+                self._supervised_competition_mode
+                and selected_c_zone_direction != COUNTERCLOCKWISE
+            ):
+                raise ValueError(
+                    "supervised competition mode requires the authored "
+                    "counterclockwise baseline"
+                )
+            authored_waypoints = apply_c_zone_direction(
+                source_waypoints,
+                selected_c_zone_direction,
             )
             self._waypoint_document_calibrated = (
                 waypoint_document.get("calibrated") is True
@@ -1423,28 +1490,54 @@ class TaskNode(Node):
                 waypoint_document,
                 authored_waypoints,
             )
-            ordered_waypoints = materialize_mission_route(
-                authored_waypoints,
-                planning_segments,
-            )
-            self._waypoints = materialize_free_yaws(ordered_waypoints)
-            materialized_by_id = {
-                waypoint.id: waypoint for waypoint in self._waypoints
-            }
-            authored_navigation_segments = materialize_navigation_segments(
-                authored_waypoints,
-                planning_segments,
-            )
             selected_segments = select_segment_prefix(
                 planning_segments,
                 self.get_parameter("navigation_test_end_segment_id").value,
             )
-            self._navigation_segments = tuple(
-                tuple(materialized_by_id[waypoint.id] for waypoint in segment)
-                for segment in authored_navigation_segments[
-                    :len(selected_segments)
-                ]
+            self._waypoints, self._navigation_segments = (
+                _materialize_navigation_variant(
+                    authored_waypoints,
+                    planning_segments,
+                    selected_segments,
+                )
             )
+            self._competition_navigation_variants = None
+            if self._supervised_competition_mode:
+                if selected_segments != planning_segments:
+                    raise ValueError(
+                        "supervised competition mode requires the full route"
+                    )
+                endpoint_tasks = tuple(
+                    segment[-1].task for segment in self._navigation_segments
+                )
+                if endpoint_tasks != ("qr", "vlm", "return"):
+                    raise ValueError(
+                        "supervised competition mode requires the semantic "
+                        "QR, VLM, and return route"
+                    )
+                clockwise_waypoints = apply_c_zone_direction(
+                    source_waypoints,
+                    CLOCKWISE,
+                )
+                clockwise_planning_segments = load_planning_segments(
+                    waypoint_document,
+                    clockwise_waypoints,
+                )
+                if clockwise_planning_segments != planning_segments:
+                    raise ValueError(
+                        "clockwise C-zone variant changes planning segments"
+                    )
+                _, clockwise_navigation_segments = (
+                    _materialize_navigation_variant(
+                        clockwise_waypoints,
+                        clockwise_planning_segments,
+                        selected_segments,
+                    )
+                )
+                self._competition_navigation_variants = {
+                    COUNTERCLOCKWISE: self._navigation_segments,
+                    CLOCKWISE: clockwise_navigation_segments,
+                }
             supervised_prefixes = tuple(
                 segment_id
                 for parameter_name, segment_id in (
@@ -1465,6 +1558,9 @@ class TaskNode(Node):
                 )
             self._supervised_navigation_test = bool(
                 supervised_prefixes) or supervised_full_route
+            if self._supervised_competition_mode and self._supervised_navigation_test:
+                raise ValueError(
+                    "supervised competition and navigation test modes conflict")
             if supervised_prefixes:
                 expected_segment_id = supervised_prefixes[0]
                 selected_segment_ids = tuple(
@@ -1529,6 +1625,7 @@ class TaskNode(Node):
         if (
             not self._waypoint_document_calibrated
             and not self._supervised_navigation_test
+            and not self._supervised_competition_mode
         ):
             # Launch arguments are an operator attestation, while the route
             # document records whether these exact coordinates were approved.
@@ -1618,6 +1715,8 @@ class TaskNode(Node):
             qr_retries=self.get_parameter("qr_retries").value,
             qr_retry_delay_sec=self.get_parameter(
                 "qr_retry_delay_sec").value,
+            continue_after_qr_failure=self.get_parameter(
+                "continue_after_qr_failure").value,
             qr_handoff_test_mode=self.get_parameter(
                 "qr_handoff_test_mode").value,
             vlm_timeout_sec=self.get_parameter("vlm_timeout_sec").value,
@@ -1696,6 +1795,7 @@ class TaskNode(Node):
             generation,
             self._waypoints,
             self._navigation_segments,
+            c_zone_navigation_variants=self._competition_navigation_variants,
         )
         if result.success:
             self.get_logger().info(result.status)

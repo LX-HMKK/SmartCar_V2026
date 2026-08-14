@@ -68,11 +68,25 @@ def generate_launch_description():
                 "complete all-forward route"),
         ),
         DeclareLaunchArgument(
+            "supervised_competition_mode",
+            default_value="false",
+            description=(
+                "Permit one e-stop-latched, manually triggered semantic "
+                "competition route without changing the route YAML"),
+        ),
+        DeclareLaunchArgument(
             "qr_handoff_test_mode",
             default_value="false",
             description=(
                 "After QR handling, announce the next diagnosis-room segment "
                 "and stop before it; disabled by default"),
+        ),
+        DeclareLaunchArgument(
+            "continue_after_qr_failure",
+            default_value="false",
+            description=(
+                "Publish an unrecognized QR result and keep the semantic "
+                "route running instead of ending the mission"),
         ),
         DeclareLaunchArgument(
             "waypoints_calibrated",
@@ -124,6 +138,13 @@ def generate_launch_description():
             default_value="/image",
             description="Image topic remapped into the on-demand zbar reader",
         ),
+        DeclareLaunchArgument(
+            "qr_reader_preloaded",
+            default_value="false",
+            description=(
+                "Use the launch-managed barcode reader rather than starting "
+                "one at the QR task point"),
+        ),
         Node(
             package="smartcar_task",
             executable="task_node",
@@ -160,10 +181,16 @@ def generate_launch_description():
                         "supervised_p_to_c1_only"),
                     "supervised_full_route": LaunchConfiguration(
                         "supervised_full_route"),
+                    "supervised_competition_mode": LaunchConfiguration(
+                        "supervised_competition_mode"),
                     "qr_handoff_test_mode": LaunchConfiguration(
                         "qr_handoff_test_mode"),
+                    "continue_after_qr_failure": LaunchConfiguration(
+                        "continue_after_qr_failure"),
                     "barcode_reader_image_topic": LaunchConfiguration(
                         "barcode_reader_image_topic"),
+                    "qr_reader_preloaded": LaunchConfiguration(
+                        "qr_reader_preloaded"),
                     "use_sim_time": LaunchConfiguration("use_sim_time"),
                 },
             ],

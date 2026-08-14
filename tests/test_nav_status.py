@@ -21,6 +21,10 @@ class NavStatusContracts(unittest.TestCase):
             direction_guard="stopped",
             task="IDLE",
             task_services={"start": True, "reset": True},
+            vision_services={"qr": True, "vlm": True},
+            vision_required=True,
+            qr_reader_ready=True,
+            qr_reader_required=True,
             depth_status="depth_points_active",
             depth_points=2,
             depth_scan=2,
@@ -77,6 +81,40 @@ class NavStatusContracts(unittest.TestCase):
         missing = nav_status.missing_ready_items(snapshot, True)
         self.assertIn("direction_guard=stopped", missing)
         self.assertIn("task_service=reset", missing)
+
+    def test_competition_snapshot_requires_qr_vlm_and_preloaded_reader(self):
+        snapshot = self.ready_depth_snapshot()
+        self.assertEqual(
+            nav_status.missing_ready_items(
+                snapshot,
+                True,
+                require_vision=True,
+                require_qr_reader=True,
+            ),
+            [],
+        )
+
+        snapshot.vision_services["vlm"] = False
+        snapshot.qr_reader_ready = False
+        missing = nav_status.missing_ready_items(
+            snapshot,
+            True,
+            require_vision=True,
+            require_qr_reader=True,
+        )
+        self.assertIn("vision_service=vlm", missing)
+        self.assertIn("qr_reader", missing)
+
+    def test_preloaded_reader_flag_requires_vision_service_flag(self):
+        arguments = type("Args", (), {
+            "timeout": 1.0,
+            "launch_pid": 0,
+            "rviz_pid": 0,
+            "vision_services": False,
+            "preloaded_qr_reader": True,
+        })()
+        with self.assertRaisesRegex(ValueError, "vision-services"):
+            nav_status.run(arguments)
 
     def test_summary_exposes_all_startup_surfaces(self):
         snapshot = nav_status.StartupSnapshot(

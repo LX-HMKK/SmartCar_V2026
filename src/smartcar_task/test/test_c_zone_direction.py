@@ -16,6 +16,12 @@ from smartcar_task.c_zone_direction import (  # noqa: E402
     apply_c_zone_direction,
     normalize_c_zone_direction,
 )
+from smartcar_task.planning_segments import (  # noqa: E402
+    load_planning_segments,
+    materialize_mission_route,
+    materialize_navigation_segments,
+)
+from smartcar_task.route_geometry import materialize_free_yaws  # noqa: E402
 from smartcar_task.waypoints import load_waypoint_document  # noqa: E402
 
 
@@ -97,6 +103,50 @@ class CZoneDirectionTests(unittest.TestCase):
                     math.sin(yaw(original.orientation)),
                     math.sin(yaw(recovered.orientation)),
                 )
+
+    def test_materialized_variants_keep_the_same_forward_nav2_topology(self):
+        document, authored = load_waypoint_document(NAV_ONLY_FILE)
+        counterclockwise_segments = load_planning_segments(document, authored)
+        clockwise_authored = apply_c_zone_direction(authored, CLOCKWISE)
+        clockwise_segments = load_planning_segments(document, clockwise_authored)
+        self.assertEqual(counterclockwise_segments, clockwise_segments)
+
+        def action_inputs(route, segments):
+            materialized = materialize_free_yaws(
+                materialize_mission_route(route, segments))
+            by_id = {waypoint.id: waypoint for waypoint in materialized}
+            return tuple(
+                tuple(by_id[waypoint.id] for waypoint in action)
+                for action in materialize_navigation_segments(route, segments)
+            )
+
+        counterclockwise = action_inputs(authored, counterclockwise_segments)
+        clockwise = action_inputs(clockwise_authored, clockwise_segments)
+        counterclockwise_signature = tuple(
+            tuple(
+                (waypoint.id, waypoint.task, waypoint.direction,
+                 waypoint.goal_profile, waypoint.heading_mode)
+                for waypoint in action
+            )
+            for action in counterclockwise
+        )
+        clockwise_signature = tuple(
+            tuple(
+                (waypoint.id, waypoint.task, waypoint.direction,
+                 waypoint.goal_profile, waypoint.heading_mode)
+                for waypoint in action
+            )
+            for action in clockwise
+        )
+        self.assertEqual(counterclockwise_signature, clockwise_signature)
+        self.assertTrue(
+            all(
+                waypoint.direction == "forward"
+                for action in clockwise for waypoint in action
+            )
+        )
+        self.assertAlmostEqual(clockwise[1][-1].position[0], 3.0833886341698835)
+        self.assertAlmostEqual(yaw(clockwise[1][-1].orientation), 0.0)
 
     def test_normalization_accepts_only_declared_directions(self):
         self.assertEqual(

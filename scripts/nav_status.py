@@ -18,6 +18,7 @@ LIFECYCLE_NODES = (
     "velocity_smoother",
 )
 TASK_SERVICES = ("start", "reset")
+VISION_SERVICES = ("qr", "vlm")
 ACTIVE_STATE_ID = 3
 DEPTH_MIN_FRAMES = 2
 MAX_DEPTH_CAPTURE_AGE_SEC = 0.25
@@ -63,6 +64,10 @@ class StartupSnapshot:
     direction_guard: str = ""
     task: str = ""
     task_services: dict[str, bool] = field(default_factory=dict)
+    vision_services: dict[str, bool] = field(default_factory=dict)
+    vision_required: bool = False
+    qr_reader_ready: bool | None = None
+    qr_reader_required: bool = False
     depth_status: str = ""
     depth_points: int = 0
     depth_scan: int = 0
@@ -125,6 +130,8 @@ def missing_ready_items(
     snapshot: StartupSnapshot,
     require_depth: bool,
     now_sec: float = 0.0,
+    require_vision: bool = False,
+    require_qr_reader: bool = False,
 ) -> list[str]:
     missing = [
         name for name in LIFECYCLE_NODES
@@ -139,6 +146,12 @@ def missing_ready_items(
     for service in TASK_SERVICES:
         if not snapshot.task_services.get(service, False):
             missing.append(f"task_service={service}")
+    if require_vision:
+        for service in VISION_SERVICES:
+            if not snapshot.vision_services.get(service, False):
+                missing.append(f"vision_service={service}")
+    if require_qr_reader and snapshot.qr_reader_ready is not True:
+        missing.append("qr_reader")
     missing.extend(_safety_input_missing(snapshot, now_sec))
 
     expected_source = "depth_scan" if require_depth else "scan"
@@ -192,6 +205,14 @@ def summary(snapshot: StartupSnapshot, now_sec: float | None = None) -> str:
     task_services = "+".join(
         name for name in TASK_SERVICES
         if snapshot.task_services.get(name, False)) or "waiting"
+    vision = "not_requested"
+    if snapshot.vision_required:
+        vision = "+".join(
+            name for name in VISION_SERVICES
+            if snapshot.vision_services.get(name, False)) or "waiting"
+    qr_reader = "not_requested"
+    if snapshot.qr_reader_required:
+        qr_reader = "ready" if snapshot.qr_reader_ready else "waiting"
     depth = (
         f"{snapshot.depth_status or 'waiting'} "
         f"points={snapshot.depth_points} scan={snapshot.depth_scan} "
@@ -210,6 +231,7 @@ def summary(snapshot: StartupSnapshot, now_sec: float | None = None) -> str:
         f"safety={snapshot.safety or 'waiting'} "
         f"guard={snapshot.direction_guard or 'waiting'} "
         f"task={snapshot.task or 'waiting'} services={task_services} "
+        f"vision={vision} qr_reader={qr_reader} "
         f"costmaps={snapshot.local_costmap}/{snapshot.global_costmap} "
         f"sources={sources} depth=[{depth}] capture_age={capture_age} "
         f"inputs=odom:{_age_text(snapshot.odom_received_at, now_sec)},"
@@ -233,6 +255,16 @@ def parse_args(argv=None):
     parser = argparse.ArgumentParser(
         description="Wait for one complete navigation startup snapshot")
     parser.add_argument("--depth-camera", action="store_true")
+    parser.add_argument(
+        "--vision-services",
+        action="store_true",
+        help="Require the QR and VLM services to be available",
+    )
+    parser.add_argument(
+        "--preloaded-qr-reader",
+        action="store_true",
+        help="Require a launch-managed zbar publisher on /barcode",
+    )
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--launch-pid", type=int, default=0)
     parser.add_argument("--rviz-pid", type=int, default=0)
@@ -244,6 +276,8 @@ def run(args) -> int:
         raise ValueError("timeout must be finite and positive")
     if args.launch_pid < 0 or args.rviz_pid < 0:
         raise ValueError("process IDs must be non-negative")
+    if args.preloaded_qr_reader and not args.vision_services:
+        raise ValueError("--preloaded-qr-reader requires --vision-services")
 
     from lifecycle_msgs.srv import GetState
     from nav2_msgs.msg import Costmap
@@ -256,6 +290,8 @@ def run(args) -> int:
     from sensor_msgs.msg import LaserScan, PointCloud2
     from std_msgs.msg import Float32, String
     from std_srvs.srv import Trigger
+    if args.vision_services:
+        from smartcar_interfaces.srv import DescribeScene, ReadQr
 
     status_qos = QoSProfile(
         depth=1,
@@ -295,7 +331,11 @@ def run(args) -> int:
     class StartupStatusNode(Node):
         def __init__(self):
             super().__init__("nav_startup_status")
-            self.snapshot = StartupSnapshot(rviz_required=args.rviz_pid > 0)
+            self.snapshot = StartupSnapshot(
+                rviz_required=args.rviz_pid > 0,
+                vision_required=args.vision_services,
+                qr_reader_required=args.preloaded_qr_reader,
+            )
             self.deadline = time.monotonic() + args.timeout
             self.exit_code: int | None = None
             self._last_report = ""
@@ -312,6 +352,14 @@ def run(args) -> int:
                 name: self.create_client(Trigger, f"/smartcar/task/{name}")
                 for name in TASK_SERVICES
             }
+            self._vision_clients = {}
+            if args.vision_services:
+                self._vision_clients = {
+                    "qr": self.create_client(
+                        ReadQr, "/smartcar/vision/read_qr"),
+                    "vlm": self.create_client(
+                        DescribeScene, "/smartcar/vision/describe_scene"),
+                }
             self._safety_parameter_client = self.create_client(
                 GetParameters, "/safety_node/get_parameters")
             self._costmap_parameter_clients = {
@@ -503,6 +551,17 @@ def run(args) -> int:
                 for name, client in self._task_clients.items()
             }
 
+        def _poll_vision_services(self):
+            if not self._vision_clients:
+                return
+            self.snapshot.vision_services = {
+                name: client.service_is_ready()
+                for name, client in self._vision_clients.items()
+            }
+            if args.preloaded_qr_reader:
+                self.snapshot.qr_reader_ready = self.count_publishers(
+                    "/barcode") > 0
+
         def _tick(self):
             now_sec = time.monotonic()
             if args.launch_pid and not _process_is_running(args.launch_pid):
@@ -514,8 +573,14 @@ def run(args) -> int:
             self._poll_lifecycle(now_sec)
             self._poll_parameters(now_sec)
             self._poll_task_services()
+            self._poll_vision_services()
             missing = missing_ready_items(
-                self.snapshot, args.depth_camera, now_sec)
+                self.snapshot,
+                args.depth_camera,
+                now_sec,
+                require_vision=args.vision_services,
+                require_qr_reader=args.preloaded_qr_reader,
+            )
             report = summary(self.snapshot, now_sec)
             if (report != self._last_report
                     and now_sec - self._last_report_at >= 1.0):

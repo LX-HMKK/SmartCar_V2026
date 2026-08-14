@@ -11,6 +11,7 @@ AGENTS = ROOT / "AGENTS.md"
 PACKAGE = ROOT / "src" / "smartcar_task"
 NODE = PACKAGE / "smartcar_task" / "task_node.py"
 MISSION = PACKAGE / "smartcar_task" / "mission.py"
+COMPETITION = PACKAGE / "smartcar_task" / "competition.py"
 NAVIGATION_GOALS = PACKAGE / "smartcar_task" / "navigation_goals.py"
 LAUNCH = PACKAGE / "launch" / "smartcar_task.launch.py"
 PACKAGE_XML = PACKAGE / "package.xml"
@@ -131,6 +132,111 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn('"waypoints_calibrated"', source)
         self.assertIn('FindPackageShare("smartcar_nav2")', source)
         self.assertIn('"default_waypoints.yaml"', source)
+
+    def test_competition_task_parameters_are_explicit_and_disabled_by_default(self):
+        parameters = yaml.safe_load(
+            TASK_CONFIG.read_text(encoding="utf-8")
+        )["task_node"]["ros__parameters"]
+        task_launch = LAUNCH.read_text(encoding="utf-8")
+        node_source = NODE.read_text(encoding="utf-8")
+
+        for name in (
+            "supervised_competition_mode",
+            "continue_after_qr_failure",
+            "qr_reader_preloaded",
+        ):
+            self.assertIs(parameters[name], False)
+            self.assertIn(f'"{name}"', task_launch)
+            self.assertIn(
+                f'"{name}": LaunchConfiguration(',
+                task_launch,
+            )
+            self.assertIn(
+                f'self.declare_parameter("{name}", False)',
+                node_source,
+            )
+
+        self.assertIn(
+            '"supervised_competition_mode": LaunchConfiguration(',
+            task_launch,
+        )
+        self.assertIn(
+            '"continue_after_qr_failure": LaunchConfiguration(',
+            task_launch,
+        )
+        self.assertIn(
+            '"qr_reader_preloaded": LaunchConfiguration(',
+            task_launch,
+        )
+
+    def test_competition_mode_keeps_the_confirmed_wheel_imu_profile(self):
+        source = SYSTEM.read_text(encoding="utf-8")
+        competition_validation = source.split(
+            'if _as_bool(context, "supervised_competition_mode"):',
+            1,
+        )[1].split('if not _as_bool(context, "autostart_mission"):', 1)[0]
+        self.assertIn('"localization_profile"', competition_validation)
+        self.assertIn('localization_profile=wheel_imu', competition_validation)
+
+    def test_competition_qr_selects_and_publishes_runtime_c_zone_variant(self):
+        competition_source = COMPETITION.read_text(encoding="utf-8")
+        mission_source = MISSION.read_text(encoding="utf-8")
+        node_source = NODE.read_text(encoding="utf-8")
+
+        self.assertIn(
+            "if classify_qr_parity(content) == QR_PARITY_EVEN:",
+            competition_source,
+        )
+        self.assertIn("return CLOCKWISE", competition_source)
+        self.assertIn("return COUNTERCLOCKWISE", competition_source)
+        self.assertIn("QR_PARITY_UNRECOGNIZED", competition_source)
+
+        self.assertIn(
+            "and selected_c_zone_direction != COUNTERCLOCKWISE",
+            node_source,
+        )
+        self.assertIn(
+            "supervised competition mode requires the authored ",
+            node_source,
+        )
+        self.assertIn("clockwise_waypoints = apply_c_zone_direction(", node_source)
+        self.assertIn(
+            "if clockwise_planning_segments != planning_segments:",
+            node_source,
+        )
+        self.assertIn(
+            "clockwise C-zone variant changes planning segments",
+            node_source,
+        )
+        self.assertIn("self._competition_navigation_variants = {", node_source)
+        self.assertIn(
+            "COUNTERCLOCKWISE: self._navigation_segments", node_source)
+        self.assertIn("CLOCKWISE: clockwise_navigation_segments", node_source)
+        self.assertIn(
+            "c_zone_navigation_variants=self._competition_navigation_variants",
+            node_source,
+        )
+
+        self.assertIn(
+            "counterclockwise C-zone variant must equal the baseline route",
+            mission_source,
+        )
+        self.assertIn(
+            "direction = c_zone_direction_for_qr(task_result.text)",
+            mission_source,
+        )
+        self.assertIn("selected_segments = variants[direction]", mission_source)
+        self.assertIn(
+            "c_zone_variant_rewrites_completed_segments",
+            mission_source,
+        )
+        self.assertIn("self._publish_c_zone_direction(direction)", mission_source)
+        self.assertIn(
+            'String, "/smartcar/output/c_zone_direction", 10)',
+            node_source,
+        )
+        self.assertIn("def publish_c_zone_direction(self, value):", node_source)
+        self.assertIn("publish_direction(text)", mission_source)
 
     def test_node_uses_worker_thread_and_expected_interfaces(self):
         source = NODE.read_text(encoding="utf-8")

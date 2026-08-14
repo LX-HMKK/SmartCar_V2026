@@ -124,7 +124,7 @@ class MediaLaunchContractTests(unittest.TestCase):
         self.assertNotIn("cv_bridge", source)
         self.assertNotIn("CvBridge", source)
 
-    def test_media_display_tools_are_rgb_only_and_text_subscriber_only(self):
+    def test_media_display_tools_are_rgb_only_and_competition_ui_is_text_only(self):
         rgb_source = (PACKAGE_ROOT / "smartcar_tools" / "rgb_imshow.py").read_text(
             encoding="utf-8")
         output_source = (
@@ -135,12 +135,48 @@ class MediaLaunchContractTests(unittest.TestCase):
         self.assertIn('"/aurora/rgb/image_raw"', rgb_source)
         self.assertIn("qos_profile_sensor_data", rgb_source)
         self.assertIn('"/smartcar/output/text"', output_source)
+        self.assertIn('"/smartcar/output/qr"', output_source)
+        self.assertIn('"/smartcar/output/c_zone_direction"', output_source)
+        self.assertIn('"/smartcar/output/vlm"', output_source)
+        self.assertIn('"/smartcar/task/state"', output_source)
         self.assertIn("text_received", output_source)
+        self.assertIn("qr_received", output_source)
+        self.assertIn("c_zone_direction_received", output_source)
+        self.assertIn("vlm_received", output_source)
+        self.assertIn("state_received", output_source)
         self.assertIn("rgb_imshow", setup_source)
         self.assertIn("competition_output_display", setup_source)
+        for forbidden in (
+            "sensor_msgs",
+            "cv2.",
+            "cv_bridge",
+            "qos_profile_sensor_data",
+        ):
+            self.assertNotIn(forbidden, output_source)
         for forbidden in ("smartcar_bringup", "smartcar_nav2", "smartcar_task"):
             self.assertNotIn(forbidden, rgb_source)
             self.assertNotIn(forbidden, output_source)
+
+    def test_competition_ui_remote_start_is_opt_in_and_confirmed(self):
+        source = (
+            PACKAGE_ROOT / "smartcar_tools" / "competition_output_display.py"
+        ).read_text(encoding="utf-8")
+        self.assertIn("from PyQt5.QtCore import QProcess", source)
+        self.assertIn(
+            'self.declare_parameter("remote_start_enabled", False)', source)
+        self.assertIn(
+            'self.declare_parameter("remote_start_command", "")', source)
+        self.assertIn("competition_start_argv(remote_start_command)", source)
+        self.assertIn("if remote_start_enabled else ()", source)
+        self.assertIn("self._start_process = QProcess(self)", source)
+        self.assertIn("QProcess.MergedChannels", source)
+        self.assertIn('confirmation.setWindowTitle("确认发车")', source)
+        self.assertIn("confirmation.setDefaultButton(QMessageBox.No)", source)
+        self.assertIn("confirmation.exec_() != QMessageBox.Yes", source)
+        self.assertIn("self._start_process.start(", source)
+        self.assertIn(
+            "self._start_command[0], list(self._start_command[1:]))", source)
+        self.assertNotIn("shell=True", source)
 
 
 if __name__ == "__main__":

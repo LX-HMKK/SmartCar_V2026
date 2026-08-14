@@ -83,7 +83,7 @@ use_depth_camera:=true
 use_vision:=false
 ```
 
-`nav_test.sh` 不会同步、清理或构建。它固定启动 Aurora 深度避障和 RViz，并用单个状态进程检查 Nav2 lifecycle、task、急停、depth points/scan 与两张 costmap。运行入口只有：
+`nav_test.sh` 不会同步、清理或构建。它固定启动 Aurora 深度避障和 RViz，并用单个状态进程检查 Nav2 lifecycle、task、急停、depth points/scan 与两张 costmap。纯导航测试入口为：
 
 ```bash
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh
@@ -96,6 +96,43 @@ bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
 `nav_test.sh` 还会校验当前 `src/` 指纹是否与 `nav_prepare.sh` 写入的准备指纹一致。源码同步后未重新准备时，它会拒绝启动，防止旧 `install/` 产物掩盖当前代码。
 
 不带 `--go` 时只进入急停锁存的就绪状态。`--go` 在本次明确运动授权、物理急停可用且车辆已在 P 点朝 `+X` 摆位后，健康检查通过即按“急停锁存复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序发车。`--wheel-only` 只用于定位对照。`--c-zone-direction=clockwise` 在启动时仅内存镜像已确认的 C 区约束；省略时默认 `counterclockwise`，不写入 YAML，也不在运行中切换。`ros_cleanup.sh` 先结束 `nav_test.sh` 记录的导航和 RViz PID，再清理已知导航残留；它不会使用宽泛进程匹配或清理航点编辑器。任何运动仍须另行取得该次明确授权。
+
+### 比赛模式
+
+比赛使用语义路线和独立的两阶段入口，而不是 `nav_test.sh --go`：
+
+```bash
+# 同步、构建完成后；需要本次实体相机授权
+bash /home/sunrise/ros2_ws/scripts/competition_mode.sh prepare
+
+# 裁判发令时；需要本次非零运动授权、物理急停确认和 P 点人工摆位：
+# 在“比赛输出”UI按“发车”，并在确认框中选择“是”
+
+# 仅检查，或在异常时先物理急停后停止
+bash /home/sunrise/ros2_ws/scripts/competition_mode.sh status
+bash /home/sunrise/ros2_ws/scripts/competition_mode.sh stop
+```
+
+`prepare` 启动同一个 Aurora 驱动的 RGB 与深度链路、QR/VLM 服务、深度 costmap、Nav2 和比赛任务树，
+但保持软件急停锁存且不执行任务。它不启动 RViz、OpenCV `imshow` 或独立媒体短测；唯一图形界面是同屏
+显示 QR 奇偶、已选 C 区方向、VLM 文本和任务状态的比赛输出 UI。不要在比赛栈运行时启动 `media_test.sh`，否则会重复
+打开 Aurora。准备检查会确认 QR/VLM 服务可用；默认预热还会确认 ZBar reader 已启动。Volcengine
+凭据只保存在 RDK 工作区的 `config/volcengine_ark.local.yaml`，同步脚本不会传输或删除它，比赛脚本只做
+存在性检查，绝不输出其内容。
+
+比赛输出 UI 的“发车”按钮是裁判口令后的标准入口。比赛脚本显式授权该按钮后，它会显示 P 点摆位和物理
+急停确认框，并在 RDK 本地异步执行同一 `competition_mode.sh start --confirm` 流程；远程桌面连接可以点击
+这个按钮，但不能替代本次实体相机/非零运动的明确授权。`start --confirm` 保留为 UI 不可用时的受看护恢复
+入口，不能与 UI 发车并行执行。无论入口为何，都会执行定位复位、解除软件急停和任务 Trigger。比赛任务在
+A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> counterclockwise（逆时针）`，
+`偶数 -> clockwise（顺时针）`；`未识别`、歧义结果或 QR 读取失败则回退
+`counterclockwise（逆时针）`，仍继续完整路线返回 P。QR 奇偶和已选方向都会显示在比赛输出 UI。
+该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
+VLM 无结果会显示通用描述并继续回到 P；导航、定位、方向门、costmap 或 safety 异常仍按失败处理，
+不能为了完赛绕过安全链。
+
+`prepare` 会先拒绝已有的底盘、Nav2、任务、Aurora 或视觉节点，防止旧 ROS 栈用同名全局服务或话题
+误通过新栈健康检查。此时先确认物理急停，再停止或按现场流程清理旧栈。
 
 发车前必须人工将车辆放在 P 原点、车头朝 `+X`；软件 `reset` 不能替代物理复位。路线所有段均由
 Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接路线、绕障规则或专用导航阈值。

@@ -7,10 +7,17 @@ import threading
 from smartcar_task.planning_segments import (
     allows_precise_terminal_through_poses,
 )
+from smartcar_task.competition import (
+    c_zone_direction_for_qr,
+    c_zone_direction_text,
+    qr_parity_text,
+)
+from smartcar_task.c_zone_direction import CLOCKWISE, COUNTERCLOCKWISE
 
 
 VLM_HARD_TIMEOUT_SEC = 8.0
 VLM_FALLBACK_TEXT = "画面中可能是一名穿着浅色上衣的人物，正面站立并挥手。"
+QR_UNRECOGNIZED_TEXT = "未识别"
 TERMINAL_STATES = frozenset({"COMPLETED", "STOPPED", "FAILED"})
 RESETTABLE_STATES = TERMINAL_STATES | frozenset({"IDLE"})
 QR_HANDOFF_TEST_CONTENT = "模拟赛题数据：任务类型为诊疗区人物描述。"
@@ -67,6 +74,7 @@ class MissionConfig:
     qr_timeout_sec: float = 3.0
     qr_retries: int = 1
     qr_retry_delay_sec: float = 0.25
+    continue_after_qr_failure: bool = False
     qr_handoff_test_mode: bool = False
     vlm_timeout_sec: float = 8.0
     vlm_prompt: str = (
@@ -98,6 +106,8 @@ class MissionConfig:
             self.qr_retry_delay_sec,
             nonnegative=True,
         )
+        if not isinstance(self.continue_after_qr_failure, bool):
+            raise ValueError("continue_after_qr_failure must be a boolean")
         if not isinstance(self.qr_handoff_test_mode, bool):
             raise ValueError("qr_handoff_test_mode must be a boolean")
         vlm_timeout = _finite(
@@ -163,13 +173,29 @@ class Mission:
         self._set_state(MissionState.WAITING_FOR_SERVERS, generation)
         return generation
 
-    def execute(self, waypoints, navigation_segments=None):
+    def execute(
+        self,
+        waypoints,
+        navigation_segments=None,
+        c_zone_navigation_variants=None,
+    ):
         generation = self.reserve_start()
         if generation is None:
             return OperationResult(False, "mission_not_idle")
-        return self.run_reserved(generation, waypoints, navigation_segments)
+        return self.run_reserved(
+            generation,
+            waypoints,
+            navigation_segments,
+            c_zone_navigation_variants,
+        )
 
-    def run_reserved(self, generation, waypoints, navigation_segments=None):
+    def run_reserved(
+        self,
+        generation,
+        waypoints,
+        navigation_segments=None,
+        c_zone_navigation_variants=None,
+    ):
         with self._lock:
             if generation != self._generation or not self._reserved:
                 return OperationResult(False, "mission_generation_invalid")
@@ -180,6 +206,7 @@ class Mission:
                 generation,
                 tuple(waypoints),
                 navigation_segments,
+                c_zone_navigation_variants,
             )
         except Exception as error:
             if self._stop_requested.is_set():
@@ -242,7 +269,13 @@ class Mission:
         self._set_state(MissionState.IDLE)
         return OperationResult(True, "ok")
 
-    def _run(self, generation, waypoints, navigation_segments=None):
+    def _run(
+        self,
+        generation,
+        waypoints,
+        navigation_segments=None,
+        c_zone_navigation_variants=None,
+    ):
         if not waypoints:
             return self._fail(generation, "waypoints_empty")
         if self._stop_requested.is_set():
@@ -256,6 +289,10 @@ class Mission:
             segments = tuple(self._navigation_segments(waypoints))
         else:
             segments = tuple(tuple(segment) for segment in navigation_segments)
+        variants = self._c_zone_navigation_variants(
+            segments,
+            c_zone_navigation_variants,
+        )
         require_qr = False
         require_vlm = False
         for segment in segments:
@@ -273,7 +310,9 @@ class Mission:
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
 
-        for segment in segments:
+        segment_index = 0
+        while segment_index < len(segments):
+            segment = segments[segment_index]
             invalid_segment = self._navigation_segment_error(segment)
             if invalid_segment is not None:
                 return self._fail(generation, invalid_segment)
@@ -298,11 +337,71 @@ class Mission:
                     task_result.text,
                     task_result.fallback_used,
                 )
-
+            if endpoint_task == "qr" and variants is not None:
+                direction = c_zone_direction_for_qr(task_result.text)
+                selected_segments = variants[direction]
+                completed = segment_index + 1
+                if selected_segments[:completed] != segments[:completed]:
+                    return self._fail(
+                        generation,
+                        "c_zone_variant_rewrites_completed_segments",
+                    )
+                segments = selected_segments
+                self._publish_c_zone_direction(direction)
+            segment_index += 1
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
         self._set_state(MissionState.COMPLETED, generation)
         return OperationResult(True, "mission_completed")
+
+    @staticmethod
+    def _navigation_segment_signature(segments):
+        """Describe the invariant Nav2 action topology without coordinates."""
+        return tuple(
+            tuple(
+                (
+                    waypoint.id,
+                    waypoint.task,
+                    waypoint.direction,
+                    getattr(waypoint, "goal_profile", "standard"),
+                    getattr(waypoint, "heading_mode", None),
+                )
+                for waypoint in segment
+            )
+            for segment in segments
+        )
+
+    @classmethod
+    def _c_zone_navigation_variants(cls, baseline, variants):
+        """Normalize and fail closed on malformed runtime C-zone variants."""
+        if variants is None:
+            return None
+        try:
+            supplied = dict(variants)
+        except (TypeError, ValueError) as error:
+            raise ValueError("c_zone_navigation_variants must be a mapping") from error
+        expected_directions = {COUNTERCLOCKWISE, CLOCKWISE}
+        if set(supplied) != expected_directions:
+            raise ValueError(
+                "c_zone_navigation_variants must contain counterclockwise and clockwise"
+            )
+        normalized = {
+            direction: tuple(tuple(segment) for segment in supplied[direction])
+            for direction in expected_directions
+        }
+        baseline_signature = cls._navigation_segment_signature(baseline)
+        if not baseline_signature:
+            raise ValueError("c_zone_navigation_variants require navigation segments")
+        if normalized[COUNTERCLOCKWISE] != baseline:
+            raise ValueError(
+                "counterclockwise C-zone variant must equal the baseline route"
+            )
+        for direction, candidate in normalized.items():
+            if cls._navigation_segment_signature(candidate) != baseline_signature:
+                raise ValueError(
+                    "c_zone_navigation_variants must preserve segment topology"
+                )
+        return normalized
 
     @staticmethod
     def _navigation_segments(waypoints):
@@ -405,7 +504,7 @@ class Mission:
                 return self._finish_stopped(generation)
             content = str(result.text).strip()
             if result.success and content:
-                self._publish_value(content)
+                self._publish_qr_value(content)
                 return OperationResult(True, result.status, content)
             last_status = result.status
             if attempt + 1 < attempts and not self._interruptible_sleep(
@@ -413,11 +512,19 @@ class Mission:
             ):
                 return self._finish_stopped(generation)
         if self._config.qr_handoff_test_mode:
-            self._publish_value(QR_HANDOFF_TEST_CONTENT)
+            self._publish_qr_value(QR_HANDOFF_TEST_CONTENT)
             return OperationResult(
                 True,
                 "qr_handoff_test_simulated",
                 QR_HANDOFF_TEST_CONTENT,
+                True,
+            )
+        if self._config.continue_after_qr_failure:
+            self._publish_qr_value(QR_UNRECOGNIZED_TEXT)
+            return OperationResult(
+                True,
+                f"qr_fallback:{last_status}",
+                QR_UNRECOGNIZED_TEXT,
                 True,
             )
         return self._fail(generation, f"qr_failed:{last_status}")
@@ -440,7 +547,7 @@ class Mission:
                 description,
                 True,
             )
-        self._publish_value(description)
+        self._publish_vlm_value(description)
         return result
 
     def _interruptible_sleep(self, duration_sec):
@@ -468,6 +575,25 @@ class Mission:
     def _publish_value(self, value):
         self._output.publish_text(value)
         self._output.publish_speech(value)
+
+    def _publish_qr_value(self, value):
+        publish_qr = getattr(self._output, "publish_qr", None)
+        if callable(publish_qr):
+            publish_qr(qr_parity_text(value))
+        self._publish_value(value)
+
+    def _publish_vlm_value(self, value):
+        publish_vlm = getattr(self._output, "publish_vlm", None)
+        if callable(publish_vlm):
+            publish_vlm(value)
+        self._publish_value(value)
+
+    def _publish_c_zone_direction(self, direction):
+        text = c_zone_direction_text(direction)
+        publish_direction = getattr(self._output, "publish_c_zone_direction", None)
+        if callable(publish_direction):
+            publish_direction(text)
+        self._publish_value(f"C区方向：{text}")
 
     def _set_state(self, state, generation=None):
         with self._lock:
