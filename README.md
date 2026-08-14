@@ -13,12 +13,12 @@
 
 ---
 
-> 面向智慧医疗赛的全自动智能车系统：车辆自 **P** 起点发车，途经二维码观察点 **A** 与诊疗区角点 **C1**，在 A 点读取二维码、在 C1 点执行图生文人物描述并语音播报，最终返回 **P** 终点。全程由 Nav2 基于实时 costmap 自主规划，融合激光、深度、视觉与惯性里程计，实现动态避障与语义任务。
+> 面向智慧医疗赛的全自动智能车系统：车辆自 **P** 起点发车，途经二维码观察点 **A** 与诊疗区角点 **C1**，在 A 点读取二维码、在 C1 点执行图生文人物描述并语音播报，最终返回 **P** 终点。全程由 Nav2 基于实时 costmap 自主规划，以 Aurora 深度相机为唯一视觉与障碍感知来源（RGB 模块供图像识别、深度模块供动态避障），融合 IMU/轮式里程计定位，完成动态避障与语义任务。
 
 ### ✨ 系统亮点
 
 - **全自动** —— 全正向路线自主导航，任务状态机编排二维码 / 图生文 / 语音播报
-- **多模态感知** —— 激光雷达 + 深度相机 + RGB 相机 + IMU/轮式里程计四源融合
+- **多模态感知** —— Aurora 深度相机同时提供 RGB 视觉与深度避障，配 IMU/轮式里程计定位
 - **实时动态避障** —— Aurora 深度点云进 costmap，障碍移走即清障，支撑 Nav2 重规划
 - **安全优先** —— 方向门 + fail-closed 安全门，全命令经 Ackermann 安全链，杜绝无人自动发车
 
@@ -30,9 +30,7 @@
 flowchart TB
     subgraph SENSE["📡 感知层"]
         direction LR
-        YL["YDLIDAR 激光雷达"]
         AU["Aurora 深度相机"]
-        CA["RGB 相机"]
         IM["IMU · 轮式里程计"]
     end
 
@@ -51,9 +49,8 @@ flowchart TB
     end
 
     IM --> EKF
-    YL --> NAV
     AU --> NAV
-    CA --> VIS
+    AU --> VIS
     EKF --> NAV
     NAV --> TSK
     VIS --> TSK
@@ -65,7 +62,7 @@ flowchart TB
     classDef sense fill:#e8f1fb,stroke:#2b6cb0,stroke-width:1.5px,color:#1a365d
     classDef proc fill:#eef7ee,stroke:#38a169,stroke-width:1.5px,color:#22543d
     classDef act fill:#fff5f5,stroke:#e53e3e,stroke-width:1.5px,color:#742a2a
-    class YL,AU,CA,IM sense
+    class AU,IM sense
     class EKF,NAV,VIS,SPC,TSK,SF proc
     class BASE act
 ```
@@ -78,9 +75,7 @@ flowchart TB
 | :--- | :--- | :--- | :--- |
 | 🖥️ 计算平台 | 地平线 RDK X5 8G | 主控，运行 TROS ROS 2 Humble | — |
 | 🚗 底盘 | OriginCar 阿克曼 | 转向与驱动执行 | 串口 `/dev/ttyACM0` |
-| 📡 激光雷达 | YDLIDAR Tmini Plus | 2D 扫描 `/scan`，供 costmap 与可选里程计 | 串口 `/dev/ttyUSB0` |
-| 📷 深度相机 | Aurora 930 | RGB + 10 Hz IR/深度，动态障碍感知 | USB |
-| 📷 RGB 相机 | USB 相机 | 二维码 / 图生文视觉输入 | USB |
+| 📷 深度相机 | Aurora 930 | **RGB 模块**供二维码/图生文视觉输入，**深度模块**供动态障碍感知 | USB |
 | 🧭 惯性 / 里程计 | IMU + 轮式编码器 | EKF 融合定位输入 | 板载 |
 | 🔊 语音 | 扬声器 + 火山 TTS | 任务结果播报 | 板载音频 |
 
@@ -97,7 +92,7 @@ smartcar_nav2           Nav2 规划 / 平滑 / costmap 与航点
 smartcar_safety         方向门 + fail-closed 安全门 + Ackermann 输出
 smartcar_vision         二维码(zbar) 与有界 VLM 服务
 smartcar_speech         可选火山 TTS 与本地播放
-origincar               底盘串口、轮式里程计、IMU、EKF 与 LiDAR
+origincar               底盘串口、轮式里程计、IMU 与 EKF
 smartcar_tools          航点编辑、场地参考与诊断
 smartcar_sim            Ubuntu Gazebo 仿真与纯导航验证
 ```
@@ -155,8 +150,8 @@ EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner；EKF 的 yaw 输�
 
 ### 工程验证状态
 
-- ✅ 本机 Gazebo 已完成纯导航全路线软件校验；LiDAR 无障碍现场实测已确认当前全正向路线的基础通行性。
-- ⏳ 深度相机动态障碍感知（costmap 标记 / 清障与实时重规划）、QR / VLM / 语音语义任务与受看护现场跑动仍需逐项验收。
+- ✅ 本机 Gazebo 已完成纯导航全路线软件校验。
+- ⏳ 深度相机动态障碍感知（costmap 标记 / 清障与实时重规划）、二维码 / 图生文 / 语音语义任务与受看护现场跑动仍需逐项验收。
 
 ---
 

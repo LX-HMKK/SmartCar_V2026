@@ -143,11 +143,10 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 | --- | --- |
 | 路线 | 全正向 `P -> A -> via_1 -> via_2 -> via_3 -> via_6 -> C1 -> via_4 -> via_5 -> via_7 -> P` |
 | 路线文件 | `default_waypoints.yaml` 与 `nav_only.yaml` 完全共用航点 ID、顺序、坐标、姿态、方向、profile 和 `planning_segments`；仅 A/C1 任务类型不同。 |
-| 路线状态 | 两份路线均为 `calibrated: false`。当前全正向纯导航路线已通过 LiDAR 无障碍现场基础通行性验证；深度相机的动态障碍感知仍需单独验证。 |
+| 路线状态 | 两份路线均为 `calibrated: false`。当前全正向纯导航路线已完成本机 Gazebo 全链软件校验；深度相机的动态障碍感知仍需现场验证。 |
 | 任务 profile | A、C1 为 `precise`；P 为 `standard`。 |
-| 运动门禁 | 默认均为 `false`，用于防止无人自动发车。对收到本次明确运动授权的官方受看护短测，脚本会为指定前缀一次性传入运行确认；不得将默认值反复作为 LiDAR 已验证路线的技术阻塞。固定深度相机外参不是门禁。 |
+| 运动门禁 | 默认均为 `false`，用于防止无人自动发车。对收到本次明确运动授权的官方受看护短测，脚本会为指定前缀一次性传入运行确认；不得将默认值反复作为已验证路线的技术阻塞。固定深度相机外参不是门禁。 |
 | 底盘串口 | `/dev/ttyACM0` |
-| LiDAR 串口 | `/dev/ttyUSB0` |
 | 默认相机驱动 | `aurora`；纯导航准备时明确关闭相机和视觉。 |
 | Aurora 深度模式 | `10 Hz` IR/depth，relay 上限 `12 Hz`；校正 Aurora 固件采集时间戳后发布 `/smartcar/depth/points`。 |
 | 深度有效距离 | 转换后的前向 `/smartcar/depth/scan`、障碍标记与 clearing 均限制在 `3.0 m` 内。 |
@@ -172,9 +171,9 @@ Nav2 基于实时 obstacle/inflation costmap 规划，不得添加人工连接�
 velocity_smoother -> direction_guard -> smartcar_safety -> /ackermann_cmd
 ```
 
-不得绕过方向门或 safety，禁止直接向底盘发布 Twist 或 Ackermann 命令。LiDAR 用于连续扫描匹配
-里程计与 Nav2 costmap，不用于 SLAM 或静态地图定位；EKF 是 `odom_combined -> base_footprint` 的唯一
-TF owner。EKF 的 yaw 输出完全来自 IMU 的 z 轴角速度：轮式合成的 yaw 不可靠且被 EKF 忽略，标定后的
+不得绕过方向门或 safety，禁止直接向底盘发布 Twist 或 Ackermann 命令。深度相机是唯一障碍与视觉
+感知来源，不用于 SLAM 或静态地图定位；EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。
+EKF 的 yaw 输出完全来自 IMU 的 z 轴角速度：轮式合成的 yaw 不可靠且被 EKF 忽略，标定后的
 IMU yaw 可靠。
 
 ## 深度静态验收
@@ -185,7 +184,7 @@ IMU yaw 可靠。
 - 修正后的采集时间戳最大年龄为 `0.215 s`，低于 relay 的 `0.35 s` 拒绝阈值。
 - 当时 local/global costmap 的原始点云静态接入与 safety 的 `1.0 s` 深度心跳均已核对。当前版本改用前向 `/smartcar/depth/scan` 的 `+Inf` clearing；部署后须在急停锁存、无运动状态下复核其标记和移障清除。
 
-该记录只证明点云时间戳与 costmap 静态接入。LiDAR 无障碍实测已证明路线的基础通行性；深度模式仍须在每次明确运动授权后验证动态障碍物的标记/清障与 Nav2 实时重规划，不要求重复航点或固定外参标定。
+该记录只证明点云时间戳与 costmap 静态接入。深度模式仍须在每次明确运动授权后验证动态障碍物的标记/清障与 Nav2 实时重规划，不要求重复航点或固定外参标定。
 
 ## 检查与异常处理
 

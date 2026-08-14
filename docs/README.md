@@ -25,10 +25,9 @@ src/
   smartcar_nav2                          Smac Hybrid、原生行为树、costmap 与路线
   smartcar_safety                        速度平滑后的方向门、安全看门狗与 Ackermann 输出
   smartcar_vision, smartcar_speech       Aurora/QR/VLM 与可选语音服务
-  origincar                              底盘串口、轮式里程计、IMU、EKF 与可选 LiDAR/RF2O
+  origincar                              底盘串口、轮式里程计、IMU、EKF 与深度相机接入
   smartcar_tools                         航点编辑、场地参考、短测与独立诊断
   smartcar_sim                           Gazebo、仿真传感器适配与纯导航验证
-  third_party/rf2o_laser_odometry        可选 scan-to-scan 里程计
 ```
 
 `smartcar_bringup` 只负责组装；路线和规划参数由 `smartcar_task`、`smartcar_nav2` 所有；
@@ -63,7 +62,7 @@ Aurora /aurora/points2 -> 深度 relay -> /smartcar/depth/points -> safety + RVi
 EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。EKF 的 yaw 输出完全来自 IMU 的
 z 轴角速度：轮式里程计合成 yaw 不可靠（阿克曼底盘推算漂移），其角速度观测在 EKF 中被忽略；
 标定后的 IMU yaw 可靠。深度点云仅作为 Nav2 障碍物数据，不参与 SLAM 或静态地图定位。
-LiDAR 模式可提供 costmap 观测与连续扫描匹配里程计，但不做 SLAM。
+深度相机是唯一障碍与视觉感知来源：深度模块经 `/smartcar/depth/scan` 提供 costmap 观测，RGB 模块供二维码/图生文视觉输入。
 
 ### 实车与仿真边界
 
