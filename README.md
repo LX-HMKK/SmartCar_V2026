@@ -1,51 +1,53 @@
-# 🧭 溯源队 · 智慧医疗赛智能车
+# 🧭 Team Suyuan · Smart Healthcare Smart Car
 
-**常州大学** · 第二十一届全国大学生智能汽车竞赛 · **地瓜机器人智慧医疗赛**
+**Changzhou University** · 21st National College Students Intelligent Vehicle Competition · **D-Robotics Smart Healthcare Challenge**
 
-| 项目 | 内容 |
+> 🌐 **Languages:** [**中文版 README_cn.md**](README_cn.md) | English
+
+| Field | Value |
 | :--- | :--- |
-| 🚩 **赛队名称** | 溯源 |
-| 🏫 **学校名称** | 常州大学 |
-| 👨‍💼 **队长** | 沈放 |
-| 👥 **组员** | 王少卿 · 曹鹏宇 · 赵宇航 · 周派 |
-| 🖥️ **计算平台** | 地平线 RDK X5 8G（TROS ROS 2 Humble） |
-| 🤖 **参赛模式** | 全自动模式（人工发车确认） |
+| 🚩 **Team Name** | Suyuan (溯源) |
+| 🏫 **School** | Changzhou University |
+| 👨‍💼 **Team Leader** | Shen Fang |
+| 👥 **Members** | Wang Shaoqing · Cao Pengyu · Zhao Yuhang · Zhou Pai |
+| 🖥️ **Compute Platform** | Horizon RDK X5 8G (TROS ROS 2 Humble) |
+| 🤖 **Competition Mode** | Fully automatic (with manual launch confirmation) |
 
 ---
 
-> 面向智慧医疗赛的全自动智能车系统：车辆自 **P** 起点发车，途经二维码观察点 **A** 与诊疗区角点 **C1**，在 A 点读取二维码、在 C1 点执行图生文人物描述并语音播报，最终返回 **P** 终点。全程由 Nav2 基于实时 costmap 自主规划，以 Aurora 深度相机为唯一视觉与障碍感知来源（RGB 模块供图像识别、深度模块供动态避障），融合 IMU/轮式里程计定位，完成动态避障与语义任务。
+> A fully automatic smart car for the Smart Healthcare challenge: the vehicle starts from point **P**, travels through QR observation point **A** and clinic corner **C1**, reads a QR code at A, performs an image-to-text person description and voice announcement at C1, then returns to **P**. The whole route is planned autonomously by Nav2 on the live costmap, with the Aurora depth camera as the sole vision and obstacle-perception source (RGB module for image recognition, depth module for dynamic obstacle avoidance), fused with IMU/wheel odometry for localization.
 
-### ✨ 系统亮点
+### ✨ Highlights
 
-- **全自动** —— 全正向路线自主导航，任务状态机编排二维码 / 图生文 / 语音播报
-- **多模态感知** —— Aurora 深度相机同时提供 RGB 视觉与深度避障，配 IMU/轮式里程计定位
-- **实时动态避障** —— Aurora 深度点云进 costmap，障碍移走即清障，支撑 Nav2 重规划
-- **安全优先** —— 方向门 + fail-closed 安全门，全命令经 Ackermann 安全链，杜绝无人自动发车
+- **Fully automatic** — all-forward autonomous navigation; mission state machine orchestrates QR / image-to-text / voice announcement
+- **Multi-modal perception** — Aurora depth camera provides both RGB vision and depth obstacle avoidance, plus IMU/wheel odometry localization
+- **Real-time dynamic avoidance** — Aurora depth point cloud feeds the costmap; cleared obstacles are forgotten immediately, enabling Nav2 replanning
+- **Safety first** — direction guard + fail-closed safety gate; every command passes through the Ackermann safety chain to prevent unattended auto-launch
 
 ---
 
-## 一、整体系统架构
+## 1. Overall System Architecture
 
 ```mermaid
 flowchart TB
-    subgraph SENSE["📡 感知层"]
+    subgraph SENSE["📡 Perception"]
         direction LR
-        AU["Aurora 深度相机"]
-        IM["IMU · 轮式里程计"]
+        AU["Aurora Depth Camera"]
+        IM["IMU · Wheel Odometry"]
     end
 
-    subgraph PROC["🧠 处理层 · RDK X5（TROS ROS 2）"]
+    subgraph PROC["🧠 Processing · RDK X5 (TROS ROS 2)"]
         direction LR
-        EKF["EKF 融合定位"]
-        NAV["Nav2 实时规划 + costmap"]
-        VIS["QR / VLM 视觉"]
-        SPC["TTS 语音"]
-        TSK["任务状态机"]
-        SF["方向门 + 安全门"]
+        EKF["EKF Fusion Localization"]
+        NAV["Nav2 Real-time Planning + costmap"]
+        VIS["QR / VLM Vision"]
+        SPC["TTS Speech"]
+        TSK["Mission State Machine"]
+        SF["Direction Guard + Safety Gate"]
     end
 
-    subgraph ACT["🚗 执行层"]
-        BASE["OriginCar 阿克曼底盘"]
+    subgraph ACT["🚗 Execution"]
+        BASE["OriginCar Ackermann Chassis"]
     end
 
     IM --> EKF
@@ -67,56 +69,56 @@ flowchart TB
     class BASE act
 ```
 
-系统按「感知 → 处理 → 执行」分层：传感器数据经 EKF 与 Nav2 转化为运动规划，任务状态机编排语义任务，最终命令必须经过方向门与安全门后由 Ackermann 底盘执行。
+The system is layered as "Perception → Processing → Execution": sensor data is turned into motion plans by EKF and Nav2, the mission state machine orchestrates semantic tasks, and every final command must pass the direction guard and safety gate before reaching the Ackermann chassis.
 
-## 二、硬件选型与连接方式
+## 2. Hardware Selection & Connections
 
-| 硬件 | 型号 | 作用 | 连接 |
+| Hardware | Model | Role | Connection |
 | :--- | :--- | :--- | :--- |
-| 🖥️ 计算平台 | 地平线 RDK X5 8G | 主控，运行 TROS ROS 2 Humble | — |
-| 🚗 底盘 | OriginCar 阿克曼 | 转向与驱动执行 | 串口 `/dev/ttyACM0` |
-| 📷 深度相机 | Aurora 930 | **RGB 模块**供二维码/图生文视觉输入，**深度模块**供动态障碍感知 | USB |
-| 🧭 惯性 / 里程计 | IMU + 轮式编码器 | EKF 融合定位输入 | 板载 |
-| 🔊 语音 | 扬声器 + 火山 TTS | 任务结果播报 | 板载音频 |
+| 🖥️ Compute platform | Horizon RDK X5 8G | Main controller, runs TROS ROS 2 Humble | — |
+| 🚗 Chassis | OriginCar Ackermann | Steering & drive execution | Serial `/dev/ttyACM0` |
+| 📷 Depth camera | Aurora 930 | **RGB module** for QR/image-to-text vision, **depth module** for dynamic obstacle perception | USB |
+| 🧭 Inertial / odometry | IMU + wheel encoders | Inputs to EKF fusion localization | Onboard |
+| 🔊 Speech | Speaker + Volcano TTS | Announces mission results | Onboard audio |
 
-> **安装约束**：深度相机固定于前轮正上方、离地 `0.15 m`、水平朝前，外参为已确认的结构约束。
+> **Mounting constraint**: the depth camera is fixed above the front wheels, `0.15 m` off the ground, facing forward; extrinsics are a confirmed structural constraint.
 
-## 三、软件系统设计思路
+## 3. Software Design
 
-### 模块分层
+### Module Layout
 
 ```text
-smartcar_bringup        系统组装与一键启动
-smartcar_task           任务状态机与 Nav2 action 编排
-smartcar_nav2           Nav2 规划 / 平滑 / costmap 与航点
-smartcar_safety         方向门 + fail-closed 安全门 + Ackermann 输出
-smartcar_vision         二维码(zbar) 与有界 VLM 服务
-smartcar_speech         可选火山 TTS 与本地播放
-origincar               底盘串口、轮式里程计、IMU 与 EKF
-smartcar_tools          航点编辑、场地参考与诊断
-smartcar_sim            Ubuntu Gazebo 仿真与纯导航验证
+smartcar_bringup        System assembly & one-click launch
+smartcar_task           Mission state machine & Nav2 action orchestration
+smartcar_nav2           Nav2 planning / smoothing / costmap & waypoints
+smartcar_safety         Direction guard + fail-closed safety gate + Ackermann output
+smartcar_vision         QR(zbar) & bounded VLM services
+smartcar_speech         Optional Volcano TTS & local playback
+origincar               Chassis serial, wheel odometry, IMU & EKF
+smartcar_tools          Waypoint editing, field reference & diagnostics
+smartcar_sim            Ubuntu Gazebo simulation & pure-nav validation
 ```
 
-### 关键数据流
+### Key Data Flows
 
 ```mermaid
 flowchart LR
-    subgraph MOVE["🛞 运动链"]
+    subgraph MOVE["🛞 Motion chain"]
         direction LR
         t1["task"] --> n1["Nav2"] --> a1["/cmd_vel_nav"]
         a1 --> s1["velocity_smoother"] --> g1["direction_guard"]
-        g1 --> f1["smartcar_safety"] --> a2["/ackermann_cmd"] --> b1["阿克曼底盘"]
+        g1 --> f1["smartcar_safety"] --> a2["/ackermann_cmd"] --> b1["Ackermann chassis"]
     end
 
-    subgraph LOC["📍 定位链"]
+    subgraph LOC["📍 Localization chain"]
         direction LR
-        o1["轮式 /odom"] & i1["/imu/data_raw"] --> e1["EKF"]
+        o1["Wheel /odom"] & i1["/imu/data_raw"] --> e1["EKF"]
         e1 --> o2["/odom_combined"] --> bf["base_footprint"]
     end
 
-    subgraph OBS["🛡️ 避障链"]
+    subgraph OBS["🛡️ Obstacle chain"]
         direction LR
-        p1["Aurora 深度点云"] --> r1["pointcloud_to_laserscan"]
+        p1["Aurora depth point cloud"] --> r1["pointcloud_to_laserscan"]
         r1 --> s2["/smartcar/depth/scan"] --> cm["local / global costmap"]
     end
 
@@ -128,40 +130,40 @@ flowchart LR
     class p1,r1,s2,cm obs
 ```
 
-EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner；EKF 的 yaw 输出完全来自 IMU 的 z 轴角速度（轮式合成 yaw 不可靠且被忽略，标定后的 IMU yaw 可靠）。深度点云仅作 Nav2 障碍物观测，不做 SLAM 或静态地图定位。运动链不可绕过方向门或安全门。
+EKF is the sole TF owner of `odom_combined -> base_footprint`; the EKF yaw output comes entirely from the IMU z-axis angular velocity (wheel-derived yaw is unreliable and ignored; the calibrated IMU yaw is reliable). The depth point cloud serves only as Nav2 obstacle observation, not SLAM or static-map localization. The motion chain must not bypass the direction guard or safety gate.
 
-## 四、关键任务实现策略
+## 4. Key Task Implementation Strategies
 
-| 任务 | 实现策略 |
+| Task | Strategy |
 | :--- | :--- |
-| 🧭 **全正向自主导航** | 所有路段由 Nav2 基于实时 costmap 规划，采用 Smac Hybrid `DUBIN` 规划器；有经过点的段用 `ComputePathThroughPoses` 生成路径并经原生 `ConstrainedSmoother` 碰撞检查平滑，结果仅供当次跟踪，不写死不落盘。全正向树禁止反向规划，每段最多 3 次受限直线 `BackUp` 脱困。 |
-| 🔳 **二维码任务（A 点）** | zbar 读取二维码，判读奇偶决定 C 区绕行方向（奇数 → 逆时针，偶数 → 顺时针）；读取失败或歧义时确定性回退逆时针并继续完赛。 |
-| 🖼️ **图生文任务（C1 点）** | 有界 VLM 对诊疗区人物 / 场景作简洁描述，8 s 超时与兜底描述保证任务不中断。 |
-| 🔊 **语音播报** | 任务文本经火山 TTS 合成播报；凭据默认禁用，可现场启用。 |
-| 🛡️ **动态避障** | Aurora 深度点云转换为前向 `/smartcar/depth/scan` 进入两张 costmap，障碍移走时空束以 `+Inf` 产生明确 clearing 射线，支撑 Nav2 实时重规划。 |
-| 🔒 **安全设计** | 方向门默认 STOP、安全门 fail-closed，全部运动命令经 Ackermann 安全链输出；五个运动门禁默认锁存，防止无人自动发车。 |
+| 🧭 **All-forward autonomous navigation** | Every segment is planned by Nav2 on the live costmap using the Smac Hybrid `DUBIN` planner; through-pose segments use `ComputePathThroughPoses` and are smoothed by the native `ConstrainedSmoother` with collision checking, used only for that `FollowPath` — never persisted or written to YAML. Reverse planning is forbidden; at most 3 constrained straight-line `BackUp` recoveries per segment. |
+| 🔳 **QR task (point A)** | zbar reads the QR code and uses its parity to select the C-zone direction (odd → counterclockwise, even → clockwise); on failure or ambiguity it deterministically falls back to counterclockwise and continues to complete the route. |
+| 🖼️ **Image-to-text task (point C1)** | A bounded VLM produces a concise description of the clinic-area person/scene, with an 8 s timeout and fallback description so the mission never stalls. |
+| 🔊 **Voice announcement** | Mission text is synthesized by Volcano TTS; credentials are disabled by default and can be enabled on site. |
+| 🛡️ **Dynamic obstacle avoidance** | Aurora depth point cloud is converted to a forward `/smartcar/depth/scan` that feeds both costmaps; cleared obstacles emit `+Inf` beams producing explicit clearing rays that support Nav2 real-time replanning. |
+| 🔒 **Safety design** | Direction guard defaults to STOP and the safety gate is fail-closed; all motion commands go through the Ackermann safety chain; five motion gates default latched to prevent unattended auto-launch. |
 
-## 五、与竞赛任务及规则的适配
+## 5. Competition Adaptation
 
-- 赛制为**全自动模式**，发车采用人工确认入口，车辆须人工置于 **P** 原点、车头朝 `+X`。
-- 完整路线全正向：`P → A → via_1 → via_2 → via_3 → via_6 → C1 → via_4 → via_5 → via_7 → P`；实车与仿真使用同一张路线，仅 A/C1 任务类型不同。
-- 导航严格由 Nav2 通用配置约束，不使用强制路径、先验墙体或点位专用阈值掩盖失败。
-- 支持语音、二维码、图生文三个独立媒体入口与一键系统启动，可按现场需要单独启用。
+- Fully **automatic mode** with a manual launch-confirmation entry; the vehicle must be manually placed at origin **P** facing `+X`.
+- Complete all-forward route: `P → A → via_1 → via_2 → via_3 → via_6 → C1 → via_4 → via_5 → via_7 → P`; the real-car and simulation routes share the same geometry, differing only in the A/C1 task type.
+- Navigation is strictly constrained by Nav2 generic configuration; no forced paths, prior walls, or waypoint-specific thresholds are used to mask failures.
+- Voice, QR, and image-to-text media entries plus one-click system launch can be enabled independently as needed on site.
 
-### 工程验证状态
+### Engineering Validation Status
 
-- ✅ 本机 Gazebo 已完成纯导航全路线软件校验。
-- ⏳ 深度相机动态障碍感知（costmap 标记 / 清障与实时重规划）、二维码 / 图生文 / 语音语义任务与受看护现场跑动仍需逐项验收。
+- ✅ Local Gazebo completed full-route pure-navigation software validation.
+- ⏳ Depth-camera dynamic obstacle perception (costmap marking / clearing and real-time replanning), QR / image-to-text / voice semantic tasks, and supervised on-site runs are still to be validated item by item.
 
 ---
 
-## 📚 文档入口
+## 📚 Documentation
 
-详细部署、仿真、航点编辑与现场流程见：
+Deployment, simulation, waypoint editing, and field procedures:
 
-- [文档与架构索引](docs/README.md)
-- [RDK 部署与现场流程](docs/deployment/rdk-environment-setup.md)
-- [本机 Gazebo 仿真](docs/deployment/local-simulation.md)
-- [航点编辑与授权](docs/deployment/waypoint-editor.md)
-- [脚本使用手册](docs/deployment/scripts.md)
-- [场地与诊断工具](docs/reference/field-tools.md)
+- [Docs & Architecture Index](docs/README.md)
+- [RDK Deployment & Field Procedures](docs/deployment/rdk-environment-setup.md)
+- [Local Gazebo Simulation](docs/deployment/local-simulation.md)
+- [Waypoint Editing & Authorization](docs/deployment/waypoint-editor.md)
+- [Scripts Reference](docs/deployment/scripts.md)
+- [Field & Diagnostics Tools](docs/reference/field-tools.md)
