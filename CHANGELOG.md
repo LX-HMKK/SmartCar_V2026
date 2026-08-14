@@ -1,5 +1,13 @@
 # 变更日志
 
+## 2026-08-14 - 方案文档重构与定位航向来源明确化
+
+### 文档
+
+- 根 `README.md` 按 NodeHub 竞赛方案提交规范重写为纯方案提交文档：增加赛队标识（溯源 · 常州大学 · 队长沈放 · 组员四人）与 Mermaid 分层架构图、硬件选型表、关键数据流、任务实现策略与规则适配五部分；原部署命令与工程细节全部下沉 `docs/`。
+- `CLAUDE.md` 与 `AGENTS.md` 交叉对齐：补齐经过点 `via` 语义与 `ComputePathThroughPoses` 实时平滑窄例外两条硬规则；`config/` 权威源表述精确为「`src/`（含各包内 `config/`）与全局 `config/`（DDS/udev）」。
+- 全链路文档明确定位航向来源：EKF 的 yaw 输出完全来自 IMU 的 z 轴角速度，轮式合成的 yaw 不可靠且被 EKF 忽略（`odom0_config` 角速度为 `false`），标定后的 IMU yaw 可靠。
+
 ## 2026-08-07 - 全正向路线 Gazebo 全链复验
 
 - 当前 `default_waypoints.yaml` 与 `nav_only.yaml` 收敛为四个显式 planning segment、14 个航点

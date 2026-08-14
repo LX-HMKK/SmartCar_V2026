@@ -60,8 +60,10 @@ Aurora /aurora/points2 -> 深度 relay -> /smartcar/depth/points -> safety + RVi
                                                                   -> local/global costmap
 ```
 
-EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。深度点云仅作为 Nav2 障碍物数据，
-不参与 SLAM 或静态地图定位。LiDAR 模式可提供 costmap 观测与连续扫描匹配里程计，但不做 SLAM。
+EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner。EKF 的 yaw 输出完全来自 IMU 的
+z 轴角速度：轮式里程计合成 yaw 不可靠（阿克曼底盘推算漂移），其角速度观测在 EKF 中被忽略；
+标定后的 IMU yaw 可靠。深度点云仅作为 Nav2 障碍物数据，不参与 SLAM 或静态地图定位。
+LiDAR 模式可提供 costmap 观测与连续扫描匹配里程计，但不做 SLAM。
 
 ### 实车与仿真边界
 

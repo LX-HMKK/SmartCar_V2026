@@ -174,7 +174,8 @@ velocity_smoother -> direction_guard -> smartcar_safety -> /ackermann_cmd
 
 不得绕过方向门或 safety，禁止直接向底盘发布 Twist 或 Ackermann 命令。LiDAR 用于连续扫描匹配
 里程计与 Nav2 costmap，不用于 SLAM 或静态地图定位；EKF 是 `odom_combined -> base_footprint` 的唯一
-TF owner。
+TF owner。EKF 的 yaw 输出完全来自 IMU 的 z 轴角速度：轮式合成的 yaw 不可靠且被 EKF 忽略，标定后的
+IMU yaw 可靠。
 
 ## 深度静态验收
 
