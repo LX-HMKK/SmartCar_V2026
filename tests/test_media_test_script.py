@@ -27,10 +27,10 @@ class MediaTestScriptTests(unittest.TestCase):
         for forbidden in ("smartcar_bringup", "use_base:=true", "use_nav:=true"):
             self.assertNotIn(forbidden, source)
 
-    def test_qr_output_is_limited_to_odd_or_even_and_vlm_auto_requests(self):
+    def test_qr_output_uses_the_qr_display_and_vlm_auto_requests(self):
         source = SCRIPT.read_text(encoding="utf-8")
         self.assertIn("--continuous", source)
-        self.assertIn("--output-topic /smartcar/output/text", source)
+        self.assertIn("--output-topic /smartcar/output/qr", source)
         self.assertIn("QR_PROBE_LOG", source)
         self.assertIn("MEDIA_STATE_DIR=/tmp/smartcar_media", source)
         self.assertIn("record_media_pid qr_probe", source)

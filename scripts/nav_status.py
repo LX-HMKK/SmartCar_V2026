@@ -20,6 +20,7 @@ LIFECYCLE_NODES = (
 TASK_SERVICES = ("start", "reset")
 VISION_SERVICES = ("qr", "vlm")
 ACTIVE_STATE_ID = 3
+POLL_INTERVAL_SEC = 0.2
 DEPTH_MIN_FRAMES = 2
 MAX_DEPTH_CAPTURE_AGE_SEC = 0.25
 MAX_DEPTH_FUTURE_SKEW_SEC = 0.05
@@ -498,7 +499,7 @@ def run(args) -> int:
                 return
 
         def _poll_lifecycle(self, now_sec):
-            if now_sec - self._last_lifecycle_poll_at < 1.0:
+            if now_sec - self._last_lifecycle_poll_at < POLL_INTERVAL_SEC:
                 return
             self._last_lifecycle_poll_at = now_sec
             for name, client in self._lifecycle_clients.items():
@@ -516,7 +517,7 @@ def run(args) -> int:
                 self._lifecycle_futures[name] = future
 
         def _poll_parameters(self, now_sec):
-            if now_sec - self._last_parameter_poll_at < 1.0:
+            if now_sec - self._last_parameter_poll_at < POLL_INTERVAL_SEC:
                 return
             self._last_parameter_poll_at = now_sec
             safety_future = self._parameter_futures.get("safety")

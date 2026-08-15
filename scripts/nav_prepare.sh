@@ -2,8 +2,8 @@
 # Rebuild the physical navigation stack only after source/config changes.
 set -euo pipefail
 
-SOURCE_ENV=/root/source_env.sh
 WORKSPACE=/home/sunrise/ros2_ws
+SOURCE_ENV="$WORKSPACE/scripts/source_env.sh"
 COLCON_PARALLEL_WORKERS=8
 BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"
 

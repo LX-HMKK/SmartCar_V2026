@@ -93,25 +93,21 @@ class QrProbeTests(unittest.TestCase):
         self.assertEqual(response_exit_code(True, "unexpected"), QR_NOT_FOUND)
         self.assertNotEqual(INVALID_ARGUMENT, QR_NOT_FOUND)
 
-    def test_competition_output_is_limited_to_odd_or_even(self):
-        self.assertEqual(
-            competition_output_text(True, "第3题：奇数", "ok"),
-            "奇数",
-        )
-        self.assertEqual(
-            competition_output_text(True, "偶数", "ok"),
-            "偶数",
-        )
+    def test_competition_output_keeps_the_decoded_qr_payload(self):
         self.assertEqual(
             competition_output_text(True, "9697", "ok"),
-            "奇数",
+            "9697",
+        )
+        self.assertEqual(
+            competition_output_text(True, " 0007 ", "ok"),
+            "0007",
         )
         self.assertEqual(
             competition_output_text(True, "640", "ok"),
-            "偶数",
+            "640",
         )
         self.assertEqual(
-            competition_output_text(True, "第3题", "ok"),
+            competition_output_text(True, "  ", "ok"),
             "未识别",
         )
         self.assertEqual(
@@ -193,11 +189,55 @@ class MediaDisplayTests(unittest.TestCase):
             enabled_window._start_command,
             ("bash", "/opt/smartcar/competition_mode.sh", "start", "--confirm"),
         )
+        enabled_window.set_qr("0024")
+        self.assertEqual(enabled_window.qr_label.text(), "0024")
         enabled_window.set_c_zone_direction("顺时针")
         self.assertEqual(enabled_window.c_zone_direction_label.text(), "顺时针")
         enabled_window.close()
         disabled_window.close()
         app.processEvents()
+
+    @unittest.skipUnless(
+        CompetitionOutputWindow is not None,
+        "PyQt5 is not installed on this test host",
+    )
+    def test_competition_layout_fits_the_1280x720_hdmi_panel(self):
+        from PyQt5.QtCore import QPoint
+
+        app = QApplication.instance() or QApplication(["competition-ui-hdmi-test"])
+        window = CompetitionOutputWindow(
+            CompetitionOutputBridge(),
+            "比赛输出",
+            "等待比赛输出",
+            "等待二维码",
+            "等待二维码后选择",
+            "等待诊疗区描述",
+            "急停锁存",
+            True,
+            "/opt/smartcar/competition_mode.sh",
+        )
+        try:
+            window.resize(1280, 720)
+            window.show()
+            app.processEvents()
+            root = window.centralWidget()
+            self.assertEqual((root.width(), root.height()), (1280, 720))
+            for widget in (
+                window.start_button,
+                window.start_status_label,
+                window.qr_label,
+                window.c_zone_direction_label,
+                window.vlm_output,
+                window.output_label,
+            ):
+                position = widget.mapTo(root, QPoint(0, 0))
+                self.assertGreaterEqual(position.x(), 0)
+                self.assertGreaterEqual(position.y(), 0)
+                self.assertLessEqual(position.x() + widget.width(), root.width())
+                self.assertLessEqual(position.y() + widget.height(), root.height())
+        finally:
+            window.close()
+            app.processEvents()
 
 
 class DisplayStateTests(unittest.TestCase):

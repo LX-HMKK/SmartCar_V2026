@@ -6,7 +6,6 @@ from smartcar_task.c_zone_direction import CLOCKWISE, COUNTERCLOCKWISE
 QR_PARITY_ODD = "odd"
 QR_PARITY_EVEN = "even"
 QR_PARITY_UNRECOGNIZED = "unrecognized"
-QR_UNRECOGNIZED_TEXT = "未识别"
 C_ZONE_DIRECTION_COUNTERCLOCKWISE_TEXT = "逆时针"
 C_ZONE_DIRECTION_CLOCKWISE_TEXT = "顺时针"
 
@@ -26,16 +25,6 @@ def classify_qr_parity(content):
     if value.isdecimal():
         return QR_PARITY_ODD if int(value) % 2 else QR_PARITY_EVEN
     return QR_PARITY_UNRECOGNIZED
-
-
-def qr_parity_text(content):
-    """Return the compact text shown on the competition display."""
-    parity = classify_qr_parity(content)
-    if parity == QR_PARITY_ODD:
-        return "奇数"
-    if parity == QR_PARITY_EVEN:
-        return "偶数"
-    return QR_UNRECOGNIZED_TEXT
 
 
 def c_zone_direction_for_qr(content):

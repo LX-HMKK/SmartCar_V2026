@@ -14,11 +14,9 @@ from smartcar_task.competition import (  # noqa: E402
     QR_PARITY_EVEN,
     QR_PARITY_ODD,
     QR_PARITY_UNRECOGNIZED,
-    QR_UNRECOGNIZED_TEXT,
     c_zone_direction_for_qr,
     c_zone_direction_text,
     classify_qr_parity,
-    qr_parity_text,
 )
 from smartcar_task.c_zone_direction import CLOCKWISE, COUNTERCLOCKWISE  # noqa: E402
 
@@ -40,11 +38,6 @@ class CompetitionQrTests(unittest.TestCase):
                     classify_qr_parity(payload),
                     QR_PARITY_UNRECOGNIZED,
                 )
-
-    def test_display_text_is_limited_to_parity_or_unrecognized(self):
-        self.assertEqual(qr_parity_text("13"), "奇数")
-        self.assertEqual(qr_parity_text("24"), "偶数")
-        self.assertEqual(qr_parity_text("WARD-A"), QR_UNRECOGNIZED_TEXT)
 
     def test_qr_parity_selects_the_authorized_c_zone_variant(self):
         self.assertEqual(c_zone_direction_for_qr("13"), COUNTERCLOCKWISE)

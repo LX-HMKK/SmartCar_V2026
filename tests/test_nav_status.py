@@ -13,6 +13,9 @@ spec.loader.exec_module(nav_status)
 
 
 class NavStatusContracts(unittest.TestCase):
+    def test_uses_a_short_poll_interval_for_startup_discovery(self):
+        self.assertEqual(nav_status.POLL_INTERVAL_SEC, 0.2)
+
     def ready_depth_snapshot(self):
         return nav_status.StartupSnapshot(
             lifecycle={name: nav_status.ACTIVE_STATE_ID

@@ -11,6 +11,10 @@ bt_navigator:
     # the observed local-costmap clear round trip in the simulator, which made
     # a legitimate collision recovery abort before it could replan.
     default_server_timeout: 100
+    # Native GoalReached nodes use this global tolerance. Keep it aligned with
+    # the return PositionGoalChecker so reaching P stops the return action
+    # before an obstacle-triggered controller failure can start BackUp.
+    goal_reached_tol: 0.15
     default_nav_to_pose_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
     # Setting plugin_lib_names replaces Nav2's defaults. Load only native
@@ -25,6 +29,8 @@ bt_navigator:
       - nav2_pipeline_sequence_bt_node
       - nav2_back_up_action_bt_node
       - nav2_remove_passed_goals_action_bt_node
+      - nav2_get_pose_from_path_action_bt_node
+      - nav2_goal_reached_condition_bt_node
       - nav2_smooth_path_action_bt_node
       - smartcar_remove_duplicate_path_points_bt_node
 
@@ -37,6 +43,9 @@ bt_navigator_navigate_through_poses_rclcpp_node:
     bt_loop_duration: 20
     # Keep the ThroughPoses navigator aligned with the primary navigator.
     default_server_timeout: 100
+    # Match the return PositionGoalChecker. The return tree uses this native
+    # condition to finish once its terminal path pose is within 0.15 m.
+    goal_reached_tol: 0.15
     default_nav_to_pose_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_to_pose_w_replanning_and_recovery.xml"
     default_nav_through_poses_bt_xml: "@SMARTCAR_NAV2_SHARE_DIR@/config/behavior_trees/navigate_through_poses_w_replanning_and_recovery.xml"
     # Same minimal native node set as the primary navigator.
@@ -51,6 +60,8 @@ bt_navigator_navigate_through_poses_rclcpp_node:
       - nav2_goal_checker_selector_bt_node
       - nav2_back_up_action_bt_node
       - nav2_remove_passed_goals_action_bt_node
+      - nav2_get_pose_from_path_action_bt_node
+      - nav2_goal_reached_condition_bt_node
       - nav2_smooth_path_action_bt_node
       - smartcar_remove_duplicate_path_points_bt_node
 
@@ -82,7 +93,10 @@ controller_server:
     progress_checker:
       plugin: "nav2_controller::SimpleProgressChecker"
       required_movement_radius: 0.25
-      movement_time_allowance: 15.0
+      # A genuine stall should fail FollowPath promptly, then use the existing
+      # bounded native BackUp and real-time replan. At the 0.05 m/s regulated
+      # floor, covering the required 0.25 m still has a one-second margin.
+      movement_time_allowance: 6.0
     goal_checker:
       plugin: "nav2_controller::SimpleGoalChecker"
       xy_goal_tolerance: 0.35

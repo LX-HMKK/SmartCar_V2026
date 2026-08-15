@@ -11,6 +11,8 @@ try:
     from PyQt5.QtWidgets import (
         QApplication,
         QLabel,
+        QGridLayout,
+        QHBoxLayout,
         QMainWindow,
         QMessageBox,
         QPushButton,
@@ -62,42 +64,44 @@ if QApplication is not None:
         ):
             super().__init__()
             self.setWindowTitle(window_title)
-            self.setMinimumSize(900, 450)
+            # The RDK HDMI panel is 1280x720.  Keep every competition result
+            # visible there instead of relying on a tall, single-column stack.
+            self.setMinimumSize(960, 540)
             self.resize(1280, 720)
             self.setStyleSheet("""
                 QMainWindow { background: #eef1f4; color: #17212b; }
-                QLabel#title { font-size: 34px; font-weight: 700; }
-                QLabel#state { color: #4a5d6c; font-size: 20px; }
-                QLabel#section { color: #3d5366; font-size: 22px; font-weight: 700; }
-                QLabel#start_status { color: #4a5d6c; font-size: 18px; }
+                QLabel#title { font-size: 28px; font-weight: 700; }
+                QLabel#state { color: #4a5d6c; font-size: 16px; }
+                QLabel#section { color: #3d5366; font-size: 18px; font-weight: 700; }
+                QLabel#start_status { color: #4a5d6c; font-size: 16px; }
                 QLabel#qr {
                     background: #ffffff;
                     border: 1px solid #c5ced6;
-                    font-size: 44px;
+                    font-size: 36px;
                     font-weight: 700;
-                    padding: 22px;
+                    padding: 12px;
                 }
                 QLabel#c_zone_direction {
                     background: #ffffff;
                     border: 1px solid #c5ced6;
                     color: #165c85;
-                    font-size: 28px;
+                    font-size: 24px;
                     font-weight: 700;
-                    padding: 12px;
+                    padding: 10px;
                 }
                 QTextEdit#vlm, QLabel#output {
                     background: #ffffff;
                     border: 1px solid #c5ced6;
-                    font-size: 28px;
-                    padding: 18px;
+                    font-size: 20px;
+                    padding: 10px;
                 }
                 QPushButton#start {
                     background: #167d45;
                     border: 1px solid #126438;
                     color: #ffffff;
-                    font-size: 28px;
+                    font-size: 22px;
                     font-weight: 700;
-                    min-height: 62px;
+                    min-height: 46px;
                 }
                 QPushButton#start:disabled {
                     background: #aeb8b1;
@@ -107,8 +111,8 @@ if QApplication is not None:
             """)
             root = QWidget(self)
             layout = QVBoxLayout(root)
-            layout.setContentsMargins(28, 28, 28, 28)
-            layout.setSpacing(12)
+            layout.setContentsMargins(18, 18, 18, 18)
+            layout.setSpacing(8)
             self._start_command = (
                 competition_start_argv(remote_start_command)
                 if remote_start_enabled else ()
@@ -121,52 +125,87 @@ if QApplication is not None:
             self._start_process.finished.connect(self._finish_start)
             self._start_process.errorOccurred.connect(self._handle_start_error)
 
+            header = QWidget(root)
+            header_layout = QHBoxLayout(header)
+            header_layout.setContentsMargins(0, 0, 0, 0)
+            header_layout.setSpacing(16)
+
+            heading = QWidget(header)
+            heading_layout = QVBoxLayout(heading)
+            heading_layout.setContentsMargins(0, 0, 0, 0)
+            heading_layout.setSpacing(0)
+
             title = QLabel(window_title)
             title.setObjectName("title")
-            title.setAlignment(Qt.AlignCenter)
-            layout.addWidget(title)
+            title.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            heading_layout.addWidget(title)
 
             self.state_label = QLabel(normalize_output_text(initial_state))
             self.state_label.setObjectName("state")
-            self.state_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(self.state_label)
+            self.state_label.setWordWrap(True)
+            self.state_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            heading_layout.addWidget(self.state_label)
+            header_layout.addWidget(heading, 1)
 
             self.start_button = QPushButton("发车")
             self.start_button.setObjectName("start")
+            self.start_button.setMinimumWidth(156)
+            self.start_button.setMaximumWidth(190)
             self.start_button.setEnabled(bool(self._start_command))
             self.start_button.clicked.connect(self.request_start)
-            layout.addWidget(self.start_button)
 
             self.start_status_label = QLabel(
-                "急停锁存，等待发车"
+                "预置完成，等待发车"
                 if self._start_command else "此界面未授权发车"
             )
             self.start_status_label.setObjectName("start_status")
-            self.start_status_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(self.start_status_label)
+            self.start_status_label.setWordWrap(True)
+            self.start_status_label.setMinimumWidth(250)
+            self.start_status_label.setMaximumWidth(320)
+            self.start_status_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            header_layout.addWidget(self.start_status_label)
+            header_layout.addWidget(self.start_button)
+            layout.addWidget(header)
 
+            content = QWidget(root)
+            content_layout = QGridLayout(content)
+            content_layout.setContentsMargins(0, 0, 0, 0)
+            content_layout.setHorizontalSpacing(12)
+            content_layout.setVerticalSpacing(8)
+
+            summary = QWidget(content)
+            summary_layout = QVBoxLayout(summary)
+            summary_layout.setContentsMargins(0, 0, 0, 0)
+            summary_layout.setSpacing(6)
             qr_title = QLabel("二维码结果")
             qr_title.setObjectName("section")
-            layout.addWidget(qr_title)
+            summary_layout.addWidget(qr_title)
 
             self.qr_label = QLabel(normalize_output_text(initial_qr))
             self.qr_label.setObjectName("qr")
             self.qr_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(self.qr_label)
+            self.qr_label.setMinimumHeight(116)
+            summary_layout.addWidget(self.qr_label, 1)
 
             c_zone_title = QLabel("C区行驶方向")
             c_zone_title.setObjectName("section")
-            layout.addWidget(c_zone_title)
+            summary_layout.addWidget(c_zone_title)
 
             self.c_zone_direction_label = QLabel(
                 normalize_output_text(initial_c_zone_direction))
             self.c_zone_direction_label.setObjectName("c_zone_direction")
+            self.c_zone_direction_label.setWordWrap(True)
             self.c_zone_direction_label.setAlignment(Qt.AlignCenter)
-            layout.addWidget(self.c_zone_direction_label)
+            self.c_zone_direction_label.setMinimumHeight(84)
+            summary_layout.addWidget(self.c_zone_direction_label, 1)
 
+            vlm_panel = QWidget(content)
+            vlm_layout = QVBoxLayout(vlm_panel)
+            vlm_layout.setContentsMargins(0, 0, 0, 0)
+            vlm_layout.setSpacing(6)
             vlm_title = QLabel("诊疗区描述")
             vlm_title.setObjectName("section")
-            layout.addWidget(vlm_title)
+            vlm_layout.addWidget(vlm_title)
 
             self.vlm_output = QTextEdit()
             self.vlm_output.setObjectName("vlm")
@@ -174,13 +213,21 @@ if QApplication is not None:
             self.vlm_output.setAcceptRichText(False)
             self.vlm_output.setLineWrapMode(QTextEdit.WidgetWidth)
             self.vlm_output.setPlainText(normalize_output_text(initial_vlm))
-            layout.addWidget(self.vlm_output, 1)
+            self.vlm_output.setMinimumHeight(240)
+            vlm_layout.addWidget(self.vlm_output, 1)
+
+            content_layout.addWidget(summary, 0, 0)
+            content_layout.addWidget(vlm_panel, 0, 1)
+            content_layout.setColumnStretch(0, 3)
+            content_layout.setColumnStretch(1, 7)
+            layout.addWidget(content, 1)
 
             self.output_label = QLabel(normalize_output_text(initial_text))
             self.output_label.setObjectName("output")
             self.output_label.setWordWrap(True)
             self.output_label.setAlignment(Qt.AlignCenter)
-            self.output_label.setMaximumHeight(96)
+            self.output_label.setMinimumHeight(48)
+            self.output_label.setMaximumHeight(64)
             layout.addWidget(self.output_label)
             self.setCentralWidget(root)
             bridge.text_received.connect(self.set_text)
@@ -235,7 +282,7 @@ if QApplication is not None:
             self._start_output = ""
             self.start_button.setEnabled(False)
             self.start_button.setText("发车中")
-            self.start_status_label.setText("正在进行发车前检查")
+            self.start_status_label.setText("正在触发比赛任务")
             self._start_process.start(
                 self._start_command[0], list(self._start_command[1:]))
 

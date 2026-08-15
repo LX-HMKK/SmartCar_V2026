@@ -6,9 +6,13 @@
         <ComputePathThroughPoses goals="{goals}" path="{raw_path}" planner_id="GridBased"/>
         <RemoveDuplicatePathPoints input_path="{raw_path}" output_path="{deduplicated_path}"/>
         <SmoothPath unsmoothed_path="{deduplicated_path}" smoothed_path="{path}" smoother_id="constrained_smoother" max_smoothing_duration="0.20" check_for_collisions="true"/>
+        <GetPoseFromPath path="{path}" pose="{terminal_path_goal}" index="-1"/>
         <PipelineSequence name="TrackReturnThroughPathAndPersistPassedConstraints">
           <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
-          <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="return_goal_checker"/>
+          <ReactiveFallback name="FinishReturnWithinTerminalTolerance">
+            <GoalReached goal="{terminal_path_goal}" global_frame="odom_combined" robot_base_frame="base_footprint"/>
+            <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="return_goal_checker"/>
+          </ReactiveFallback>
         </PipelineSequence>
       </Sequence>
       <Sequence name="NativeBackUpAndPruneRemainingConstraints">

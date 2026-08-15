@@ -189,7 +189,7 @@ class MissionTests(unittest.TestCase):
         )
 
         mission = self.make_mission(vision=FakeVision(
-            qr=OperationResult(True, "ok", "24"),
+            qr=OperationResult(True, "ok", "0024"),
             vlm=OperationResult(True, "ok", "person"),
         ))
         result = mission.execute(
@@ -211,8 +211,12 @@ class MissionTests(unittest.TestCase):
                 (clockwise_return, finish),
             ],
         )
+        self.assertEqual(self.output.qr, ["0024"])
         self.assertEqual(self.output.c_zone_direction, ["顺时针"])
-        self.assertEqual(self.output.text, ["24", "C区方向：顺时针", "person"])
+        self.assertEqual(
+            self.output.text,
+            ["0024", "C区方向：顺时针", "person"],
+        )
 
     def test_odd_or_unrecognized_qr_keeps_the_authored_c_zone_variant(self):
         a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")

@@ -7,10 +7,10 @@
 # ============================================================
 set -uo pipefail
 
-SOURCE_ENV=/root/source_env.sh
 WORKSPACE=/home/sunrise/ros2_ws
+SOURCE_ENV="$WORKSPACE/scripts/source_env.sh"
 WP="$WORKSPACE/src/smartcar_nav2/config/waypoints/nav_only.yaml"
-STATUS_TOOL=/root/nav_status.py
+STATUS_TOOL="$WORKSPACE/scripts/nav_status.py"
 BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"
 STATE_DIR=/tmp/smartcar_nav
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
@@ -47,13 +47,13 @@ source_fingerprint() {
 require_prepared_workspace() {
   local prepared current
   if [[ ! -r "$BUILD_FINGERPRINT" ]]; then
-    echo "missing $BUILD_FINGERPRINT; run /root/nav_prepare.sh"
+    echo "missing $BUILD_FINGERPRINT; run bash $WORKSPACE/scripts/nav_prepare.sh"
     exit 2
   fi
   prepared=$(tr -d '[:space:]' < "$BUILD_FINGERPRINT")
   current=$(source_fingerprint)
   if [[ -z "$prepared" || "$prepared" != "$current" ]]; then
-    echo "RDK source differs from the prepared build; run /root/nav_prepare.sh"
+    echo "RDK source differs from the prepared build; run bash $WORKSPACE/scripts/nav_prepare.sh"
     exit 2
   fi
 }
@@ -153,7 +153,7 @@ start_rviz() {
 # nav_prepare.sh owns cleanup and build. This entry verifies that preparation,
 # then starts the prepared stack, checks it, and optionally starts the route.
 test -x "$STATUS_TOOL" || {
-  echo "missing $STATUS_TOOL; run /root/nav_prepare.sh"
+  echo "missing $STATUS_TOOL; run bash $WORKSPACE/scripts/nav_prepare.sh"
   exit 2
 }
 

@@ -50,7 +50,7 @@ bash scripts/local_waypoint_editor.sh use_rviz:=true
 以下本机命令的目标由 `SMARTCAR_RDK_HOST` 决定。当前无线地址：
 
 ```bash
-export SMARTCAR_RDK_HOST=root@172.16.24.170
+export SMARTCAR_RDK_HOST=root@10.15.243.92
 ```
 
 ### `sync_to_rdk.py`
@@ -64,7 +64,8 @@ python3 scripts/sync_to_rdk.py push
 python3 scripts/sync_to_rdk.py setup
 ```
 
-`setup` 将 `scripts/source_env.sh` 写到 RDK 的 `~/source_env.sh`。其他低频子命令：
+`setup` 将 `scripts/source_env.sh` 写到 RDK 工作空间的
+`/home/sunrise/ros2_ws/scripts/source_env.sh`。其他低频子命令：
 
 ```bash
 python3 scripts/sync_to_rdk.py pull --dry-run
@@ -93,12 +94,12 @@ bash scripts/nav_deploy.sh
 
 ### `nav_prepare.sh`
 
-RDK 上的准备入口，部署后路径为 `/root/nav_prepare.sh`。它会停止当前导航栈、增量构建到
+RDK 上的准备入口，部署后路径为 `/home/sunrise/ros2_ws/scripts/nav_prepare.sh`。它会停止当前导航栈、增量构建到
 `smartcar_bringup` 和 `smartcar_vision`，并写入构建指纹：
 
 ```bash
 ssh "$SMARTCAR_RDK_HOST"
-bash /root/nav_prepare.sh
+bash /home/sunrise/ros2_ws/scripts/nav_prepare.sh
 ```
 
 通常通过 `nav_deploy.sh` 间接调用；只有在 RDK 已同步但需要重新准备时才直接执行。它不启动
@@ -106,11 +107,11 @@ bash /root/nav_prepare.sh
 
 ### `source_env.sh`
 
-RDK 环境定义文件，不直接执行。`sync_to_rdk.py setup` 将它部署为 `~/source_env.sh`；在 RDK
+RDK 环境定义文件，不直接执行。`sync_to_rdk.py setup` 将它部署到工作空间 scripts/；在 RDK
 终端加载环境时使用：
 
 ```bash
-source ~/source_env.sh
+source /home/sunrise/ros2_ws/scripts/source_env.sh
 cd /home/sunrise/ros2_ws
 ```
 
@@ -118,7 +119,7 @@ cd /home/sunrise/ros2_ws
 
 ### `nav_test.sh`
 
-部署后位于 `/home/sunrise/ros2_ws/scripts/nav_test.sh`；`/root/nav_test.sh` 是同一版本的兼容入口。
+部署后位于 `/home/sunrise/ros2_ws/scripts/nav_test.sh`。
 固定启动 Aurora 深度、`pointcloud_to_laserscan` 和双 costmap。Nav2 节点先启动，生命周期激活会等待
 Aurora 初始化稳定；核心状态正常后才启动 RViz。普通启动保持软件急停锁存：
 
@@ -128,7 +129,7 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 
 启动前会校验 `src/` 与 `.smartcar_nav_prepare_fingerprint` 一致；若刚执行过
 `sync_to_rdk.py push` 而未运行准备构建，它会拒绝启动，避免误用旧的 `install/` 产物。执行
-`bash /root/nav_prepare.sh`，或使用 `bash scripts/nav_deploy.sh` 完成同步和准备后再启动。
+`bash /home/sunrise/ros2_ws/scripts/nav_prepare.sh`，或使用 `bash scripts/nav_deploy.sh` 完成同步和准备后再启动。
 
 它会启动实体 Aurora 相机，因此需要本次实体相机授权。以下两个命令还会在状态检查后复位、解除
 软件急停并发车，必须先取得本次非零运动授权，确认物理急停可用，并将车人工放在 P 原点、车头朝
@@ -147,12 +148,12 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 
 ### `competition_mode.sh`
 
-比赛入口部署在 `/home/sunrise/ros2_ws/scripts/competition_mode.sh`；`/root/competition_mode.sh`
-是同一文件的兼容入口。`sync_to_rdk.py push` 会同步两份入口，代码或配置变化后仍须先运行
+比赛入口部署在 `/home/sunrise/ros2_ws/scripts/competition_mode.sh`。`sync_to_rdk.py push` 会同步工作空间入口，代码或配置变化后仍须先运行
 `nav_prepare.sh`，由构建指纹阻止使用旧的 `install/` 产物。
 
 ```bash
-# 收到本次实体相机授权后：挂载所有比赛节点，但不发车
+# 收到本次实体相机授权后：先将车人工放在 P 原点、车头朝 +X，
+# 再挂载并预置所有比赛节点；全程保持急停，不发车
 bash /home/sunrise/ros2_ws/scripts/competition_mode.sh prepare
 
 # 裁判发令且本次非零运动已明确授权后：在“比赛输出”UI按“发车”，
@@ -169,7 +170,10 @@ bash /home/sunrise/ros2_ws/scripts/competition_mode.sh stop
 `safety_emergency_stop_on_start:=true`。健康检查还要求 QR 与 VLM 服务可用；默认预热模式会额外确认
 ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。它还只检查 RDK 本地
 `config/volcengine_ark.local.yaml` 是否存在且非空，绝不读取或打印密钥；该文件已从同步白名单排除。
-健康检查完成后才启动唯一的“比赛输出”UI；该 UI 同时显示任务状态、QR 奇偶、已选 C 区方向和 VLM 文本。比赛入口固定
+在健康检查通过后，`prepare` 仍在软件急停锁存下执行一次 P 点定位复位，并将该结果绑定到当前比赛栈 PID。
+因此裁判发令时不再重复健康快照或定位复位；按钮只解除软件急停并触发任务。若赛前位置或健康状态发生变化，
+车辆重新放到 P 点后执行 `bash /home/sunrise/ros2_ws/scripts/competition_mode.sh arm` 重新预置，急停始终保持锁存。
+健康检查完成后才启动唯一的“比赛输出”UI；该 UI 同时显示任务状态、识别出的 QR 数字、已选 C 区方向和 VLM 文本。比赛入口固定
 `use_visualization:=false`，不会启动 RViz、OpenCV
 `imshow`、`rgb_imshow`、独立 `qr_test.launch.py` 或 `vlm_test.launch.py`。不要与
 `media_test.sh` 并行运行，以免再次争用 Aurora。
@@ -180,14 +184,14 @@ ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。它还只检
 确认车辆位于 P 原点、车头朝 `+X` 且物理急停可用。该按钮只由比赛入口显式启用，并在 RDK 本地异步调用
 同一 `competition_mode.sh start --confirm` 流程；远程桌面连接可操作该 UI，但不能跳过本次实体相机和
 非零运动的明确授权。`start --confirm` 保留为 UI 不可用时的受看护恢复入口，不能与 UI 发车并行执行。
-无论从哪个入口发车，流程都按“验证 P 原点定位复位 -> 解除软件急停 -> `/smartcar/task/start`”顺序执行。
+无论从哪个入口发车，流程都按“已预置标记 -> 解除软件急停 -> `/smartcar/task/start`”顺序执行。
 
 `prepare` 会拒绝在已有底盘、Nav2、任务、Aurora 或视觉节点运行时再启动，避免旧 ROS 栈的全局话题和
 服务误通过本次健康检查。此时先确认物理急停，再执行 `competition_mode.sh stop` 或按现场流程清理旧栈。
 
 比赛任务在 A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> counterclockwise（逆时针）`，
 `偶数 -> clockwise（顺时针）`，`未识别`、歧义结果或 QR 读取失败均回退
-`counterclockwise（逆时针）`，并继续完整路线返回 P。QR 奇偶和所选方向都会发布到比赛输出 UI。
+`counterclockwise（逆时针）`，并继续完整路线返回 P。识别出的 QR 数字和所选方向都会发布到比赛输出 UI。
 该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
 VLM 无有效结果时发布受控的通用描述并继续回到 P。上述降级只覆盖语义任务结果，不能掩盖 Nav2、方向门、
 safety、定位或 costmap 故障；这些故障仍必须停止并按现场流程处理。
@@ -205,11 +209,12 @@ bash /home/sunrise/ros2_ws/scripts/media_test.sh vlm
 
 两个模式都会打开 OpenCV `imshow` 的 Aurora RGB 原始画面。`qr` 单独使用 Aurora RGB `640x400`
 模式以提高二维码短测的有效像素，`vlm` 保持默认 Aurora RGB 模式。`qr` 还会打开“QR 比赛输出”UI，持续识别
-并显示 `奇数`、`偶数` 或 `未识别`；调整画面后会继续等待新的二维码结果。关闭该 UI 或按 Ctrl-C
+并显示解码出的 QR 内容或 `未识别`；调整画面后会继续等待新的二维码结果。关闭该 UI 或按 Ctrl-C
 结束本次 QR 短测。`vlm` 会打开
 图生文比赛输出 UI，收到首个有效 RGB 帧且服务可用后自动请求一次。若画面拍偏或不可确认，提示词和
 服务兜底都会返回通用猜测文字。此脚本会启动实体 Aurora 相机，需要该次相机授权；不产生底盘运动。
-部署了视觉源码改动后，先运行 `/root/nav_prepare.sh` 以重建 `smartcar_tools`。
+部署了视觉源码改动后，先运行 `/home/sunrise/ros2_ws/scripts/nav_prepare.sh` 以重建
+`smartcar_tools`。
 
 ### `nav_status.py`
 
@@ -217,7 +222,7 @@ bash /home/sunrise/ros2_ws/scripts/media_test.sh vlm
 scan 和双 costmap；RViz 在该检查成功后启动。通常无需单独运行。需要人工诊断已启动栈时：
 
 ```bash
-python3 /root/nav_status.py --depth-camera --timeout 60
+python3 /home/sunrise/ros2_ws/scripts/nav_status.py --depth-camera --timeout 60
 ```
 
 可额外传入 `--launch-pid <pid>` 和 `--rviz-pid <pid>`，使检查同时验证对应进程仍在运行。

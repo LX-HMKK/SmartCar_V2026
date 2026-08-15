@@ -23,13 +23,7 @@ def competition_output_text(success, content, status):
     if not bool(success) or str(status) != "ok":
         return "未识别"
     value = str(content).strip()
-    if "奇数" in value:
-        return "奇数"
-    if "偶数" in value:
-        return "偶数"
-    if value.isdecimal():
-        return "奇数" if int(value) % 2 else "偶数"
-    return "未识别"
+    return value or "未识别"
 
 
 def build_parser():

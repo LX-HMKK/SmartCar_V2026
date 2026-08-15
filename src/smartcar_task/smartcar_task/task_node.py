@@ -500,6 +500,11 @@ class RosNavigator:
             setattr(self, attribute, client)
             return client
 
+    def prewarm_action_clients(self):
+        """Start DDS discovery before the operator releases the e-stop."""
+        self._action_client(through_poses=False)
+        self._action_client(through_poses=True)
+
     def _wait_for_action_server(self, client, timeout_sec):
         deadline = time.monotonic() + max(0.0, float(timeout_sec))
         poll_interval = 0.5
@@ -1692,6 +1697,7 @@ class TaskNode(Node):
             self.get_parameter(
                 "return_through_poses_behavior_tree").value,
         )
+        self._navigator.prewarm_action_clients()
         self._vision = RosVision(self, self._io_group)
         self._localization = RosLocalization(
             self,

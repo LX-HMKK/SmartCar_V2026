@@ -6,7 +6,7 @@
   pull         RDK /home/sunrise/ros2_ws/src/ -> 本机 src/（反向，慎用）
   pull-waypoints  仅回传 RDK 上现场微调后的语义航点 YAML
   init-vendor  一次性回传官方 origincar 到本机
-  setup        scp source_env.sh 到 RDK ~/
+  setup        scp source_env.sh 到 RDK 工作空间 scripts/
 
 环境：
   - 免密 ssh key 到 RDK；默认 root@192.168.128.10。DHCP 地址可通过
@@ -42,18 +42,24 @@ LOCAL_CONFIG = REPO_ROOT / "config"
 LOCAL_VENDOR_ORIGINCAR = LOCAL_SRC / "origincar"
 LOCAL_SOURCE_ENV = REPO_ROOT / "scripts" / "source_env.sh"
 RUNTIME_SCRIPT_TARGETS = (
-    (REPO_ROOT / "scripts" / "nav_prepare.sh", "/root/nav_prepare.sh"),
-    (REPO_ROOT / "scripts" / "nav_test.sh", "/root/nav_test.sh"),
+    (REPO_ROOT / "scripts" / "source_env.sh",
+     f"{REMOTE_WS}/scripts/source_env.sh"),
+    (REPO_ROOT / "scripts" / "nav_prepare.sh",
+     f"{REMOTE_WS}/scripts/nav_prepare.sh"),
     (REPO_ROOT / "scripts" / "nav_test.sh",
      f"{REMOTE_WS}/scripts/nav_test.sh"),
-    (REPO_ROOT / "scripts" / "competition_mode.sh", "/root/competition_mode.sh"),
     (REPO_ROOT / "scripts" / "competition_mode.sh",
      f"{REMOTE_WS}/scripts/competition_mode.sh"),
     (REPO_ROOT / "scripts" / "media_test.sh",
      f"{REMOTE_WS}/scripts/media_test.sh"),
-    (REPO_ROOT / "scripts" / "nav_status.py", "/root/nav_status.py"),
+    (REPO_ROOT / "scripts" / "nav_status.py",
+     f"{REMOTE_WS}/scripts/nav_status.py"),
     (REPO_ROOT / "scripts" / "ros_cleanup.sh",
      f"{REMOTE_WS}/scripts/ros_cleanup.sh"),
+    (REPO_ROOT / "scripts" / "nav_deploy.sh",
+     f"{REMOTE_WS}/scripts/nav_deploy.sh"),
+    (REPO_ROOT / "scripts" / "sync_to_rdk.py",
+     f"{REMOTE_WS}/scripts/sync_to_rdk.py"),
 )
 WAYPOINTS_RELATIVE_PATH = Path(
     "src/smartcar_nav2/config/waypoints/default_waypoints.yaml")
@@ -201,7 +207,7 @@ def build_parser():
     p.add_argument("--dry-run", action="store_true")
     p.set_defaults(func="init_vendor")
 
-    p = sub.add_parser("setup", help="scp source_env.sh 到 RDK ~/")
+    p = sub.add_parser("setup", help="scp source_env.sh 到 RDK 工作空间 scripts/")
     p.set_defaults(func="setup")
 
     return parser
@@ -258,12 +264,12 @@ def cmd_setup(args):
     if not LOCAL_SOURCE_ENV.is_file():
         print(f"错误：{LOCAL_SOURCE_ENV} 不存在", file=sys.stderr)
         sys.exit(1)
-    cmd = ["scp", str(LOCAL_SOURCE_ENV), f"{HOST}:~/source_env.sh"]
+    cmd = ["scp", str(LOCAL_SOURCE_ENV), f"{HOST}:{REMOTE_WS}/scripts/source_env.sh"]
     print("$ " + " ".join(cmd))
     result = subprocess.run(cmd)
     if result.returncode != 0:
         sys.exit(result.returncode)
-    print(f"已部署到 {HOST}:~/source_env.sh，RDK 上 source ~/source_env.sh 即可。")
+    print(f"已部署到 {HOST}:{REMOTE_WS}/scripts/source_env.sh，RDK 上 source {REMOTE_WS}/scripts/source_env.sh 即可。")
 
 
 _DISPATCH = {

@@ -10,7 +10,6 @@ from smartcar_task.planning_segments import (
 from smartcar_task.competition import (
     c_zone_direction_for_qr,
     c_zone_direction_text,
-    qr_parity_text,
 )
 from smartcar_task.c_zone_direction import CLOCKWISE, COUNTERCLOCKWISE
 
@@ -579,7 +578,7 @@ class Mission:
     def _publish_qr_value(self, value):
         publish_qr = getattr(self._output, "publish_qr", None)
         if callable(publish_qr):
-            publish_qr(qr_parity_text(value))
+            publish_qr(str(value).strip())
         self._publish_value(value)
 
     def _publish_vlm_value(self, value):

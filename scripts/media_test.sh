@@ -2,8 +2,8 @@
 # Isolated Aurora RGB media check: bash media_test.sh qr|vlm
 set -uo pipefail
 
-SOURCE_ENV=/root/source_env.sh
 WORKSPACE=/home/sunrise/ros2_ws
+SOURCE_ENV="$WORKSPACE/scripts/source_env.sh"
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
 QR_LOG_DIR="$RUNTIME_DIR/smartcar_media"
 MEDIA_STATE_DIR=/tmp/smartcar_media
@@ -118,7 +118,7 @@ case "$1" in
     # lets the operator adjust distance and framing after the first attempt.
     ros2 run smartcar_tools qr_probe \
       --service-wait-sec 15 --timeout-sec 3 --continuous \
-      --interval-sec 0.25 --output-topic /smartcar/output/text \
+      --interval-sec 0.25 --output-topic /smartcar/output/qr \
       >"$QR_PROBE_LOG" 2>&1 &
     probe_pid=$!
     record_media_pid qr_probe "$probe_pid"

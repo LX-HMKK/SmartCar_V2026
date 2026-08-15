@@ -113,16 +113,18 @@ class TestTargets(unittest.TestCase):
         self.assertTrue(any(d.endswith("/src/") for d in dsts))
         self.assertTrue(any(d.endswith("/config/") for d in dsts))
         self.assertTrue(all(d.startswith(sync.HOST) for d in dsts))
-        self.assertIn(f"{sync.HOST}:/root/nav_prepare.sh", dsts)
-        self.assertIn(f"{sync.HOST}:/root/nav_test.sh", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/source_env.sh", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_prepare.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_test.sh", dsts)
-        self.assertIn(f"{sync.HOST}:/root/competition_mode.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/competition_mode.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/media_test.sh", dsts)
-        self.assertIn(f"{sync.HOST}:/root/nav_status.py", dsts)
+        self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_status.py", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/ros_cleanup.sh", dsts)
 
@@ -193,6 +195,10 @@ class TestCmdSetup(unittest.TestCase):
                 self.assertTrue(run.called)
                 argv = run.call_args[0][0]
                 self.assertEqual(argv[0], "scp")
+                self.assertEqual(
+                    argv[-1],
+                    f"{sync.HOST}:{sync.REMOTE_WS}/scripts/source_env.sh",
+                )
 
 
 class TestCmdPull(unittest.TestCase):

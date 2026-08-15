@@ -54,8 +54,19 @@ class TaskLaunchContractTests(unittest.TestCase):
 
         primary, recovery_actions = recovery
         self.assertEqual(primary.tag, "Sequence")
-        self.assertEqual(len(primary), 4)
-        initial_plan, deduplicate, smooth_path, tracking = primary
+        is_return_tree = (
+            filename == "navigate_through_poses_return_w_replanning_and_recovery.xml"
+        )
+        self.assertEqual(len(primary), 5 if is_return_tree else 4)
+        initial_plan, deduplicate, smooth_path = primary[:3]
+        if is_return_tree:
+            terminal_goal, tracking = primary[3:]
+            self.assertEqual(terminal_goal.tag, "GetPoseFromPath")
+            self.assertEqual(terminal_goal.attrib["path"], "{path}")
+            self.assertEqual(terminal_goal.attrib["pose"], "{terminal_path_goal}")
+            self.assertEqual(terminal_goal.attrib["index"], "-1")
+        else:
+            tracking = primary[3]
         self.assertEqual(initial_plan.tag, "ComputePathThroughPoses")
         self.assertEqual(initial_plan.attrib["goals"], "{goals}")
         self.assertEqual(initial_plan.attrib["path"], "{raw_path}")
@@ -74,15 +85,30 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertEqual(
             smooth_path.attrib["check_for_collisions"], "true")
         self.assertEqual(tracking.tag, "PipelineSequence")
-        self.assertEqual([child.tag for child in tracking], [
-            "RemovePassedGoals", "FollowPath"])
-        continuous_prune, follow_path = tracking
+        self.assertEqual(
+            [child.tag for child in tracking],
+            ["RemovePassedGoals", "ReactiveFallback"]
+            if is_return_tree else ["RemovePassedGoals", "FollowPath"],
+        )
+        continuous_prune, tracking_action = tracking
         self.assertEqual(continuous_prune.attrib["input_goals"], "{goals}")
         self.assertEqual(continuous_prune.attrib["output_goals"], "{goals}")
         self.assertEqual(continuous_prune.attrib["radius"], "0.40")
         self.assertEqual(continuous_prune.attrib["global_frame"], "odom_combined")
         self.assertEqual(
             continuous_prune.attrib["robot_base_frame"], "base_footprint")
+        if is_return_tree:
+            self.assertEqual(
+                [child.tag for child in tracking_action],
+                ["GoalReached", "FollowPath"],
+            )
+            goal_reached, follow_path = tracking_action
+            self.assertEqual(goal_reached.attrib["goal"], "{terminal_path_goal}")
+            self.assertEqual(goal_reached.attrib["global_frame"], "odom_combined")
+            self.assertEqual(
+                goal_reached.attrib["robot_base_frame"], "base_footprint")
+        else:
+            follow_path = tracking_action
         self.assertEqual(follow_path.tag, "FollowPath")
         self.assertEqual(follow_path.attrib["path"], "{path}")
 
@@ -242,6 +268,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         source = NODE.read_text(encoding="utf-8")
         for token in (
             "ActionClient(",
+            "def prewarm_action_clients(self):",
+            "self._navigator.prewarm_action_clients()",
             "NavigateToPose,",
             '"/navigate_to_pose"',
             '"/smartcar/direction_guard/prepare"',
@@ -496,6 +524,49 @@ class TaskLaunchContractTests(unittest.TestCase):
         for filename in THROUGH_POSES_TREES:
             self._assert_through_poses_recovery_tree(filename)
 
+    def test_stalled_follow_path_uses_a_short_global_progress_deadline(self):
+        controller = yaml.safe_load(
+            (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        )["controller_server"]["ros__parameters"]
+        progress = controller["progress_checker"]
+
+        self.assertEqual(
+            progress["plugin"], "nav2_controller::SimpleProgressChecker")
+        self.assertEqual(float(progress["required_movement_radius"]), 0.25)
+        self.assertEqual(float(progress["movement_time_allowance"]), 6.0)
+        self.assertEqual(float(controller["failure_tolerance"]), 0.0)
+
+    def test_return_goal_tolerance_precedes_native_back_up(self):
+        parameters = yaml.safe_load(
+            (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
+        )
+        controller = parameters["controller_server"]["ros__parameters"]
+        return_checker = controller["return_goal_checker"]
+
+        self.assertEqual(
+            return_checker["plugin"], "nav2_controller::PositionGoalChecker")
+        self.assertEqual(float(return_checker["xy_goal_tolerance"]), 0.15)
+        self.assertFalse(return_checker["stateful"])
+        for navigator in (
+            "bt_navigator",
+            "bt_navigator_navigate_through_poses_rclcpp_node",
+        ):
+            navigator_parameters = parameters[navigator]["ros__parameters"]
+            self.assertEqual(
+                float(navigator_parameters["goal_reached_tol"]),
+                float(return_checker["xy_goal_tolerance"]),
+            )
+            self.assertIn(
+                "nav2_get_pose_from_path_action_bt_node",
+                navigator_parameters["plugin_lib_names"],
+            )
+            self.assertIn(
+                "nav2_goal_reached_condition_bt_node",
+                navigator_parameters["plugin_lib_names"],
+            )
+        self._assert_through_poses_recovery_tree(
+            "navigate_through_poses_return_w_replanning_and_recovery.xml")
+
     def test_costmaps_use_the_configured_inflation_radius(self):
         parameters = yaml.safe_load(
             (NAV2_CONFIG / "nav2_params.yaml").read_text(encoding="utf-8")
@@ -664,7 +735,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("autostart_mission:=false", source)
         self.assertIn("safety_emergency_stop_on_start:=true", source)
         self.assertNotIn("safety_emergency_stop_on_start:=false", source)
-        self.assertIn('STATUS_TOOL=/root/nav_status.py', source)
+        self.assertIn('STATUS_TOOL="$WORKSPACE/scripts/nav_status.py"', source)
         self.assertIn('BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"', source)
         self.assertIn('require_prepared_workspace', source)
         self.assertIn('RDK source differs from the prepared build', source)

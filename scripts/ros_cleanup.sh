@@ -69,6 +69,8 @@ stop_saved_process "$COMPETITION_STATE_DIR/launch.pid" \
 stop_saved_process "$COMPETITION_STATE_DIR/output_ui.pid" \
   "ros2 run smartcar_tools competition_output_display"
 rm -f "$COMPETITION_STATE_DIR/qr_reader_preloaded"
+rm -f "$COMPETITION_STATE_DIR/armed_launch.pid"
+rmdir "$COMPETITION_STATE_DIR/start.lock" 2>/dev/null || true
 rmdir "$COMPETITION_STATE_DIR" 2>/dev/null || true
 stop_saved_process "$MEDIA_STATE_DIR/qr_probe.pid" \
   "ros2 run smartcar_tools qr_probe"

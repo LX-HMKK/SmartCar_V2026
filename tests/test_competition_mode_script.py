@@ -19,6 +19,7 @@ class CompetitionModeScriptTests(unittest.TestCase):
 
     def test_exposes_a_two_phase_manual_start_interface(self):
         self.assertIn("competition_mode.sh prepare [--lazy-qr]", self.source)
+        self.assertIn("competition_mode.sh arm", self.source)
         self.assertIn("competition_mode.sh start --confirm", self.source)
         self.assertIn("competition_mode.sh status", self.source)
         self.assertIn("competition_mode.sh stop", self.source)
@@ -80,12 +81,29 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertLess(active_authority, lightdm_fallback)
         self.assertLess(lightdm_fallback, root_fallback)
 
-    def test_start_orders_reset_then_release_then_task_trigger(self):
+    def test_prepare_prearms_before_start_releases_the_stop(self):
+        prearm = self.function_body("arm_prepared_stack", "hold_after_start_failure")
         start = self.function_body("start", "status")
-        reset = self.source.index("/smartcar/task/reset")
-        release = self.source.index("set_software_emergency_stop false")
-        trigger = self.source.index("/smartcar/task/start")
-        self.assertLess(reset, release)
+        self.assertIn("verify_stack_health", prearm)
+        self.assertIn("reset_task_origin", prearm)
+        self.assertIn("write_armed_launch_identity", prearm)
+        self.assertLess(
+            prearm.index("verify_stack_health"),
+            prearm.index("set_software_emergency_stop true"),
+        )
+        self.assertLess(
+            prearm.index("set_software_emergency_stop true"),
+            prearm.index("reset_task_origin"),
+        )
+        self.assertLess(
+            prearm.index("reset_task_origin"),
+            prearm.index("write_armed_launch_identity"),
+        )
+        self.assertIn("stack_is_armed", start)
+        self.assertNotIn("verify_stack_health", start)
+        self.assertNotIn("reset_task_origin", start)
+        release = start.index("set_software_emergency_stop false")
+        trigger = start.index("/smartcar/task/start")
         self.assertLess(release, trigger)
         self.assertIn("hold_after_start_failure", self.source)
         self.assertIn("set_software_emergency_stop true", self.source)
@@ -127,10 +145,14 @@ class CompetitionModeScriptTests(unittest.TestCase):
             with self.subTest(node=node):
                 self.assertIn(node, stale_check)
 
-        prepare_body = self.function_body("prepare", "start")
+        prepare_body = self.function_body("prepare", "arm")
         prepare = prepare_body.index("assert_no_competing_ros_stack")
         launch = prepare_body.index("nohup ros2 launch")
         self.assertLess(prepare, launch)
+        self.assertIn(
+            "arm_prepared_stack \"$launch_pid\" \"$preload_qr\" 75",
+            prepare_body,
+        )
         stop = self.source.index("stop() {")
         cleanup = self.source.index('bash "$WORKSPACE/scripts/ros_cleanup.sh"')
         self.assertLess(stop, cleanup)
@@ -154,6 +176,10 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertIn('$COMPETITION_STATE_DIR/output_ui.pid', source)
         self.assertIn(
             'rm -f "$COMPETITION_STATE_DIR/qr_reader_preloaded"',
+            source,
+        )
+        self.assertIn(
+            'rm -f "$COMPETITION_STATE_DIR/armed_launch.pid"',
             source,
         )
 
