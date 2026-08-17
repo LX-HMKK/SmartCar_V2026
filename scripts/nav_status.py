@@ -6,6 +6,7 @@ import argparse
 from dataclasses import dataclass, field
 import math
 import os
+from pathlib import Path
 import time
 
 
@@ -21,11 +22,128 @@ TASK_SERVICES = ("start", "reset")
 VISION_SERVICES = ("qr", "vlm")
 ACTIVE_STATE_ID = 3
 POLL_INTERVAL_SEC = 0.2
+RPC_TIMEOUT_SEC = 1.0
+PREARM_RPC_TIMEOUT_SEC = 12.0
 DEPTH_MIN_FRAMES = 2
 MAX_DEPTH_CAPTURE_AGE_SEC = 0.25
 MAX_DEPTH_FUTURE_SKEW_SEC = 0.05
 DEPTH_POINTS_FRAME = "depth_camera_link_1"
 DEPTH_SCAN_FRAME = "base_footprint"
+
+LIFECYCLE_STATE_NAMES = {
+    0: "unknown",
+    1: "unconfigured",
+    2: "inactive",
+    3: "active",
+    4: "finalized",
+    10: "configuring",
+    11: "cleaningup",
+    12: "shuttingdown",
+    13: "activating",
+    14: "deactivating",
+    15: "errorprocessing",
+}
+
+
+@dataclass
+class PendingRpc:
+    """One outstanding asynchronous service request and its monotonic start."""
+
+    future: object
+    started_at: float
+
+
+def lifecycle_state_name(state_id: int | None) -> str:
+    if state_id is None:
+        return "missing"
+    return LIFECYCLE_STATE_NAMES.get(state_id, f"state_{state_id}")
+
+
+def inactive_lifecycle_nodes(snapshot: "StartupSnapshot") -> list[str]:
+    return [
+        f"{name}={lifecycle_state_name(snapshot.lifecycle.get(name))}"
+        for name in LIFECYCLE_NODES
+        if snapshot.lifecycle.get(name) != ACTIVE_STATE_ID
+    ]
+
+
+def take_current_rpc(
+    pending_calls: dict[str, PendingRpc], key: str, future: object,
+) -> PendingRpc | None:
+    """Remove and return only the request still current for ``key``.
+
+    A timed-out request can complete after its replacement was sent.  Its
+    callback must not overwrite the newer response or clear the newer request.
+    """
+
+    pending = pending_calls.get(key)
+    if pending is None or pending.future is not future:
+        return None
+    pending_calls.pop(key, None)
+    return pending
+
+
+def discard_timed_out_rpc(
+    pending_calls: dict[str, PendingRpc], key: str, now_sec: float,
+) -> PendingRpc | None:
+    """Cancel and discard one expired RPC, returning it for diagnostics."""
+
+    pending = pending_calls.get(key)
+    if pending is None or pending.future.done():
+        return None
+    if now_sec - pending.started_at < RPC_TIMEOUT_SEC:
+        return None
+
+    # Drop it before cancellation because cancel() may synchronously invoke its
+    # callback.  A late callback is then ignored by take_current_rpc().
+    pending_calls.pop(key, None)
+    try:
+        pending.future.cancel()
+    except Exception:
+        pass
+    return pending
+
+
+def service_response_succeeded(response: object) -> bool:
+    """Return whether a std_srvs response explicitly accepted the request."""
+
+    return bool(getattr(response, "success", False))
+
+
+class StartupTimelineLogger:
+    """Emit startup diagnostics to stdout and, optionally, a private append log."""
+
+    def __init__(self, log_path: str | None):
+        self._path = Path(log_path) if log_path else None
+        self._write_failed = False
+
+    def emit(self, message: str) -> None:
+        # ROS status strings are external input. Keep a malformed value from
+        # injecting extra lines into the persistent diagnostic log.
+        line = message.replace("\r", "\\r").replace("\n", "\\n")
+        print(line, flush=True)
+        if self._path is None or self._write_failed:
+            return
+
+        try:
+            self._path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            flags = os.O_WRONLY | os.O_APPEND | os.O_CREAT
+            if hasattr(os, "O_CLOEXEC"):
+                flags |= os.O_CLOEXEC
+            if hasattr(os, "O_NOFOLLOW"):
+                flags |= os.O_NOFOLLOW
+            descriptor = os.open(self._path, flags, 0o600)
+            try:
+                entry = (
+                    f"{time.strftime('%Y-%m-%dT%H:%M:%S%z')} {line}\n"
+                ).encode("utf-8", "replace")
+                if os.write(descriptor, entry) != len(entry):
+                    raise OSError("short startup timeline write")
+            finally:
+                os.close(descriptor)
+        except OSError:
+            self._write_failed = True
+            print("WARNING startup timeline log append unavailable", flush=True)
 
 
 @dataclass
@@ -203,6 +321,9 @@ def summary(snapshot: StartupSnapshot, now_sec: float | None = None) -> str:
     active_count = sum(
         snapshot.lifecycle.get(name) == ACTIVE_STATE_ID
         for name in LIFECYCLE_NODES)
+    lifecycle_waiting = ",".join(inactive_lifecycle_nodes(snapshot)) or "none"
+    nav2_state = "active" if active_count == len(LIFECYCLE_NODES) else (
+        f"waiting[{lifecycle_waiting}]")
     task_services = "+".join(
         name for name in TASK_SERVICES
         if snapshot.task_services.get(name, False)) or "waiting"
@@ -228,7 +349,7 @@ def summary(snapshot: StartupSnapshot, now_sec: float | None = None) -> str:
         snapshot.costmap_sources.get(scope, "-")
         for scope in ("local", "global"))
     return (
-        f"nav2={active_count}/{len(LIFECYCLE_NODES)} "
+        f"nav2={nav2_state} "
         f"safety={snapshot.safety or 'waiting'} "
         f"guard={snapshot.direction_guard or 'waiting'} "
         f"task={snapshot.task or 'waiting'} services={task_services} "
@@ -269,6 +390,18 @@ def parse_args(argv=None):
     parser.add_argument("--timeout", type=float, default=30.0)
     parser.add_argument("--launch-pid", type=int, default=0)
     parser.add_argument("--rviz-pid", type=int, default=0)
+    parser.add_argument(
+        "--prearm",
+        action="store_true",
+        help=(
+            "After the health snapshot, confirm the software stop and reset "
+            "the task origin in this same ROS process"
+        ),
+    )
+    parser.add_argument(
+        "--timeline-log",
+        help="Append startup progress and final diagnostics to this local log file",
+    )
     return parser.parse_args(argv)
 
 
@@ -279,6 +412,8 @@ def run(args) -> int:
         raise ValueError("process IDs must be non-negative")
     if args.preloaded_qr_reader and not args.vision_services:
         raise ValueError("--preloaded-qr-reader requires --vision-services")
+    timeline_log = getattr(args, "timeline_log", None)
+    prearm = getattr(args, "prearm", False)
 
     from lifecycle_msgs.srv import GetState
     from nav2_msgs.msg import Costmap
@@ -290,7 +425,7 @@ def run(args) -> int:
     from rclpy.qos import DurabilityPolicy, QoSProfile, ReliabilityPolicy
     from sensor_msgs.msg import LaserScan, PointCloud2
     from std_msgs.msg import Float32, String
-    from std_srvs.srv import Trigger
+    from std_srvs.srv import SetBool, Trigger
     if args.vision_services:
         from smartcar_interfaces.srv import DescribeScene, ReadQr
 
@@ -337,14 +472,19 @@ def run(args) -> int:
                 vision_required=args.vision_services,
                 qr_reader_required=args.preloaded_qr_reader,
             )
-            self.deadline = time.monotonic() + args.timeout
+            self.started_at = time.monotonic()
+            self.deadline = self.started_at + args.timeout
             self.exit_code: int | None = None
+            self._timeline = StartupTimelineLogger(timeline_log)
             self._last_report = ""
-            self._last_report_at = 0.0
+            self._last_report_at = self.started_at - 1.0
             self._last_lifecycle_poll_at = 0.0
             self._last_parameter_poll_at = 0.0
-            self._lifecycle_futures = {}
-            self._parameter_futures = {}
+            self._lifecycle_futures: dict[str, PendingRpc] = {}
+            self._parameter_futures: dict[str, PendingRpc] = {}
+            self._prearm_futures: dict[str, PendingRpc] = {}
+            self._prearm_phase = "health" if prearm else "disabled"
+            self._prearm_error = ""
             self._lifecycle_clients = {
                 name: self.create_client(GetState, f"/{name}/get_state")
                 for name in LIFECYCLE_NODES
@@ -353,6 +493,10 @@ def run(args) -> int:
                 name: self.create_client(Trigger, f"/smartcar/task/{name}")
                 for name in TASK_SERVICES
             }
+            self._emergency_stop_client = None
+            if prearm:
+                self._emergency_stop_client = self.create_client(
+                    SetBool, "/smartcar/safety/emergency_stop")
             self._vision_clients = {}
             if args.vision_services:
                 self._vision_clients = {
@@ -402,6 +546,13 @@ def run(args) -> int:
                     LaserScan, "/smartcar/depth/scan",
                     self._on_depth_scan, sensor_qos)
             self.create_timer(0.2, self._tick)
+            self._emit(
+                "BEGIN "
+                f"timeout={args.timeout:.1f}s launch_pid={args.launch_pid or '-'} "
+                f"depth_camera={args.depth_camera} "
+                f"vision_services={args.vision_services} prearm={prearm}",
+                self.started_at,
+            )
 
         def _on_safety(self, message):
             self.snapshot.safety = message.data.strip()
@@ -458,13 +609,181 @@ def run(args) -> int:
                 return self.snapshot.depth_scan_received_at is not None
             return self.snapshot.scan_received_at is not None
 
-        def _store_lifecycle(self, name, future):
+        def _emit(self, message: str, now_sec: float | None = None):
+            if now_sec is None:
+                now_sec = time.monotonic()
+            elapsed = max(0.0, now_sec - self.started_at)
+            self._timeline.emit(f"[startup {elapsed:.1f}s] {message}")
+
+        def _discard_expired_rpc(
+            self,
+            pending_calls: dict[str, PendingRpc],
+            key: str,
+            target: str,
+            now_sec: float,
+        ) -> bool:
+            expired = discard_timed_out_rpc(pending_calls, key, now_sec)
+            if expired is None:
+                return False
+            self._emit(
+                f"rpc_timeout target={target} age="
+                f"{now_sec - expired.started_at:.2f}s retrying",
+                now_sec,
+            )
+            return True
+
+        def _start_rpc(
+            self,
+            pending_calls: dict[str, PendingRpc],
+            key: str,
+            target: str,
+            client,
+            request,
+            callback,
+        ) -> bool:
+            started_at = time.monotonic()
             try:
-                self.snapshot.lifecycle[name] = future.result().current_state.id
+                future = client.call_async(request)
             except Exception:
-                self.snapshot.lifecycle.pop(name, None)
+                self._emit(f"rpc_request_failed target={target}", started_at)
+                return False
+            pending_calls[key] = PendingRpc(future=future, started_at=started_at)
+            future.add_done_callback(callback)
+            return True
+
+        def _fail_prearm(self, reason: str, now_sec: float):
+            if self._prearm_error:
+                return
+            self._prearm_error = reason
+            self._emit(f"PREARM_FAILED reason={reason}", now_sec)
+
+        def _discard_expired_prearm_rpc(
+            self, key: str, target: str, now_sec: float,
+        ) -> bool:
+            pending = self._prearm_futures.get(key)
+            if pending is None or pending.future.done():
+                return False
+            age_sec = now_sec - pending.started_at
+            if age_sec < PREARM_RPC_TIMEOUT_SEC:
+                return False
+
+            # A reset may already have reached the task node when its response
+            # times out.  Do not issue it again; retain the startup stop and
+            # require an explicit operator re-arm instead.
+            self._prearm_futures.pop(key, None)
+            try:
+                pending.future.cancel()
+            except Exception:
+                pass
+            self._fail_prearm(f"{target}_timeout", now_sec)
+            return True
+
+        def _store_prearm_stop_latch(self, future):
+            if take_current_rpc(
+                    self._prearm_futures, "emergency_stop", future) is None:
+                return
+            try:
+                response = future.result()
+            except Exception:
+                self._fail_prearm(
+                    "emergency_stop_response_error", time.monotonic())
+                return
+            if not service_response_succeeded(response):
+                self._fail_prearm(
+                    "emergency_stop_rejected", time.monotonic())
+                return
+            self._prearm_phase = "reset"
+            self._emit("PREARM_STOP_LATCHED")
+
+        def _store_prearm_reset(self, future):
+            if take_current_rpc(self._prearm_futures, "reset", future) is None:
+                return
+            try:
+                response = future.result()
+            except Exception:
+                self._fail_prearm("origin_reset_response_error", time.monotonic())
+                return
+            if not service_response_succeeded(response):
+                self._fail_prearm("origin_reset_rejected", time.monotonic())
+                return
+            self._prearm_phase = "complete"
+            self._emit("PREARM_ORIGIN_RESET_COMPLETE")
+
+        def _advance_prearm(self, now_sec: float):
+            if self._prearm_error or self._prearm_phase == "complete":
+                return
+            if self._prearm_phase == "health":
+                if not self._emergency_stop_client.service_is_ready():
+                    return
+                request = SetBool.Request()
+                request.data = True
+                if not self._start_rpc(
+                        self._prearm_futures,
+                        "emergency_stop",
+                        "prearm:emergency_stop",
+                        self._emergency_stop_client,
+                        request,
+                        self._store_prearm_stop_latch,
+                ):
+                    self._fail_prearm("emergency_stop_request_failed", now_sec)
+                    return
+                self._prearm_phase = "latching_stop"
+                self._emit("PREARM_STOP_LATCHING", now_sec)
+                return
+            if self._prearm_phase == "latching_stop":
+                pending = self._prearm_futures.get("emergency_stop")
+                if pending is not None and pending.future.done():
+                    self._store_prearm_stop_latch(pending.future)
+                else:
+                    self._discard_expired_prearm_rpc(
+                        "emergency_stop", "emergency_stop", now_sec)
+                return
+            if self._prearm_phase == "reset":
+                reset_client = self._task_clients["reset"]
+                if not reset_client.service_is_ready():
+                    return
+                if not self._start_rpc(
+                        self._prearm_futures,
+                        "reset",
+                        "prearm:origin_reset",
+                        reset_client,
+                        Trigger.Request(),
+                        self._store_prearm_reset,
+                ):
+                    self._fail_prearm("origin_reset_request_failed", now_sec)
+                    return
+                self._prearm_phase = "resetting_origin"
+                self._emit("PREARM_ORIGIN_RESETTING", now_sec)
+                return
+            if self._prearm_phase == "resetting_origin":
+                pending = self._prearm_futures.get("reset")
+                if pending is not None and pending.future.done():
+                    self._store_prearm_reset(pending.future)
+                else:
+                    self._discard_expired_prearm_rpc(
+                        "reset", "origin_reset", now_sec)
+                return
+
+        def _store_lifecycle(self, name, future):
+            if take_current_rpc(self._lifecycle_futures, name, future) is None:
+                return
+            try:
+                state_id = future.result().current_state.id
+            except Exception:
+                if name in self.snapshot.lifecycle:
+                    self.snapshot.lifecycle.pop(name, None)
+                self._emit(f"lifecycle_rpc_error node={name}")
+                return
+            previous_state = self.snapshot.lifecycle.get(name)
+            self.snapshot.lifecycle[name] = state_id
+            if previous_state != state_id:
+                self._emit(
+                    f"lifecycle node={name} "
+                    f"state={lifecycle_state_name(state_id)}")
 
         def _store_safety_parameters(self, future):
+            if take_current_rpc(self._parameter_futures, "safety", future) is None:
+                return
             try:
                 values = future.result().values
                 if len(values) != len(safety_parameter_names) or any(
@@ -484,9 +803,13 @@ def run(args) -> int:
                     voltage_timeout_sec=values[9].double_value,
                 )
             except Exception:
+                self._emit("parameters_rpc_error target=safety")
                 return
 
         def _store_costmap_parameters(self, scope, future):
+            if take_current_rpc(
+                    self._parameter_futures, scope, future) is None:
+                return
             try:
                 values = future.result().values
                 if len(values) != len(costmap_parameter_names) or any(
@@ -496,6 +819,7 @@ def run(args) -> int:
                 self.snapshot.costmap_sources[scope] = values[0].string_value.strip()
                 self.snapshot.costmap_topics[scope] = values[1].string_value.strip()
             except Exception:
+                self._emit(f"parameters_rpc_error target={scope}_costmap")
                 return
 
         def _poll_lifecycle(self, now_sec):
@@ -505,46 +829,88 @@ def run(args) -> int:
             for name, client in self._lifecycle_clients.items():
                 if self.snapshot.lifecycle.get(name) == ACTIVE_STATE_ID:
                     continue
-                future = self._lifecycle_futures.get(name)
-                if future is not None and not future.done():
+                pending = self._lifecycle_futures.get(name)
+                if pending is not None:
+                    if pending.future.done():
+                        self._store_lifecycle(name, pending.future)
+                    elif not self._discard_expired_rpc(
+                            self._lifecycle_futures,
+                            name,
+                            f"lifecycle:{name}",
+                            now_sec):
+                        continue
+                if self.snapshot.lifecycle.get(name) == ACTIVE_STATE_ID:
                     continue
                 if not client.service_is_ready():
                     continue
-                future = client.call_async(GetState.Request())
-                future.add_done_callback(
+                self._start_rpc(
+                    self._lifecycle_futures,
+                    name,
+                    f"lifecycle:{name}",
+                    client,
+                    GetState.Request(),
                     lambda completed, node_name=name:
-                    self._store_lifecycle(node_name, completed))
-                self._lifecycle_futures[name] = future
+                    self._store_lifecycle(node_name, completed),
+                )
 
         def _poll_parameters(self, now_sec):
             if now_sec - self._last_parameter_poll_at < POLL_INTERVAL_SEC:
                 return
             self._last_parameter_poll_at = now_sec
-            safety_future = self._parameter_futures.get("safety")
+            safety_pending = self._parameter_futures.get("safety")
+            if safety_pending is not None:
+                if safety_pending.future.done():
+                    self._store_safety_parameters(safety_pending.future)
+                else:
+                    self._discard_expired_rpc(
+                        self._parameter_futures,
+                        "safety",
+                        "parameters:safety",
+                        now_sec,
+                    )
             if (not self.snapshot.safety_requirements.is_complete()
-                    and (safety_future is None or safety_future.done())
+                    and "safety" not in self._parameter_futures
                     and self._safety_parameter_client.service_is_ready()):
                 request = GetParameters.Request()
                 request.names = list(safety_parameter_names)
-                safety_future = self._safety_parameter_client.call_async(request)
-                safety_future.add_done_callback(self._store_safety_parameters)
-                self._parameter_futures["safety"] = safety_future
+                self._start_rpc(
+                    self._parameter_futures,
+                    "safety",
+                    "parameters:safety",
+                    self._safety_parameter_client,
+                    request,
+                    self._store_safety_parameters,
+                )
             for scope, client in self._costmap_parameter_clients.items():
-                future = self._parameter_futures.get(scope)
+                pending = self._parameter_futures.get(scope)
+                if pending is not None:
+                    if pending.future.done():
+                        self._store_costmap_parameters(scope, pending.future)
+                    else:
+                        self._discard_expired_rpc(
+                            self._parameter_futures,
+                            scope,
+                            f"parameters:{scope}_costmap",
+                            now_sec,
+                        )
                 if (scope in self.snapshot.costmap_sources
                         and scope in self.snapshot.costmap_topics):
                     continue
-                if future is not None and not future.done():
+                if scope in self._parameter_futures:
                     continue
                 if not client.service_is_ready():
                     continue
                 request = GetParameters.Request()
                 request.names = list(costmap_parameter_names)
-                future = client.call_async(request)
-                future.add_done_callback(
+                self._start_rpc(
+                    self._parameter_futures,
+                    scope,
+                    f"parameters:{scope}_costmap",
+                    client,
+                    request,
                     lambda completed, costmap_scope=scope:
-                    self._store_costmap_parameters(costmap_scope, completed))
-                self._parameter_futures[scope] = future
+                    self._store_costmap_parameters(costmap_scope, completed),
+                )
 
         def _poll_task_services(self):
             self.snapshot.task_services = {
@@ -566,7 +932,9 @@ def run(args) -> int:
         def _tick(self):
             now_sec = time.monotonic()
             if args.launch_pid and not _process_is_running(args.launch_pid):
-                print("NOT_READY launch_exited", flush=True)
+                report = summary(self.snapshot, now_sec)
+                self._emit(
+                    f"NOT_READY missing=launch_exited {report}", now_sec)
                 self.exit_code = 1
                 return
             if self.snapshot.rviz_required:
@@ -583,20 +951,44 @@ def run(args) -> int:
                 require_qr_reader=args.preloaded_qr_reader,
             )
             report = summary(self.snapshot, now_sec)
-            if (report != self._last_report
+            progress = f"{report} missing={','.join(missing) or 'none'}"
+            if (progress != self._last_report
                     and now_sec - self._last_report_at >= 1.0):
-                elapsed = args.timeout - max(0.0, self.deadline - now_sec)
-                print(f"[startup {elapsed:.1f}s] {report}", flush=True)
-                self._last_report = report
+                self._emit(progress, now_sec)
+                self._last_report = progress
                 self._last_report_at = now_sec
-            if not missing:
-                print(f"READY {report}", flush=True)
+            if prearm:
+                if self._prearm_phase == "health":
+                    if not missing:
+                        self._advance_prearm(now_sec)
+                else:
+                    self._advance_prearm(now_sec)
+                if self._prearm_error:
+                    self._emit(
+                        f"NOT_READY prearm={self._prearm_error} {report}",
+                        now_sec)
+                    self.exit_code = 1
+                    return
+                if self._prearm_phase == "complete":
+                    self._emit(f"PREARM_READY {report} missing=none", now_sec)
+                    self.exit_code = 0
+                    return
+            elif not missing:
+                self._emit(f"READY {report} missing=none", now_sec)
                 self.exit_code = 0
                 return
             if now_sec >= self.deadline:
-                print(
+                if prearm and self._prearm_phase != "health":
+                    self._fail_prearm(
+                        f"{self._prearm_phase}_deadline", now_sec)
+                    self._emit(
+                        f"NOT_READY prearm={self._prearm_error} {report}",
+                        now_sec)
+                    self.exit_code = 1
+                    return
+                self._emit(
                     f"NOT_READY missing={','.join(missing)} {report}",
-                    flush=True)
+                    now_sec)
                 self.exit_code = 1
 
     rclpy.init()

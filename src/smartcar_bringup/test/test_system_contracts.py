@@ -248,6 +248,15 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('executable="field_reference_node"', system_source)
         self.assertIn('executable="waypoint_viz"', system_source)
         self.assertIn("condition=IfCondition(use_imu_filter)", vendor_source)
+        self.assertIn("use_lidar = LaunchConfiguration('use_lidar')", vendor_source)
+        self.assertIn(
+            "DeclareLaunchArgument('use_lidar', default_value='true')",
+            vendor_source,
+        )
+        self.assertIn(
+            "link_to_laser = Node(\n        condition=IfCondition(use_lidar),",
+            vendor_source,
+        )
         self.assertGreaterEqual(
             vendor_source.count(
                 "condition=IfCondition(use_robot_description)"

@@ -1,12 +1,12 @@
-<!-- Up to three native bounded BackUp recoveries, each followed by a live-costmap replan. -->
+<!-- Up to six native bounded BackUp recoveries, each followed by a live-costmap replan. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="3" name="ReplanAfterNativeBackUp">
+    <RecoveryNode number_of_retries="6" name="ReplanAfterNativeBackUp">
       <Sequence name="PlanThenFollowPrecisePath">
         <ComputePathToPose goal="{goal}" path="{path}" planner_id="GridBased"/>
         <FollowPath path="{path}" controller_id="FollowPath" goal_checker_id="precise_goal_checker"/>
       </Sequence>
-      <BackUp backup_dist="0.20" backup_speed="0.15" time_allowance="4.0"/>
+      <BackUp backup_dist="0.20" backup_speed="0.25" time_allowance="4.0"/>
     </RecoveryNode>
   </BehaviorTree>
 </root>

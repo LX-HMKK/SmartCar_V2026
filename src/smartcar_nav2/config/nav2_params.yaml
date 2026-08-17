@@ -328,7 +328,7 @@ velocity_smoother:
     feedback: "OPEN_LOOP"
     max_velocity: [0.50, 0.0, 1.3636363636363635]
     # The only negative command source is Nav2's finite native BackUp recovery.
-    min_velocity: [-0.15, 0.0, -1.3636363636363635]
+    min_velocity: [-0.25, 0.0, -1.3636363636363635]
     max_accel: [0.5, 0.0, 1.0]
     max_decel: [-2.0, 0.0, -2.0]
     odom_topic: "/odom_combined"

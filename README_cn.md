@@ -134,8 +134,8 @@ EKF 是 `odom_combined -> base_footprint` 的唯一 TF owner；EKF 的 yaw 输�
 
 | 任务 | 实现策略 |
 | :--- | :--- |
-| 🧭 **全正向自主导航** | 所有路段由 Nav2 基于实时 costmap 规划，采用 Smac Hybrid `DUBIN` 规划器；有经过点的段用 `ComputePathThroughPoses` 生成路径并经原生 `ConstrainedSmoother` 碰撞检查平滑，结果仅供当次跟踪，不写死不落盘。全正向树禁止反向规划，每段最多 3 次受限直线 `BackUp` 脱困。 |
-| 🔳 **二维码任务（A 点）** | zbar 读取二维码，判读奇偶决定 C 区绕行方向（奇数 → 逆时针，偶数 → 顺时针）；读取失败或歧义时确定性回退逆时针并继续完赛。 |
+| 🧭 **全正向自主导航** | 所有路段由 Nav2 基于实时 costmap 规划，采用 Smac Hybrid `DUBIN` 规划器；有经过点的段用 `ComputePathThroughPoses` 生成路径并经原生 `ConstrainedSmoother` 碰撞检查平滑，结果仅供当次跟踪，不写死不落盘。全正向树禁止反向规划，每段最多 6 次受限直线 `BackUp` 脱困，每次 `0.20 m`、速度不超过 `0.25 m/s`。 |
+| 🔳 **二维码任务（A 点）** | zbar 读取二维码，判读奇偶决定 C 区绕行方向（奇数 → 顺时针，偶数 → 逆时针）；读取失败或歧义时确定性回退逆时针并继续完赛。 |
 | 🖼️ **图生文任务（C1 点）** | 有界 VLM 对诊疗区人物 / 场景作简洁描述，8 s 超时与兜底描述保证任务不中断。 |
 | 🔊 **语音播报** | 任务文本经火山 TTS 合成播报；凭据默认禁用，可现场启用。 |
 | 🛡️ **动态避障** | Aurora 深度点云转换为前向 `/smartcar/depth/scan` 进入两张 costmap，障碍移走时空束以 `+Inf` 产生明确 clearing 射线，支撑 Nav2 实时重规划。 |

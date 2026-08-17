@@ -9,6 +9,7 @@ MEDIA_STATE_DIR=/tmp/smartcar_media
 stop_saved_process() {
   local pid_file=$1
   local expected=$2
+  local stop_signal=${3:-TERM}
   local pid cmdline
 
   [ -r "$pid_file" ] || return
@@ -24,7 +25,7 @@ stop_saved_process() {
   fi
 
   echo "  stopping PID $pid ($expected)"
-  kill -TERM "$pid" 2>/dev/null || true
+  kill -"$stop_signal" "$pid" 2>/dev/null || true
   for _ in 1 2 3 4 5; do
     kill -0 "$pid" 2>/dev/null || break
     sleep 1
@@ -65,7 +66,8 @@ stop_saved_process "$STATE_DIR/launch.pid" \
 stop_saved_process "$STATE_DIR/rviz.pid" "navigation.rviz"
 rmdir "$STATE_DIR" 2>/dev/null || true
 stop_saved_process "$COMPETITION_STATE_DIR/launch.pid" \
-  "ros2 launch smartcar_bringup smartcar_system.launch.py"
+  "python3 /home/sunrise/ros2_ws/scripts/competition_launch.py" \
+  USR1
 stop_saved_process "$COMPETITION_STATE_DIR/output_ui.pid" \
   "ros2 run smartcar_tools competition_output_display"
 rm -f "$COMPETITION_STATE_DIR/qr_reader_preloaded"
@@ -98,6 +100,7 @@ TARGET_PIDS=$( {
     '/smartcar_tools/(rgb_imshow|competition_output_display|vlm_display|qr_probe|image_replay_node)' \
     '/zbar_ros/barcode_reader' \
     'ros2 launch smartcar_tools (qr_test|vlm_test)\.launch\.py' \
+    'competition_launch\.py' \
     'media_test\.sh (qr|vlm)' \
     '/smartcar_(task|safety|vision|nav2|bringup)/' \
     '/origincar_base/' \

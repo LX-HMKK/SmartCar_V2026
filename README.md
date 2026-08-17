@@ -136,8 +136,8 @@ EKF is the sole TF owner of `odom_combined -> base_footprint`; the EKF yaw outpu
 
 | Task | Strategy |
 | :--- | :--- |
-| 🧭 **All-forward autonomous navigation** | Every segment is planned by Nav2 on the live costmap using the Smac Hybrid `DUBIN` planner; through-pose segments use `ComputePathThroughPoses` and are smoothed by the native `ConstrainedSmoother` with collision checking, used only for that `FollowPath` — never persisted or written to YAML. Reverse planning is forbidden; at most 3 constrained straight-line `BackUp` recoveries per segment. |
-| 🔳 **QR task (point A)** | zbar reads the QR code and uses its parity to select the C-zone direction (odd → counterclockwise, even → clockwise); on failure or ambiguity it deterministically falls back to counterclockwise and continues to complete the route. |
+| 🧭 **All-forward autonomous navigation** | Every segment is planned by Nav2 on the live costmap using the Smac Hybrid `DUBIN` planner; through-pose segments use `ComputePathThroughPoses` and are smoothed by the native `ConstrainedSmoother` with collision checking, used only for that `FollowPath` — never persisted or written to YAML. Reverse planning is forbidden; at most 6 constrained straight-line `BackUp` recoveries per segment, each `0.20 m` at up to `0.25 m/s`. |
+| 🔳 **QR task (point A)** | zbar reads the QR code and uses its parity to select the C-zone direction (odd → clockwise, even → counterclockwise); on failure or ambiguity it deterministically falls back to counterclockwise and continues to complete the route. |
 | 🖼️ **Image-to-text task (point C1)** | A bounded VLM produces a concise description of the clinic-area person/scene, with an 8 s timeout and fallback description so the mission never stalls. |
 | 🔊 **Voice announcement** | Mission text is synthesized by Volcano TTS; credentials are disabled by default and can be enabled on site. |
 | 🛡️ **Dynamic obstacle avoidance** | Aurora depth point cloud is converted to a forward `/smartcar/depth/scan` that feeds both costmaps; cleared obstacles emit `+Inf` beams producing explicit clearing rays that support Nav2 real-time replanning. |

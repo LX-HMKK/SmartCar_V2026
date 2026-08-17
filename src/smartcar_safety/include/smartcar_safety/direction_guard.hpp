@@ -13,7 +13,7 @@ using TwistComponents = std::array<double, 6>;
 
 // Mission recovery may only use this native Nav2 BackUp speed. Configurations
 // may lower it, but can never raise the command boundary above this cap.
-constexpr double kForwardRecoveryMaxReverseSpeed{0.15};
+constexpr double kForwardRecoveryMaxReverseSpeed{0.25};
 
 enum class MotionDirection : std::uint8_t {
   Stop = 0,

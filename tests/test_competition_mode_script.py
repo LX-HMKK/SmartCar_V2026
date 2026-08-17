@@ -31,6 +31,17 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertIn("use_camera:=true use_vision:=true", self.source)
         self.assertIn("use_depth_camera:=true", self.source)
         self.assertIn("localization_profile:=wheel_imu", self.source)
+        self.assertIn("nav2_lifecycle_manager_delay_sec:=0.0", self.source)
+        self.assertIn('COMPETITION_LAUNCHER="$WORKSPACE/scripts/competition_launch.py"', self.source)
+        self.assertIn(
+            'COMPETITION_STACK_PROBE="$WORKSPACE/install/smartcar_nav2/bin/'
+            'competition_stack_probe"',
+            self.source,
+        )
+        self.assertIn('nohup python3 "$COMPETITION_LAUNCHER"', self.source)
+        self.assertNotIn("nohup ros2 launch smartcar_bringup", self.source)
+        self.assertIn('startup_mark "launch_spawned"', self.source)
+        self.assertIn('--timeline-log "$LAUNCH_LOG"', self.source)
         self.assertIn(
             'VISION_CONFIG="$WORKSPACE/src/smartcar_vision/config/'
             'vision_volcengine.yaml"',
@@ -63,6 +74,18 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertNotIn("qr_test.launch.py", self.source)
         self.assertNotIn("vlm_test.launch.py", self.source)
 
+    def test_competition_entry_does_not_block_on_source_fingerprint(self):
+        self.assertNotIn(".smartcar_nav_prepare_fingerprint", self.source)
+        self.assertNotIn("BUILD_FINGERPRINT", self.source)
+        self.assertNotIn("source_fingerprint", self.source)
+        self.assertNotIn("require_prepared_workspace", self.source)
+
+    def test_startup_timeline_uses_numeric_uptime_milliseconds(self):
+        expected = r'''awk '{printf "%d\n", $1 * 1000}' /proc/uptime'''
+        malformed = r'''awk '{printf "%d\\n", $1 * 1000}' /proc/uptime'''
+        self.assertEqual(self.source.count(expected), 2)
+        self.assertNotIn(malformed, self.source)
+
     def test_display_uses_the_active_seat_xauthority_before_fallbacks(self):
         display = self.function_body("configure_display", "pid_is_running")
         active_session = display.index(
@@ -83,20 +106,16 @@ class CompetitionModeScriptTests(unittest.TestCase):
 
     def test_prepare_prearms_before_start_releases_the_stop(self):
         prearm = self.function_body("arm_prepared_stack", "hold_after_start_failure")
+        health = self.function_body("verify_stack_health", "arm_prepared_stack")
         start = self.function_body("start", "status")
         self.assertIn("verify_stack_health", prearm)
-        self.assertIn("reset_task_origin", prearm)
         self.assertIn("write_armed_launch_identity", prearm)
+        self.assertIn('"$timeout_sec" true', prearm)
+        self.assertIn("--prearm", health)
+        self.assertNotIn("set_software_emergency_stop true", prearm)
+        self.assertNotIn("reset_task_origin", prearm)
         self.assertLess(
             prearm.index("verify_stack_health"),
-            prearm.index("set_software_emergency_stop true"),
-        )
-        self.assertLess(
-            prearm.index("set_software_emergency_stop true"),
-            prearm.index("reset_task_origin"),
-        )
-        self.assertLess(
-            prearm.index("reset_task_origin"),
             prearm.index("write_armed_launch_identity"),
         )
         self.assertIn("stack_is_armed", start)
@@ -104,6 +123,9 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertNotIn("reset_task_origin", start)
         release = start.index("set_software_emergency_stop false")
         trigger = start.index("/smartcar/task/start")
+        self.assertIn('startup_mark "start_requested"', start)
+        self.assertIn('startup_mark "software_stop_released"', start)
+        self.assertIn('startup_mark "task_trigger_accepted"', start)
         self.assertLess(release, trigger)
         self.assertIn("hold_after_start_failure", self.source)
         self.assertIn("set_software_emergency_stop true", self.source)
@@ -132,7 +154,10 @@ class CompetitionModeScriptTests(unittest.TestCase):
     def test_prepare_rejects_a_stale_stack_and_stop_always_relatches(self):
         stale_check = self.function_body(
             "assert_no_competing_ros_stack", "set_software_emergency_stop")
+        self.assertIn('"$COMPETITION_STACK_PROBE"', stale_check)
+        self.assertIn("--timeout-sec 0.5", stale_check)
         self.assertIn("timeout 5s ros2 node list", stale_check)
+        self.assertIn("ROS CLI fallback", stale_check)
         self.assertIn("refuse to prepare over an unknown stack", stale_check)
         for node in (
             "/direction_guard",
@@ -147,7 +172,7 @@ class CompetitionModeScriptTests(unittest.TestCase):
 
         prepare_body = self.function_body("prepare", "arm")
         prepare = prepare_body.index("assert_no_competing_ros_stack")
-        launch = prepare_body.index("nohup ros2 launch")
+        launch = prepare_body.index('nohup python3 "$COMPETITION_LAUNCHER"')
         self.assertLess(prepare, launch)
         self.assertIn(
             "arm_prepared_stack \"$launch_pid\" \"$preload_qr\" 75",
@@ -168,11 +193,27 @@ class CompetitionModeScriptTests(unittest.TestCase):
             self.source,
         )
         self.assertNotIn("vlm_display", self.source)
+        self.assertIn("在比赛输出 UI 单击", self.source)
+
+    def test_ui_start_reuses_the_prepared_ros_environment(self):
+        self.assertIn('UI_START_ENV_MARKER=SMARTCAR_COMPETITION_UI_START_ENV', self.source)
+        self.assertIn('nohup env "$UI_START_ENV_MARKER=1"', self.source)
+        self.assertIn(
+            'if [[ "${SMARTCAR_COMPETITION_UI_START_ENV:-}" != "1" ]]',
+            self.source,
+        )
+        self.assertIn("UI start did not inherit the prepared ROS environment", self.source)
+        self.assertIn("export SMARTCAR_COMPETITION_FAST_ENV=1", self.source)
 
     def test_cleanup_tracks_competition_stack_and_ui(self):
         source = CLEANUP.read_text(encoding="utf-8")
         self.assertIn("COMPETITION_STATE_DIR=/tmp/smartcar_competition", source)
         self.assertIn('$COMPETITION_STATE_DIR/launch.pid', source)
+        self.assertIn(
+            '"python3 /home/sunrise/ros2_ws/scripts/competition_launch.py"',
+            source,
+        )
+        self.assertIn("competition_launch\\.py", source)
         self.assertIn('$COMPETITION_STATE_DIR/output_ui.pid', source)
         self.assertIn(
             'rm -f "$COMPETITION_STATE_DIR/qr_reader_preloaded"',

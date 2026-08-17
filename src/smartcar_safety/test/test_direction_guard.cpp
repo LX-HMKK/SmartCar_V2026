@@ -27,7 +27,7 @@ DirectionGuardConfig test_config() {
   config.stop_angular_speed_threshold = 0.05;
   config.zero_epsilon = 1.0e-6;
   config.direction_epsilon = 1.0e-4;
-  config.forward_recovery_max_reverse_speed = 0.15;
+  config.forward_recovery_max_reverse_speed = 0.25;
   return config;
 }
 
@@ -191,8 +191,8 @@ TEST(DirectionGuardTest, ForwardRecoveryLeaseAllowsOnlyCappedNativeBackUp) {
 
   EXPECT_EQ(guard.on_candidate(command(0.12, 0.2), 0.15),
             command(0.12, 0.2));
-  EXPECT_EQ(guard.on_candidate(command(-0.15), 0.16), command(-0.15));
-  EXPECT_EQ(guard.evaluate(0.17), command(-0.15));
+  EXPECT_EQ(guard.on_candidate(command(-0.25), 0.16), command(-0.25));
+  EXPECT_EQ(guard.evaluate(0.17), command(-0.25));
   EXPECT_TRUE(guard.renew(identity, 0.18).success);
 }
 
@@ -201,7 +201,7 @@ TEST(DirectionGuardTest, ForwardRecoveryRejectsAnySpeedBeyondNativeBackUpCap) {
   prepare_and_activate(guard, MotionDirection::ForwardRecovery, 1, uuid(1),
                        0.0);
 
-  expect_zero(guard.on_candidate(command(-0.150001), 0.15));
+  expect_zero(guard.on_candidate(command(-0.250001), 0.15));
   EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
   EXPECT_EQ(guard.status(), "warning_recovery_reverse_speed_rejected");
   EXPECT_EQ(guard.on_candidate(command(0.12, 0.2), 0.16),
@@ -214,7 +214,7 @@ TEST(DirectionGuardTest, ForwardRecoveryDoesNotLatchOnRepeatedReverse) {
   prepare_and_activate(guard, MotionDirection::ForwardRecovery, 1, uuid(1),
                        0.0);
 
-  EXPECT_EQ(guard.on_candidate(command(-0.15), 0.15), command(-0.15));
+  EXPECT_EQ(guard.on_candidate(command(-0.25), 0.15), command(-0.25));
   expect_zero(guard.on_candidate(command(0.0), 0.16));
   EXPECT_EQ(guard.on_candidate(command(-0.10), 0.17), command(-0.10));
   EXPECT_EQ(guard.phase(), DirectionGuardPhase::Active);
@@ -243,7 +243,7 @@ TEST(DirectionGuardTest, ForwardRecoveryDoesNotLatchOnElapsedReverseTime) {
 
 TEST(DirectionGuardTest, ForwardRecoveryCapCannotExceedNativeBackUpCap) {
   auto config = test_config();
-  config.forward_recovery_max_reverse_speed = 0.151;
+  config.forward_recovery_max_reverse_speed = 0.251;
   EXPECT_THROW(DirectionGuard(config, 42), std::invalid_argument);
 }
 

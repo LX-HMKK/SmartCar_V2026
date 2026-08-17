@@ -33,7 +33,7 @@ def c_zone_direction_for_qr(content):
     The authored counterclockwise route is the deterministic fallback for an
     unreadable QR result, so semantic degradation still completes the route.
     """
-    if classify_qr_parity(content) == QR_PARITY_EVEN:
+    if classify_qr_parity(content) == QR_PARITY_ODD:
         return CLOCKWISE
     return COUNTERCLOCKWISE
 

@@ -268,17 +268,6 @@ if QApplication is not None:
                 or self._start_process.state() != QProcess.NotRunning
             ):
                 return
-            confirmation = QMessageBox(self)
-            confirmation.setIcon(QMessageBox.Warning)
-            confirmation.setWindowTitle("确认发车")
-            confirmation.setText("确认远程发车？")
-            confirmation.setInformativeText(
-                "请确认车辆已人工放在 P 原点、车头朝 +X，物理急停可用。"
-            )
-            confirmation.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
-            confirmation.setDefaultButton(QMessageBox.No)
-            if confirmation.exec_() != QMessageBox.Yes:
-                return
             self._start_output = ""
             self.start_button.setEnabled(False)
             self.start_button.setText("发车中")

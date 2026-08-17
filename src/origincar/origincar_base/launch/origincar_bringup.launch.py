@@ -62,6 +62,7 @@ def generate_launch_description():
     skip_converter = LaunchConfiguration('skip_converter')
     input_topic = LaunchConfiguration('input_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
+    use_lidar = LaunchConfiguration('use_lidar')
     use_imu_filter = LaunchConfiguration('use_imu_filter')
     use_robot_description = LaunchConfiguration('use_robot_description')
     laser_frame = LaunchConfiguration('laser_frame')
@@ -95,6 +96,7 @@ def generate_launch_description():
             'input_topic', default_value='/cmd_vel_safe',
             description='Twist input topic for chassis conversion'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
+        DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument(
             'localization_profile', default_value='wheel_imu',
             description=(
@@ -177,6 +179,7 @@ def generate_launch_description():
         ],
     )
     link_to_laser = Node(
+        condition=IfCondition(use_lidar),
         package='tf2_ros',
         executable='static_transform_publisher',
         name='link_to_laser',

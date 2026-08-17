@@ -2,6 +2,7 @@
 import importlib.util
 from pathlib import Path
 import sys
+import tempfile
 import unittest
 
 
@@ -15,6 +16,7 @@ spec.loader.exec_module(nav_status)
 class NavStatusContracts(unittest.TestCase):
     def test_uses_a_short_poll_interval_for_startup_discovery(self):
         self.assertEqual(nav_status.POLL_INTERVAL_SEC, 0.2)
+        self.assertEqual(nav_status.PREARM_RPC_TIMEOUT_SEC, 12.0)
 
     def ready_depth_snapshot(self):
         return nav_status.StartupSnapshot(
@@ -128,10 +130,110 @@ class NavStatusContracts(unittest.TestCase):
         )
 
         rendered = nav_status.summary(snapshot)
-        for token in ("nav2=0/6", "safety=emergency_stop", "task=IDLE",
+        for token in ("nav2=waiting[controller_server=missing",
+                      "safety=emergency_stop", "task=IDLE",
                       "costmaps=1/1", "points=2", "scan=2",
                       "capture_age=0.080s"):
             self.assertIn(token, rendered)
+
+    def test_summary_names_each_inactive_lifecycle_node_and_state(self):
+        snapshot = nav_status.StartupSnapshot(
+            lifecycle={
+                "controller_server": 2,
+                "planner_server": 0,
+                "smoother_server": 15,
+                "behavior_server": nav_status.ACTIVE_STATE_ID,
+            },
+        )
+
+        waiting = nav_status.inactive_lifecycle_nodes(snapshot)
+        self.assertIn("controller_server=inactive", waiting)
+        self.assertIn("planner_server=unknown", waiting)
+        self.assertIn("smoother_server=errorprocessing", waiting)
+        self.assertIn("bt_navigator=missing", waiting)
+        self.assertIn("velocity_smoother=missing", waiting)
+        self.assertIn("nav2=waiting[controller_server=inactive",
+                      nav_status.summary(snapshot))
+
+    def test_timed_out_rpc_is_cancelled_discarded_and_can_be_retried(self):
+        class Future:
+            def __init__(self):
+                self.cancelled = 0
+
+            def done(self):
+                return False
+
+            def cancel(self):
+                self.cancelled += 1
+
+        future = Future()
+        pending = nav_status.PendingRpc(future=future, started_at=10.0)
+        calls = {"velocity_smoother": pending}
+
+        self.assertIsNone(nav_status.discard_timed_out_rpc(
+            calls, "velocity_smoother",
+            10.0 + nav_status.RPC_TIMEOUT_SEC - 0.001,
+        ))
+        self.assertIn("velocity_smoother", calls)
+        expired = nav_status.discard_timed_out_rpc(
+            calls, "velocity_smoother",
+            10.0 + nav_status.RPC_TIMEOUT_SEC,
+        )
+
+        self.assertIs(expired, pending)
+        self.assertNotIn("velocity_smoother", calls)
+        self.assertEqual(future.cancelled, 1)
+
+    def test_late_rpc_callback_cannot_replace_a_newer_request(self):
+        old_future = object()
+        new_future = object()
+        old = nav_status.PendingRpc(future=old_future, started_at=1.0)
+        replacement = nav_status.PendingRpc(future=new_future, started_at=2.0)
+        calls = {"velocity_smoother": replacement}
+
+        self.assertIsNone(nav_status.take_current_rpc(
+            calls, "velocity_smoother", old_future))
+        self.assertIs(calls["velocity_smoother"], replacement)
+        self.assertIs(
+            nav_status.take_current_rpc(
+                calls, "velocity_smoother", new_future),
+            replacement,
+        )
+        self.assertNotIn("velocity_smoother", calls)
+
+    def test_timeline_log_is_private_append_only_and_single_line_safe(self):
+        with tempfile.TemporaryDirectory() as directory:
+            log_path = Path(directory) / "runtime" / "startup.timeline.log"
+            timeline = nav_status.StartupTimelineLogger(str(log_path))
+            timeline.emit("first\nsecond")
+            timeline.emit("final")
+
+            content = log_path.read_text(encoding="utf-8")
+            self.assertIn("first\\nsecond", content)
+            self.assertIn("final", content)
+            self.assertEqual(len(content.splitlines()), 2)
+            self.assertEqual(log_path.stat().st_mode & 0o077, 0)
+
+    def test_timeline_log_option_is_optional(self):
+        self.assertIsNone(nav_status.parse_args([]).timeline_log)
+        self.assertEqual(
+            nav_status.parse_args(
+                ["--timeline-log", "/tmp/nav-startup.timeline.log"]
+            ).timeline_log,
+            "/tmp/nav-startup.timeline.log",
+        )
+
+    def test_prearm_option_is_opt_in(self):
+        self.assertFalse(nav_status.parse_args([]).prearm)
+        self.assertTrue(nav_status.parse_args(["--prearm"]).prearm)
+
+    def test_service_response_requires_explicit_success(self):
+        accepted = type("Response", (), {"success": True})()
+        rejected = type("Response", (), {"success": False})()
+
+        self.assertTrue(nav_status.service_response_succeeded(accepted))
+        self.assertFalse(nav_status.service_response_succeeded(rejected))
+        self.assertFalse(nav_status.service_response_succeeded(object()))
 
 
 if __name__ == "__main__":

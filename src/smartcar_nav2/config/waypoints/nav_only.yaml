@@ -68,8 +68,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 2.0414198238416983
-      y: 2.882158944658946
+      x: 2.033889545441502
+      y: 2.675583012789576
       z: 0.0
   task: via
   direction: forward
@@ -78,8 +78,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.516292129182755
-      y: 3.127791184041185
+      x: 3.3682610903314036
+      y: 3.0314890001608763
       z: 0.0
   task: via
   direction: forward
@@ -88,8 +88,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 3.2297795004826266
-      y: 3.966261965090091
+      x: 3.353935458896397
+      y: 4.04144601632883
       z: 0.0
   task: via
   direction: forward
@@ -98,8 +98,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.9166113658301165
-      y: 4.092664595398971
+      x: 0.5834193626471001
+      y: 4.115308972007723
       z: 0.0
     orientation:
       x: 0.0
@@ -114,8 +114,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 0.5795376850064355
-      y: 3.060376447876449
+      x: 0.5870007705058516
+      y: 3.0050725357947243
       z: 0.0
   task: via
   direction: forward
@@ -124,8 +124,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 2.021591960263835
-      y: 2.7731056949806963
+      x: 2.0303081375827503
+      y: 2.668420197072073
       z: 0.0
   task: via
   direction: forward
@@ -134,8 +134,8 @@ waypoints:
   frame_id: odom_combined
   pose:
     position:
-      x: 1.9982359033140287
-      y: 1.7321428571428579
+      x: 2.0088196904302404
+      y: 1.7730682323841704
       z: 0.0
   task: via
   direction: forward

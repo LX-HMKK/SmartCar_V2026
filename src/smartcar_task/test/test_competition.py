@@ -40,8 +40,10 @@ class CompetitionQrTests(unittest.TestCase):
                 )
 
     def test_qr_parity_selects_the_authorized_c_zone_variant(self):
-        self.assertEqual(c_zone_direction_for_qr("13"), COUNTERCLOCKWISE)
-        self.assertEqual(c_zone_direction_for_qr("24"), CLOCKWISE)
+        self.assertEqual(c_zone_direction_for_qr("13"), CLOCKWISE)
+        self.assertEqual(c_zone_direction_for_qr("24"), COUNTERCLOCKWISE)
+        self.assertEqual(c_zone_direction_for_qr("奇数任务"), CLOCKWISE)
+        self.assertEqual(c_zone_direction_for_qr("偶数任务"), COUNTERCLOCKWISE)
         self.assertEqual(c_zone_direction_for_qr("奇数或偶数"), COUNTERCLOCKWISE)
         self.assertEqual(c_zone_direction_for_qr("WARD-A"), COUNTERCLOCKWISE)
 

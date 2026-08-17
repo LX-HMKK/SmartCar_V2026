@@ -50,6 +50,8 @@ RUNTIME_SCRIPT_TARGETS = (
      f"{REMOTE_WS}/scripts/nav_test.sh"),
     (REPO_ROOT / "scripts" / "competition_mode.sh",
      f"{REMOTE_WS}/scripts/competition_mode.sh"),
+    (REPO_ROOT / "scripts" / "competition_launch.py",
+     f"{REMOTE_WS}/scripts/competition_launch.py"),
     (REPO_ROOT / "scripts" / "media_test.sh",
      f"{REMOTE_WS}/scripts/media_test.sh"),
     (REPO_ROOT / "scripts" / "nav_status.py",

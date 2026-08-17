@@ -8,6 +8,7 @@ endif()
 find_package(ament_cmake REQUIRED)
 find_package(behaviortree_cpp_v3 REQUIRED)
 find_package(nav_msgs REQUIRED)
+find_package(rclcpp REQUIRED)
 
 add_library(smartcar_remove_duplicate_path_points_bt_node SHARED
   src/remove_duplicate_path_points_action.cpp
@@ -22,6 +23,13 @@ target_include_directories(smartcar_remove_duplicate_path_points_bt_node PUBLIC
 ament_target_dependencies(smartcar_remove_duplicate_path_points_bt_node
   behaviortree_cpp_v3
   nav_msgs
+)
+
+add_executable(competition_stack_probe
+  src/competition_stack_probe.cpp
+)
+ament_target_dependencies(competition_stack_probe
+  rclcpp
 )
 # Nav2 1.1.20 (TROS Humble): RewrittenYaml chain silently drops controller
 # params in favour of YDLIDAR defaults, causing "No critics defined for
@@ -63,7 +71,9 @@ install(DIRECTORY include/
   DESTINATION include
 )
 
-install(TARGETS smartcar_remove_duplicate_path_points_bt_node
+install(TARGETS
+  smartcar_remove_duplicate_path_points_bt_node
+  competition_stack_probe
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin

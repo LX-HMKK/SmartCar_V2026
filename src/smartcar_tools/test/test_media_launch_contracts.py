@@ -157,7 +157,7 @@ class MediaLaunchContractTests(unittest.TestCase):
             self.assertNotIn(forbidden, rgb_source)
             self.assertNotIn(forbidden, output_source)
 
-    def test_competition_ui_remote_start_is_opt_in_and_confirmed(self):
+    def test_competition_ui_remote_start_is_opt_in_and_single_click(self):
         source = (
             PACKAGE_ROOT / "smartcar_tools" / "competition_output_display.py"
         ).read_text(encoding="utf-8")
@@ -170,9 +170,8 @@ class MediaLaunchContractTests(unittest.TestCase):
         self.assertIn("if remote_start_enabled else ()", source)
         self.assertIn("self._start_process = QProcess(self)", source)
         self.assertIn("QProcess.MergedChannels", source)
-        self.assertIn('confirmation.setWindowTitle("确认发车")', source)
-        self.assertIn("confirmation.setDefaultButton(QMessageBox.No)", source)
-        self.assertIn("confirmation.exec_() != QMessageBox.Yes", source)
+        self.assertNotIn('confirmation.setWindowTitle("确认发车")', source)
+        self.assertNotIn("confirmation.exec_() != QMessageBox.Yes", source)
         self.assertIn("self._start_process.start(", source)
         self.assertIn(
             "self._start_command[0], list(self._start_command[1:]))", source)

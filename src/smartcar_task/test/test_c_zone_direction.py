@@ -78,10 +78,10 @@ class CZoneDirectionTests(unittest.TestCase):
         )
         self.assertAlmostEqual(yaw(reflected["c_corner_1"].orientation), 0.0)
         self.assertAlmostEqual(
-            reflected["via_2"].position[0], 1.9585801761583017,
+            reflected["via_2"].position[0], 1.966110454558498,
         )
         self.assertAlmostEqual(
-            reflected["via_3"].position[0], 0.48370787081724487,
+            reflected["via_3"].position[0], 0.6317389096685964,
         )
 
     def test_clockwise_transform_is_an_involution(self):
@@ -145,7 +145,7 @@ class CZoneDirectionTests(unittest.TestCase):
                 for action in clockwise for waypoint in action
             )
         )
-        self.assertAlmostEqual(clockwise[1][-1].position[0], 3.0833886341698835)
+        self.assertAlmostEqual(clockwise[1][-1].position[0], 3.4165806373529)
         self.assertAlmostEqual(yaw(clockwise[1][-1].orientation), 0.0)
 
     def test_normalization_accepts_only_declared_directions(self):

@@ -166,7 +166,7 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(self.output.text, ["WARD-A", "person"])
         self.assertEqual(mission.state, MissionState.COMPLETED)
 
-    def test_qr_result_selects_the_remaining_c_zone_variant_once(self):
+    def test_even_qr_keeps_the_authored_c_zone_variant_once(self):
         a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")
         counterclockwise_via = waypoint("via_2", "via", 2.0)
         counterclockwise_c = waypoint(
@@ -207,18 +207,18 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(
             self.navigator.through_calls,
             [
-                (clockwise_via, clockwise_c),
-                (clockwise_return, finish),
+                (counterclockwise_via, counterclockwise_c),
+                (counterclockwise_return, finish),
             ],
         )
         self.assertEqual(self.output.qr, ["0024"])
-        self.assertEqual(self.output.c_zone_direction, ["顺时针"])
+        self.assertEqual(self.output.c_zone_direction, ["逆时针"])
         self.assertEqual(
             self.output.text,
-            ["0024", "C区方向：顺时针", "person"],
+            ["0024", "C区方向：逆时针", "person"],
         )
 
-    def test_odd_or_unrecognized_qr_keeps_the_authored_c_zone_variant(self):
+    def test_odd_qr_selects_clockwise_and_unrecognized_keeps_authored_variant(self):
         a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")
         via = waypoint("via_2", "via", 2.0)
         c = waypoint("c_corner_1", "vlm", 3.0, "precise", "locked")
@@ -234,7 +234,19 @@ class MissionTests(unittest.TestCase):
                 (waypoint("via_4", "via", 22.0), finish),
             ),
         }
-        for payload in ("13", "奇数或偶数"):
+        expected_cases = (
+            (
+                "13",
+                [(variants["clockwise"][1]), (variants["clockwise"][2])],
+                "顺时针",
+            ),
+            (
+                "奇数或偶数",
+                [(via, c), (return_via, finish)],
+                "逆时针",
+            ),
+        )
+        for payload, expected_through_calls, expected_direction in expected_cases:
             with self.subTest(payload=payload):
                 mission = self.make_mission(vision=FakeVision(
                     qr=OperationResult(True, "ok", payload),
@@ -248,9 +260,12 @@ class MissionTests(unittest.TestCase):
                 self.assertTrue(result.success, result.status)
                 self.assertEqual(
                     self.navigator.through_calls,
-                    [(via, c), (return_via, finish)],
+                    expected_through_calls,
                 )
-                self.assertEqual(self.output.c_zone_direction, ["逆时针"])
+                self.assertEqual(
+                    self.output.c_zone_direction,
+                    [expected_direction],
+                )
 
     def test_c_zone_variants_fail_closed_when_they_change_nav2_topology(self):
         a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")

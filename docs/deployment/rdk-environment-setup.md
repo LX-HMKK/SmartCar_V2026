@@ -129,8 +129,8 @@ bash /home/sunrise/ros2_ws/scripts/competition_mode.sh stop
 急停确认框，并在 RDK 本地异步执行同一 `competition_mode.sh start --confirm` 流程；远程桌面连接可以点击
 这个按钮，但不能替代本次实体相机/非零运动的明确授权。`start --confirm` 保留为 UI 不可用时的受看护恢复
 入口，不能与 UI 发车并行执行。无论入口为何，都会验证当前 PID 的预置标记、解除软件急停和任务 Trigger。比赛任务在
-A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> counterclockwise（逆时针）`，
-`偶数 -> clockwise（顺时针）`；`未识别`、歧义结果或 QR 读取失败则回退
+A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> clockwise（顺时针）`，
+`偶数 -> counterclockwise（逆时针）`；`未识别`、歧义结果或 QR 读取失败则回退
 `counterclockwise（逆时针）`，仍继续完整路线返回 P。识别出的 QR 数字和已选方向都会显示在比赛输出 UI。
 该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
 VLM 无结果会显示通用描述并继续回到 P；导航、定位、方向门、costmap 或 safety 异常仍按失败处理，

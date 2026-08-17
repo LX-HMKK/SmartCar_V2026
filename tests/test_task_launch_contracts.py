@@ -49,7 +49,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertEqual(len(top_level), 1)
         recovery = top_level[0]
         self.assertEqual(recovery.tag, "RecoveryNode")
-        self.assertEqual(recovery.attrib["number_of_retries"], "3")
+        self.assertEqual(recovery.attrib["number_of_retries"], "6")
         self.assertEqual(len(recovery), 2)
 
         primary, recovery_actions = recovery
@@ -117,7 +117,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             "BackUp", "RemovePassedGoals"])
         backup, recovery_prune = recovery_actions
         self.assertEqual(backup.attrib["backup_dist"], "0.20")
-        self.assertEqual(backup.attrib["backup_speed"], "0.15")
+        self.assertEqual(backup.attrib["backup_speed"], "0.25")
         self.assertEqual(recovery_prune.attrib["input_goals"], "{goals}")
         self.assertEqual(recovery_prune.attrib["output_goals"], "{goals}")
         self.assertEqual(recovery_prune.attrib["radius"], "0.40")
@@ -210,7 +210,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         node_source = NODE.read_text(encoding="utf-8")
 
         self.assertIn(
-            "if classify_qr_parity(content) == QR_PARITY_EVEN:",
+            "if classify_qr_parity(content) == QR_PARITY_ODD:",
             competition_source,
         )
         self.assertIn("return CLOCKWISE", competition_source)
@@ -315,6 +315,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("完整 footprint 碰撞检查", rules)
         self.assertIn("不得落盘、复用、写死", rules)
         self.assertIn("FollowPath", rules)
+        self.assertIn("每段最多 6 次直线 `BackUp`", rules)
         self.assertIn("end_id must not be a via waypoint", planning)
         self.assertIn("must reference a via waypoint", planning)
         self.assertIn("navigation_segment_intermediate_not_via", mission)
@@ -327,10 +328,10 @@ class TaskLaunchContractTests(unittest.TestCase):
             self.assertEqual(tree.count("<SmoothPath "), 1)
             self.assertEqual(tree.count("<FollowPath "), 1)
             self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
-            self.assertIn('RecoveryNode number_of_retries="3"', tree)
+            self.assertIn('RecoveryNode number_of_retries="6"', tree)
             self.assertEqual(tree.count("<BackUp "), 1)
             self.assertIn('backup_dist="0.20"', tree)
-            self.assertIn('backup_speed="0.15"', tree)
+            self.assertIn('backup_speed="0.25"', tree)
             self.assertEqual(tree.count("<RemovePassedGoals "), 2)
             self.assertIn("PipelineSequence", tree)
             self.assertNotIn("Spin", tree)
@@ -393,10 +394,10 @@ class TaskLaunchContractTests(unittest.TestCase):
             )
             for token in forbidden:
                 self.assertNotIn(token, source)
-            self.assertIn('RecoveryNode number_of_retries="3"', source)
+            self.assertIn('RecoveryNode number_of_retries="6"', source)
             self.assertEqual(source.count("<BackUp "), 1)
             self.assertIn('backup_dist="0.20"', source)
-            self.assertIn('backup_speed="0.15"', source)
+            self.assertIn('backup_speed="0.25"', source)
             if tree.name in THROUGH_POSES_TREES:
                 self.assertIn("PipelineSequence", source)
                 self.assertEqual(source.count("<RemoveDuplicatePathPoints "), 1)
@@ -408,7 +409,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         for filename in THROUGH_POSES_TREES:
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertEqual(tree.count("<BackUp "), 1)
-            self.assertIn('backup_speed="0.15"', tree)
+            self.assertIn('backup_speed="0.25"', tree)
             self.assertEqual(tree.count("<RemovePassedGoals "), 2)
             self.assertEqual(tree.count("<ComputePathThroughPoses "), 1)
             self.assertEqual(tree.count("<RemoveDuplicatePathPoints "), 1)
@@ -467,7 +468,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             "smartcar_remove_duplicate_path_points_bt_node", cmake)
         self.assertIn("remove_duplicate_path_points_action.cpp", cmake)
         self.assertIn('behavior_plugins: ["backup"]', params)
-        self.assertIn("min_velocity: [-0.15", params)
+        self.assertIn("min_velocity: [-0.25", params)
         launch = NAV2_LAUNCH.read_text(encoding="utf-8")
         self.assertIn("'smoother_server',", launch)
         self.assertIn("package='nav2_smoother'", launch)
@@ -736,10 +737,10 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("safety_emergency_stop_on_start:=true", source)
         self.assertNotIn("safety_emergency_stop_on_start:=false", source)
         self.assertIn('STATUS_TOOL="$WORKSPACE/scripts/nav_status.py"', source)
-        self.assertIn('BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"', source)
-        self.assertIn('require_prepared_workspace', source)
-        self.assertIn('RDK source differs from the prepared build', source)
-        self.assertIn('STATUS_ARGS=(--timeout 60)', source)
+        self.assertNotIn(".smartcar_nav_prepare_fingerprint", source)
+        self.assertNotIn("source_fingerprint", source)
+        self.assertNotIn("require_prepared_workspace", source)
+        self.assertIn('STATUS_ARGS=(--timeout 60 --timeline-log "$LOG")', source)
         self.assertIn('hold_started_stack', source)
         self.assertIn('nohup ros2 launch smartcar_bringup', source)
         self.assertIn('nohup rviz2 -d', source)
@@ -757,7 +758,6 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertLess(reset, release)
         self.assertLess(release, start)
         self.assertIn('banner "等待人工发车"', source)
-        self.assertIn("source_fingerprint", source)
         self.assertNotIn("nav2_params_fixed.yaml", source)
         self.assertNotIn("ros_cleanup", source)
 
@@ -781,12 +781,8 @@ class TaskLaunchContractTests(unittest.TestCase):
             "--packages-up-to smartcar_bringup smartcar_vision",
             prepare_source,
         )
-        self.assertIn('find "$WORKSPACE/src"', prepare_source)
-        self.assertIn('find "$WORKSPACE/src"', source)
-        self.assertLess(
-            source.index("require_prepared_workspace"),
-            source.index('nohup ros2 launch smartcar_bringup'),
-        )
+        self.assertNotIn(".smartcar_nav_prepare_fingerprint", prepare_source)
+        self.assertNotIn("source_fingerprint", prepare_source)
         self.assertIn("python3 \"$STATUS_TOOL\"", source)
         self.assertIn("startup health did not become ready", source)
         self.assertLess(
@@ -812,9 +808,18 @@ class TaskLaunchContractTests(unittest.TestCase):
             source,
         )
         self.assertIn('"ros2 launch smartcar_bringup smartcar_system.launch.py"', source)
+        self.assertIn(
+            '"python3 /home/sunrise/ros2_ws/scripts/competition_launch.py"',
+            source,
+        )
+        self.assertIn(
+            '"python3 /home/sunrise/ros2_ws/scripts/competition_launch.py" \\\n  USR1',
+            source,
+        )
         self.assertIn('"navigation.rviz"', source)
         self.assertIn("/proc/$pid/cmdline", source)
-        self.assertIn('kill -TERM "$pid"', source)
+        self.assertIn('local stop_signal=${3:-TERM}', source)
+        self.assertIn('kill -"$stop_signal" "$pid"', source)
         self.assertIn('for _ in 1 2 3 4 5', source)
         self.assertIn('kill -KILL "$pid"', source)
         for node in (

@@ -127,9 +127,9 @@ Aurora 初始化稳定；核心状态正常后才启动 RViz。普通启动保�
 bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 ```
 
-启动前会校验 `src/` 与 `.smartcar_nav_prepare_fingerprint` 一致；若刚执行过
-`sync_to_rdk.py push` 而未运行准备构建，它会拒绝启动，避免误用旧的 `install/` 产物。执行
-`bash /home/sunrise/ros2_ws/scripts/nav_prepare.sh`，或使用 `bash scripts/nav_deploy.sh` 完成同步和准备后再启动。
+已完成的构建可持续用于启动；入口不再比较当前 `src/` 与准备时的源码指纹。代码或配置改动需要
+生效时，才执行 `bash /home/sunrise/ros2_ws/scripts/nav_prepare.sh`，或使用
+`bash scripts/nav_deploy.sh` 完成同步和准备后再启动。
 
 它会启动实体 Aurora 相机，因此需要本次实体相机授权。以下两个命令还会在状态检查后复位、解除
 软件急停并发车，必须先取得本次非零运动授权，确认物理急停可用，并将车人工放在 P 原点、车头朝
@@ -148,16 +148,21 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh --go --c-zone-direction=clockwise
 
 ### `competition_mode.sh`
 
-比赛入口部署在 `/home/sunrise/ros2_ws/scripts/competition_mode.sh`。`sync_to_rdk.py push` 会同步工作空间入口，代码或配置变化后仍须先运行
-`nav_prepare.sh`，由构建指纹阻止使用旧的 `install/` 产物。
+比赛入口部署在 `/home/sunrise/ros2_ws/scripts/competition_mode.sh`。已完成的构建可持续用于比赛
+预置，比赛入口不再比较当前 `src/` 与准备时的源码指纹。代码或配置改动需要生效时，仍须运行
+`nav_prepare.sh` 重建对应的 `install/` 产物。
+
+比赛预置将 Nav2 lifecycle manager 的固定 20 秒等待设为 `0.0`；最终发车仍由实时深度、costmap、
+安全链和 P 点复位健康检查决定。比赛 UI 从已预置的 ROS 环境发车，不会在按键后再次加载环境。
+`$XDG_RUNTIME_DIR/smartcar_competition/bringup.log` 会记录预置阶段、各 lifecycle 节点状态、
+健康检查和 UI 就绪的时间线。
 
 ```bash
 # 收到本次实体相机授权后：先将车人工放在 P 原点、车头朝 +X，
 # 再挂载并预置所有比赛节点；全程保持急停，不发车
 bash /home/sunrise/ros2_ws/scripts/competition_mode.sh prepare
 
-# 裁判发令且本次非零运动已明确授权后：在“比赛输出”UI按“发车”，
-# 并在确认框中选择“是”
+# 裁判发令后：在“比赛输出”UI单击“发车”即直接触发已预置的发车链路
 
 # 只读健康检查；异常时先使用物理急停，再执行停止
 bash /home/sunrise/ros2_ws/scripts/competition_mode.sh status
@@ -189,8 +194,8 @@ ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。它还只检
 `prepare` 会拒绝在已有底盘、Nav2、任务、Aurora 或视觉节点运行时再启动，避免旧 ROS 栈的全局话题和
 服务误通过本次健康检查。此时先确认物理急停，再执行 `competition_mode.sh stop` 或按现场流程清理旧栈。
 
-比赛任务在 A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> counterclockwise（逆时针）`，
-`偶数 -> clockwise（顺时针）`，`未识别`、歧义结果或 QR 读取失败均回退
+比赛任务在 A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> clockwise（顺时针）`，
+`偶数 -> counterclockwise（逆时针）`，`未识别`、歧义结果或 QR 读取失败均回退
 `counterclockwise（逆时针）`，并继续完整路线返回 P。识别出的 QR 数字和所选方向都会发布到比赛输出 UI。
 该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
 VLM 无有效结果时发布受控的通用描述并继续回到 P。上述降级只覆盖语义任务结果，不能掩盖 Nav2、方向门、

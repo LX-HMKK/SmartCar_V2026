@@ -8,6 +8,7 @@ from smartcar_task.mission import OperationResult
 
 STATUS_SUCCEEDED = 4
 STATUS_CANCELED = 5
+STATUS_ABORTED = 6
 MOTION_FORWARD = 1
 MOTION_FORWARD_RECOVERY = 3
 
@@ -18,6 +19,8 @@ def classify_follow_waypoints_result(status, missed_waypoints):
         return OperationResult(True, "ok")
     if int(status) == STATUS_CANCELED:
         return OperationResult(False, "navigation_canceled")
+    if int(status) == STATUS_ABORTED:
+        return OperationResult(False, "navigation_aborted")
     if int(status) == STATUS_SUCCEEDED:
         return OperationResult(
             False,
@@ -31,6 +34,8 @@ def classify_navigate_to_pose_result(status):
         return OperationResult(True, "ok")
     if int(status) == STATUS_CANCELED:
         return OperationResult(False, "navigation_canceled")
+    if int(status) == STATUS_ABORTED:
+        return OperationResult(False, "navigation_aborted")
     return OperationResult(False, f"navigation_status_{int(status)}")
 
 

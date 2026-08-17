@@ -12,6 +12,6 @@ direction_guard:
     zero_epsilon: 0.000001
     direction_epsilon: 0.0001
     # A forward mission lease may admit only Nav2's finite native BackUp recovery.
-    # The C++ boundary rejects any configured value above 0.15 m/s.
-    forward_recovery_max_reverse_speed: 0.15
+    # The C++ boundary rejects any configured value above 0.25 m/s.
+    forward_recovery_max_reverse_speed: 0.25
     publish_frequency_hz: 20.0

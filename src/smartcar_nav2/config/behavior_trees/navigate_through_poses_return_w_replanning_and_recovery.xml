@@ -1,7 +1,7 @@
-<!-- Up to three native BackUp recoveries replan only remaining constraints. -->
+<!-- Up to six native BackUp recoveries replan only remaining constraints. -->
 <root main_tree_to_execute="MainTree">
   <BehaviorTree ID="MainTree">
-    <RecoveryNode number_of_retries="3" name="ReplanRemainingGoalsAfterNativeBackUp">
+    <RecoveryNode number_of_retries="6" name="ReplanRemainingGoalsAfterNativeBackUp">
       <Sequence name="PlanThenTrackReturnThroughPath">
         <ComputePathThroughPoses goals="{goals}" path="{raw_path}" planner_id="GridBased"/>
         <RemoveDuplicatePathPoints input_path="{raw_path}" output_path="{deduplicated_path}"/>
@@ -16,7 +16,7 @@
         </PipelineSequence>
       </Sequence>
       <Sequence name="NativeBackUpAndPruneRemainingConstraints">
-        <BackUp backup_dist="0.20" backup_speed="0.15" time_allowance="4.0"/>
+        <BackUp backup_dist="0.20" backup_speed="0.25" time_allowance="4.0"/>
         <RemovePassedGoals input_goals="{goals}" output_goals="{goals}" radius="0.40" global_frame="odom_combined" robot_base_frame="base_footprint"/>
       </Sequence>
     </RecoveryNode>

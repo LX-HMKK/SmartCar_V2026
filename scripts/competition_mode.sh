@@ -8,7 +8,8 @@ WAYPOINTS_FILE="$WORKSPACE/src/smartcar_nav2/config/waypoints/default_waypoints.
 VISION_CONFIG="$WORKSPACE/src/smartcar_vision/config/vision_volcengine.yaml"
 VLM_CREDENTIALS_FILE="$WORKSPACE/config/volcengine_ark.local.yaml"
 STATUS_TOOL="$WORKSPACE/scripts/nav_status.py"
-BUILD_FINGERPRINT="$WORKSPACE/.smartcar_nav_prepare_fingerprint"
+COMPETITION_LAUNCHER="$WORKSPACE/scripts/competition_launch.py"
+COMPETITION_STACK_PROBE="$WORKSPACE/install/smartcar_nav2/bin/competition_stack_probe"
 STATE_DIR=/tmp/smartcar_competition
 RUNTIME_DIR=${XDG_RUNTIME_DIR:-/tmp}
 LOG_DIR="$RUNTIME_DIR/smartcar_competition"
@@ -19,6 +20,9 @@ UI_PID_FILE="$STATE_DIR/output_ui.pid"
 QR_READER_MODE_FILE="$STATE_DIR/qr_reader_preloaded"
 ARMED_LAUNCH_PID_FILE="$STATE_DIR/armed_launch.pid"
 START_LOCK_DIR="$STATE_DIR/start.lock"
+UI_START_ENV_MARKER=SMARTCAR_COMPETITION_UI_START_ENV
+SCRIPT_STARTED_AT_MS=$(awk '{printf "%d\n", $1 * 1000}' /proc/uptime)
+STARTUP_STARTED_AT_MS=$SCRIPT_STARTED_AT_MS
 
 usage() {
   cat <<'EOF'
@@ -35,33 +39,13 @@ start 只接受当前启动进程的已预置标记，解除软件急停并触�
 EOF
 }
 
-source_fingerprint() {
-  find "$WORKSPACE/src" \
-    -type f \
-    ! -path '*/.git/*' \
-    ! -path '*/__pycache__/*' \
-    ! -name '*.pyc' \
-    ! -name '*.bak' \
-    ! -name '*.orig' \
-    -print0 \
-    | sort -z \
-    | xargs -0r sha256sum \
-    | sha256sum \
-    | awk '{print $1}'
-}
-
-require_prepared_workspace() {
-  local prepared current
-  if [[ ! -r "$BUILD_FINGERPRINT" ]]; then
-    echo "missing $BUILD_FINGERPRINT; run bash $WORKSPACE/scripts/nav_prepare.sh" >&2
-    exit 2
-  fi
-  prepared=$(tr -d '[:space:]' < "$BUILD_FINGERPRINT")
-  current=$(source_fingerprint)
-  if [[ -z "$prepared" || "$prepared" != "$current" ]]; then
-    echo "RDK source differs from the prepared build; run bash $WORKSPACE/scripts/nav_prepare.sh" >&2
-    exit 2
-  fi
+startup_mark() {
+  local step=$1
+  local now_ms elapsed_ms
+  now_ms=$(awk '{printf "%d\n", $1 * 1000}' /proc/uptime)
+  elapsed_ms=$((now_ms - STARTUP_STARTED_AT_MS))
+  printf '[competition-startup] elapsed_ms=%s step=%s\n' \
+    "$elapsed_ms" "$step" >> "$LAUNCH_LOG"
 }
 
 require_vlm_credentials() {
@@ -166,7 +150,26 @@ release_start_lock() {
 }
 
 assert_no_competing_ros_stack() {
-  local node_list node existing
+  local node_list node existing probe_output probe_status
+  if [[ -x "$COMPETITION_STACK_PROBE" ]]; then
+    probe_output=$(timeout 2s "$COMPETITION_STACK_PROBE" \
+      --timeout-sec 0.5 2>&1)
+    probe_status=$?
+    case "$probe_status" in
+      0)
+        return
+        ;;
+      1)
+        echo "existing SmartCar stack detected ($probe_output); stop it before prepare" >&2
+        exit 1
+        ;;
+      *)
+        # Do not treat a failed graph probe as an empty graph. The established
+        # ROS CLI check below remains the conservative fallback.
+        echo "competition graph probe unavailable; using ROS CLI fallback" >&2
+        ;;
+    esac
+  fi
   if ! node_list=$(timeout 5s ros2 node list 2>/dev/null); then
     echo "cannot inspect the ROS graph; refuse to prepare over an unknown stack" >&2
     exit 1
@@ -230,12 +233,16 @@ verify_stack_health() {
   local launch_pid=$1
   local qr_reader_mode=$2
   local timeout_sec=$3
+  local prearm=${4:-false}
   local status_args=(
     --depth-camera --vision-services --timeout "$timeout_sec" \
-    --launch-pid "$launch_pid"
+    --launch-pid "$launch_pid" --timeline-log "$LAUNCH_LOG"
   )
   if [[ "$qr_reader_mode" == true ]]; then
     status_args+=(--preloaded-qr-reader)
+  fi
+  if [[ "$prearm" == true ]]; then
+    status_args+=(--prearm)
   fi
   python3 "$STATUS_TOOL" "${status_args[@]}"
 }
@@ -246,23 +253,18 @@ arm_prepared_stack() {
   local timeout_sec=$3
   rm -f "$ARMED_LAUNCH_PID_FILE"
   echo "正在完成赛前健康检查..."
-  if ! verify_stack_health "$launch_pid" "$qr_reader_mode" "$timeout_sec"; then
+  startup_mark "health_check_started"
+  if ! verify_stack_health \
+      "$launch_pid" "$qr_reader_mode" "$timeout_sec" true; then
     echo "比赛栈健康检查失败；软件急停保持锁存" >&2
     return 1
   fi
-  if ! set_software_emergency_stop true; then
-    echo "无法确认软件急停已锁存；请立即使用物理急停" >&2
-    return 1
-  fi
-  echo "正在完成 P 点定位复位..."
-  if ! reset_task_origin; then
-    echo "P 点定位复位失败；软件急停保持锁存" >&2
-    return 1
-  fi
+  startup_mark "prearm_ready"
   if ! write_armed_launch_identity "$launch_pid"; then
     echo "无法写入比赛栈预置标记；软件急停保持锁存" >&2
     return 1
   fi
+  startup_mark "stack_armed"
   echo "比赛栈已预置：软件急停锁存，按下发车将立即触发任务。"
 }
 
@@ -305,7 +307,6 @@ prepare() {
     exit 2
   fi
 
-  require_prepared_workspace
   [[ -r "$WAYPOINTS_FILE" ]] || {
     echo "missing $WAYPOINTS_FILE" >&2
     exit 2
@@ -319,25 +320,31 @@ prepare() {
     echo "missing $STATUS_TOOL; run bash $WORKSPACE/scripts/nav_prepare.sh" >&2
     exit 2
   }
+  [[ -r "$COMPETITION_LAUNCHER" ]] || {
+    echo "missing $COMPETITION_LAUNCHER; run bash $WORKSPACE/scripts/nav_prepare.sh" >&2
+    exit 2
+  }
   if pid_is_running "$LAUNCH_PID_FILE"; then
     echo "competition stack is already prepared; use status, start, or stop" >&2
     exit 1
   fi
-  assert_no_competing_ros_stack
-
   configure_display
   mkdir -p "$STATE_DIR" "$LOG_DIR"
   : > "$LAUNCH_LOG"
   : > "$UI_LOG"
+  startup_mark "prepare_started"
+  assert_no_competing_ros_stack
+  startup_mark "ros_graph_clear"
   rm -f "$LAUNCH_PID_FILE" "$UI_PID_FILE" "$QR_READER_MODE_FILE" \
     "$ARMED_LAUNCH_PID_FILE"
   release_start_lock
 
-  nohup ros2 launch smartcar_bringup smartcar_system.launch.py \
+  nohup python3 "$COMPETITION_LAUNCHER" \
     use_base:=true use_lidar:=false use_laser_odometry:=false \
     localization_profile:=wheel_imu \
     use_imu_filter:=false use_robot_description:=false \
     use_safety:=true use_nav:=true nav_autostart:=true \
+    nav2_lifecycle_manager_delay_sec:=0.0 \
     use_camera:=true use_vision:=true camera_driver:=aurora \
     use_depth_camera:=true aurora_rgb_fps:=10 aurora_ir_fps:=10 \
     use_task:=true use_visualization:=false use_speech:=false \
@@ -352,6 +359,7 @@ prepare() {
   local launch_pid=$!
   printf '%s\n' "$launch_pid" > "$LAUNCH_PID_FILE"
   printf '%s\n' "$preload_qr" > "$QR_READER_MODE_FILE"
+  startup_mark "launch_spawned"
 
   if ! arm_prepared_stack "$launch_pid" "$preload_qr" 75; then
     tail -80 "$LAUNCH_LOG" >&2 || true
@@ -359,7 +367,11 @@ prepare() {
     exit 1
   fi
 
-  nohup ros2 run smartcar_tools competition_output_display --ros-args \
+  # The UI process inherits this fully sourced ROS environment. Its start
+  # child passes the marker back to this script, avoiding a second 4-5 second
+  # source_env.sh pass after the referee presses the button.
+  nohup env "$UI_START_ENV_MARKER=1" \
+    ros2 run smartcar_tools competition_output_display --ros-args \
     -p fullscreen:=true -p window_title:="比赛输出" \
     -p initial_state:="预置完成，急停锁存，等待远程发车" \
     -p remote_start_enabled:=true \
@@ -373,10 +385,10 @@ prepare() {
     echo "比赛输出 UI 启动失败；软件急停保持锁存" >&2
     exit 1
   fi
+  startup_mark "ui_ready"
 
   echo "比赛栈已预置：急停锁存，车辆不会自动发车。"
-  echo "裁判发令后，在确认物理急停可用时执行："
-  echo "  bash /home/sunrise/ros2_ws/scripts/competition_mode.sh start --confirm"
+  echo "裁判发令后，在比赛输出 UI 单击“发车”。"
 }
 
 arm() {
@@ -384,7 +396,6 @@ arm() {
     usage >&2
     exit 2
   fi
-  require_prepared_workspace
   require_vlm_credentials
   local launch_pid qr_reader_mode
   if ! launch_pid=$(read_launch_pid); then
@@ -417,6 +428,7 @@ start() {
     echo "competition start is already in progress" >&2
     exit 1
   fi
+  startup_mark "start_requested"
   trap 'handle_start_interruption INT' INT
   trap 'handle_start_interruption TERM' TERM
   trap 'handle_start_interruption HUP' HUP
@@ -424,6 +436,7 @@ start() {
   if ! set_software_emergency_stop false; then
     hold_after_start_failure "解除软件急停失败"
   fi
+  startup_mark "software_stop_released"
   echo "正在触发比赛任务..."
   local result
   if ! result=$(timeout 12s ros2 service call /smartcar/task/start \
@@ -437,6 +450,7 @@ start() {
     rm -f "$ARMED_LAUNCH_PID_FILE"
     hold_after_start_failure "任务未获准启动"
   fi
+  startup_mark "task_trigger_accepted"
   rm -f "$ARMED_LAUNCH_PID_FILE"
   release_start_lock
   trap - INT TERM HUP
@@ -444,7 +458,6 @@ start() {
 }
 
 status() {
-  require_prepared_workspace
   if ! pid_is_running "$LAUNCH_PID_FILE"; then
     echo "competition stack is not running" >&2
     exit 1
@@ -470,13 +483,19 @@ stop() {
   bash "$WORKSPACE/scripts/ros_cleanup.sh"
 }
 
-if [[ ! -r "$SOURCE_ENV" ]]; then
-  echo "missing $SOURCE_ENV; run sync_to_rdk.py setup" >&2
+if [[ "${SMARTCAR_COMPETITION_UI_START_ENV:-}" != "1" ]]; then
+  if [[ ! -r "$SOURCE_ENV" ]]; then
+    echo "missing $SOURCE_ENV; run sync_to_rdk.py setup" >&2
+    exit 2
+  fi
+  export SMARTCAR_COMPETITION_FAST_ENV=1
+  set +u
+  source "$SOURCE_ENV"
+  set -u
+elif ! command -v ros2 >/dev/null 2>&1 || [[ -z "${AMENT_PREFIX_PATH:-}" ]]; then
+  echo "UI start did not inherit the prepared ROS environment" >&2
   exit 2
 fi
-set +u
-source "$SOURCE_ENV"
-set -u
 cd "$WORKSPACE"
 
 case "${1:-}" in

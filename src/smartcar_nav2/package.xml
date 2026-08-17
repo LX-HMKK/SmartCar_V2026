@@ -11,6 +11,7 @@
 
   <depend>behaviortree_cpp_v3</depend>
   <depend>nav_msgs</depend>
+  <depend>rclcpp</depend>
 
   <exec_depend>nav2_bt_navigator</exec_depend>
   <exec_depend>nav2_behaviors</exec_depend>

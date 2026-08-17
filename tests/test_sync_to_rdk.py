@@ -122,6 +122,8 @@ class TestTargets(unittest.TestCase):
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/competition_mode.sh", dsts)
         self.assertIn(
+            f"{sync.HOST}:{sync.REMOTE_WS}/scripts/competition_launch.py", dsts)
+        self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/media_test.sh", dsts)
         self.assertIn(
             f"{sync.HOST}:{sync.REMOTE_WS}/scripts/nav_status.py", dsts)

@@ -60,7 +60,11 @@ class ProtocolTests(unittest.TestCase):
         )
         self.assertEqual(
             classify_navigate_to_pose_result(6).status,
-            "navigation_status_6",
+            "navigation_aborted",
+        )
+        self.assertEqual(
+            classify_follow_waypoints_result(6, []).status,
+            "navigation_aborted",
         )
 
     def test_behavior_tree_selection_uses_bounded_forward_recovery_profile(self):
