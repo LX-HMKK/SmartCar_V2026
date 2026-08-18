@@ -103,7 +103,7 @@ case "$1" in
     : > "$RGB_LOG"
     : > "$OUTPUT_LOG"
     ros2 launch smartcar_tools qr_test.launch.py \
-      input_source:=camera camera_driver:=aurora \
+      input_source:=camera \
       aurora_resolution_mode_index:=2 >"$QR_LOG" 2>&1 &
     launch_pid=$!
     record_media_pid qr_launch "$launch_pid"
@@ -139,7 +139,7 @@ case "$1" in
     : > "$RGB_LOG"
     start_rgb_imshow VLM
     ros2 launch smartcar_tools vlm_test.launch.py \
-      input_source:=camera camera_driver:=aurora auto_request:=true &
+      input_source:=camera auto_request:=true &
     launch_pid=$!
     record_media_pid vlm_launch "$launch_pid"
     wait "$launch_pid"

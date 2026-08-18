@@ -345,7 +345,7 @@ prepare() {
     use_imu_filter:=false use_robot_description:=false \
     use_safety:=true use_nav:=true nav_autostart:=true \
     nav2_lifecycle_manager_delay_sec:=0.0 \
-    use_camera:=true use_vision:=true camera_driver:=aurora \
+    use_camera:=true use_vision:=true \
     use_depth_camera:=true aurora_rgb_fps:=10 aurora_ir_fps:=10 \
     use_task:=true use_visualization:=false \
     autostart_mission:=false safety_emergency_stop_on_start:=true \

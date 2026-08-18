@@ -17,8 +17,6 @@
   <exec_depend>smartcar_interfaces</exec_depend>
   <exec_depend>zbar_ros</exec_depend>
   <exec_depend>deptrum-ros-driver-aurora930</exec_depend>
-  <exec_depend>hobot_usb_cam</exec_depend>
-  <exec_depend>mipi_cam</exec_depend>
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>python3-opencv</exec_depend>

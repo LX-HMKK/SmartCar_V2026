@@ -205,7 +205,7 @@ VLM 无有效结果时任务明确失败，不发布通用描述或伪造语义�
 ### `media_test.sh`
 
 RDK 上的独立 QR/VLM 画面和文字短测。它只启动 Aurora 相机和对应视觉节点，不启动底盘、Nav2、
-任务树或任何运动链。两个入口都固定订阅 Aurora RGB 话题 `/aurora/rgb/image_raw`，不会启动 USB
+任务树或任何运动链。两个入口都固定订阅 Aurora RGB 话题 `/aurora/rgb/image_raw`，不选择其他相机驱动
 或 MIPI 相机，也不会传递或改写 Aurora 深度、IR、点云参数。
 
 ```bash

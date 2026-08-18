@@ -17,10 +17,8 @@ class MediaTestScriptTests(unittest.TestCase):
 
     def test_always_selects_aurora_rgb_without_motion_stack(self):
         source = SCRIPT.read_text(encoding="utf-8")
-        self.assertEqual(source.count("camera_driver:=aurora"), 2)
         self.assertIn("input_source:=camera", source)
-        self.assertNotIn("camera_driver:=usb", source)
-        self.assertNotIn("camera_driver:=mipi", source)
+        self.assertNotIn("camera_driver", source)
         self.assertNotIn("aurora_depth_enable:=", source)
         self.assertNotIn("aurora_point_cloud_enable:=", source)
         self.assertEqual(source.count("aurora_resolution_mode_index:=2"), 1)

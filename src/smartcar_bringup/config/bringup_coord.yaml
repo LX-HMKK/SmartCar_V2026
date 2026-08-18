@@ -14,7 +14,7 @@ topics:
   cmd_vel: /cmd_vel
   cmd_vel_safe: /cmd_vel_safe
   ackermann_cmd: /ackermann_cmd
-  image: /image
+  image: /aurora/rgb/image_raw
   depth_points: /smartcar/depth/points
 
 toggles:
@@ -45,8 +45,6 @@ extrinsics:
     parent: base_link
     child_by_driver:
       aurora: rgb_camera_link
-      usb: default_usb_cam
-      mipi: default_cam
     xyz: [0.1205, 0.0, 0.11]
     rpy: [0.0, 0.0, 0.0]
   link_to_depth_camera:
@@ -82,4 +80,4 @@ motion_gates:
 
 hardware:
   chassis_serial: /dev/ttyACM0
-  camera_driver: aurora
+  depth_camera: aurora930

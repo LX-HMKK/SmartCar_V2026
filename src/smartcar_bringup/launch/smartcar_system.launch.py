@@ -15,18 +15,9 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
-CAMERA_FRAMES = {
-    "aurora": "rgb_camera_link",
-    "usb": "default_usb_cam",
-    "mipi": "default_cam",
-}
-CAMERA_TOPICS = {
-    "aurora": "/aurora/rgb/image_raw",
-    "usb": "/image",
-    "mipi": "/image_raw",
-}
+RGB_CAMERA_FRAME = "rgb_camera_link"
+AURORA_RGB_TOPIC = "/aurora/rgb/image_raw"
 EXTERNAL_IMAGE_TOPIC = "/smartcar/vision/image"
-DEPTH_CAMERA_DRIVER = "aurora"
 DEPTH_POINT_CLOUD_INPUT_TOPIC = "/aurora/points2"
 DEPTH_POINT_CLOUD_TOPIC = "/smartcar/depth/points"
 DEPTH_SCAN_TOPIC = "/smartcar/depth/scan"
@@ -40,7 +31,6 @@ DEPTH_SCAN_HALF_FOV_RAD = 0.75
 # the 3.0 m costmap marking limit, so it is used only for clearing, never as a
 # circular ring of obstacle returns.
 DEPTH_SCAN_CLEARING_ENVELOPE_M = 3.01
-VALID_CAMERA_DRIVERS = tuple(CAMERA_FRAMES)
 MOTION_GATES = (
     "steering_calibrated",
     "emergency_stop_ready",
@@ -58,16 +48,11 @@ def _as_bool(context, name):
 
 
 def _resolve_camera_source(context):
-    use_camera = _as_bool(context, "use_camera")
+    use_camera = _as_bool(context, "use_camera") or _as_bool(
+        context, "use_depth_camera")
     configured_topic = LaunchConfiguration("image_topic").perform(context).strip()
-    if not use_camera:
-        return "none", configured_topic or EXTERNAL_IMAGE_TOPIC
-
-    camera_driver = LaunchConfiguration(
-        "camera_driver").perform(context).strip().lower()
-    if camera_driver not in VALID_CAMERA_DRIVERS:
-        raise RuntimeError("camera_driver must be aurora, usb, or mipi")
-    return camera_driver, configured_topic or CAMERA_TOPICS[camera_driver]
+    return configured_topic or (
+        AURORA_RGB_TOPIC if use_camera else EXTERNAL_IMAGE_TOPIC)
 
 
 def _vision_and_camera_actions(context):
@@ -78,19 +63,9 @@ def _vision_and_camera_actions(context):
     if not use_camera and not use_vision and not use_depth_camera:
         return []
 
-    selected_driver, selected_topic = _resolve_camera_source(context)
-    if use_depth_camera:
-        if use_camera and selected_driver != DEPTH_CAMERA_DRIVER:
-            raise RuntimeError(
-                "use_depth_camera requires camera_driver=aurora when RGB "
-                "camera streaming is also enabled")
-        selected_driver = DEPTH_CAMERA_DRIVER
-        selected_topic = (
-            LaunchConfiguration("image_topic").perform(context).strip()
-            or CAMERA_TOPICS[selected_driver]
-        )
+    selected_topic = _resolve_camera_source(context)
 
-    start_camera_driver = use_camera or use_depth_camera
+    start_camera = use_camera or use_depth_camera
     aurora_rgb_enable = use_camera or use_vision
     actions = [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
@@ -99,11 +74,8 @@ def _vision_and_camera_actions(context):
             "smartcar_vision.launch.py",
         ])),
         launch_arguments={
-            "camera_driver": selected_driver,
             "image_topic": selected_topic,
-            "usb_video_device": LaunchConfiguration(
-                "usb_video_device").perform(context),
-            "use_camera": "true" if start_camera_driver else "false",
+            "use_camera": "true" if start_camera else "false",
             "use_services": "true" if use_vision else "false",
             # The standard stack starts zbar only at A to conserve CPU.  The
             # competition entry may explicitly preload it before the referee
@@ -126,9 +98,6 @@ def _vision_and_camera_actions(context):
     )]
 
     if use_camera or (use_vision and use_depth_camera):
-        frame_override = LaunchConfiguration(
-            "camera_frame").perform(context).strip()
-        camera_frame = frame_override or CAMERA_FRAMES[selected_driver]
         actions.append(Node(
             package="tf2_ros",
             executable="static_transform_publisher",
@@ -141,7 +110,7 @@ def _vision_and_camera_actions(context):
                 "--pitch", LaunchConfiguration("camera_pitch").perform(context),
                 "--yaw", LaunchConfiguration("camera_yaw").perform(context),
                 "--frame-id", "base_link",
-                "--child-frame-id", camera_frame,
+                "--child-frame-id", RGB_CAMERA_FRAME,
             ],
         ))
     if use_depth_camera:
@@ -261,15 +230,7 @@ def _task_actions(context):
     if not _as_bool(context, "use_task"):
         return []
 
-    _, image_topic = _resolve_camera_source(context)
-    if (
-        _as_bool(context, "use_depth_camera")
-        and _as_bool(context, "use_vision")
-    ):
-        image_topic = (
-            LaunchConfiguration("image_topic").perform(context).strip()
-            or CAMERA_TOPICS[DEPTH_CAMERA_DRIVER]
-        )
+    image_topic = _resolve_camera_source(context)
     return [IncludeLaunchDescription(
         PythonLaunchDescriptionSource(PathJoinSubstitution([
             FindPackageShare("smartcar_task"),
@@ -632,7 +593,6 @@ def generate_launch_description():
                 "safety.yaml",
             ]),
         ),
-        DeclareLaunchArgument("camera_driver", default_value="usb"),
         DeclareLaunchArgument("preload_qr_reader", default_value="false"),
         DeclareLaunchArgument("aurora_rgb_fps", default_value="10"),
         DeclareLaunchArgument("aurora_ir_fps", default_value="10"),
@@ -660,8 +620,6 @@ def generate_launch_description():
                 "vision.yaml",
             ]),
         ),
-        DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
-        DeclareLaunchArgument("camera_frame", default_value=""),
         DeclareLaunchArgument(
             "steering_calibrated", default_value="false"),
         DeclareLaunchArgument(

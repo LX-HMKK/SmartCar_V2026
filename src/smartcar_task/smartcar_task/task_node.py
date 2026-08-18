@@ -163,7 +163,8 @@ class TaskNode(Node):
         }
         for name, default in scalar_defaults.items():
             self.declare_parameter(name, default)
-        self.declare_parameter("barcode_reader_image_topic", "/image")
+        self.declare_parameter(
+            "barcode_reader_image_topic", "/aurora/rgb/image_raw")
 
     def _load_route(self):
         waypoints_file = str(

@@ -286,8 +286,6 @@ class TestSystemSmoke(unittest.TestCase):
             "joint_state_publisher",
             "robot_state_publisher",
             "aurora",
-            "usb_cam",
-            "mipi_cam",
         )
         self.assertFalse([
             name for name in names if any(value in name for value in forbidden)

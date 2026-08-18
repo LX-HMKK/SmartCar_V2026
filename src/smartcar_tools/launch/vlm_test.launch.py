@@ -14,11 +14,7 @@ from launch_ros.actions import Node
 from launch_ros.substitutions import FindPackageShare
 
 
-DRIVER_TOPICS = {
-    "aurora": "/aurora/rgb/image_raw",
-    "usb": "/image",
-    "mipi": "/image_raw",
-}
+AURORA_RGB_TOPIC = "/aurora/rgb/image_raw"
 
 
 def _as_bool(value, name):
@@ -33,8 +29,6 @@ def _as_bool(value, name):
 def _runtime_actions(context):
     input_source = LaunchConfiguration(
         "input_source").perform(context).strip().lower()
-    camera_driver = LaunchConfiguration(
-        "camera_driver").perform(context).strip().lower()
     configured_topic = LaunchConfiguration(
         "image_topic").perform(context).strip()
     use_sim_time = _as_bool(
@@ -55,21 +49,16 @@ def _runtime_actions(context):
         raise RuntimeError("request_timeout_sec must be in (0, 30]")
     if input_source not in ("camera", "file"):
         raise RuntimeError("input_source must be camera or file")
-    if camera_driver not in DRIVER_TOPICS:
-        raise RuntimeError("camera_driver must be aurora, usb, or mipi")
-
     actions = []
     if input_source == "camera":
-        selected_driver = camera_driver
         use_camera = "true"
-        source_topic = configured_topic or DRIVER_TOPICS[camera_driver]
+        source_topic = configured_topic or AURORA_RGB_TOPIC
     else:
         image_file = LaunchConfiguration("image_file").perform(context).strip()
         if not image_file:
             raise RuntimeError("image_file is required for file input")
         if not Path(image_file).expanduser().is_file():
             raise RuntimeError(f"image_file does not exist: {image_file}")
-        selected_driver = "none"
         use_camera = "false"
         source_topic = configured_topic or "/smartcar/test/image"
         actions.append(Node(
@@ -95,14 +84,11 @@ def _runtime_actions(context):
             "smartcar_vision.launch.py",
         ])),
         launch_arguments={
-            "camera_driver": selected_driver,
             "use_camera": use_camera,
             "use_services": "true",
             "use_zbar": "false",
             "use_sim_time": "true" if use_sim_time else "false",
             "image_topic": source_topic,
-            "usb_video_device": LaunchConfiguration(
-                "usb_video_device").perform(context),
             "config_file": LaunchConfiguration(
                 "config_file").perform(context),
         }.items(),
@@ -142,8 +128,6 @@ def generate_launch_description():
             default_value="camera",
             description="Image source: camera or file",
         ),
-        DeclareLaunchArgument("camera_driver", default_value="aurora"),
-        DeclareLaunchArgument("usb_video_device", default_value="/dev/video0"),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument("image_file", default_value=""),
         DeclareLaunchArgument(

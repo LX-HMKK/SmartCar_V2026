@@ -27,7 +27,7 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertIn('case "${1:-}" in', self.source)
 
     def test_prepare_keeps_motion_stopped_and_uses_one_aurora_stack(self):
-        self.assertIn("camera_driver:=aurora", self.source)
+        self.assertNotIn("camera_driver", self.source)
         self.assertIn("use_camera:=true use_vision:=true", self.source)
         self.assertIn("use_depth_camera:=true", self.source)
         self.assertIn("localization_profile:=wheel_imu", self.source)

@@ -40,7 +40,6 @@ class MediaLaunchContractTests(unittest.TestCase):
     def test_qr_entry_supports_camera_and_file_without_motion_stack(self):
         source = QR.read_text(encoding="utf-8")
         self.assertEqual(launch_default(QR, "input_source"), "camera")
-        self.assertEqual(launch_default(QR, "camera_driver"), "aurora")
         self.assertEqual(
             launch_default(QR, "aurora_resolution_mode_index"), "0")
         self.assertIn('input_source not in ("camera", "file")', source)
@@ -58,7 +57,6 @@ class MediaLaunchContractTests(unittest.TestCase):
     def test_vlm_entry_uses_hdmi_text_output(self):
         source = VLM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(VLM, "display"), ":0")
-        self.assertEqual(launch_default(VLM, "camera_driver"), "aurora")
         self.assertEqual(
             launch_default(VLM, "xauthority"),
             "/var/run/lightdm/root/:0",
@@ -74,6 +72,7 @@ class MediaLaunchContractTests(unittest.TestCase):
         self.assertNotIn('LaunchConfiguration("prompt")', source)
         self.assertIn("vision.yaml", source)
         self.assertNotIn("vision_volcengine.yaml", source)
+        self.assertNotIn("camera_driver", source)
         for forbidden in (
             "smartcar_bringup",
             "smartcar_nav2",

@@ -121,9 +121,16 @@ class SystemContractTests(unittest.TestCase):
 
     def test_camera_topic_is_resolved_once_for_vision_and_task(self):
         source = SYSTEM.read_text(encoding="utf-8")
-        topics = assigned_literal(SYSTEM, "CAMERA_TOPICS")
-        self.assertEqual(launch_default(SYSTEM, "camera_driver"), "usb")
-        self.assertEqual(topics, assigned_literal(VISION, "DRIVER_TOPICS"))
+        self.assertEqual(
+            assigned_literal(SYSTEM, "AURORA_RGB_TOPIC"),
+            "/aurora/rgb/image_raw",
+        )
+        self.assertEqual(
+            assigned_literal(VISION, "AURORA_RGB_TOPIC"),
+            "/aurora/rgb/image_raw",
+        )
+        self.assertNotIn("camera_driver", source)
+        self.assertNotIn("usb_video_device", source)
         self.assertIn("def _resolve_camera_source(context):", source)
         self.assertIn('"barcode_reader_image_topic": image_topic', source)
         self.assertIn("OpaqueFunction(function=_task_actions)", source)
@@ -300,12 +307,10 @@ class SystemContractTests(unittest.TestCase):
         self.assertNotIn("'0.41'", source)
         self.assertNotIn("'0.12'", source)
 
-    def test_camera_tf_targets_real_driver_frames_and_is_overrideable(self):
+    def test_camera_tf_uses_the_fixed_aurora_rgb_frame(self):
         source = SYSTEM.read_text(encoding="utf-8")
-        self.assertIn('"aurora": "rgb_camera_link"', source)
-        self.assertIn('"usb": "default_usb_cam"', source)
-        self.assertIn('"mipi": "default_cam"', source)
-        self.assertIn('"camera_frame").perform(context)', source)
+        self.assertIn('RGB_CAMERA_FRAME = "rgb_camera_link"', source)
+        self.assertNotIn('LaunchConfiguration("camera_frame")', source)
         self.assertIn('"--frame-id", "base_link"', source)
 
     def test_nav_and_component_launches_propagate_runtime_clock_controls(self):

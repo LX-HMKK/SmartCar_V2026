@@ -882,7 +882,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         node_source = _task_runtime_source()
         self.assertIn('"barcode_reader_image_topic"', launch_source)
         self.assertIn(
-            'self.declare_parameter("barcode_reader_image_topic", "/image")',
+            '"barcode_reader_image_topic", "/aurora/rgb/image_raw")',
             node_source,
         )
         self.assertIn('f"image:={image_topic}"', node_source)

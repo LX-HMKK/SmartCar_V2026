@@ -35,7 +35,7 @@ def _time_message_to_nanoseconds(message):
 class VisionNode(Node):
     def __init__(self):
         super().__init__("vision_node")
-        self.declare_parameter("image_topic", "/image")
+        self.declare_parameter("image_topic", "/aurora/rgb/image_raw")
         self.declare_parameter("barcode_topic", "/barcode")
         self.declare_parameter("vlm_model", "")
         self.declare_parameter("default_prompt", "")

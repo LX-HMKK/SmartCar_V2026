@@ -80,7 +80,6 @@ bash /home/sunrise/ros2_ws/scripts/nav_test.sh
 autostart_mission:=false
 safety_emergency_stop_on_start:=true
 use_camera:=false
-camera_driver:=aurora
 use_depth_camera:=true
 use_vision:=false
 ```

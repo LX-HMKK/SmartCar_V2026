@@ -39,9 +39,8 @@ def launch_default(source, name):
 
 
 class VisionLaunchContractTests(unittest.TestCase):
-    def test_usb_is_default_and_aurora_depth_is_explicit_opt_in(self):
+    def test_aurora_is_the_only_camera_and_depth_is_explicit(self):
         source = LAUNCH_FILE.read_text(encoding="utf-8")
-        self.assertEqual(launch_default(source, "camera_driver"), "usb")
         self.assertEqual(launch_default(source, "aurora_depth_enable"), "false")
         self.assertEqual(
             launch_default(source, "aurora_point_cloud_enable"), "false")
@@ -58,24 +57,24 @@ class VisionLaunchContractTests(unittest.TestCase):
         ):
             self.assertIn(setting, source)
 
-    def test_camera_selector_and_topic_defaults_are_explicit(self):
+    def test_aurora_topic_is_the_only_hardware_image_source(self):
         source = LAUNCH_FILE.read_text(encoding="utf-8")
-        for driver in ("aurora", "usb", "mipi", "none"):
-            self.assertIn(f'"{driver}"', source)
-        self.assertIn('"aurora": "/aurora/rgb/image_raw"', source)
-        self.assertIn('"usb": "/image"', source)
-        self.assertIn('"mipi": "/image_raw"', source)
-        self.assertIn("hobot_usb_cam.launch.py", source)
-        self.assertIn("mipi_cam_640x480_bgr8.launch.py", source)
+        self.assertIn('AURORA_RGB_TOPIC = "/aurora/rgb/image_raw"', source)
+        self.assertNotIn("camera_driver", source)
+        self.assertNotIn("hobot_usb_cam", source)
+        self.assertNotIn("mipi_cam", source)
         self.assertIn("aurora_point_cloud_enable requires aurora_depth_enable", source)
 
         parameters = yaml.safe_load(
             DEFAULT_CONFIG.read_text(encoding="utf-8")
         )["vision_node"]["ros__parameters"]
-        self.assertEqual(parameters["image_topic"], "/image")
+        self.assertEqual(parameters["image_topic"], "/aurora/rgb/image_raw")
 
         node_source = NODE_FILE.read_text(encoding="utf-8")
-        self.assertIn('self.declare_parameter("image_topic", "/image")', node_source)
+        self.assertIn(
+            'self.declare_parameter("image_topic", "/aurora/rgb/image_raw")',
+            node_source,
+        )
 
     def test_zbar_remaps_directly_to_selected_image_source(self):
         source = LAUNCH_FILE.read_text(encoding="utf-8")
@@ -84,8 +83,8 @@ class VisionLaunchContractTests(unittest.TestCase):
         self.assertIn('("image", source_topic)', source)
         self.assertIn('("barcode", "/barcode")', source)
         self.assertNotIn("relay_enabled", source)
-        self.assertIn('"usb_pixel_format": "mjpeg2rgb"', source)
-        self.assertIn('"mipi_io_method": "ros"', source)
+        self.assertNotIn("usb_pixel_format", source)
+        self.assertNotIn("mipi_io_method", source)
 
     def test_node_uses_required_concurrency_and_receipt_time(self):
         source = NODE_FILE.read_text(encoding="utf-8")
@@ -105,8 +104,6 @@ class VisionLaunchContractTests(unittest.TestCase):
             "smartcar_interfaces",
             "zbar_ros",
             "deptrum-ros-driver-aurora930",
-            "hobot_usb_cam",
-            "mipi_cam",
             "launch",
             "launch_ros",
             "python3-opencv",

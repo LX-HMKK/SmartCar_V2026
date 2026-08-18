@@ -149,7 +149,7 @@ nohup ros2 launch smartcar_bringup smartcar_system.launch.py \
   use_base:=true \
   use_safety:=true use_nav:=true \
   nav_autostart:=true use_camera:=false use_vision:=false \
-  camera_driver:=aurora use_depth_camera:=true aurora_ir_fps:=10 aurora_rgb_fps:=10 \
+  use_depth_camera:=true aurora_ir_fps:=10 aurora_rgb_fps:=10 \
   use_task:=true \
   $EXTRA_ARGS $LOCALIZATION_PROFILE_ARG $C_ZONE_DIRECTION_ARG use_visualization:=true waypoints_file:="$WP" \
   >> "$LOG" 2>&1 &

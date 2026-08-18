@@ -96,7 +96,7 @@ def generate_launch_description():
         ),
         DeclareLaunchArgument(
             "barcode_reader_image_topic",
-            default_value="/image",
+            default_value="/aurora/rgb/image_raw",
             description="Image topic remapped into the on-demand zbar reader",
         ),
         DeclareLaunchArgument(

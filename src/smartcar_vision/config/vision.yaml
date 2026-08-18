@@ -1,6 +1,6 @@
 vision_node:
   ros__parameters:
-    image_topic: /image
+    image_topic: /aurora/rgb/image_raw
     barcode_topic: /barcode
     vlm_model: doubao-seed-2-0-lite-260428
     default_prompt: "只描述当前图像中实际可见的内容，限一句话；不要根据任务背景猜测或补充画面中看不到的信息。"
