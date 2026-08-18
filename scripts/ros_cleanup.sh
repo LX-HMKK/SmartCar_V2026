@@ -48,18 +48,6 @@ collect_by_command() {
   done
 }
 
-remove_stale_fastdds_ports() {
-  local port
-
-  command -v fuser >/dev/null 2>&1 || return
-  for port in /dev/shm/fastrtps_port* /dev/shm/fastdds_port*; do
-    [ -e "$port" ] || continue
-    # Never unlink a port held by a still-running DDS participant.
-    fuser -s "$port" >/dev/null 2>&1 && continue
-    rm -f -- "$port"
-  done
-}
-
 echo "=== SmartCar cleanup ==="
 stop_saved_process "$STATE_DIR/launch.pid" \
   "ros2 launch smartcar_bringup smartcar_system.launch.py"
@@ -119,5 +107,4 @@ if [ -n "$TARGET_PIDS" ]; then
   [ -z "$TARGET_PIDS" ] || kill -KILL $TARGET_PIDS 2>/dev/null || true
 fi
 
-remove_stale_fastdds_ports
 echo "=== Done ==="

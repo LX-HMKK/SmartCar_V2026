@@ -9,15 +9,7 @@ else
 fi
 sim_env_workspace=${SMARTCAR_WS:-${sim_env_default_workspace}}
 
-export RMW_IMPLEMENTATION=rmw_fastrtps_cpp
 export ROS_LOCALHOST_ONLY=1
-
-# Clear custom locator profiles so every local participant uses the same
-# default Fast DDS transports.
-unset FASTRTPS_DEFAULT_PROFILES_FILE
-unset FASTDDS_DEFAULT_PROFILES_FILE
-unset RMW_FASTRTPS_USE_QOS_FROM_XML
-unset CYCLONEDDS_URI
 
 if [ -d "${sim_env_workspace}/install/smartcar_sim/share/smartcar_sim/models" ]; then
     SIM_MODEL_PATH="${sim_env_workspace}/install/smartcar_sim/share/smartcar_sim/models"

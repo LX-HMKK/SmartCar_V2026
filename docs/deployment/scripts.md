@@ -242,5 +242,5 @@ bash /home/sunrise/ros2_ws/scripts/ros_cleanup.sh
 ```
 
 它先结束 `nav_test.sh`、`competition_mode.sh` 和 `media_test.sh` 记录的 PID，再清理已知的导航、
-QR/VLM 与 Aurora 视觉残留节点；随后只删除无 DDS 进程占用的 Fast DDS 端口文件。不会使用宽泛
-`pkill -f`，也不会清理 ROS daemon 或航点编辑器。异常时先使用物理急停，再运行该命令。
+QR/VLM 与 Aurora 视觉残留节点。不会使用宽泛 `pkill -f`，也不会清理 ROS daemon 或航点编辑器。
+异常时先使用物理急停，再运行该命令。

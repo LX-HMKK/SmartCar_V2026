@@ -86,10 +86,7 @@ def generate_launch_description():
     # Keep every simulator participant on the local development host.  Do not
     # inject a custom DDS locator profile: it can split multi-process discovery.
 
-    # ── 清理残留 SHM/临时文件（必须在 DDS/进程启动前执行）──
-    # 修复原因：PathJoinSubstitution 返回 Substitution 对象，在
-    # ExecuteProcess 的 cmd 参数中可能未正确解析。改用 os.path.join
-    # 直接构造字符串路径，与 dds_config 的处理方式保持一致。
+    # Clean stale simulation files before starting processes.
     cleanup_script = os.path.join(pkg_sim, "scripts", "sim_cleanup.sh")
     skip_cleanup = LaunchConfiguration("skip_cleanup", default="false")
     sim_cleanup = ExecuteProcess(
@@ -97,9 +94,9 @@ def generate_launch_description():
         name="sim_cleanup",
         condition=UnlessCondition(skip_cleanup),
     )
-    # An existing local editor or diagnostic session owns its Fast DDS shared
-    # memory.  This explicit opt-in path performs no cleanup; callers must
-    # isolate their launch with ROS_DOMAIN_ID and IGN_PARTITION.
+    # An existing local editor or diagnostic session owns local DDS resources.
+    # This explicit opt-in path performs no cleanup; callers must isolate their
+    # launch with ROS_DOMAIN_ID and IGN_PARTITION.
     sim_cleanup_skip = ExecuteProcess(
         cmd=["bash", cleanup_script, "--skip"],
         name="sim_cleanup_skip",
@@ -154,8 +151,7 @@ def generate_launch_description():
         name="gz_server_headless",
     )
 
-    # DDS environment applies to every process launched below.
-    set_rmw = SetEnvironmentVariable("RMW_IMPLEMENTATION", "rmw_fastrtps_cpp")
+    # Keep the simulator local without selecting an RMW implementation.
     set_localhost = SetEnvironmentVariable("ROS_LOCALHOST_ONLY", "1")
     model_path = os.path.join(pkg_sim, "models")
     existing_model_path = os.environ.get("IGN_GAZEBO_RESOURCE_PATH", "")
@@ -393,12 +389,12 @@ def generate_launch_description():
                 "nav2_params_file": str(params_path),
                 "nav2_params_overlay_file": "",
                 # Let the verified helper below issue STARTUP only after the
-                # lifecycle manager has created and warmed its Fast DDS
-                # response readers. Autostart can race controller plugin
+                # lifecycle manager has created and warmed its service
+                # readers. Autostart can race controller plugin
                 # configuration and strand the manager in Gazebo.
                 "autostart": "false",
-                # Fast DDS can discover lifecycle services before their reply
-                # readers are stable. A 2 s delay still let controller_server
+                # Service discovery can complete before reply readers are
+                # stable. A 2 s delay still let controller_server
                 # finish configuring after its manager had abandoned the
                 # change_state response. Keep the larger wait local to Gazebo;
                 # the production Nav2 launch retains its zero-delay default.
@@ -496,8 +492,8 @@ def generate_launch_description():
                     "[sim] sensor preflight passed; publishing static TF, then "
                     "checking scan-time TF"
                 )),
-                # Static transforms published before the Gazebo clock / Fast
-                # DDS graph is live can be absent from late Nav2 subscribers
+                # Static transforms published before the Gazebo clock / DDS
+                # graph is live can be absent from late Nav2 subscribers
                 # despite their transient-local QoS. Publish them after the
                 # live scan+odom gate, then allow discovery to settle before
                 # either costmap starts its laser message filter.
@@ -677,7 +673,6 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "results_file", default_value="/tmp/auto_train_results.json"),
         DeclareLaunchArgument("use_through_poses", default_value="true"),
-        set_rmw,
         set_localhost,
         set_model_path,
         # Resolve the base plus simulation-only overlay before Gazebo or Nav2

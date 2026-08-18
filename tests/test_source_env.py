@@ -6,6 +6,9 @@ import unittest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ENV = ROOT / "scripts" / "source_env.sh"
 NAV_PREPARE = ROOT / "scripts" / "nav_prepare.sh"
+SIM_ENV = ROOT / "src" / "smartcar_sim" / "scripts" / "sim_env.sh"
+SIM_LAUNCH = ROOT / "src" / "smartcar_sim" / "launch" / "sim.launch.py"
+SIM_PACKAGE = ROOT / "src" / "smartcar_sim" / "package.xml"
 
 
 class SourceEnvironmentContracts(unittest.TestCase):
@@ -37,6 +40,18 @@ class SourceEnvironmentContracts(unittest.TestCase):
         self.assertIn("Prepared competition environment snapshot", source)
         self.assertNotIn("ROS_DOMAIN_ID", source)
         self.assertNotIn("RMW_IMPLEMENTATION", source)
+
+    def test_simulation_does_not_select_a_specific_rmw(self):
+        sim_environment = SIM_ENV.read_text(encoding="utf-8")
+        self.assertNotIn("RMW_IMPLEMENTATION", sim_environment)
+        self.assertNotIn("CYCLONEDDS_URI", sim_environment)
+        self.assertNotIn(
+            'SetEnvironmentVariable("RMW_IMPLEMENTATION"',
+            SIM_LAUNCH.read_text(encoding="utf-8"),
+        )
+        self.assertNotIn(
+            "rmw_fastrtps_cpp", SIM_PACKAGE.read_text(encoding="utf-8")
+        )
 
 
 if __name__ == "__main__":

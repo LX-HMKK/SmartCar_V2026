@@ -854,9 +854,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("'media_test\\.sh (qr|vlm)'", source)
         self.assertIn("'/zbar_ros/barcode_reader'", source)
         self.assertIn("image_replay_node", source)
-        self.assertIn("remove_stale_fastdds_ports", source)
-        self.assertIn('fuser -s "$port"', source)
-        self.assertIn('rm -f -- "$port"', source)
+        self.assertNotIn("fastdds", source.lower())
+        self.assertNotIn("fastrtps", source.lower())
         for unsafe_or_unrelated in (
             "setsid", "pkill -f", "ros2 daemon", "waypoint_editor",
             "\n    rviz2",

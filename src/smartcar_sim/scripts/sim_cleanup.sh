@@ -111,39 +111,16 @@ if [ "$kill_processes" = true ]; then
     fi
 fi
 
-# ---- 1. Clean DDS shared-memory transport files ----
-# FastDDS SHM 传输使用 /dev/shm/ 下的文件作为共享内存对象。
-# 前缀包括：fastdds_（官方）、fastrtps_（旧版）。
-# 修复原因：shm_only DDS 配置下，残留段名冲突 → participant 创建失败。
-shopt -s nullglob 2>/dev/null || true
-shm_cleaned=0
-for f in /dev/shm/fastdds_* /dev/shm/fastrtps_*; do
-    rm -f "$f" && ((shm_cleaned++))
-done
-shopt -u nullglob 2>/dev/null || true
-echo "[cleanup] Removed ${shm_cleaned} DDS SHM file(s)"
-
-# ---- 2. Clean DDS POSIX semaphores ----
-# FastDDS 使用命名信号量（sem. 前缀）进行 SHM 段同步。
-# 残留信号量会导致新 participant 的 SHM 初始化失败（EACCES/EINVAL）。
-shopt -s nullglob 2>/dev/null || true
-sem_cleaned=0
-for f in /dev/shm/sem.fastdds_* /dev/shm/sem.fastrtps_*; do
-    rm -f "$f" && ((sem_cleaned++))
-done
-shopt -u nullglob 2>/dev/null || true
-echo "[cleanup] Removed ${sem_cleaned} DDS semaphore(s)"
-
-# ---- 3. Clean simulation temp files ----
+# ---- 1. Clean simulation temp files ----
 shopt -s nullglob 2>/dev/null || true
 tmp_cleaned=0
-for f in /tmp/gazebo-* /tmp/ign-* /tmp/fastdds* /tmp/fastrtps* /tmp/ros2_daemon_*; do
+for f in /tmp/gazebo-* /tmp/ign-* /tmp/ros2_daemon_*; do
     rm -rf "$f" && ((tmp_cleaned++))
 done
 shopt -u nullglob 2>/dev/null || true
 echo "[cleanup] Removed ${tmp_cleaned} tmp file(s)"
 
-# ---- 4. Clean the Gazebo pending lock ----
+# ---- 2. Clean the Gazebo pending lock ----
 # Gazebo 的 .gz 锁文件和 master 注册表在 --verbose 模式下可能残留
 if [ -d "$HOME/.gz" ]; then
     rm -rf "$HOME/.gz/server/pending.lock" 2>/dev/null || true

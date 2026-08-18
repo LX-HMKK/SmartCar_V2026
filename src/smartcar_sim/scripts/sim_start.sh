@@ -22,7 +22,7 @@ while [ "$#" -gt 0 ]; do
         --rviz) use_rviz=true ;;
         --no-rviz) use_rviz=false ;;
         # A caller preserving an existing local ROS/Gazebo session must skip
-        # both this wrapper's process cleanup and sim.launch.py's shared-memory
+        # both this wrapper's process cleanup and sim.launch.py's stale-file
         # cleanup. The launch still requires the caller to isolate DDS/Gazebo.
         --no-clean) clean_processes=false; skip_cleanup=true ;;
         --) shift; launch_args+=("$@"); break ;;
@@ -44,7 +44,7 @@ if [ "$skip_cleanup" = true ]; then
     launch_args+=("skip_cleanup:=true")
 fi
 
-echo "[sim] RMW=${RMW_IMPLEMENTATION}, localhost=${ROS_LOCALHOST_ONLY}"
+echo "[sim] RMW=${RMW_IMPLEMENTATION:-ros-default}, localhost=${ROS_LOCALHOST_ONLY}"
 echo "[sim] headless=${headless}, rviz=${use_rviz}"
 
 exec ros2 launch smartcar_sim sim.launch.py \

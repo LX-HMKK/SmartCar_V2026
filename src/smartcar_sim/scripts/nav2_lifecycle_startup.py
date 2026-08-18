@@ -2,7 +2,7 @@
 """Start the Gazebo Nav2 lifecycle stack after DDS service warm-up.
 
 Nav2 Humble creates its lifecycle service clients just after the lifecycle
-manager process starts.  Starting the manager immediately can race Fast DDS
+manager process starts. Starting the manager immediately can race middleware
 service reply-reader discovery when a controller has a non-trivial configure
 step (such as loading MPPI critics).  This process deliberately waits until
 both the manager and every managed node's state service are discoverable,
@@ -152,8 +152,8 @@ class Nav2LifecycleStartup(Node):
     def _wait_for_startup_or_active(self, future: object) -> bool:
         """Accept one STARTUP only after state probes prove its actual result.
 
-        Fast DDS can lose the manager's service response while delivering the
-        lifecycle state traffic.  Polling the managed nodes during the bounded
+        A middleware response can be delayed while lifecycle state traffic is
+        still being established. Polling the managed nodes during the bounded
         wait avoids needlessly stalling a healthy Nav2 stack for the full
         service timeout.  It never sends a second STARTUP request.
         """
@@ -220,7 +220,7 @@ class Nav2LifecycleStartup(Node):
             return False
 
         self.get_logger().info(
-            "Nav2 lifecycle services discovered; warming Fast DDS reply readers "
+            "Nav2 lifecycle services discovered; warming reply readers "
             f"for {self._warmup_sec:.1f}s")
         deadline = time.monotonic() + self._warmup_sec
         while rclpy.ok() and time.monotonic() < deadline:
