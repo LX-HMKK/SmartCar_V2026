@@ -260,9 +260,9 @@ class TaskNode(Node):
         if supervised_full_route and supervised_prefixes:
             raise ValueError(
                 "supervised full route and prefix cannot be combined")
-        self._supervised_navigation_test = bool(
+        supervised_navigation_test = bool(
             supervised_prefixes) or supervised_full_route
-        if self._supervised_competition_mode and self._supervised_navigation_test:
+        if self._supervised_competition_mode and supervised_navigation_test:
             raise ValueError(
                 "supervised competition and navigation test modes conflict")
         selected_segment_ids = tuple(

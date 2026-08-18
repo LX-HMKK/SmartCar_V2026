@@ -19,22 +19,6 @@ class DescribeOutcome(NamedTuple):
     status: str
 
 
-class _Deadline:
-    def __init__(self, timeout_sec, maximum_sec, monotonic_ns):
-        timeout = float(timeout_sec)
-        maximum = float(maximum_sec)
-        if not math.isfinite(timeout) or timeout <= 0.0:
-            raise ValueError("timeout must be finite and greater than zero")
-        if not math.isfinite(maximum) or maximum <= 0.0:
-            raise ValueError("maximum timeout must be finite and greater than zero")
-        self._monotonic_ns = monotonic_ns
-        self._deadline_ns = monotonic_ns() + int(
-            min(timeout, maximum) * 1_000_000_000)
-
-    def remaining_sec(self):
-        return max(0.0, (self._deadline_ns - self._monotonic_ns()) / 1e9)
-
-
 class VisionServiceCore:
     def __init__(
         self,
@@ -75,13 +59,18 @@ class VisionServiceCore:
 
     def describe_scene(self, not_before_ns, timeout_sec):
         try:
-            deadline = _Deadline(
-                timeout_sec, self._max_vlm_timeout_sec, self._monotonic_ns)
+            timeout = float(timeout_sec)
+            if not math.isfinite(timeout) or timeout <= 0.0:
+                raise ValueError
+            deadline_ns = self._monotonic_ns() + int(
+                min(timeout, self._max_vlm_timeout_sec) * 1_000_000_000)
         except (TypeError, ValueError, OverflowError):
             return DescribeOutcome(False, "", "invalid_timeout")
         try:
+            remaining_sec = max(
+                0.0, (deadline_ns - self._monotonic_ns()) / 1_000_000_000)
             image = self._image_buffer.wait_for(
-                not_before_ns, deadline.remaining_sec())
+                not_before_ns, remaining_sec)
         except (TypeError, ValueError, OverflowError):
             return DescribeOutcome(False, "", "invalid_request")
         if image is None:
@@ -93,7 +82,8 @@ class VisionServiceCore:
             return self._failure(f"jpeg_error:{type(error).__name__}")
         if not isinstance(jpeg, (bytes, bytearray)) or not jpeg:
             return self._failure("jpeg_empty")
-        remaining = deadline.remaining_sec()
+        remaining = max(
+            0.0, (deadline_ns - self._monotonic_ns()) / 1_000_000_000)
         if remaining <= 0.0:
             return self._failure("vlm_timeout")
 
@@ -102,7 +92,7 @@ class VisionServiceCore:
         except Exception as error:
             status = str(error).strip() or f"backend_error:{type(error).__name__}"
             return self._failure(status)
-        if deadline.remaining_sec() <= 0.0:
+        if deadline_ns <= self._monotonic_ns():
             return self._failure("vlm_timeout")
         description = str(description).strip()
         if not description:

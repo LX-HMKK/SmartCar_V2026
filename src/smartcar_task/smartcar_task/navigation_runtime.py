@@ -652,18 +652,6 @@ class RosNavigator(
             if client.wait_for_server(timeout_sec=min(poll_interval, remaining)):
                 return True
 
-    def _release_idle_action_client(self, client):
-        """Keep action clients alive while executor callbacks can be queued.
-
-        Destroying an ``ActionClient`` immediately after a terminal result can
-        invalidate its wait-set entry on another executor thread. The owning
-        ROS node tears down these clients during shutdown, so there is no
-        benefit to recreating them between consecutive navigation segments.
-        """
-        with self._condition:
-            if self._active_locked():
-                return
-
     def navigate(self, waypoint):
         try:
             goal = self._goal_factory.navigate_goal(waypoint)
@@ -673,12 +661,8 @@ class RosNavigator(
         if not self._wait_for_action_server(
             client, self._goal_response_timeout_sec
         ):
-            self._release_idle_action_client(client)
             return OperationResult(False, "navigation_server_unavailable")
-        try:
-            return self._navigate_goal(goal, client)
-        finally:
-            self._release_idle_action_client(client)
+        return self._navigate_goal(goal, client)
 
     def navigate_through(self, waypoints):
         """Run one constant-direction segment without stopping at through goals."""
@@ -692,9 +676,5 @@ class RosNavigator(
         if not self._wait_for_action_server(
             client, self._goal_response_timeout_sec
         ):
-            self._release_idle_action_client(client)
             return OperationResult(False, "navigation_server_unavailable")
-        try:
-            return self._navigate_goal(goal, client)
-        finally:
-            self._release_idle_action_client(client)
+        return self._navigate_goal(goal, client)

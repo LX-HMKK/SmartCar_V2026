@@ -106,7 +106,6 @@ class RosDirectionGuardObservationTests(unittest.TestCase):
     class FakeNode:
         def __init__(self):
             self.subscriptions = []
-            self.destroy_calls = 0
 
         @staticmethod
         def create_client(*_args, **_kwargs):
@@ -117,10 +116,7 @@ class RosDirectionGuardObservationTests(unittest.TestCase):
             self.subscriptions.append(subscription)
             return subscription
 
-        def destroy_subscription(self, _subscription):
-            self.destroy_calls += 1
-
-    def test_stop_observation_subscription_is_reused(self):
+    def test_odom_observation_subscription_is_reused(self):
         node = self.FakeNode()
         guard = RosDirectionGuard(
             node,
@@ -135,12 +131,10 @@ class RosDirectionGuardObservationTests(unittest.TestCase):
 
         guard._start_odom_observation()
         first = guard._odom_subscription
-        guard._stop_odom_observation()
         guard._start_odom_observation()
 
         self.assertIs(guard._odom_subscription, first)
         self.assertEqual(len(node.subscriptions), 1)
-        self.assertEqual(node.destroy_calls, 0)
 
 
 @unittest.skipUnless(
@@ -151,7 +145,6 @@ class RosLocalizationObservationTests(unittest.TestCase):
     class FakeNode:
         def __init__(self):
             self.subscriptions = []
-            self.destroy_calls = 0
 
         @staticmethod
         def create_client(*_args, **_kwargs):
@@ -162,10 +155,7 @@ class RosLocalizationObservationTests(unittest.TestCase):
             self.subscriptions.append(subscription)
             return subscription
 
-        def destroy_subscription(self, _subscription):
-            self.destroy_calls += 1
-
-    def test_reset_observation_subscriptions_are_reused(self):
+    def test_reset_odom_subscription_is_reused(self):
         node = self.FakeNode()
         localization = RosLocalization(
             node,
@@ -178,12 +168,10 @@ class RosLocalizationObservationTests(unittest.TestCase):
 
         localization._start_odometry_observation()
         first_odom = localization._odom_subscription
-        localization._stop_odometry_observation()
         localization._start_odometry_observation()
 
         self.assertIs(localization._odom_subscription, first_odom)
         self.assertEqual(len(node.subscriptions), 1)
-        self.assertEqual(node.destroy_calls, 0)
 
 
 if __name__ == "__main__":

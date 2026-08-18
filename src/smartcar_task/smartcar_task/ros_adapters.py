@@ -220,6 +220,8 @@ class RosDirectionGuard:
         with self._odom_condition:
             if self._odom_subscription is not None:
                 return
+            # Keep one subscription for the node lifetime; queued executor
+            # callbacks make per-wait destruction unsafe.
             self._odom_subscription = self._node.create_subscription(
                 Odometry,
                 "/odom",
@@ -228,35 +230,25 @@ class RosDirectionGuard:
                 callback_group=self._callback_group,
             )
 
-    def _stop_odom_observation(self):
-        # Keep the subscription alive for the node lifetime. Destroying it
-        # immediately after a stop barrier can race a queued callback in a
-        # MultiThreadedExecutor and raise rclpy InvalidHandle. The next
-        # barrier excludes observations from the previous wait.
-        return
-
     def wait_stopped(self):
         self._start_odom_observation()
         deadline = time.monotonic() + self._stop_timeout_sec
         self._start_stop_barrier()
-        try:
-            with self._odom_condition:
-                while time.monotonic() < deadline:
-                    now = time.monotonic()
-                    if (
-                        self._zero_since is not None
-                        and self._last_zero is not None
-                        and self._last_zero - self._zero_since
-                        >= self._stop_dwell_sec
-                        and now - self._last_zero
-                        <= self._odom_stale_timeout_sec
-                    ):
-                        return OperationResult(True, "stopped")
-                    self._odom_condition.wait(
-                        timeout=max(0.0, deadline - now))
-            return OperationResult(False, "odom_stop_timeout")
-        finally:
-            self._stop_odom_observation()
+        with self._odom_condition:
+            while time.monotonic() < deadline:
+                now = time.monotonic()
+                if (
+                    self._zero_since is not None
+                    and self._last_zero is not None
+                    and self._last_zero - self._zero_since
+                    >= self._stop_dwell_sec
+                    and now - self._last_zero
+                    <= self._odom_stale_timeout_sec
+                ):
+                    return OperationResult(True, "stopped")
+                self._odom_condition.wait(
+                    timeout=max(0.0, deadline - now))
+        return OperationResult(False, "odom_stop_timeout")
 
     @staticmethod
     def _set_identity(request, lease):
@@ -478,21 +470,26 @@ class RosLocalization:
 
     def reset_origin(self):
         self._start_odometry_observation()
-        try:
-            self._deadline = time.monotonic() + self._reset_timeout_sec
-            if not self._wait_for_reset_services():
-                return OperationResult(False, "reset_service_unavailable")
-            return run_reset_sequence(
-                lambda: not self._navigator.is_active(),
-                self._call_set_pose,
-                self._wait_for_verified_origin,
+        self._deadline = time.monotonic() + self._reset_timeout_sec
+        remaining = self._deadline - time.monotonic()
+        if (
+            remaining <= 0.0
+            or not self._set_pose_client.wait_for_service(
+                timeout_sec=remaining
             )
-        finally:
-            self._stop_odometry_observation()
+        ):
+            return OperationResult(False, "reset_service_unavailable")
+        return run_reset_sequence(
+            lambda: not self._navigator.is_active(),
+            self._call_set_pose,
+            self._wait_for_verified_origin,
+        )
 
     def _start_odometry_observation(self):
         with self._condition:
             if self._odom_subscription is None:
+                # Keep one subscription for the node lifetime; reset sequence
+                # numbers define each verification boundary.
                 self._odom_subscription = self._node.create_subscription(
                     Odometry,
                     "/odom_combined",
@@ -500,21 +497,6 @@ class RosLocalization:
                     10,
                     callback_group=self._callback_group,
                 )
-
-    def _stop_odometry_observation(self):
-        # As with the stop observer, keep reset observers alive for the node
-        # lifetime. Destroying a subscription while its QoS event remains in a
-        # MultiThreadedExecutor wait set can raise rclpy InvalidHandle. Reset
-        # sequence counters establish the next observation boundary.
-        return
-
-    def _wait_for_reset_services(self):
-        remaining = self._deadline - time.monotonic()
-        if remaining <= 0.0:
-            return False
-        if not self._set_pose_client.wait_for_service(timeout_sec=remaining):
-            return False
-        return True
 
     def _call_set_pose(self):
         request = SetPose.Request()

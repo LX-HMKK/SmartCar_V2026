@@ -628,6 +628,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("class _Nav2OperationLifecycle:", source)
         self.assertIn("class _DirectionLeaseLifecycle:", source)
         self.assertIn("class _Nav2ActionCallbacks:", source)
+        self.assertNotIn("def _release_idle_action_client", source)
         facade = source.split("class RosNavigator(", 1)[1]
         self.assertNotIn("def _navigate_goal", facade)
         self.assertNotIn("def _prepare_motion", facade)
@@ -647,15 +648,16 @@ class TaskLaunchContractTests(unittest.TestCase):
 
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
         source = ROS_ADAPTERS.read_text(encoding="utf-8")
-        sequence = source[
-            source.index("return run_reset_sequence("):
-            source.index("def _wait_for_reset_services")
-        ]
+        sequence = source[source.index("return run_reset_sequence("):]
         set_pose = sequence.index("self._call_set_pose")
         verify = sequence.index("self._wait_for_verified_origin")
         self.assertLess(set_pose, verify)
         self.assertIn("self._set_pose_client.call_async", source)
         self.assertNotIn("_clear_fault_client", source)
+        self.assertNotIn("def _wait_for_reset_services", source)
+        self.assertNotIn("def _stop_odometry_observation", source)
+
+        self.assertNotIn("def _stop_odom_observation", source)
 
     def test_task_node_never_publishes_chassis_velocity(self):
         source = _task_runtime_source()

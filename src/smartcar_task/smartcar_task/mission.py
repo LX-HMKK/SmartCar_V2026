@@ -115,11 +115,6 @@ class Mission:
         with self._lock:
             return self._state
 
-    @property
-    def running(self):
-        with self._lock:
-            return self._reserved or self._running or self._resetting
-
     def reserve_start(self):
         with self._lock:
             if (
@@ -140,7 +135,7 @@ class Mission:
     def execute(
         self,
         waypoints,
-        navigation_segments=None,
+        navigation_segments,
         c_zone_navigation_variants=None,
     ):
         generation = self.reserve_start()
@@ -157,7 +152,7 @@ class Mission:
         self,
         generation,
         waypoints,
-        navigation_segments=None,
+        navigation_segments,
         c_zone_navigation_variants=None,
     ):
         with self._lock:
@@ -237,7 +232,7 @@ class Mission:
         self,
         generation,
         waypoints,
-        navigation_segments=None,
+        navigation_segments,
         c_zone_navigation_variants=None,
     ):
         if not waypoints:
@@ -249,10 +244,7 @@ class Mission:
         ):
             return self._fail(generation, "navigation_server_unavailable")
 
-        if navigation_segments is None:
-            segments = tuple(self._navigation_segments(waypoints))
-        else:
-            segments = tuple(tuple(segment) for segment in navigation_segments)
+        segments = tuple(tuple(segment) for segment in navigation_segments)
         variants = self._c_zone_navigation_variants(
             segments,
             c_zone_navigation_variants,
@@ -353,27 +345,6 @@ class Mission:
                     "c_zone_navigation_variants must preserve segment topology"
                 )
         return normalized
-
-    @staticmethod
-    def _navigation_segments(waypoints):
-        segment = []
-        segment_direction = None
-        for waypoint in waypoints:
-            if not segment and waypoint.task == "start":
-                continue  # car already at start, skip zero-length nav
-            if segment and waypoint.direction != segment_direction:
-                yield tuple(segment)
-                segment.clear()
-                segment_direction = None
-            segment.append(waypoint)
-            if segment_direction is None:
-                segment_direction = waypoint.direction
-            if waypoint.task in {"qr", "vlm", "return"}:
-                yield tuple(segment)
-                segment.clear()
-                segment_direction = None
-        if segment:
-            yield tuple(segment)
 
     @staticmethod
     def _navigation_segment_error(segment):
