@@ -212,13 +212,10 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('ATTR{idVendor}=="3251", ATTR{idProduct}=="1930"', rules)
         self.assertEqual(rules.count('ATTR{power/control}="on"'), 2)
 
-    def test_system_rejects_external_nav2_overlays(self):
+    def test_system_owns_its_depth_nav2_overlay(self):
         source = SYSTEM.read_text(encoding="utf-8")
-        self.assertIn("requested_overlay", source)
-        self.assertIn(
-            "smartcar_system does not accept external Nav2 parameter overlays",
-            source,
-        )
+        self.assertNotIn('DeclareLaunchArgument("nav2_params_overlay_file"', source)
+        self.assertNotIn("requested_overlay", source)
         self.assertIn('"allow_params_overlay": allow_params_overlay', source)
 
     def test_base_switch_only_gates_vendor_chassis_include(self):

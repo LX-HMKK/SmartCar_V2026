@@ -20,7 +20,6 @@ from smartcar_interfaces.srv import (
 from std_msgs.msg import String
 
 from smartcar_task.mission import OperationResult
-from smartcar_task.navigation_runtime import RosNavigator
 from smartcar_task.protocols import (
     odometry_matches_origin,
     run_reset_sequence,

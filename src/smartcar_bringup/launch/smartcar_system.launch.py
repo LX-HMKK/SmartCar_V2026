@@ -231,11 +231,6 @@ def _vision_and_camera_actions(context):
 def _navigation_actions(context):
     if not _as_bool(context, "use_nav"):
         return []
-    requested_overlay = LaunchConfiguration("nav2_params_overlay_file").perform(
-        context).strip()
-    if requested_overlay:
-        raise RuntimeError(
-            "smartcar_system does not accept external Nav2 parameter overlays")
     overlay = ""
     allow_params_overlay = "false"
     if _as_bool(context, "use_depth_camera"):
@@ -656,7 +651,6 @@ def generate_launch_description():
             "depth_camera_frame", default_value=DEPTH_CAMERA_FRAME),
         DeclareLaunchArgument(
             "depth_camera_input_frame", default_value=DEPTH_CAMERA_INPUT_FRAME),
-        DeclareLaunchArgument("nav2_params_overlay_file", default_value=""),
         DeclareLaunchArgument("image_topic", default_value=""),
         DeclareLaunchArgument(
             "vision_config_file",

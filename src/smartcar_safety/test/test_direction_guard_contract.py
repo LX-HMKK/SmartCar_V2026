@@ -9,7 +9,6 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 NODE = PACKAGE_ROOT / "src" / "direction_guard_node.cpp"
 CORE = PACKAGE_ROOT / "src" / "direction_guard.cpp"
 CONFIG = PACKAGE_ROOT / "config" / "safety.yaml"
-LAUNCH = PACKAGE_ROOT / "launch" / "direction_guard.launch.py"
 CMAKE = PACKAGE_ROOT / "CMakeLists.txt"
 
 
@@ -81,11 +80,6 @@ class DirectionGuardContractTests(unittest.TestCase):
         self.assertIn('status.rfind("warning_", 0) == 0', source)
         self.assertIn("RCLCPP_WARN(get_logger()", source)
         self.assertIn("forward mission lease remains active", source)
-
-    def test_launch_starts_only_the_cpp_guard(self):
-        source = LAUNCH.read_text(encoding="utf-8")
-        self.assertIn('executable="direction_guard_node"', source)
-        self.assertIn('"safety.yaml"', source)
 
     def test_default_colcon_tests_are_narrow_and_direction_specific(self):
         source = CMAKE.read_text(encoding="utf-8")

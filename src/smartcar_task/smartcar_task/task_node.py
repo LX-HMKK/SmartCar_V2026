@@ -28,10 +28,10 @@ from smartcar_task.planning_segments import (
     materialize_navigation_segments,
     select_segment_prefix,
 )
+from smartcar_task.navigation_runtime import RosNavigator
 from smartcar_task.ros_adapters import (
     RosDirectionGuard,
     RosLocalization,
-    RosNavigator,
     RosOutput,
     RosVision,
     SystemClock,
