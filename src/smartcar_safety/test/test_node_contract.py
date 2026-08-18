@@ -36,10 +36,6 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
         )
         self.assertIn('Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS', source)
         self.assertIn(
-            'LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True',
-            source,
-        )
-        self.assertIn(
             'Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS,',
             source,
         )
@@ -47,9 +43,9 @@ class SafetyNodeCommandContractTests(unittest.TestCase):
             'Odometry, "/odom", self._on_raw_odom, LATEST_RELIABLE_QOS,',
             source,
         )
-        # Command, scan, both odometry streams, and the optional depth relay
+        # Command, both odometry streams, and the optional depth relay
         # heartbeat must all avoid deserializing payloads in the Python guard.
-        self.assertEqual(source.count("raw=True"), 4)
+        self.assertEqual(source.count("raw=True"), 3)
 
     def test_raw_odom_has_an_independent_required_subscription(self):
         source = NODE_SOURCE.read_text(encoding="utf-8")

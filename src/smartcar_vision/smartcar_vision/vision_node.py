@@ -17,7 +17,11 @@ from std_msgs.msg import String
 
 from smartcar_vision.service_core import VisionServiceCore
 from smartcar_vision.timed_sample import TimedSampleBuffer
-from smartcar_vision.vlm_backend import make_backend
+from smartcar_vision.volcengine_vlm_cli import (
+    VolcengineVlmError,
+    _load_api_key,
+    request_description_bytes,
+)
 
 
 def _time_message_to_nanoseconds(message):
@@ -33,41 +37,27 @@ class VisionNode(Node):
         super().__init__("vision_node")
         self.declare_parameter("image_topic", "/image")
         self.declare_parameter("barcode_topic", "/barcode")
-        self.declare_parameter("vlm_backend_mode", "disabled")
-        self.declare_parameter("vlm_command_argv", [""])
-        self.declare_parameter("vlm_static_text", "")
-        self.declare_parameter(
-            "default_prompt", (
-                "请描述当前画面中实际可见的场景、物体、标志或人物。"
-                "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
-                "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
-                "重新拍摄。"
-            ))
-        self.declare_parameter("max_vlm_timeout_sec", 8.0)
-        self.declare_parameter("runtime_dir", "/tmp/smartcar_vision")
+        self.declare_parameter("vlm_model", "")
+        self.declare_parameter("default_prompt", "")
+        self.declare_parameter("max_vlm_timeout_sec", 30.0)
         self.declare_parameter("jpeg_quality", 90)
 
         self._image_topic = str(self.get_parameter("image_topic").value)
         barcode_topic = str(self.get_parameter("barcode_topic").value)
         self._default_prompt = str(self.get_parameter("default_prompt").value)
+        self._vlm_model = str(self.get_parameter("vlm_model").value).strip()
         self._jpeg_quality = int(self.get_parameter("jpeg_quality").value)
         if not 1 <= self._jpeg_quality <= 100:
             raise ValueError("jpeg_quality must be between 1 and 100")
 
-        backend = make_backend(
-            self.get_parameter("vlm_backend_mode").value,
-            self.get_parameter("vlm_command_argv").value,
-            self.get_parameter("vlm_static_text").value,
-        )
         self._barcode_buffer = TimedSampleBuffer()
         self._image_buffer = TimedSampleBuffer()
         self._bridge = CvBridge()
         self._core = VisionServiceCore(
             barcode_buffer=self._barcode_buffer,
             image_buffer=self._image_buffer,
-            backend=backend,
-            jpeg_writer=self._write_jpeg,
-            runtime_dir=self.get_parameter("runtime_dir").value,
+            describe_jpeg=self._describe_jpeg,
+            jpeg_encoder=self._encode_jpeg,
             max_vlm_timeout_sec=self.get_parameter(
                 "max_vlm_timeout_sec").value,
         )
@@ -135,23 +125,20 @@ class VisionNode(Node):
             timeout = float(request.timeout_sec)
             if not math.isfinite(timeout):
                 raise ValueError("timeout must be finite")
-            prompt = request.prompt or self._default_prompt
             outcome = self._core.describe_scene(
-                not_before_ns, timeout, prompt)
+                not_before_ns, timeout)
         except (TypeError, ValueError, OverflowError):
             response.success = False
-            response.fallback_used = False
             response.description = ""
             response.status = "invalid_request"
             return response
 
         response.success = outcome.success
-        response.fallback_used = outcome.fallback_used
         response.description = outcome.description
         response.status = outcome.status
         return response
 
-    def _write_jpeg(self, image_message, file_object):
+    def _encode_jpeg(self, image_message):
         image = self._bridge.imgmsg_to_cv2(
             image_message, desired_encoding="bgr8")
         success, encoded = cv2.imencode(
@@ -161,7 +148,18 @@ class VisionNode(Node):
         )
         if not success:
             raise RuntimeError("OpenCV JPEG encoding failed")
-        file_object.write(encoded.tobytes())
+        return encoded.tobytes()
+
+    def _describe_jpeg(self, jpeg_bytes, timeout_sec):
+        if not self._vlm_model:
+            raise VolcengineVlmError("vlm_not_configured")
+        return request_description_bytes(
+            image_bytes=jpeg_bytes,
+            prompt=self._default_prompt,
+            model=self._vlm_model,
+            api_key=_load_api_key(),
+            timeout_sec=timeout_sec,
+        )
 
 
 def main(args=None):

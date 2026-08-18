@@ -1,5 +1,4 @@
 """ROS-independent tests for media probes, replay, and display state."""
-import json
 import os
 from pathlib import Path
 import sys
@@ -25,10 +24,6 @@ from smartcar_tools.qr_probe import (  # noqa: E402
     competition_output_text,
     response_exit_code,
 )
-from smartcar_tools.speech_probe import (  # noqa: E402
-    SpeechStatusTracker,
-    parse_status,
-)
 from smartcar_tools.rgb_imshow import (  # noqa: E402
     normalize_window_title,
     should_close,
@@ -41,48 +36,6 @@ from smartcar_tools.vlm_display import (  # noqa: E402
     result_kind,
     result_status_text,
 )
-
-
-class SpeechProbeTests(unittest.TestCase):
-    def test_parser_rejects_non_request_status(self):
-        self.assertIsNone(parse_status("not json"))
-        self.assertIsNone(parse_status(json.dumps({
-            "state": "ready",
-            "request_id": "",
-            "detail": "",
-        })))
-
-    def test_tracker_stays_on_one_request_until_terminal(self):
-        tracker = SpeechStatusTracker()
-        queued = json.dumps({
-            "state": "queued",
-            "request_id": "request-a",
-            "detail": "",
-        })
-        self.assertIsNone(tracker.consume(queued))
-        tracker.arm()
-        self.assertIsNone(tracker.consume(json.dumps({
-            "state": "completed",
-            "request_id": "stale-request",
-            "detail": "",
-        })))
-        self.assertEqual(tracker.consume(queued)["state"], "queued")
-        self.assertIsNone(tracker.consume(json.dumps({
-            "state": "synthesizing",
-            "request_id": "request-b",
-            "detail": "",
-        })))
-        for state in ("synthesizing", "playing", "completed"):
-            tracker.consume(json.dumps({
-                "state": state,
-                "request_id": "request-a",
-                "detail": "",
-            }))
-        self.assertEqual(
-            tracker.history,
-            ["queued", "synthesizing", "playing", "completed"],
-        )
-        self.assertEqual(tracker.terminal["state"], "completed")
 
 
 class QrProbeTests(unittest.TestCase):
@@ -241,15 +194,12 @@ class MediaDisplayTests(unittest.TestCase):
 
 
 class DisplayStateTests(unittest.TestCase):
-    def test_success_fallback_and_failure_are_distinct(self):
-        success = DisplayResult(True, False, "描述", "ok", 1.0)
-        fallback = DisplayResult(True, True, "兜底", "vlm_timeout", 8.0)
-        failure = DisplayResult(False, False, "", "image_timeout", 8.0)
+    def test_success_and_failure_are_distinct(self):
+        success = DisplayResult(True, "描述", "ok", 1.0)
+        failure = DisplayResult(False, "", "image_timeout", 8.0)
         self.assertEqual(result_kind(success), "success")
-        self.assertEqual(result_kind(fallback), "fallback")
         self.assertEqual(result_kind(failure), "failed")
         self.assertEqual(result_status_text(success), "生成完成")
-        self.assertEqual(result_status_text(fallback), "生成完成")
         self.assertEqual(result_status_text(failure), "生成失败")
 
     @unittest.skipUnless(
@@ -265,7 +215,7 @@ class DisplayStateTests(unittest.TestCase):
         app.processEvents()
         self.assertEqual(window.result_text.toPlainText(), long_text)
         window.finish_request(DisplayResult(
-            True, True, "画面中可能是一名穿着浅色上衣的人物，正面站立并挥手。", "vlm_timeout", 8.0))
+            True, "人物正在挥手。", "ok", 8.0))
         self.assertEqual(window.status_label.text(), "生成完成 · 8.0 s")
         self.assertTrue(window.trigger_button.isEnabled())
         window.close()

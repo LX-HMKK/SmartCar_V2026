@@ -33,12 +33,10 @@ class SafetyGuard:
     def __init__(
         self,
         command_timeout_sec=0.30,
-        scan_timeout_sec=0.35,
         odom_timeout_sec=0.35,
         minimum_voltage=0.0,
         voltage_timeout_sec=1.0,
         max_linear_speed_mps=0.50,
-        require_scan=True,
         require_odom=True,
         raw_odom_timeout_sec=0.25,
         require_raw_odom=True,
@@ -47,8 +45,6 @@ class SafetyGuard:
     ):
         self.command_timeout_sec = require_positive_finite(
             "command_timeout_sec", command_timeout_sec)
-        self.scan_timeout_sec = require_positive_finite(
-            "scan_timeout_sec", scan_timeout_sec)
         self.odom_timeout_sec = require_positive_finite(
             "odom_timeout_sec", odom_timeout_sec)
         self.raw_odom_timeout_sec = require_positive_finite(
@@ -61,7 +57,6 @@ class SafetyGuard:
             "voltage_timeout_sec", voltage_timeout_sec)
         self.max_linear_speed_mps = require_positive_finite(
             "max_linear_speed_mps", max_linear_speed_mps)
-        self.require_scan = bool(require_scan)
         self.require_odom = bool(require_odom)
         self.require_raw_odom = bool(require_raw_odom)
         self.require_depth_points = bool(require_depth_points)
@@ -69,7 +64,6 @@ class SafetyGuard:
         self.command_received_at = None
         self.command_invalid = False
         self.command_speed_limit_exceeded = False
-        self.scan_received_at = None
         self.odom_received_at = None
         self.raw_odom_received_at = None
         self.depth_points_received_at = None
@@ -99,9 +93,6 @@ class SafetyGuard:
 
     def mark_command_invalid(self):
         self.command_invalid = True
-
-    def mark_scan(self, receipt_time_sec):
-        self.scan_received_at = float(receipt_time_sec)
 
     def mark_odom(self, receipt_time_sec):
         self.odom_received_at = float(receipt_time_sec)
@@ -153,12 +144,6 @@ class SafetyGuard:
             return self._result(False, "command_missing")
         if not self._fresh(self.command_received_at, now_sec, self.command_timeout_sec):
             return self._result(False, "command_stale")
-
-        if self.require_scan:
-            if self.scan_received_at is None:
-                return self._result(False, "scan_missing")
-            if not self._fresh(self.scan_received_at, now_sec, self.scan_timeout_sec):
-                return self._result(False, "scan_stale")
 
         if self.require_odom:
             if self.odom_received_at is None:

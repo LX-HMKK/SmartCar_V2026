@@ -51,8 +51,8 @@ def _runtime_actions(context):
     )
     request_timeout = float(LaunchConfiguration(
         "request_timeout_sec").perform(context))
-    if not 0.0 < request_timeout <= 8.0:
-        raise RuntimeError("request_timeout_sec must be in (0, 8]")
+    if not 0.0 < request_timeout <= 30.0:
+        raise RuntimeError("request_timeout_sec must be in (0, 30]")
     if input_source not in ("camera", "file"):
         raise RuntimeError("input_source must be camera or file")
     if camera_driver not in DRIVER_TOPICS:
@@ -116,7 +116,6 @@ def _runtime_actions(context):
             "image_topic": source_topic,
             "output_topic": "/smartcar/output/text",
             "service_name": "/smartcar/vision/describe_scene",
-            "prompt": LaunchConfiguration("prompt").perform(context),
             "request_timeout_sec": request_timeout,
             "fullscreen": fullscreen,
             "auto_request": auto_request,
@@ -153,22 +152,13 @@ def generate_launch_description():
         DeclareLaunchArgument("use_sim_time", default_value="false"),
         DeclareLaunchArgument("fullscreen", default_value="true"),
         DeclareLaunchArgument("auto_request", default_value="false"),
-        DeclareLaunchArgument("request_timeout_sec", default_value="8.0"),
-        DeclareLaunchArgument(
-            "prompt",
-            default_value=(
-                "请描述当前画面中实际可见的场景、物体、标志或人物。"
-                "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
-                "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
-                "重新拍摄。"
-            ),
-        ),
+        DeclareLaunchArgument("request_timeout_sec", default_value="30.0"),
         DeclareLaunchArgument(
             "config_file",
             default_value=PathJoinSubstitution([
                 FindPackageShare("smartcar_vision"),
                 "config",
-                "vision_volcengine.yaml",
+                "vision.yaml",
             ]),
         ),
         OpaqueFunction(function=_runtime_actions),

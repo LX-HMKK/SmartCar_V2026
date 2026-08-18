@@ -16,8 +16,6 @@ class OdomDiagContractTests(unittest.TestCase):
             "/odom",
             "/imu/data_raw",
             "/odom_combined",
-            "/scan",
-            "/odom_laser",
             "/diagnostics",
         ):
             with self.subTest(topic=topic):

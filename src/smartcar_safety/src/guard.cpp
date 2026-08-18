@@ -6,27 +6,24 @@
 
 namespace smartcar_safety {
 
-SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
-                         double odom_timeout, double raw_odom_timeout,
+SafetyGuard::SafetyGuard(double cmd_timeout, double odom_timeout,
+                         double raw_odom_timeout,
                          double min_voltage, double voltage_timeout,
-                         double max_linear_speed_mps, bool require_scan,
+                         double max_linear_speed_mps,
                          bool require_odom, bool require_raw_odom,
                          double depth_points_timeout,
                          bool require_depth_points)
     : cmd_timeout_(cmd_timeout),
-      scan_timeout_(scan_timeout),
       odom_timeout_(odom_timeout),
       raw_odom_timeout_(raw_odom_timeout),
       depth_points_timeout_(depth_points_timeout),
       min_voltage_(min_voltage),
       voltage_timeout_(voltage_timeout),
       max_linear_speed_mps_(max_linear_speed_mps),
-      require_scan_(require_scan),
       require_odom_(require_odom),
       require_raw_odom_(require_raw_odom),
       require_depth_points_(require_depth_points),
       cmd_at_(NAN),
-      scan_at_(NAN),
       odom_at_(NAN),
       raw_odom_at_(NAN),
       depth_points_at_(NAN),
@@ -36,16 +33,12 @@ SafetyGuard::SafetyGuard(double cmd_timeout, double scan_timeout,
       cmd_speed_limit_exceeded_(false),
       estop_(false),
       cmd_at_set_(false),
-      scan_at_set_(false),
       odom_at_set_(false),
       raw_odom_at_set_(false),
       depth_points_at_set_(false),
       voltage_at_set_(false) {
   if (!std::isfinite(cmd_timeout) || cmd_timeout <= 0.0) {
     throw std::invalid_argument("command_timeout_sec must be positive finite");
-  }
-  if (!std::isfinite(scan_timeout) || scan_timeout <= 0.0) {
-    throw std::invalid_argument("scan_timeout_sec must be positive finite");
   }
   if (!std::isfinite(odom_timeout) || odom_timeout <= 0.0) {
     throw std::invalid_argument("odom_timeout_sec must be positive finite");
@@ -92,11 +85,6 @@ bool SafetyGuard::mark_command(double now_sec, double linear_x) {
 
 void SafetyGuard::mark_command_invalid() {
   cmd_invalid_ = true;
-}
-
-void SafetyGuard::mark_scan(double now_sec) {
-  scan_at_ = now_sec;
-  scan_at_set_ = true;
 }
 
 void SafetyGuard::mark_odom(double now_sec) {
@@ -148,15 +136,6 @@ SafetyVerdict SafetyGuard::evaluate(double now_sec) const {
   }
   if (!fresh(cmd_at_, now_sec, cmd_timeout_)) {
     return result(false, "command_stale");
-  }
-
-  if (require_scan_) {
-    if (!scan_at_set_) {
-      return result(false, "scan_missing");
-    }
-    if (!fresh(scan_at_, now_sec, scan_timeout_)) {
-      return result(false, "scan_stale");
-    }
   }
 
   if (require_odom_) {

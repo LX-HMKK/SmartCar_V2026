@@ -9,7 +9,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import qos_profile_sensor_data
-from sensor_msgs.msg import Imu, LaserScan
+from sensor_msgs.msg import Imu
 
 
 class OdomDiagNode(Node):
@@ -21,8 +21,6 @@ class OdomDiagNode(Node):
         self.declare_parameter("odom_topic", "/odom")
         self.declare_parameter("imu_topic", "/imu/data_raw")
         self.declare_parameter("odom_combined_topic", "/odom_combined")
-        self.declare_parameter("scan_topic", "/scan")
-        self.declare_parameter("odom_laser_topic", "/odom_laser")
         self.declare_parameter("diagnostics_topic", "/diagnostics")
         self.declare_parameter("expect_stationary", False)
         self.declare_parameter("stationary_position_tolerance_m", 0.10)
@@ -35,13 +33,11 @@ class OdomDiagNode(Node):
             "odom_combined": str(
                 self.get_parameter("odom_combined_topic").value
             ),
-            "scan": str(self.get_parameter("scan_topic").value),
-            "odom_laser": str(self.get_parameter("odom_laser_topic").value),
         }
         self._arrivals = {name: [] for name in self._topics}
         self._pose_samples = {
             name: [None, None]
-            for name in ("odom", "odom_combined", "odom_laser")
+            for name in ("odom", "odom_combined")
         }
         self._expect_stationary = bool(
             self.get_parameter("expect_stationary").value)
@@ -61,11 +57,9 @@ class OdomDiagNode(Node):
             "odom": Odometry,
             "imu": Imu,
             "odom_combined": Odometry,
-            "scan": LaserScan,
-            "odom_laser": Odometry,
         }
         for name, topic in self._topics.items():
-            qos = qos_profile_sensor_data if name in {"imu", "scan"} else 10
+            qos = qos_profile_sensor_data if name == "imu" else 10
             self.create_subscription(
                 message_types[name],
                 topic,
@@ -169,7 +163,7 @@ class OdomDiagNode(Node):
     def _print_pose_displacements(self):
         displacements = self._pose_displacements()
         print("\n  Relative odometry displacement:", flush=True)
-        for name in ("odom", "odom_combined", "odom_laser"):
+        for name in ("odom", "odom_combined"):
             displacement = displacements.get(name)
             if displacement is None:
                 print(f"    {name}: unavailable", flush=True)
@@ -191,7 +185,7 @@ class OdomDiagNode(Node):
         if reference is None:
             return
         print("\n  Relative displacement versus odom_combined:", flush=True)
-        for name in ("odom", "odom_laser"):
+        for name in ("odom",):
             candidate = displacements.get(name)
             if candidate is None:
                 continue
@@ -271,7 +265,6 @@ class OdomDiagNode(Node):
             f"imu={rates['imu']:.1f}Hz "
             f"ekf={rates['odom_combined']:.1f}Hz "
             f"scan={rates['scan']:.1f}Hz "
-            f"laser_odom={rates['odom_laser']:.1f}Hz "
             f"ekf_warnings={len(self._ekf_warnings)}",
             flush=True,
         )

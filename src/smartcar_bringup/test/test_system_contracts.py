@@ -19,6 +19,7 @@ DEPTH_OVERLAY = (
     ROOT / "src" / "smartcar_nav2" / "config"
     / "depth_camera_obstacle_overlay.yaml"
 )
+NAV_PARAMS = ROOT / "src" / "smartcar_nav2" / "config" / "nav2_params.yaml"
 UDEV_RULES = ROOT / "config" / "udev" / "99-smartcar-aurora-usb-power.rules"
 
 
@@ -57,8 +58,6 @@ class SystemContractTests(unittest.TestCase):
     def test_system_exposes_all_switches_and_never_autostarts_motion(self):
         expected_defaults = {
             "use_base": "true",
-            "use_lidar": "true",
-            "use_laser_odometry": "false",
             "use_imu_filter": "false",
             "use_robot_description": "false",
             "use_safety": "true",
@@ -68,12 +67,10 @@ class SystemContractTests(unittest.TestCase):
             "use_depth_camera": "false",
             "use_task": "true",
             "use_visualization": "false",
-            "use_speech": "false",
             "autostart_mission": "false",
             "supervised_p_to_a_only": "false",
             "supervised_p_to_c1_only": "false",
             "c_zone_direction": "counterclockwise",
-            "qr_handoff_test_mode": "false",
             "use_sim_time": "false",
             "nav_autostart": "true",
             "nav2_lifecycle_manager_delay_sec": "20.0",
@@ -90,7 +87,6 @@ class SystemContractTests(unittest.TestCase):
             ("smartcar_nav2", "navigation_launch.py"),
             ("smartcar_vision", "smartcar_vision.launch.py"),
             ("smartcar_task", "smartcar_task.launch.py"),
-            ("smartcar_speech", "smartcar_speech.launch.py"),
         ):
             self.assertIn(f'FindPackageShare("{package}")', source)
             self.assertIn(f'"{launch_file}"', source)
@@ -118,9 +114,8 @@ class SystemContractTests(unittest.TestCase):
             '"supervised_p_to_a_only": LaunchConfiguration(', source)
         self.assertIn(
             '"supervised_p_to_c1_only": LaunchConfiguration(', source)
-        self.assertIn(
-            '"qr_handoff_test_mode": LaunchConfiguration(', source)
-        self.assertIn('"qr_handoff_test_mode")', source)
+        self.assertNotIn("qr_handoff_test_mode", source)
+        self.assertNotIn("continue_after_qr_failure", source)
         self.assertIn('"use_base": use_base', source)
         self.assertIn('"use_safety_ackermann": "true"', source)
 
@@ -137,7 +132,7 @@ class SystemContractTests(unittest.TestCase):
         source = SYSTEM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(SYSTEM, "use_depth_camera"), "false")
         self.assertIn(
-            'use_nav requires use_lidar=true or use_depth_camera=true ', source)
+            'use_nav requires use_depth_camera=true ', source)
         self.assertEqual(
             launch_default(SYSTEM, "allow_synthetic_obstacle_source"),
             "false",
@@ -149,7 +144,7 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('executable="depth_pointcloud_relay"', source)
         self.assertIn('package="pointcloud_to_laserscan"', source)
         self.assertIn('executable="pointcloud_to_laserscan_node"', source)
-        self.assertIn('("scan", DEPTH_LASER_SCAN_TOPIC)', source)
+        self.assertIn('("scan", DEPTH_SCAN_TOPIC)', source)
         self.assertIn('"use_inf": True', source)
         self.assertIn('"target_frame": DEPTH_SCAN_TARGET_FRAME', source)
         self.assertIn('"queue_size": 1', source)
@@ -163,7 +158,6 @@ class SystemContractTests(unittest.TestCase):
         self.assertNotIn("depth_camera_calibrated", source)
         self.assertIn('"safety_require_depth_points": LaunchConfiguration(', source)
         self.assertIn('"use_depth_camera")', source)
-        self.assertIn('"safety_require_scan": use_lidar', source)
         # Run the depth-only Aurora source at 10 Hz and leave relay headroom
         # so legitimate capture frames are never rate-limited downstream.
         self.assertIn('"max_publish_rate_hz": 12.0', source)
@@ -180,7 +174,7 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn("effective_aurora_rgb_fps", vision_source)
 
         config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
-        self.assertIs(config["toggles"]["use_lidar"], False)
+        self.assertNotIn("use_lidar", config["toggles"])
         self.assertIs(config["toggles"]["use_depth_camera"], True)
         depth = config["extrinsics"]["link_to_depth_camera"]
         self.assertIs(depth["measured"], True)
@@ -204,6 +198,14 @@ class SystemContractTests(unittest.TestCase):
             self.assertTrue(layer["depth_scan"]["inf_is_valid"])
             self.assertEqual(layer["depth_scan"]["obstacle_max_range"], 3.0)
             self.assertEqual(layer["depth_scan"]["raytrace_max_range"], 3.0)
+
+        baseline = yaml.safe_load(NAV_PARAMS.read_text(encoding="utf-8"))
+        for costmap in ("local_costmap", "global_costmap"):
+            layer = baseline[costmap][costmap]["ros__parameters"][
+                "obstacle_layer"]
+            self.assertEqual(layer["observation_sources"], "depth_scan")
+            self.assertEqual(
+                layer["depth_scan"]["topic"], "/smartcar/depth/scan")
 
         rules = UDEV_RULES.read_text(encoding="utf-8")
         self.assertIn('ATTR{idVendor}=="05e3", ATTR{idProduct}=="0610"', rules)
@@ -248,15 +250,9 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('executable="field_reference_node"', system_source)
         self.assertIn('executable="waypoint_viz"', system_source)
         self.assertIn("condition=IfCondition(use_imu_filter)", vendor_source)
-        self.assertIn("use_lidar = LaunchConfiguration('use_lidar')", vendor_source)
-        self.assertIn(
-            "DeclareLaunchArgument('use_lidar', default_value='true')",
-            vendor_source,
-        )
-        self.assertIn(
-            "link_to_laser = Node(\n        condition=IfCondition(use_lidar),",
-            vendor_source,
-        )
+        for source in (system_source, BRINGUP.read_text(encoding="utf-8"), vendor_source):
+            self.assertNotIn("use_lidar", source)
+            self.assertNotIn("link_to_laser", source)
         self.assertGreaterEqual(
             vendor_source.count(
                 "condition=IfCondition(use_robot_description)"
@@ -292,20 +288,15 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn(
             '"safety_emergency_stop_on_start": LaunchConfiguration(', source)
 
-    def test_laser_odometry_is_opt_in_and_requires_calibration(self):
+    def test_rf2o_laser_odometry_is_removed(self):
         source = SYSTEM.read_text(encoding="utf-8")
-        self.assertEqual(
-            launch_default(SYSTEM, "use_laser_odometry"), "false")
-        self.assertEqual(
-            launch_default(SYSTEM, "laser_odometry_calibrated"), "false")
-        self.assertIn('"use_laser_odometry": use_laser_odometry', source)
-        self.assertIn('missing.append("laser_odometry_calibrated")', source)
+        self.assertNotIn("use_laser_odometry", source)
+        self.assertNotIn("laser_odometry_calibrated", source)
 
-    def test_base_and_laser_tf_are_parameterized_at_the_unique_vendor_owner(self):
+    def test_base_tf_is_parameterized_at_the_unique_vendor_owner(self):
         source = VENDOR.read_text(encoding="utf-8")
         for name in (
             "base_x", "base_y", "base_z", "base_roll", "base_pitch", "base_yaw",
-            "laser_x", "laser_y", "laser_z", "laser_roll", "laser_pitch", "laser_yaw",
         ):
             self.assertIn(f"DeclareLaunchArgument('{name}', default_value='0.0')", source)
             self.assertIn(f"LaunchConfiguration('{name}')", source)
@@ -345,23 +336,8 @@ class SystemContractTests(unittest.TestCase):
         self.assertIn('"vision_config_file").perform(context)', source)
         self.assertIn('FindPackageShare("smartcar_vision")', source)
 
-    def test_speech_is_optional_and_receives_an_explicit_config_file(self):
-        source = SYSTEM.read_text(encoding="utf-8")
-        self.assertEqual(launch_default(SYSTEM, "use_speech"), "false")
-        self.assertIn('condition=IfCondition(use_speech)', source)
-        self.assertIn(
-            '"config_file": LaunchConfiguration("speech_config_file")',
-            source,
-        )
-        required_block = source.split("required_components = (", 1)[1].split(
-            ")", 1
-        )[0]
-        self.assertNotIn('"use_speech"', required_block)
-
-    def test_all_motion_gates_default_false_in_task_and_system(self):
+    def test_current_motion_gates_default_false_in_task_and_system(self):
         for name in (
-            "waypoints_calibrated",
-            "extrinsics_calibrated",
             "steering_calibrated",
             "emergency_stop_ready",
             "operator_approved",
@@ -376,23 +352,21 @@ class SystemContractTests(unittest.TestCase):
         config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
         self.assertIs(config["toggles"]["use_base"], True)
         self.assertIs(config["extrinsics"]["base_to_link"]["measured"], True)
-        self.assertIs(config["extrinsics"]["link_to_laser"]["measured"], True)
+        self.assertNotIn("link_to_laser", config["extrinsics"])
         self.assertIs(config["extrinsics"]["link_to_camera"]["measured"], True)
         gates = config["motion_gates"]
         for name in (
-            "waypoints_calibrated",
-            "extrinsics_calibrated",
             "steering_calibrated",
             "emergency_stop_ready",
             "operator_approved",
-            "laser_odometry_calibrated",
         ):
             self.assertIs(gates[name], False)
+        self.assertNotIn("waypoints_calibrated", gates)
+        self.assertNotIn("extrinsics_calibrated", gates)
 
     def test_competition_system_defaults_match_measured_calibration(self):
         config = yaml.safe_load(COORD.read_text(encoding="utf-8"))
         base = config["extrinsics"]["base_to_link"]
-        laser = config["extrinsics"]["link_to_laser"]
         camera = config["extrinsics"]["link_to_camera"]
         depth_camera = config["extrinsics"]["link_to_depth_camera"]
 
@@ -407,14 +381,6 @@ class SystemContractTests(unittest.TestCase):
             ("base_x", "base_y", "base_z"),
             (str(value) for value in base["xyz"]),
         ))
-        expected_laser = dict(zip(
-            ("laser_x", "laser_y", "laser_z"),
-            (str(value) for value in laser["xyz"]),
-        ))
-        expected_laser.update(dict(zip(
-            ("laser_roll", "laser_pitch", "laser_yaw"),
-            (str(value) for value in laser["rpy"]),
-        )))
         expected_camera = dict(zip(
             ("camera_x", "camera_y", "camera_z"),
             (str(value) for value in camera["xyz"]),
@@ -428,7 +394,7 @@ class SystemContractTests(unittest.TestCase):
             (str(value) for value in depth_camera["rpy"]),
         )))
 
-        for name, expected in {**expected_base, **expected_laser}.items():
+        for name, expected in expected_base.items():
             with self.subTest(name=name):
                 self.assertEqual(extrinsic_defaults.get(name, "0.0"), expected)
         for name, expected in expected_camera.items():
@@ -490,9 +456,7 @@ class SystemContractTests(unittest.TestCase):
             "smartcar_safety",
             "smartcar_task",
             "smartcar_vision",
-            "smartcar_speech",
             "smartcar_tools",
-            "rf2o_laser_odometry",
         ):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
         self.assertIn("<test_depend>ament_cmake_pytest</test_depend>", source)

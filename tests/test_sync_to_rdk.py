@@ -239,7 +239,7 @@ class TestCmdInitVendor(unittest.TestCase):
                 argv = call[0][0]
                 self.assertIn("--exclude", argv)
                 self.assertTrue(
-                    any("YDLidar-SDK-master" in a or "*.deb" in a for a in argv),
+                    any("*.deb" in a for a in argv),
                     "VENDOR_EXCLUDES 未传给 rsync")
 
     def test_init_vendor_exits_on_rsync_failure(self):

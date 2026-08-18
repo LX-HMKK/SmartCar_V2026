@@ -44,7 +44,7 @@ class MediaTestScriptTests(unittest.TestCase):
         self.assertIn("start_rgb_imshow VLM", source)
         self.assertIn("competition_output_display", source)
         self.assertIn("auto_request:=true", source)
-        self.assertIn("通用的猜测描述", (
+        self.assertNotIn('LaunchConfiguration("prompt")', (
             ROOT / "src" / "smartcar_tools" / "launch" / "vlm_test.launch.py"
         ).read_text(encoding="utf-8"))
 

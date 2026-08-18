@@ -15,13 +15,11 @@ class SafetyGuardTests(unittest.TestCase):
     def make_guard(self, **overrides):
         options = {
             "command_timeout_sec": 0.30,
-            "scan_timeout_sec": 0.35,
             "odom_timeout_sec": 0.35,
             "raw_odom_timeout_sec": 0.25,
             "minimum_voltage": 0.0,
             "voltage_timeout_sec": 1.0,
             "max_linear_speed_mps": 0.30,
-            "require_scan": True,
             "require_odom": True,
             "require_raw_odom": True,
             "depth_points_timeout_sec": 0.50,
@@ -32,7 +30,6 @@ class SafetyGuardTests(unittest.TestCase):
 
     def make_healthy(self, guard, now=10.0, voltage=12.0):
         self.assertTrue(guard.mark_command(now, 0.0))
-        guard.mark_scan(now)
         guard.mark_odom(now)
         guard.mark_raw_odom(now)
         if guard.require_depth_points:
@@ -56,28 +53,17 @@ class SafetyGuardTests(unittest.TestCase):
             {"allowed": False, "reason": "command_stale"},
         )
 
-    def test_stale_scan_blocks_motion(self):
-        guard = self.make_guard()
-        self.make_healthy(guard)
-        guard.mark_command(10.20, 0.0)
-        guard.mark_odom(10.20)
-        self.assertEqual(
-            guard.evaluate(10.36),
-            {"allowed": False, "reason": "scan_stale"},
-        )
-
     def test_stale_odom_blocks_motion(self):
         guard = self.make_guard()
         self.make_healthy(guard)
         guard.mark_command(10.20, 0.0)
-        guard.mark_scan(10.20)
         self.assertEqual(
             guard.evaluate(10.36),
             {"allowed": False, "reason": "odom_stale"},
         )
 
     def test_raw_odom_is_required_by_default(self):
-        guard = SafetyGuard(require_scan=False, require_odom=False)
+        guard = SafetyGuard(require_odom=False)
         guard.mark_command(10.0, 0.0)
 
         self.assertEqual(guard.raw_odom_timeout_sec, 0.25)
@@ -98,7 +84,6 @@ class SafetyGuardTests(unittest.TestCase):
         self.make_healthy(guard)
         guard.mark_raw_odom(10.0)
         guard.mark_command(10.20, 0.0)
-        guard.mark_scan(10.20)
         guard.mark_odom(10.20)
 
         self.assertEqual(
@@ -109,7 +94,6 @@ class SafetyGuardTests(unittest.TestCase):
     def test_depth_points_are_fail_closed_when_required(self):
         guard = self.make_guard(
             command_timeout_sec=1.0,
-            scan_timeout_sec=1.0,
             odom_timeout_sec=1.0,
             raw_odom_timeout_sec=1.0,
             depth_points_timeout_sec=1.0,
@@ -119,7 +103,6 @@ class SafetyGuardTests(unittest.TestCase):
         self.assertEqual(guard.evaluate(10.20), {"allowed": True, "reason": "ok"})
 
         guard.mark_command(11.10, 0.0)
-        guard.mark_scan(11.10)
         guard.mark_odom(11.10)
         guard.mark_raw_odom(11.10)
         self.assertEqual(
@@ -129,7 +112,6 @@ class SafetyGuardTests(unittest.TestCase):
 
         guard = self.make_guard(require_depth_points=True)
         self.assertTrue(guard.mark_command(10.0, 0.0))
-        guard.mark_scan(10.0)
         guard.mark_odom(10.0)
         guard.mark_raw_odom(10.0)
         self.assertEqual(
@@ -150,7 +132,6 @@ class SafetyGuardTests(unittest.TestCase):
 
     def test_disabled_sensor_requirements_do_not_block(self):
         guard = self.make_guard(
-            require_scan=False,
             require_odom=False,
             require_raw_odom=False,
         )
@@ -178,7 +159,6 @@ class SafetyGuardTests(unittest.TestCase):
     def test_stale_voltage_blocks_motion_when_threshold_enabled(self):
         guard = self.make_guard(
             command_timeout_sec=1.0,
-            scan_timeout_sec=1.0,
             odom_timeout_sec=1.0,
             raw_odom_timeout_sec=1.0,
             minimum_voltage=11.0,
@@ -186,7 +166,6 @@ class SafetyGuardTests(unittest.TestCase):
         )
         self.make_healthy(guard, now=10.0, voltage=12.0)
         guard.mark_command(10.60, 0.0)
-        guard.mark_scan(10.60)
         guard.mark_odom(10.60)
         guard.mark_raw_odom(10.60)
 
@@ -197,7 +176,6 @@ class SafetyGuardTests(unittest.TestCase):
 
     def test_speed_limit_blocks_both_directions_until_explicitly_cleared(self):
         guard = self.make_guard(
-            require_scan=False,
             require_odom=False,
             require_raw_odom=False,
         )
@@ -230,7 +208,6 @@ class SafetyGuardTests(unittest.TestCase):
     def test_non_finite_timeouts_are_rejected(self):
         for field in (
             "command_timeout_sec",
-            "scan_timeout_sec",
             "odom_timeout_sec",
             "raw_odom_timeout_sec",
             "depth_points_timeout_sec",
@@ -244,7 +221,6 @@ class SafetyGuardTests(unittest.TestCase):
     def test_zero_and_negative_timeouts_are_rejected(self):
         for field in (
             "command_timeout_sec",
-            "scan_timeout_sec",
             "odom_timeout_sec",
             "raw_odom_timeout_sec",
             "depth_points_timeout_sec",
@@ -268,7 +244,6 @@ class SafetyGuardTests(unittest.TestCase):
     def test_zero_minimum_voltage_remains_disabled(self):
         guard = self.make_guard(
             minimum_voltage=0.0,
-            require_scan=False,
             require_odom=False,
             require_raw_odom=False,
         )

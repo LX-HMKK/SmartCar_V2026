@@ -75,30 +75,6 @@ def generate_launch_description():
                 "competition route without changing the route YAML"),
         ),
         DeclareLaunchArgument(
-            "qr_handoff_test_mode",
-            default_value="false",
-            description=(
-                "After QR handling, announce the next diagnosis-room segment "
-                "and stop before it; disabled by default"),
-        ),
-        DeclareLaunchArgument(
-            "continue_after_qr_failure",
-            default_value="false",
-            description=(
-                "Publish an unrecognized QR result and keep the semantic "
-                "route running instead of ending the mission"),
-        ),
-        DeclareLaunchArgument(
-            "waypoints_calibrated",
-            default_value="false",
-            description="Allow motion only after replacing placeholder coordinates",
-        ),
-        DeclareLaunchArgument(
-            "extrinsics_calibrated",
-            default_value="false",
-            description="Confirm measured base, laser, and camera extrinsics",
-        ),
-        DeclareLaunchArgument(
             "steering_calibrated",
             default_value="false",
             description="Confirm measured Ackermann steering calibration",
@@ -112,21 +88,6 @@ def generate_launch_description():
             "operator_approved",
             default_value="false",
             description="Explicitly authorize physical mission motion",
-        ),
-        DeclareLaunchArgument(
-            "use_laser_odometry",
-            default_value="false",
-            description="Require calibrated scan-to-scan odometry",
-        ),
-        DeclareLaunchArgument(
-            "laser_odometry_calibrated",
-            default_value="false",
-            description="Confirm RF2O timing, covariance, and fallback tests",
-        ),
-        DeclareLaunchArgument(
-            "use_depth_camera",
-            default_value="false",
-            description="Require calibrated Aurora depth obstacles for motion",
         ),
         DeclareLaunchArgument(
             "use_sim_time",
@@ -155,22 +116,12 @@ def generate_launch_description():
                 {
                     "waypoints_file": LaunchConfiguration("waypoints_file"),
                     "c_zone_direction": LaunchConfiguration("c_zone_direction"),
-                    "waypoints_calibrated": LaunchConfiguration(
-                        "waypoints_calibrated"),
-                    "extrinsics_calibrated": LaunchConfiguration(
-                        "extrinsics_calibrated"),
                     "steering_calibrated": LaunchConfiguration(
                         "steering_calibrated"),
                     "emergency_stop_ready": LaunchConfiguration(
                         "emergency_stop_ready"),
                     "operator_approved": LaunchConfiguration(
                         "operator_approved"),
-                    "use_laser_odometry": LaunchConfiguration(
-                        "use_laser_odometry"),
-                    "laser_odometry_calibrated": LaunchConfiguration(
-                        "laser_odometry_calibrated"),
-                    "use_depth_camera": LaunchConfiguration(
-                        "use_depth_camera"),
                     "autostart_mission": LaunchConfiguration(
                         "autostart_mission"),
                     "navigation_test_end_segment_id": LaunchConfiguration(
@@ -183,10 +134,6 @@ def generate_launch_description():
                         "supervised_full_route"),
                     "supervised_competition_mode": LaunchConfiguration(
                         "supervised_competition_mode"),
-                    "qr_handoff_test_mode": LaunchConfiguration(
-                        "qr_handoff_test_mode"),
-                    "continue_after_qr_failure": LaunchConfiguration(
-                        "continue_after_qr_failure"),
                     "barcode_reader_image_topic": LaunchConfiguration(
                         "barcode_reader_image_topic"),
                     "qr_reader_preloaded": LaunchConfiguration(

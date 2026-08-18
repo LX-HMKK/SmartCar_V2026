@@ -2,10 +2,7 @@ vision_node:
   ros__parameters:
     image_topic: /image
     barcode_topic: /barcode
-    vlm_backend_mode: disabled
-    vlm_command_argv: [""]
-    vlm_static_text: ""
-    default_prompt: "请描述当前画面中实际可见的场景、物体、标志或人物。若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求重新拍摄。"
-    max_vlm_timeout_sec: 8.0
-    runtime_dir: /tmp/smartcar_vision
+    vlm_model: doubao-seed-2-0-lite-260428
+    default_prompt: "只描述当前图像中实际可见的内容，限一句话；不要根据任务背景猜测或补充画面中看不到的信息。"
+    max_vlm_timeout_sec: 30.0
     jpeg_quality: 90

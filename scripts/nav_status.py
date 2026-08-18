@@ -150,8 +150,6 @@ class StartupTimelineLogger:
 class SafetyRequirements:
     """Runtime safety limits queried from the active safety node."""
 
-    require_scan: bool | None = None
-    scan_timeout_sec: float | None = None
     require_odom: bool | None = None
     odom_timeout_sec: float | None = None
     require_raw_odom: bool | None = None
@@ -163,8 +161,6 @@ class SafetyRequirements:
 
     def is_complete(self) -> bool:
         return all(value is not None for value in (
-            self.require_scan,
-            self.scan_timeout_sec,
             self.require_odom,
             self.odom_timeout_sec,
             self.require_raw_odom,
@@ -201,7 +197,6 @@ class StartupSnapshot:
     raw_odom_received_at: float | None = None
     voltage_received_at: float | None = None
     voltage: float | None = None
-    scan_received_at: float | None = None
     depth_points_received_at: float | None = None
     depth_scan_received_at: float | None = None
     safety_requirements: SafetyRequirements = field(
@@ -220,9 +215,6 @@ def _safety_input_missing(snapshot: StartupSnapshot, now_sec: float) -> list[str
         return ["safety_parameters"]
 
     missing = []
-    if requirements.require_scan and not _is_fresh(
-            snapshot.scan_received_at, float(requirements.scan_timeout_sec), now_sec):
-        missing.append("scan_fresh")
     if requirements.require_odom and not _is_fresh(
             snapshot.odom_received_at, float(requirements.odom_timeout_sec), now_sec):
         missing.append("odom_fresh")
@@ -273,8 +265,8 @@ def missing_ready_items(
         missing.append("qr_reader")
     missing.extend(_safety_input_missing(snapshot, now_sec))
 
-    expected_source = "depth_scan" if require_depth else "scan"
-    expected_topic = "/smartcar/depth/scan" if require_depth else "/scan"
+    expected_source = "depth_scan"
+    expected_topic = "/smartcar/depth/scan"
     for scope, frame_count in (
             ("local", snapshot.local_costmap),
             ("global", snapshot.global_costmap)):
@@ -358,8 +350,7 @@ def summary(snapshot: StartupSnapshot, now_sec: float | None = None) -> str:
         f"sources={sources} depth=[{depth}] capture_age={capture_age} "
         f"inputs=odom:{_age_text(snapshot.odom_received_at, now_sec)},"
         f"raw:{_age_text(snapshot.raw_odom_received_at, now_sec)},"
-        f"voltage:{_age_text(snapshot.voltage_received_at, now_sec)},"
-        f"scan:{_age_text(snapshot.scan_received_at, now_sec)} rviz={rviz}"
+        f"voltage:{_age_text(snapshot.voltage_received_at, now_sec)} rviz={rviz}"
     )
 
 
@@ -447,8 +438,6 @@ def run(args) -> int:
         reliability=ReliabilityPolicy.RELIABLE,
     )
     safety_parameter_names = (
-        "require_scan",
-        "scan_timeout_sec",
         "require_odom",
         "odom_timeout_sec",
         "require_raw_odom",
@@ -460,8 +449,7 @@ def run(args) -> int:
     )
     costmap_parameter_names = (
         "obstacle_layer.observation_sources",
-        "obstacle_layer.depth_scan.topic" if args.depth_camera
-        else "obstacle_layer.scan.topic",
+        "obstacle_layer.depth_scan.topic",
     )
 
     class StartupStatusNode(Node):
@@ -528,8 +516,6 @@ def run(args) -> int:
             self.create_subscription(
                 Float32, "/PowerVoltage", self._on_voltage, reliable_qos)
             self.create_subscription(
-                LaserScan, "/scan", self._on_scan, sensor_qos)
-            self.create_subscription(
                 Costmap, "/local_costmap/costmap_raw",
                 self._on_local_costmap, costmap_qos)
             self.create_subscription(
@@ -573,9 +559,6 @@ def run(args) -> int:
             self.snapshot.voltage_received_at = time.monotonic()
             self.snapshot.voltage = float(message.data)
 
-        def _on_scan(self, _message):
-            self.snapshot.scan_received_at = time.monotonic()
-
         def _on_depth_status(self, message):
             self.snapshot.depth_status = message.data.strip()
 
@@ -605,9 +588,7 @@ def run(args) -> int:
                 self.snapshot.global_costmap += 1
 
         def _observation_has_arrived(self) -> bool:
-            if args.depth_camera:
-                return self.snapshot.depth_scan_received_at is not None
-            return self.snapshot.scan_received_at is not None
+            return self.snapshot.depth_scan_received_at is not None
 
         def _emit(self, message: str, now_sec: float | None = None):
             if now_sec is None:
@@ -791,16 +772,14 @@ def run(args) -> int:
                         for value in values):
                     return
                 self.snapshot.safety_requirements = SafetyRequirements(
-                    require_scan=values[0].bool_value,
-                    scan_timeout_sec=values[1].double_value,
-                    require_odom=values[2].bool_value,
-                    odom_timeout_sec=values[3].double_value,
-                    require_raw_odom=values[4].bool_value,
-                    raw_odom_timeout_sec=values[5].double_value,
-                    require_depth_points=values[6].bool_value,
-                    depth_points_timeout_sec=values[7].double_value,
-                    minimum_voltage=values[8].double_value,
-                    voltage_timeout_sec=values[9].double_value,
+                    require_odom=values[0].bool_value,
+                    odom_timeout_sec=values[1].double_value,
+                    require_raw_odom=values[2].bool_value,
+                    raw_odom_timeout_sec=values[3].double_value,
+                    require_depth_points=values[4].bool_value,
+                    depth_points_timeout_sec=values[5].double_value,
+                    minimum_voltage=values[6].double_value,
+                    voltage_timeout_sec=values[7].double_value,
                 )
             except Exception:
                 self._emit("parameters_rpc_error target=safety")

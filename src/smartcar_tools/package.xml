@@ -3,7 +3,7 @@
 <package format="3">
   <name>smartcar_tools</name>
   <version>0.1.0</version>
-  <description>Field reference, waypoint editing, diagnostics, vision, and speech tools.</description>
+  <description>Field reference, waypoint editing, diagnostics, and vision tools.</description>
   <maintainer email="lx_hmkk@qq.com">LX-HMKK</maintainer>
   <license>MIT</license>
 
@@ -29,7 +29,6 @@
   <exec_depend>smartcar_interfaces</exec_depend>
   <exec_depend>smartcar_nav2</exec_depend>
   <exec_depend>smartcar_safety</exec_depend>
-  <exec_depend>smartcar_speech</exec_depend>
   <exec_depend>smartcar_task</exec_depend>
   <exec_depend>smartcar_vision</exec_depend>
   <exec_depend>std_msgs</exec_depend>

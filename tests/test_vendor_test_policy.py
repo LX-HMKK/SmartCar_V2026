@@ -7,7 +7,6 @@ ROOT = Path(__file__).resolve().parents[1]
 VENDOR_CMAKE_FILES = (
     ROOT / "src" / "origincar" / "origincar_bringup" / "CMakeLists.txt",
     ROOT / "src" / "origincar" / "origincar_description" / "CMakeLists.txt",
-    ROOT / "src" / "origincar" / "ydlidar_ros2_driver" / "CMakeLists.txt",
 )
 
 

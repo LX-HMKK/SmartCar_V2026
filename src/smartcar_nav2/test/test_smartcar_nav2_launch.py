@@ -50,13 +50,13 @@ class Nav2TestFixture:
         self.raw_odom_publisher = self.node.create_publisher(
             Odometry, "/odom", 10
         )
-        self.scan_publisher = self.node.create_publisher(
-            LaserScan, "/scan", qos_profile_sensor_data
+        self.depth_scan_publisher = self.node.create_publisher(
+            LaserScan, "/smartcar/depth/scan", qos_profile_sensor_data
         )
         self.static_broadcaster = StaticTransformBroadcaster(self.node)
         self._publish_static_transform()
         self.node.create_timer(0.05, self._publish_odometry)
-        self.node.create_timer(0.10, self._publish_scan)
+        self.node.create_timer(0.10, self._publish_depth_scan)
 
     def _publish_static_transform(self):
         transform = TransformStamped()
@@ -81,7 +81,7 @@ class Nav2TestFixture:
         raw_odometry.pose.pose.orientation.w = 1.0
         self.raw_odom_publisher.publish(raw_odometry)
 
-    def _publish_scan(self):
+    def _publish_depth_scan(self):
         scan = LaserScan()
         scan.header.stamp = self.node.get_clock().now().to_msg()
         scan.header.frame_id = "base_footprint"
@@ -92,7 +92,7 @@ class Nav2TestFixture:
         scan.range_min = 0.05
         scan.range_max = 12.0
         scan.ranges = [math.inf] * 181
-        self.scan_publisher.publish(scan)
+        self.depth_scan_publisher.publish(scan)
 
 
 def run_fixture():
@@ -128,7 +128,6 @@ def generate_test_description():
             )
         ),
         launch_arguments={
-            "require_scan": "true",
             "require_odom": "true",
         }.items(),
     )

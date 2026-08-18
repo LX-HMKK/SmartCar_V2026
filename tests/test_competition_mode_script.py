@@ -44,14 +44,14 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertIn('--timeline-log "$LAUNCH_LOG"', self.source)
         self.assertIn(
             'VISION_CONFIG="$WORKSPACE/src/smartcar_vision/config/'
-            'vision_volcengine.yaml"',
+            'vision.yaml"',
             self.source,
         )
         self.assertIn('vision_config_file:="$VISION_CONFIG"', self.source)
         self.assertIn("autostart_mission:=false", self.source)
         self.assertIn("safety_emergency_stop_on_start:=true", self.source)
         self.assertIn("supervised_competition_mode:=true", self.source)
-        self.assertIn("continue_after_qr_failure:=true", self.source)
+        self.assertNotIn("continue_after_qr_failure", self.source)
         self.assertIn("c_zone_direction:=counterclockwise", self.source)
         self.assertIn("preload_qr_reader:=", self.source)
         self.assertIn(
@@ -64,6 +64,7 @@ class CompetitionModeScriptTests(unittest.TestCase):
         self.assertIn("--vision-services", self.source)
         self.assertIn("--preloaded-qr-reader", self.source)
         self.assertIn('VLM_CREDENTIALS_FILE="$WORKSPACE/config/', self.source)
+        self.assertIn('ARK_API_KEY', self.source)
         self.assertIn("require_vlm_credentials", self.source)
         self.assertIn("loginctl show-seat seat0", self.source)
         self.assertIn("getent passwd", self.source)

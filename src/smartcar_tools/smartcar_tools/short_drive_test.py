@@ -80,7 +80,6 @@ def runtime_mode_errors(safety_params, task_params, speed_mps, route_profile="p_
 
     expected_safety = {
         "require_depth_points": True,
-        "require_scan": False,
         "emergency_stop_on_start": True,
     }
     for name, expected in expected_safety.items():
@@ -88,10 +87,7 @@ def runtime_mode_errors(safety_params, task_params, speed_mps, route_profile="p_
             errors.append(f"safety.{name} must be {expected}")
 
     expected_task = {
-        "use_depth_camera": True,
         "autostart_mission": False,
-        "waypoints_calibrated": True,
-        "extrinsics_calibrated": True,
         "steering_calibrated": True,
         "emergency_stop_ready": True,
         "operator_approved": True,
@@ -286,17 +282,13 @@ class ShortDrive(Node):
         safety_types = {
             "max_linear_speed_mps": ParameterType.PARAMETER_DOUBLE,
             "require_depth_points": ParameterType.PARAMETER_BOOL,
-            "require_scan": ParameterType.PARAMETER_BOOL,
             "emergency_stop_on_start": ParameterType.PARAMETER_BOOL,
         }
         task_types = {
-            "use_depth_camera": ParameterType.PARAMETER_BOOL,
             "supervised_p_to_a_only": ParameterType.PARAMETER_BOOL,
             "supervised_p_to_c1_only": ParameterType.PARAMETER_BOOL,
             "navigation_test_end_segment_id": ParameterType.PARAMETER_STRING,
             "autostart_mission": ParameterType.PARAMETER_BOOL,
-            "waypoints_calibrated": ParameterType.PARAMETER_BOOL,
-            "extrinsics_calibrated": ParameterType.PARAMETER_BOOL,
             "steering_calibrated": ParameterType.PARAMETER_BOOL,
             "emergency_stop_ready": ParameterType.PARAMETER_BOOL,
             "operator_approved": ParameterType.PARAMETER_BOOL,

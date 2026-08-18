@@ -4,12 +4,9 @@ task_node:
     navigation_test_end_segment_id: ""
     c_zone_direction: counterclockwise
     supervised_competition_mode: false
-    waypoints_calibrated: false
-    extrinsics_calibrated: false
     steering_calibrated: false
     emergency_stop_ready: false
     operator_approved: false
-    use_depth_camera: false
     server_wait_timeout_sec: 30.0
     navigation_timeout_sec: 120.0
     goal_response_timeout_sec: 2.0
@@ -18,7 +15,6 @@ task_node:
     # Lease renewal is diagnostic only. A failed RPC is logged but does not
     # cancel the active Nav2 goal; command freshness remains fail-closed.
     direction_service_timeout_sec: 0.20
-    direction_lease_timeout_sec: 0.0
     direction_prepare_timeout_sec: 1.0
     direction_prepare_retry_period_sec: 0.05
     direction_renew_period_sec: 0.10
@@ -27,16 +23,11 @@ task_node:
     direction_stop_linear_tolerance: 0.01
     direction_stop_angular_tolerance: 0.05
     direction_odom_stale_timeout_sec: 0.25
-    navigation_retries: 0
-    navigation_retry_delay_sec: 0.25
     qr_settle_sec: 2.0
     qr_timeout_sec: 3.0
     qr_retries: 1
     qr_retry_delay_sec: 0.25
-    continue_after_qr_failure: false
-    qr_handoff_test_mode: false
-    vlm_timeout_sec: 8.0
-    vlm_prompt: "请描述当前画面中实际可见的场景、物体、标志或人物。若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求重新拍摄。"
+    vlm_timeout_sec: 30.0
     qr_reader_preloaded: false
     reset_timeout_sec: 5.0
     origin_position_tolerance: 0.20

@@ -19,11 +19,14 @@ except ImportError:
     ROS_AVAILABLE = False
 
 try:
-    from smartcar_task.task_node import RosDirectionGuard, RosLocalization
+    from smartcar_task.ros_adapters import (
+        RosDirectionGuard,
+        RosLocalization,
+    )
 
-    TASK_NODE_AVAILABLE = True
+    ROS_ADAPTERS_AVAILABLE = True
 except ImportError:
-    TASK_NODE_AVAILABLE = False
+    ROS_ADAPTERS_AVAILABLE = False
 
 
 def waypoint(waypoint_id, task, x, profile="standard", heading_mode=None, direction="forward"):
@@ -96,8 +99,8 @@ class Nav2GoalFactoryTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    TASK_NODE_AVAILABLE,
-    "task_node ROS interfaces are unavailable",
+    ROS_ADAPTERS_AVAILABLE,
+    "ROS adapter interfaces are unavailable",
 )
 class RosDirectionGuardObservationTests(unittest.TestCase):
     class FakeNode:
@@ -141,8 +144,8 @@ class RosDirectionGuardObservationTests(unittest.TestCase):
 
 
 @unittest.skipUnless(
-    TASK_NODE_AVAILABLE,
-    "task_node ROS interfaces are unavailable",
+    ROS_ADAPTERS_AVAILABLE,
+    "ROS adapter interfaces are unavailable",
 )
 class RosLocalizationObservationTests(unittest.TestCase):
     class FakeNode:
@@ -171,18 +174,15 @@ class RosLocalizationObservationTests(unittest.TestCase):
             reset_timeout_sec=0.1,
             position_tolerance=0.2,
             yaw_tolerance=0.2,
-            use_laser_odometry=True,
         )
 
         localization._start_odometry_observation()
         first_odom = localization._odom_subscription
-        first_laser = localization._laser_odom_subscription
         localization._stop_odometry_observation()
         localization._start_odometry_observation()
 
         self.assertIs(localization._odom_subscription, first_odom)
-        self.assertIs(localization._laser_odom_subscription, first_laser)
-        self.assertEqual(len(node.subscriptions), 2)
+        self.assertEqual(len(node.subscriptions), 1)
         self.assertEqual(node.destroy_calls, 0)
 
 

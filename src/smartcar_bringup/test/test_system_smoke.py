@@ -61,13 +61,13 @@ class SystemSmokeFixture:
         self.raw_odom_publisher = self.node.create_publisher(
             Odometry, "/odom", 10
         )
-        self.scan_publisher = self.node.create_publisher(
-            LaserScan, "/scan", qos_profile_sensor_data
+        self.depth_scan_publisher = self.node.create_publisher(
+            LaserScan, "/smartcar/depth/scan", qos_profile_sensor_data
         )
         self.static_broadcaster = StaticTransformBroadcaster(self.node)
         self._publish_static_transforms()
         self.node.create_timer(0.05, self._publish_odometry)
-        self.node.create_timer(0.10, self._publish_scan)
+        self.node.create_timer(0.10, self._publish_depth_scan)
 
     def _publish_static_transforms(self):
         stamp = self.node.get_clock().now().to_msg()
@@ -100,7 +100,7 @@ class SystemSmokeFixture:
         raw_odometry.pose.pose.orientation.w = 1.0
         self.raw_odom_publisher.publish(raw_odometry)
 
-    def _publish_scan(self):
+    def _publish_depth_scan(self):
         scan = LaserScan()
         scan.header.stamp = self.node.get_clock().now().to_msg()
         scan.header.frame_id = "base_footprint"
@@ -111,7 +111,7 @@ class SystemSmokeFixture:
         scan.range_min = 0.05
         scan.range_max = 12.0
         scan.ranges = [math.inf] * 181
-        self.scan_publisher.publish(scan)
+        self.depth_scan_publisher.publish(scan)
 
 
 def run_fixture():
@@ -143,7 +143,6 @@ def generate_test_description():
                 PythonLaunchDescriptionSource(system_launch),
                 launch_arguments={
                     "use_base": "false",
-                    "use_lidar": "false",
                     "use_safety": "true",
                     "safety_emergency_stop_on_start": "true",
                     "use_nav": "true",
@@ -153,7 +152,6 @@ def generate_test_description():
                     "use_vision": "true",
                     "use_task": "true",
                     "use_visualization": "false",
-                    "use_speech": "false",
                     "autostart_mission": "false",
                     "image_topic": "/smartcar/vision/image",
                 }.items(),
@@ -287,11 +285,9 @@ class TestSystemSmoke(unittest.TestCase):
             "imu_filter",
             "joint_state_publisher",
             "robot_state_publisher",
-            "ydlidar_ros2_driver_node",
             "aurora",
             "usb_cam",
             "mipi_cam",
-            "speech_node",
         )
         self.assertFalse([
             name for name in names if any(value in name for value in forbidden)
@@ -346,7 +342,7 @@ class TestSystemSmoke(unittest.TestCase):
 
     def test_required_sensor_topics_are_present(self):
         topics = dict(self.node.get_topic_names_and_types())
-        self.assertIn("/scan", topics)
+        self.assertIn("/smartcar/depth/scan", topics)
         self.assertIn("/odom", topics)
         self.assertIn("/odom_combined", topics)
 

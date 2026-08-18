@@ -1,6 +1,7 @@
 """Offline tests for the Volcengine Ark vision CLI adapter."""
 import io
 import json
+import os
 from pathlib import Path
 import socket
 import sys
@@ -14,6 +15,7 @@ PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(PACKAGE_ROOT))
 
 from smartcar_vision.volcengine_vlm_cli import (  # noqa: E402
+    DEFAULT_TIMEOUT_SEC,
     _RejectRedirect,
     VolcengineVlmError,
     _load_api_key,
@@ -39,6 +41,9 @@ class FakeResponse:
 
 
 class VolcengineVlmCliTests(unittest.TestCase):
+    def test_default_timeout_matches_the_vision_budget(self):
+        self.assertEqual(DEFAULT_TIMEOUT_SEC, 30.0)
+
     def test_redirects_are_rejected_before_authorization_can_move_hosts(self):
         response = FakeResponse({
             "output_text": "人物站立",
@@ -100,7 +105,8 @@ class VolcengineVlmCliTests(unittest.TestCase):
             payload["input"][0]["content"][0]["type"], "input_image")
         image_url = payload["input"][0]["content"][0]["image_url"]
         self.assertTrue(image_url.startswith("data:image/jpeg;base64,"))
-        self.assertEqual(payload["max_output_tokens"], 256)
+        self.assertNotIn("max_output_tokens", payload)
+        self.assertEqual(set(payload), {"model", "input"})
         self.assertNotIn("secret-key", request.data.decode("utf-8"))
 
     def test_typed_text_content_is_supported(self):
@@ -121,6 +127,16 @@ class VolcengineVlmCliTests(unittest.TestCase):
                 with self.assertRaises(VolcengineVlmError):
                     extract_description(response)
 
+    def test_incomplete_response_is_not_reported_as_a_description(self):
+        with self.assertRaisesRegex(
+            VolcengineVlmError, "^response_incomplete:length$"
+        ):
+            extract_description({
+                "status": "incomplete",
+                "incomplete_details": {"reason": "length"},
+                "output_text": "partial",
+            })
+
     def test_main_reads_local_credentials_and_writes_description(self):
         stdout = io.StringIO()
         stderr = io.StringIO()
@@ -137,6 +153,14 @@ class VolcengineVlmCliTests(unittest.TestCase):
         ) as credentials_file:
             image_path = Path(directory) / "scene.jpg"
             image_path.write_bytes(b"jpeg")
+            config_path = Path(directory) / "vision.yaml"
+            config_path.write_text(
+                "vision_node:\n"
+                "  ros__parameters:\n"
+                "    vlm_model: model-id\n"
+                "    default_prompt: 描述\n",
+                encoding="utf-8",
+            )
             credential_path = Path(directory) / "credentials.yaml"
             credential_path.write_text(
                 "ark:\n  api_key: local-key\n", encoding="utf-8")
@@ -144,8 +168,7 @@ class VolcengineVlmCliTests(unittest.TestCase):
             code = main(
                 [
                     "--image", str(image_path),
-                    "--prompt", "描述",
-                    "--model", "model-id",
+                    "--config-file", str(config_path),
                 ],
                 stdout=stdout,
                 stderr=stderr,
@@ -160,12 +183,15 @@ class VolcengineVlmCliTests(unittest.TestCase):
     def test_main_fails_fast_without_local_credentials(self):
         stdout = io.StringIO()
         stderr = io.StringIO()
-        with mock.patch(
+        with mock.patch.dict(os.environ, {}, clear=True), mock.patch(
             "smartcar_vision.volcengine_vlm_cli._credentials_file",
             return_value=None,
         ):
             code = main(
-                ["--image", "unused.jpg", "--prompt", "描述"],
+                [
+                    "--image", "unused.jpg",
+                    "--config-file", "unused.yaml",
+                ],
                 stdout=stdout,
                 stderr=stderr,
                 opener=lambda *_args, **_kwargs: self.fail("must not call API"),
@@ -173,6 +199,15 @@ class VolcengineVlmCliTests(unittest.TestCase):
         self.assertEqual(code, 2)
         self.assertEqual(stdout.getvalue(), "")
         self.assertEqual(stderr.getvalue(), "credentials_file_missing\n")
+
+    def test_environment_api_key_takes_precedence_over_local_file(self):
+        with mock.patch.dict(
+            os.environ, {"ARK_API_KEY": "environment-key"}, clear=True
+        ), mock.patch(
+            "smartcar_vision.volcengine_vlm_cli._credentials_file",
+            return_value=None,
+        ):
+            self.assertEqual(_load_api_key(), "environment-key")
 
     def test_empty_local_api_key_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory, mock.patch(

@@ -46,8 +46,6 @@ class NavStatusContracts(unittest.TestCase):
             depth_points_received_at=0.0,
             depth_scan_received_at=0.0,
             safety_requirements=nav_status.SafetyRequirements(
-                require_scan=False,
-                scan_timeout_sec=0.35,
                 require_odom=False,
                 odom_timeout_sec=0.35,
                 require_raw_odom=False,

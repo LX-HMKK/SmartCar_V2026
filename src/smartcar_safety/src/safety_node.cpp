@@ -4,7 +4,6 @@
 #include <geometry_msgs/msg/twist.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 #include <rclcpp/rclcpp.hpp>
-#include <sensor_msgs/msg/laser_scan.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <smartcar_interfaces/srv/hold_steering_calibration.hpp>
 #include <std_msgs/msg/float32.hpp>
@@ -21,7 +20,6 @@
 
 using geometry_msgs::msg::Twist;
 using ackermann_msgs::msg::AckermannDriveStamped;
-using sensor_msgs::msg::LaserScan;
 using sensor_msgs::msg::PointCloud2;
 using nav_msgs::msg::Odometry;
 using smartcar_interfaces::srv::HoldSteeringCalibration;
@@ -74,7 +72,6 @@ public:
   SafetyNode() : Node("safety_node") {
     // Declare parameters with same names and defaults as the Python version.
     declare_parameter("command_timeout_sec", 0.30);
-    declare_parameter("scan_timeout_sec", 0.35);
     declare_parameter("odom_timeout_sec", 0.35);
     declare_parameter("raw_odom_timeout_sec", 0.25);
     declare_parameter("depth_points_timeout_sec", 1.0);
@@ -83,7 +80,6 @@ public:
     declare_parameter("voltage_timeout_sec", 1.0);
     declare_parameter("max_linear_speed_mps", 0.50);
     declare_parameter("publish_frequency_hz", 20.0);
-    declare_parameter("require_scan", true);
     declare_parameter("require_odom", true);
     declare_parameter("require_raw_odom", true);
     declare_parameter("require_depth_points", false);
@@ -99,13 +95,11 @@ public:
     // authoritative source for the linear-speed cap).
     guard_ = std::make_unique<smartcar_safety::SafetyGuard>(
         get_parameter("command_timeout_sec").as_double(),
-        get_parameter("scan_timeout_sec").as_double(),
         get_parameter("odom_timeout_sec").as_double(),
         get_parameter("raw_odom_timeout_sec").as_double(),
         get_parameter("minimum_voltage").as_double(),
         get_parameter("voltage_timeout_sec").as_double(),
         get_parameter("max_linear_speed_mps").as_double(),
-        get_parameter("require_scan").as_bool(),
         get_parameter("require_odom").as_bool(),
         get_parameter("require_raw_odom").as_bool(),
         get_parameter("depth_points_timeout_sec").as_double(),
@@ -145,7 +139,7 @@ public:
         create_publisher<String>("/smartcar/safety/status", status_qos);
 
     // Subscriptions.
-    // scan/odom/raw_odom callbacks discard message content — they only need
+    // odom/raw_odom callbacks discard message content — they only need
     // arrival timestamps (heartbeat-only, per commit cb55b54).  Unlike Python,
     // C++ deserialization is cheap (~100 ns vs ~50 us), so the raw=True
     // optimization is unnecessary here.  rclcpp::SerializedMessage also has
@@ -155,9 +149,6 @@ public:
     cmd_sub_ = create_subscription<Twist>(
         "/cmd_vel", latest_reliable,
         [this](Twist::SharedPtr msg) { on_command(msg); });
-    scan_sub_ = create_subscription<LaserScan>(
-        "/scan", latest_sensor,
-        [this](LaserScan::SharedPtr /*msg*/) { on_scan(); });
     odom_sub_ = create_subscription<Odometry>(
         "/odom_combined", latest_reliable,
         [this](Odometry::SharedPtr /*msg*/) { on_odom(); });
@@ -239,12 +230,6 @@ private:
     }
     auto result = guard_->evaluate(now);
     publish_status_if_changed(result);
-  }
-
-  void on_scan() {
-    std::lock_guard<std::mutex> lock(mutex_);
-    double now = now_sec();
-    guard_->mark_scan(now);
   }
 
   void on_odom() {
@@ -441,7 +426,6 @@ private:
   rclcpp::Publisher<AckermannDriveStamped>::SharedPtr ackermann_pub_;
   rclcpp::Publisher<String>::SharedPtr status_pub_;
   rclcpp::Subscription<Twist>::SharedPtr cmd_sub_;
-  rclcpp::Subscription<LaserScan>::SharedPtr scan_sub_;
   rclcpp::Subscription<Odometry>::SharedPtr odom_sub_;
   rclcpp::Subscription<Odometry>::SharedPtr raw_odom_sub_;
   rclcpp::Subscription<PointCloud2>::SharedPtr depth_points_sub_;

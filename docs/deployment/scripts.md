@@ -173,8 +173,9 @@ bash /home/sunrise/ros2_ws/scripts/competition_mode.sh stop
 深度仅进入 relay、`pointcloud_to_laserscan` 和 Nav2 双 costmap。它启动 `default_waypoints.yaml`
 的语义任务树、Nav2、方向门和 safety，但强制 `autostart_mission:=false` 和
 `safety_emergency_stop_on_start:=true`。健康检查还要求 QR 与 VLM 服务可用；默认预热模式会额外确认
-ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。它还只检查 RDK 本地
-`config/volcengine_ark.local.yaml` 是否存在且非空，绝不读取或打印密钥；该文件已从同步白名单排除。
+ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。VLM 凭据优先读取进程环境中的
+`ARK_API_KEY`；未设置时兼容使用 RDK 本地的 `config/volcengine_ark.local.yaml`。两种方式都不读取或
+打印密钥；本地文件已从同步白名单排除。
 在健康检查通过后，`prepare` 仍在软件急停锁存下执行一次 P 点定位复位，并将该结果绑定到当前比赛栈 PID。
 因此裁判发令时不再重复健康快照或定位复位；按钮只解除软件急停并触发任务。若赛前位置或健康状态发生变化，
 车辆重新放到 P 点后执行 `bash /home/sunrise/ros2_ws/scripts/competition_mode.sh arm` 重新预置，急停始终保持锁存。
@@ -198,8 +199,8 @@ ZBar 已在 `/barcode` 上发布，确保故障在发令前暴露。它还只检
 `偶数 -> counterclockwise（逆时针）`，`未识别`、歧义结果或 QR 读取失败均回退
 `counterclockwise（逆时针）`，并继续完整路线返回 P。识别出的 QR 数字和所选方向都会发布到比赛输出 UI。
 该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
-VLM 无有效结果时发布受控的通用描述并继续回到 P。上述降级只覆盖语义任务结果，不能掩盖 Nav2、方向门、
-safety、定位或 costmap 故障；这些故障仍必须停止并按现场流程处理。
+VLM 无有效结果时任务明确失败，不发布通用描述或伪造语义结果。Nav2、方向门、safety、定位或 costmap
+故障同样必须停止并按现场流程处理。
 
 ### `media_test.sh`
 
@@ -216,8 +217,8 @@ bash /home/sunrise/ros2_ws/scripts/media_test.sh vlm
 模式以提高二维码短测的有效像素，`vlm` 保持默认 Aurora RGB 模式。`qr` 还会打开“QR 比赛输出”UI，持续识别
 并显示解码出的 QR 内容或 `未识别`；调整画面后会继续等待新的二维码结果。关闭该 UI 或按 Ctrl-C
 结束本次 QR 短测。`vlm` 会打开
-图生文比赛输出 UI，收到首个有效 RGB 帧且服务可用后自动请求一次。若画面拍偏或不可确认，提示词和
-服务兜底都会返回通用猜测文字。此脚本会启动实体 Aurora 相机，需要该次相机授权；不产生底盘运动。
+图生文比赛输出 UI，收到首个有效 RGB 帧且服务可用后自动请求一次。若画面拍偏或不可确认，服务明确
+返回失败，不会输出通用猜测文字。此脚本会启动实体 Aurora 相机，需要该次相机授权；不产生底盘运动。
 部署了视觉源码改动后，先运行 `/home/sunrise/ros2_ws/scripts/nav_prepare.sh` 以重建
 `smartcar_tools`。
 

@@ -122,8 +122,9 @@ bash /home/sunrise/ros2_ws/scripts/competition_mode.sh stop
 它不启动 RViz、OpenCV `imshow` 或独立媒体短测；唯一图形界面是同屏
 显示识别出的 QR 数字、已选 C 区方向、VLM 文本和任务状态的比赛输出 UI。不要在比赛栈运行时启动 `media_test.sh`，否则会重复
 打开 Aurora。准备检查会确认 QR/VLM 服务可用；默认预热还会确认 ZBar reader 已启动。Volcengine
-凭据只保存在 RDK 工作区的 `config/volcengine_ark.local.yaml`，同步脚本不会传输或删除它，比赛脚本只做
-存在性检查，绝不输出其内容。
+凭据优先读取 RDK 进程环境中的 `ARK_API_KEY`；兼容回退可使用工作区的
+`config/volcengine_ark.local.yaml`。同步脚本不会传输或删除该本地文件，比赛脚本只做存在性检查，
+绝不输出密钥内容。
 
 比赛输出 UI 的“发车”按钮是裁判口令后的标准入口。比赛脚本显式授权该按钮后，它会显示 P 点摆位和物理
 急停确认框，并在 RDK 本地异步执行同一 `competition_mode.sh start --confirm` 流程；远程桌面连接可以点击
@@ -133,8 +134,8 @@ A 点读取 QR 后一次性选择已获准的 C 区运行时镜像：`奇数 -> 
 `偶数 -> counterclockwise（逆时针）`；`未识别`、歧义结果或 QR 读取失败则回退
 `counterclockwise（逆时针）`，仍继续完整路线返回 P。识别出的 QR 数字和已选方向都会显示在比赛输出 UI。
 该选择只替换内存中的后续 Nav2 输入变体，不修改两份 waypoint YAML、航点 ID/顺序或 planning segments。
-VLM 无结果会显示通用描述并继续回到 P；导航、定位、方向门、costmap 或 safety 异常仍按失败处理，
-不能为了完赛绕过安全链。
+VLM 无结果会明确失败，不显示通用描述或继续伪造语义任务完成；导航、定位、方向门、costmap 或 safety
+异常同样按失败处理，不能为了完赛绕过安全链。
 
 `prepare` 会先拒绝已有的底盘、Nav2、任务、Aurora 或视觉节点，防止旧 ROS 栈用同名全局服务或话题
 误通过新栈健康检查。此时先确认物理急停，再停止或按现场流程清理旧栈。

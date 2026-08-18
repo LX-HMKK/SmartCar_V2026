@@ -6,7 +6,6 @@ import unittest
 
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 LAUNCH_DIR = PACKAGE_ROOT / "launch"
-SPEECH = LAUNCH_DIR / "speech_test.launch.py"
 QR = LAUNCH_DIR / "qr_test.launch.py"
 VLM = LAUNCH_DIR / "vlm_test.launch.py"
 
@@ -34,21 +33,9 @@ def launch_default(path, name):
 
 class MediaLaunchContractTests(unittest.TestCase):
     def test_launch_files_are_valid_python(self):
-        for path in (SPEECH, QR, VLM):
+        for path in (QR, VLM):
             with self.subTest(path=path.name):
                 ast.parse(path.read_text(encoding="utf-8"))
-
-    def test_speech_entry_only_composes_speech(self):
-        source = SPEECH.read_text(encoding="utf-8")
-        self.assertEqual(launch_default(SPEECH, "enabled"), "true")
-        self.assertIn('FindPackageShare("smartcar_speech")', source)
-        for forbidden in (
-            "smartcar_bringup",
-            "smartcar_nav2",
-            "smartcar_task",
-            "smartcar_vision",
-        ):
-            self.assertNotIn(forbidden, source)
 
     def test_qr_entry_supports_camera_and_file_without_motion_stack(self):
         source = QR.read_text(encoding="utf-8")
@@ -65,11 +52,10 @@ class MediaLaunchContractTests(unittest.TestCase):
             "smartcar_bringup",
             "smartcar_nav2",
             "smartcar_task",
-            "smartcar_speech",
         ):
             self.assertNotIn(forbidden, source)
 
-    def test_vlm_entry_uses_hdmi_text_and_never_starts_speech(self):
+    def test_vlm_entry_uses_hdmi_text_output(self):
         source = VLM.read_text(encoding="utf-8")
         self.assertEqual(launch_default(VLM, "display"), ":0")
         self.assertEqual(launch_default(VLM, "camera_driver"), "aurora")
@@ -85,13 +71,13 @@ class MediaLaunchContractTests(unittest.TestCase):
         self.assertIn('"use_zbar": "false"', source)
         self.assertIn('"output_topic": "/smartcar/output/text"', source)
         self.assertIn('"auto_request": auto_request', source)
-        self.assertIn("通用的猜测描述", source)
-        self.assertIn("vision_volcengine.yaml", source)
+        self.assertNotIn('LaunchConfiguration("prompt")', source)
+        self.assertIn("vision.yaml", source)
+        self.assertNotIn("vision_volcengine.yaml", source)
         for forbidden in (
             "smartcar_bringup",
             "smartcar_nav2",
             "smartcar_task",
-            "smartcar_speech",
         ):
             self.assertNotIn(forbidden, source)
 

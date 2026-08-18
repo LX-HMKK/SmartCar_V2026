@@ -30,7 +30,6 @@ else:
 @dataclass(frozen=True)
 class DisplayResult:
     success: bool
-    fallback_used: bool
     text: str
     status: str
     elapsed_sec: float
@@ -39,8 +38,6 @@ class DisplayResult:
 def result_kind(result):
     if not result.success or not str(result.text).strip():
         return "failed"
-    if result.fallback_used:
-        return "fallback"
     return "success"
 
 
@@ -170,8 +167,8 @@ else:
 
 def _positive_timeout(value):
     timeout = float(value)
-    if not math.isfinite(timeout) or not 0.0 < timeout <= 8.0:
-        raise ValueError("request_timeout_sec must be in (0, 8]")
+    if not math.isfinite(timeout) or not 0.0 < timeout <= 30.0:
+        raise ValueError("request_timeout_sec must be in (0, 30]")
     return timeout
 
 
@@ -197,9 +194,7 @@ def _run(args=None):
                 "output_topic", "/smartcar/output/text")
             self.declare_parameter(
                 "service_name", "/smartcar/vision/describe_scene")
-            self.declare_parameter(
-                "prompt", "请描述当前画面中实际可见的场景和物体。")
-            self.declare_parameter("request_timeout_sec", 8.0)
+            self.declare_parameter("request_timeout_sec", 30.0)
             self.declare_parameter("fullscreen", True)
             self.declare_parameter("auto_request", False)
 
@@ -211,7 +206,6 @@ def _run(args=None):
                 self.get_parameter("service_name").value).strip()
             if not image_topic or not output_topic or not service_name:
                 raise ValueError("UI topics and service name must be nonempty")
-            self.prompt = str(self.get_parameter("prompt").value)
             self.timeout_sec = _positive_timeout(
                 self.get_parameter("request_timeout_sec").value)
             self.fullscreen = bool(
@@ -262,7 +256,6 @@ def _run(args=None):
             if not self._client.service_is_ready():
                 qt_bridge.request_finished.emit(DisplayResult(
                     False,
-                    False,
                     "",
                     "service_unavailable",
                     time.monotonic() - started,
@@ -272,7 +265,6 @@ def _run(args=None):
                 if self._pending is not None:
                     qt_bridge.request_finished.emit(DisplayResult(
                         False,
-                        False,
                         "",
                         "request_already_active",
                         0.0,
@@ -281,13 +273,11 @@ def _run(args=None):
                 request = DescribeScene.Request()
                 request.not_before = self.get_clock().now().to_msg()
                 request.timeout_sec = self.timeout_sec
-                request.prompt = self.prompt
                 self._request_started_at = started
                 try:
                     future = self._client.call_async(request)
                 except Exception as error:
                     qt_bridge.request_finished.emit(DisplayResult(
-                        False,
                         False,
                         "",
                         f"transport_error:{type(error).__name__}",
@@ -319,7 +309,6 @@ def _run(args=None):
                 pass
             qt_bridge.request_finished.emit(DisplayResult(
                 False,
-                False,
                 "",
                 "transport_timeout",
                 time.monotonic() - started,
@@ -340,7 +329,6 @@ def _run(args=None):
             except Exception as error:
                 result = DisplayResult(
                     False,
-                    False,
                     "",
                     f"transport_error:{type(error).__name__}",
                     time.monotonic() - started,
@@ -348,7 +336,6 @@ def _run(args=None):
             else:
                 result = DisplayResult(
                     bool(response.success),
-                    bool(response.fallback_used),
                     str(response.description),
                     str(response.status),
                     time.monotonic() - started,

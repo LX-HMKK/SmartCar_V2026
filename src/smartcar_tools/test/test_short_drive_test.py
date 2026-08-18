@@ -64,17 +64,13 @@ class ShortDriveLimitTests(unittest.TestCase):
         safety = {
             "max_linear_speed_mps": 0.30,
             "require_depth_points": False,
-            "require_scan": True,
             "emergency_stop_on_start": False,
         }
         task = {
-            "use_depth_camera": False,
             "supervised_p_to_a_only": False,
             "supervised_p_to_c1_only": False,
             "navigation_test_end_segment_id": "",
             "autostart_mission": False,
-            "waypoints_calibrated": False,
-            "extrinsics_calibrated": False,
             "steering_calibrated": False,
             "emergency_stop_ready": False,
             "operator_approved": False,
@@ -88,17 +84,13 @@ class ShortDriveLimitTests(unittest.TestCase):
         safety = {
             "max_linear_speed_mps": 0.05,
             "require_depth_points": True,
-            "require_scan": False,
             "emergency_stop_on_start": True,
         }
         task = {
-            "use_depth_camera": True,
             "supervised_p_to_a_only": True,
             "supervised_p_to_c1_only": False,
             "navigation_test_end_segment_id": "p_to_qr",
             "autostart_mission": False,
-            "waypoints_calibrated": True,
-            "extrinsics_calibrated": True,
             "steering_calibrated": True,
             "emergency_stop_ready": True,
             "operator_approved": True,
@@ -109,17 +101,13 @@ class ShortDriveLimitTests(unittest.TestCase):
         safety = {
             "max_linear_speed_mps": 0.05,
             "require_depth_points": True,
-            "require_scan": False,
             "emergency_stop_on_start": True,
         }
         task = {
-            "use_depth_camera": True,
             "supervised_p_to_a_only": False,
             "supervised_p_to_c1_only": True,
             "navigation_test_end_segment_id": "qr_to_vlm",
             "autostart_mission": False,
-            "waypoints_calibrated": True,
-            "extrinsics_calibrated": True,
             "steering_calibrated": True,
             "emergency_stop_ready": True,
             "operator_approved": True,

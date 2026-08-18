@@ -13,8 +13,6 @@ from smartcar_task.mission import (  # noqa: E402
     MissionConfig,
     MissionState,
     OperationResult,
-    QR_UNRECOGNIZED_TEXT,
-    VLM_FALLBACK_TEXT,
 )
 from smartcar_task.waypoints import Waypoint  # noqa: E402
 
@@ -76,8 +74,8 @@ class FakeVision:
         self.qr_calls.append((_not_before, _timeout_sec))
         return self.qr
 
-    def describe_scene(self, _not_before, _timeout_sec, _prompt):
-        self.vlm_calls.append((_not_before, _timeout_sec, _prompt))
+    def describe_scene(self, _not_before, _timeout_sec):
+        self.vlm_calls.append((_not_before, _timeout_sec))
         return self.vlm
 
 
@@ -97,7 +95,6 @@ class FakeOutput:
     def __init__(self):
         self.states = []
         self.text = []
-        self.speech = []
         self.qr = []
         self.c_zone_direction = []
         self.vlm = []
@@ -107,9 +104,6 @@ class FakeOutput:
 
     def publish_text(self, value):
         self.text.append(value)
-
-    def publish_speech(self, value):
-        self.speech.append(value)
 
     def publish_qr(self, value):
         self.qr.append(value)
@@ -142,7 +136,7 @@ class MissionTests(unittest.TestCase):
             self.localization,
             FakeClock(),
             self.output,
-            config or MissionConfig(qr_settle_sec=0.0, navigation_retry_delay_sec=0.0),
+            config or MissionConfig(qr_settle_sec=0.0),
         )
 
     def test_executes_forward_segments_with_native_single_and_through_actions(self):
@@ -327,7 +321,7 @@ class MissionTests(unittest.TestCase):
         ])
         mission = self.make_mission(
             navigator=navigator,
-            config=MissionConfig(qr_settle_sec=0.0, navigation_retry_delay_sec=0.0),
+            config=MissionConfig(qr_settle_sec=0.0),
         )
         target = waypoint("p_finish", "return", 0.0)
         result = mission.execute((waypoint("p", "start", 0.0), target), ((target,),))
@@ -335,7 +329,7 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(len(navigator.calls), 1)
         self.assertEqual(mission.state, MissionState.FAILED)
 
-    def test_navigation_failure_remains_terminal_when_qr_failure_continues(self):
+    def test_navigation_failure_is_terminal_before_the_qr_task(self):
         navigator = FakeNavigator([
             OperationResult(False, "planner_failed"),
         ])
@@ -343,8 +337,6 @@ class MissionTests(unittest.TestCase):
             navigator=navigator,
             config=MissionConfig(
                 qr_settle_sec=0.0,
-                navigation_retry_delay_sec=0.0,
-                continue_after_qr_failure=True,
             ),
         )
         a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")
@@ -383,7 +375,7 @@ class MissionTests(unittest.TestCase):
         ])
         mission = self.make_mission(
             navigator=navigator,
-            config=MissionConfig(qr_settle_sec=0.0, navigation_retry_delay_sec=0.0),
+            config=MissionConfig(qr_settle_sec=0.0),
         )
         target = waypoint("p_finish", "return", 0.0)
 
@@ -402,73 +394,22 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(self.localization.calls, 1)
         self.assertEqual(len(navigator.calls), 2)
 
-    def test_vlm_failure_uses_fixed_fallback(self):
+    def test_vlm_failure_fails_without_inventing_a_description(self):
         mission = self.make_mission(vision=FakeVision(
             vlm=OperationResult(False, "image_timeout")))
         target = waypoint("c", "vlm", 1.0, "precise", "locked")
         result = mission.execute((waypoint("p", "start", 0.0), target), ((target,),))
-        self.assertTrue(result.success)
-        self.assertEqual(self.output.text, [VLM_FALLBACK_TEXT])
-
-    def test_qr_failure_can_continue_through_vlm_and_return(self):
-        mission = self.make_mission(
-            vision=FakeVision(
-                qr=OperationResult(False, "qr_timeout"),
-                vlm=OperationResult(True, "ok", "person"),
-            ),
-            config=MissionConfig(
-                qr_settle_sec=0.0,
-                qr_retries=0,
-                navigation_retry_delay_sec=0.0,
-                continue_after_qr_failure=True,
-            ),
-        )
-        a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")
-        via_1 = waypoint("via_1", "via", 2.0)
-        c = waypoint("c_corner_1", "vlm", 3.0, "precise", "locked")
-        via_4 = waypoint("via_4", "via", 2.0)
-        finish = waypoint("p_finish", "return", 0.0)
-
-        counterclockwise_segments = ((a,), (via_1, c), (via_4, finish))
-        clockwise_segments = (
-            (a,),
-            (via_1, waypoint("c_corner_1", "vlm", 30.0, "precise", "locked")),
-            (waypoint("via_4", "via", 31.0), finish),
-        )
-        result = mission.execute(
-            (waypoint("p_start", "start", 0.0), a, via_1, c, via_4, finish),
-            counterclockwise_segments,
-            {
-                "counterclockwise": counterclockwise_segments,
-                "clockwise": clockwise_segments,
-            },
-        )
-
-        self.assertTrue(result.success, result.status)
-        self.assertEqual(result.status, "mission_completed")
-        self.assertEqual(self.navigator.calls, [a])
+        self.assertFalse(result.success)
+        self.assertEqual(result.status, "vlm_failed:image_timeout")
         self.assertEqual(
-            self.navigator.through_calls,
-            [(via_1, c), (via_4, finish)],
-        )
-        self.assertEqual(len(self.vision.qr_calls), 1)
-        self.assertEqual(len(self.vision.vlm_calls), 1)
-        self.assertEqual(self.output.qr, [QR_UNRECOGNIZED_TEXT])
-        self.assertEqual(self.output.c_zone_direction, ["逆时针"])
-        self.assertEqual(self.output.vlm, ["person"])
-        self.assertEqual(
-            self.output.text,
-            [QR_UNRECOGNIZED_TEXT, "C区方向：逆时针", "person"],
-        )
-        self.assertEqual(mission.state, MissionState.COMPLETED)
+            self.output.text, ["任务失败: vlm_failed:image_timeout"])
 
-    def test_qr_failure_is_terminal_without_competition_continuation(self):
+    def test_qr_failure_is_terminal(self):
         mission = self.make_mission(
             vision=FakeVision(qr=OperationResult(False, "qr_timeout")),
             config=MissionConfig(
                 qr_settle_sec=0.0,
                 qr_retries=0,
-                navigation_retry_delay_sec=0.0,
             ),
         )
         a = waypoint("a_task_observe", "qr", 1.0, "precise", "locked")
@@ -484,10 +425,6 @@ class MissionTests(unittest.TestCase):
         self.assertEqual(self.navigator.calls, [a])
         self.assertEqual(self.navigator.through_calls, [])
         self.assertEqual(mission.state, MissionState.FAILED)
-
-    def test_continue_after_qr_failure_requires_a_boolean(self):
-        with self.assertRaisesRegex(ValueError, "continue_after_qr_failure"):
-            MissionConfig(continue_after_qr_failure="true")
 
     def test_reset_is_allowed_after_terminal_mission(self):
         mission = self.make_mission()

@@ -39,20 +39,6 @@ Visualization Manager:
       Visual Enabled: true
     - Class: rviz_default_plugins/LaserScan
       Enabled: false
-      Name: Laser Scan
-      Size (m): 0.02
-      Style: Points
-      Topic:
-        # This display is a live sensor diagnostic; queued frames create a
-        # visible trail when the robot or RViz render loop is delayed.
-        Depth: 1
-        Durability Policy: Volatile
-        Reliability Policy: Best Effort
-        Value: /scan
-      Queue Size: 1
-      Decay Time: 0.0
-    - Class: rviz_default_plugins/LaserScan
-      Enabled: false
       Name: Depth Free-Space Scan
       Size (m): 0.02
       Style: Points

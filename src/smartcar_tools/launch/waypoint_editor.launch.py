@@ -23,7 +23,6 @@ def generate_launch_description():
             "smartcar_safety.launch.py",
         ])),
         launch_arguments={
-            "require_scan": "true",
             "require_odom": "true",
             "require_raw_odom": "true",
             "emergency_stop_on_start": "true",

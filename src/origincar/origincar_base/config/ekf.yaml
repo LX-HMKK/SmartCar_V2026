@@ -28,20 +28,6 @@ ekf_filter_node:
     odom0_differential: false
     odom0_relative: false
 
-    # Optional RF2O pose increments. The producer is disabled by default;
-    # robot_localization continues with odom0 + imu0 when this topic is absent.
-    odom1: /odom_laser
-    odom1_config: [true, true, false,
-                   false, false, true,
-                   false, false, false,
-                   false, false, false,
-                   false, false, false]
-    odom1_queue_size: 5
-    odom1_nodelay: true
-    odom1_differential: true
-    odom1_relative: false
-    odom1_pose_rejection_threshold: 3.0
-
     imu0: /imu/data_raw
     imu0_config: [false, false, false,
                   false, false, false,

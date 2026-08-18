@@ -8,7 +8,7 @@ import yaml
 PACKAGE_ROOT = Path(__file__).resolve().parents[1]
 NODE = PACKAGE_ROOT / "src" / "direction_guard_node.cpp"
 CORE = PACKAGE_ROOT / "src" / "direction_guard.cpp"
-CONFIG = PACKAGE_ROOT / "config" / "direction_guard.yaml"
+CONFIG = PACKAGE_ROOT / "config" / "safety.yaml"
 LAUNCH = PACKAGE_ROOT / "launch" / "direction_guard.launch.py"
 CMAKE = PACKAGE_ROOT / "CMakeLists.txt"
 
@@ -85,7 +85,7 @@ class DirectionGuardContractTests(unittest.TestCase):
     def test_launch_starts_only_the_cpp_guard(self):
         source = LAUNCH.read_text(encoding="utf-8")
         self.assertIn('executable="direction_guard_node"', source)
-        self.assertIn('"direction_guard.yaml"', source)
+        self.assertIn('"safety.yaml"', source)
 
     def test_default_colcon_tests_are_narrow_and_direction_specific(self):
         source = CMAKE.read_text(encoding="utf-8")

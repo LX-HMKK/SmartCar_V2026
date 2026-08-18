@@ -8,7 +8,7 @@ from nav_msgs.msg import Odometry
 import rclpy
 from rclpy.node import Node
 from rclpy.qos import QoSProfile
-from sensor_msgs.msg import LaserScan, PointCloud2
+from sensor_msgs.msg import PointCloud2
 from std_msgs.msg import Float32, String
 from std_srvs.srv import SetBool
 
@@ -46,13 +46,11 @@ class SafetyNode(Node):
     def __init__(self):
         super().__init__("safety_node")
         self.declare_parameter("command_timeout_sec", 0.30)
-        self.declare_parameter("scan_timeout_sec", 0.35)
         self.declare_parameter("odom_timeout_sec", 0.35)
         self.declare_parameter("minimum_voltage", 0.0)
         self.declare_parameter("voltage_timeout_sec", 1.0)
         self.declare_parameter("max_linear_speed_mps", 0.50)
         self.declare_parameter("publish_frequency_hz", 20.0)
-        self.declare_parameter("require_scan", True)
         self.declare_parameter("require_odom", True)
         self.declare_parameter("require_raw_odom", True)
         self.declare_parameter("raw_odom_timeout_sec", 0.25)
@@ -69,13 +67,11 @@ class SafetyNode(Node):
 
         self.guard = SafetyGuard(
             command_timeout_sec=self.get_parameter("command_timeout_sec").value,
-            scan_timeout_sec=self.get_parameter("scan_timeout_sec").value,
             odom_timeout_sec=self.get_parameter("odom_timeout_sec").value,
             raw_odom_timeout_sec=self.get_parameter("raw_odom_timeout_sec").value,
             minimum_voltage=self.get_parameter("minimum_voltage").value,
             voltage_timeout_sec=self.get_parameter("voltage_timeout_sec").value,
             max_linear_speed_mps=self.get_parameter("max_linear_speed_mps").value,
-            require_scan=self.get_parameter("require_scan").value,
             require_odom=self.get_parameter("require_odom").value,
             require_raw_odom=self.get_parameter("require_raw_odom").value,
             depth_points_timeout_sec=self.get_parameter(
@@ -110,8 +106,6 @@ class SafetyNode(Node):
             String, "/smartcar/safety/status", STATUS_QOS)
         self.create_subscription(
             Twist, "/cmd_vel", self._on_command, LATEST_RELIABLE_QOS)
-        self.create_subscription(
-            LaserScan, "/scan", self._on_scan, LATEST_SENSOR_QOS, raw=True)
         self.create_subscription(
             Odometry, "/odom_combined", self._on_odom, LATEST_RELIABLE_QOS,
             raw=True)
@@ -176,10 +170,6 @@ class SafetyNode(Node):
             self._last_command_components = components
             self._last_command_message = twist_from_components(components)
         self._publish_status_if_changed(self.guard.evaluate(now_sec))
-
-    def _on_scan(self, _message):
-        now_sec = self._now_sec()
-        self.guard.mark_scan(now_sec)
 
     def _on_odom(self, _serialized_message):
         # Throttle: effective watchdog window = odom_timeout + throttle_interval + timer_period.

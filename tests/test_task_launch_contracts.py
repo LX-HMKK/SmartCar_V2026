@@ -10,6 +10,8 @@ ROOT = Path(__file__).resolve().parents[1]
 AGENTS = ROOT / "AGENTS.md"
 PACKAGE = ROOT / "src" / "smartcar_task"
 NODE = PACKAGE / "smartcar_task" / "task_node.py"
+ROS_ADAPTERS = PACKAGE / "smartcar_task" / "ros_adapters.py"
+NAVIGATION_RUNTIME = PACKAGE / "smartcar_task" / "navigation_runtime.py"
 MISSION = PACKAGE / "smartcar_task" / "mission.py"
 COMPETITION = PACKAGE / "smartcar_task" / "competition.py"
 NAVIGATION_GOALS = PACKAGE / "smartcar_task" / "navigation_goals.py"
@@ -26,15 +28,21 @@ NAV2_BEHAVIOR_TREES = NAV2_CONFIG / "behavior_trees"
 NAV2_CMAKE = ROOT / "src" / "smartcar_nav2" / "CMakeLists.txt"
 NAV2_LAUNCH = ROOT / "src" / "smartcar_nav2" / "launch" / "navigation_launch.py"
 NAV2_PACKAGE_XML = ROOT / "src" / "smartcar_nav2" / "package.xml"
-DIRECTION_GUARD_CONFIG = (
-    ROOT / "src" / "smartcar_safety" / "config" / "direction_guard.yaml"
-)
+SAFETY_CONFIG = ROOT / "src" / "smartcar_safety" / "config" / "safety.yaml"
 THROUGH_POSES_TREES = (
     "navigate_through_poses_w_replanning_and_recovery.xml",
     "navigate_through_poses_precise_w_replanning_and_recovery.xml",
     "navigate_through_poses_return_w_replanning_and_recovery.xml",
     "navigate_through_poses_transit_w_replanning_and_recovery.xml",
 )
+
+
+def _task_runtime_source():
+    return "\n\n".join((
+        NODE.read_text(encoding="utf-8"),
+        NAVIGATION_RUNTIME.read_text(encoding="utf-8"),
+        ROS_ADAPTERS.read_text(encoding="utf-8"),
+    ))
 
 
 class TaskLaunchContractTests(unittest.TestCase):
@@ -155,7 +163,8 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn('"navigation_test_end_segment_id"', source)
         self.assertIn('"supervised_p_to_a_only"', source)
         self.assertIn('"supervised_p_to_c1_only"', source)
-        self.assertIn('"waypoints_calibrated"', source)
+        self.assertNotIn('"waypoints_calibrated"', source)
+        self.assertNotIn('"extrinsics_calibrated"', source)
         self.assertIn('FindPackageShare("smartcar_nav2")', source)
         self.assertIn('"default_waypoints.yaml"', source)
 
@@ -164,11 +173,10 @@ class TaskLaunchContractTests(unittest.TestCase):
             TASK_CONFIG.read_text(encoding="utf-8")
         )["task_node"]["ros__parameters"]
         task_launch = LAUNCH.read_text(encoding="utf-8")
-        node_source = NODE.read_text(encoding="utf-8")
+        node_source = _task_runtime_source()
 
         for name in (
             "supervised_competition_mode",
-            "continue_after_qr_failure",
             "qr_reader_preloaded",
         ):
             self.assertIs(parameters[name], False)
@@ -184,10 +192,6 @@ class TaskLaunchContractTests(unittest.TestCase):
 
         self.assertIn(
             '"supervised_competition_mode": LaunchConfiguration(',
-            task_launch,
-        )
-        self.assertIn(
-            '"continue_after_qr_failure": LaunchConfiguration(',
             task_launch,
         )
         self.assertIn(
@@ -207,7 +211,7 @@ class TaskLaunchContractTests(unittest.TestCase):
     def test_competition_qr_selects_and_publishes_runtime_c_zone_variant(self):
         competition_source = COMPETITION.read_text(encoding="utf-8")
         mission_source = MISSION.read_text(encoding="utf-8")
-        node_source = NODE.read_text(encoding="utf-8")
+        node_source = _task_runtime_source()
 
         self.assertIn(
             "if classify_qr_parity(content) == QR_PARITY_ODD:",
@@ -265,7 +269,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("publish_direction(text)", mission_source)
 
     def test_node_uses_worker_thread_and_expected_interfaces(self):
-        source = NODE.read_text(encoding="utf-8")
+        source = _task_runtime_source()
         for token in (
             "ActionClient(",
             "def prewarm_action_clients(self):",
@@ -281,7 +285,6 @@ class TaskLaunchContractTests(unittest.TestCase):
             '"/smartcar/task/reset"',
             '"/smartcar/task/state"',
             '"/smartcar/output/text"',
-            '"/smartcar/output/speech"',
             "MultiThreadedExecutor(num_threads=4)",
             "threading.Thread",
         ):
@@ -297,7 +300,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn("navigation_through_requires_forward_direction", source)
         self.assertIn("goal = NavigateThroughPoses.Goal()", source)
         self.assertIn("goal.poses = [self.pose_stamped(waypoint)", source)
-        node_source = NODE.read_text(encoding="utf-8")
+        node_source = _task_runtime_source()
         self.assertIn("goal, goal_uuid=action_uuid", node_source)
         self.assertIn("direction = motion_direction()", node_source)
         self.assertIn("Nav2GoalFactory", node_source)
@@ -343,7 +346,7 @@ class TaskLaunchContractTests(unittest.TestCase):
         parameters = yaml.safe_load(
             TASK_CONFIG.read_text(encoding="utf-8")
         )["task_node"]["ros__parameters"]
-        source = NODE.read_text(encoding="utf-8")
+        source = _task_runtime_source()
         self.assertFalse(
             any(name.endswith("_behavior_tree") for name in parameters)
         )
@@ -600,18 +603,17 @@ class TaskLaunchContractTests(unittest.TestCase):
             tree = (NAV2_BEHAVIOR_TREES / filename).read_text(encoding="utf-8")
             self.assertIn('goal_checker_id="precise_goal_checker"', tree)
 
-    def test_direction_renewal_is_diagnostic_when_lease_expiry_is_disabled(self):
+    def test_direction_renewal_is_diagnostic(self):
         task = yaml.safe_load(TASK_CONFIG.read_text(encoding="utf-8"))[
             "task_node"]["ros__parameters"]
         guard = yaml.safe_load(
-            DIRECTION_GUARD_CONFIG.read_text(encoding="utf-8")
+            SAFETY_CONFIG.read_text(encoding="utf-8")
         )["direction_guard"]["ros__parameters"]
 
         self.assertEqual(float(guard["permit_timeout_sec"]), 0.0)
-        self.assertEqual(float(task["direction_lease_timeout_sec"]), 0.0)
         self.assertEqual(float(task["direction_renew_period_sec"]), 0.10)
         self.assertEqual(float(task["direction_service_timeout_sec"]), 0.20)
-        source = NODE.read_text(encoding="utf-8")
+        source = _task_runtime_source()
         self.assertIn("def _warn_renewal_failure(self, result):", source)
         self.assertIn(
             'f"direction renewal unavailable ({status}); continuing under "',
@@ -619,26 +621,32 @@ class TaskLaunchContractTests(unittest.TestCase):
         )
         self.assertIn("continuing under", source)
         self.assertNotIn("return renewed", source)
-        self.assertIn(
-            'self.declare_parameter("direction_lease_timeout_sec", 0.0)',
-            source,
-        )
+        self.assertNotIn("direction_lease_timeout_sec", source)
 
-    def test_navigation_failure_is_single_attempt_by_default(self):
+    def test_navigator_separates_goal_action_and_direction_lifecycles(self):
+        source = NAVIGATION_RUNTIME.read_text(encoding="utf-8")
+        self.assertIn("class _Nav2OperationLifecycle:", source)
+        self.assertIn("class _DirectionLeaseLifecycle:", source)
+        self.assertIn("class _Nav2ActionCallbacks:", source)
+        facade = source.split("class RosNavigator(", 1)[1]
+        self.assertNotIn("def _navigate_goal", facade)
+        self.assertNotIn("def _prepare_motion", facade)
+        self.assertNotIn("def _on_goal_response", facade)
+
+    def test_task_does_not_expose_navigation_retry_knobs(self):
         parameters = yaml.safe_load(
             TASK_CONFIG.read_text(encoding="utf-8")
         )["task_node"]["ros__parameters"]
 
-        self.assertEqual(parameters["navigation_retries"], 0)
-        self.assertIn("navigation_retries: int = 0", MISSION.read_text(
+        self.assertNotIn("navigation_retries", parameters)
+        self.assertNotIn("navigation_retry_delay_sec", parameters)
+        self.assertNotIn("navigation_retries", MISSION.read_text(
             encoding="utf-8"))
-        self.assertIn(
-            'self.declare_parameter("navigation_retries", 0)',
-            NODE.read_text(encoding="utf-8"),
-        )
+        self.assertNotIn("navigation_retries", NODE.read_text(
+            encoding="utf-8"))
 
     def test_reset_adapter_orders_set_pose_before_odom_verification(self):
-        source = NODE.read_text(encoding="utf-8")
+        source = ROS_ADAPTERS.read_text(encoding="utf-8")
         sequence = source[
             source.index("return run_reset_sequence("):
             source.index("def _wait_for_reset_services")
@@ -650,18 +658,14 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertNotIn("_clear_fault_client", source)
 
     def test_task_node_never_publishes_chassis_velocity(self):
-        source = NODE.read_text(encoding="utf-8")
+        source = _task_runtime_source()
         self.assertNotIn("/cmd_vel", source)
         self.assertNotIn("geometry_msgs.msg import Twist", source)
 
-    def test_placeholder_waypoints_are_blocked_by_default(self):
+    def test_task_does_not_treat_yaml_calibration_as_a_motion_gate(self):
         source = NODE.read_text(encoding="utf-8")
-        self.assertIn(
-            'self.declare_parameter("waypoints_calibrated", False)', source)
-        self.assertIn(
-            'waypoint_document.get("calibrated") is True', source)
-        self.assertIn(
-            'self._motion_gates["waypoints_calibrated"] = False', source)
+        self.assertNotIn("waypoints_calibrated", source)
+        self.assertNotIn("extrinsics_calibrated", source)
         self.assertIn('"motion gates not satisfied: "', source)
 
     def test_navigation_test_is_limited_to_a_contiguous_route_prefix(self):
@@ -696,19 +700,23 @@ class TaskLaunchContractTests(unittest.TestCase):
         self.assertIn('"use_depth_camera",', supervised_block)
         self.assertNotIn('"use_lidar",', supervised_block)
 
-    def test_qr_handoff_test_mode_is_opt_in_and_requires_camera_and_vision(self):
+    def test_qr_fallback_and_handoff_controls_are_not_exposed(self):
         parameters = yaml.safe_load(
             TASK_CONFIG.read_text(encoding="utf-8")
         )["task_node"]["ros__parameters"]
         task_launch = LAUNCH.read_text(encoding="utf-8")
         system_launch = SYSTEM.read_text(encoding="utf-8")
-        self.assertIs(parameters["qr_handoff_test_mode"], False)
-        self.assertIn('self.declare_parameter("qr_handoff_test_mode", False)', NODE.read_text(encoding="utf-8"))
-        self.assertIn('"qr_handoff_test_mode"', task_launch)
-        self.assertIn('"qr_handoff_test_mode"', system_launch)
-        self.assertIn("qr_handoff_test_mode requires:", system_launch)
-        self.assertIn('"use_camera"', system_launch)
-        self.assertIn('"use_vision"', system_launch)
+        mission_source = MISSION.read_text(encoding="utf-8")
+        for name in (
+            "continue_after_qr_failure",
+            "qr_handoff_test_mode",
+            "QR_HANDOFF_TEST",
+            "QR_UNRECOGNIZED_TEXT",
+        ):
+            self.assertNotIn(name, parameters)
+            self.assertNotIn(name, task_launch)
+            self.assertNotIn(name, system_launch)
+            self.assertNotIn(name, mission_source)
 
     def test_navigation_test_script_has_only_compact_start_and_go_entries(self):
         source = NAV_TEST.read_text(encoding="utf-8")
@@ -837,7 +845,7 @@ class TaskLaunchContractTests(unittest.TestCase):
             "'/nav2_lifecycle_manager/lifecycle_manager'", source)
         self.assertIn(
             "'/tf2_ros/static_transform_publisher.*__node:="
-            "(base_to_link|base_to_gyro|link_to_laser|"
+            "(base_to_link|base_to_gyro|"
             "link_to_depth_camera_sensor)'", source)
         self.assertIn(
             "'/smartcar_tools/(field_reference_node|waypoint_viz)'", source)
@@ -860,15 +868,16 @@ class TaskLaunchContractTests(unittest.TestCase):
 
         self.assertEqual(float(parameters["lookup_table_size"]), 8.0)
 
-    def test_vision_transport_wait_uses_the_request_deadline(self):
-        source = NODE.read_text(encoding="utf-8")
-        self.assertNotIn("float(timeout_sec) + 1.0", source)
-        self.assertGreaterEqual(
-            source.count("future, max(0.0, float(timeout_sec))"), 2)
+    def test_vision_transport_wait_preserves_delivery_margin(self):
+        source = ROS_ADAPTERS.read_text(encoding="utf-8")
+        self.assertIn(
+            "future, max(0.0, float(timeout_sec)) + 1.0", source)
+        self.assertIn(
+            "future, max(0.0, float(timeout_sec)))", source)
 
     def test_on_demand_zbar_uses_the_launch_resolved_image_topic(self):
         launch_source = LAUNCH.read_text(encoding="utf-8")
-        node_source = NODE.read_text(encoding="utf-8")
+        node_source = _task_runtime_source()
         self.assertIn('"barcode_reader_image_topic"', launch_source)
         self.assertIn(
             'self.declare_parameter("barcode_reader_image_topic", "/image")',

@@ -24,7 +24,7 @@ src/
   smartcar_task                          航点任务状态机与 Nav2 action 编排
   smartcar_nav2                          Smac Hybrid、原生行为树、costmap 与路线
   smartcar_safety                        速度平滑后的方向门、安全看门狗与 Ackermann 输出
-  smartcar_vision, smartcar_speech       Aurora/QR/VLM 与可选语音服务
+  smartcar_vision                         Aurora/QR/VLM 视觉服务
   origincar                              底盘串口、轮式里程计、IMU、EKF 与深度相机接入
   smartcar_tools                         航点编辑、场地参考、短测与独立诊断
   smartcar_sim                           Gazebo、仿真传感器适配与纯导航验证

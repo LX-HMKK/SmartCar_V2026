@@ -232,7 +232,7 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "usb_video_device",
             default_value="/dev/video0",
-            description="USB camera device used by the optional fallback",
+            description="USB camera device used by the selected camera driver",
         ),
         DeclareLaunchArgument(
             "aurora_rgb_enable",

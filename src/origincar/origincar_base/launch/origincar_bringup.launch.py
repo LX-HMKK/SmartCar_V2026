@@ -62,22 +62,14 @@ def generate_launch_description():
     skip_converter = LaunchConfiguration('skip_converter')
     input_topic = LaunchConfiguration('input_topic')
     use_sim_time = LaunchConfiguration('use_sim_time')
-    use_lidar = LaunchConfiguration('use_lidar')
     use_imu_filter = LaunchConfiguration('use_imu_filter')
     use_robot_description = LaunchConfiguration('use_robot_description')
-    laser_frame = LaunchConfiguration('laser_frame')
     base_x = LaunchConfiguration('base_x')
     base_y = LaunchConfiguration('base_y')
     base_z = LaunchConfiguration('base_z')
     base_roll = LaunchConfiguration('base_roll')
     base_pitch = LaunchConfiguration('base_pitch')
     base_yaw = LaunchConfiguration('base_yaw')
-    laser_x = LaunchConfiguration('laser_x')
-    laser_y = LaunchConfiguration('laser_y')
-    laser_z = LaunchConfiguration('laser_z')
-    laser_roll = LaunchConfiguration('laser_roll')
-    laser_pitch = LaunchConfiguration('laser_pitch')
-    laser_yaw = LaunchConfiguration('laser_yaw')
 
     longitudinal_velocity_scale = LaunchConfiguration('longitudinal_velocity_scale')
     lateral_velocity_scale = LaunchConfiguration('lateral_velocity_scale')
@@ -96,7 +88,6 @@ def generate_launch_description():
             'input_topic', default_value='/cmd_vel_safe',
             description='Twist input topic for chassis conversion'),
         DeclareLaunchArgument('use_sim_time', default_value='false'),
-        DeclareLaunchArgument('use_lidar', default_value='true'),
         DeclareLaunchArgument(
             'localization_profile', default_value='wheel_imu',
             description=(
@@ -104,19 +95,12 @@ def generate_launch_description():
                 'wheel_only loads no IMU sensor into the EKF')),
         DeclareLaunchArgument('use_imu_filter', default_value='false'),
         DeclareLaunchArgument('use_robot_description', default_value='false'),
-        DeclareLaunchArgument('laser_frame', default_value='laser'),
         DeclareLaunchArgument('base_x', default_value='0.0'),
         DeclareLaunchArgument('base_y', default_value='0.0'),
         DeclareLaunchArgument('base_z', default_value='0.0'),
         DeclareLaunchArgument('base_roll', default_value='0.0'),
         DeclareLaunchArgument('base_pitch', default_value='0.0'),
         DeclareLaunchArgument('base_yaw', default_value='0.0'),
-        DeclareLaunchArgument('laser_x', default_value='0.0'),
-        DeclareLaunchArgument('laser_y', default_value='0.0'),
-        DeclareLaunchArgument('laser_z', default_value='0.0'),
-        DeclareLaunchArgument('laser_roll', default_value='0.0'),
-        DeclareLaunchArgument('laser_pitch', default_value='0.0'),
-        DeclareLaunchArgument('laser_yaw', default_value='0.0'),
         DeclareLaunchArgument(
             'longitudinal_velocity_scale', default_value='1.03'),
         DeclareLaunchArgument(
@@ -178,17 +162,6 @@ def generate_launch_description():
             '--frame-id', 'base_footprint', '--child-frame-id', 'gyro_link',
         ],
     )
-    link_to_laser = Node(
-        condition=IfCondition(use_lidar),
-        package='tf2_ros',
-        executable='static_transform_publisher',
-        name='link_to_laser',
-        arguments=[
-            '--x', laser_x, '--y', laser_y, '--z', laser_z,
-            '--roll', laser_roll, '--pitch', laser_pitch, '--yaw', laser_yaw,
-            '--frame-id', 'base_link', '--child-frame-id', laser_frame,
-        ],
-    )
     imu_filter = Node(
         condition=IfCondition(use_imu_filter),
         package='imu_filter_madgwick',
@@ -212,5 +185,4 @@ def generate_launch_description():
         description,
         imu_filter,
         robot_ekf,
-        link_to_laser,
     ])

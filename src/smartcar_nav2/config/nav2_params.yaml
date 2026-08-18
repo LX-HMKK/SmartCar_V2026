@@ -172,9 +172,10 @@ local_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
-        observation_sources: scan
-        scan:
-          topic: /scan
+        observation_sources: depth_scan
+        depth_scan:
+          # Aurora's forward scan is the only physical obstacle source.
+          topic: /smartcar/depth/scan
           data_type: LaserScan
           # A rolling costmap must not retain a historical scan after the next
           # update. Clearing rays still remove cells that disappeared from the
@@ -183,16 +184,16 @@ local_costmap:
           observation_persistence: 0.0
           clearing: true
           marking: true
-          obstacle_max_range: 2.5
+          expected_update_rate: 1.0
+          obstacle_max_range: 3.0
           obstacle_min_range: 0.25
           raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          # The laser frame is about 0.26 m above base_footprint.  Set the
-          # height window explicitly; Nav2's zero default rejects every scan
-          # return before the obstacle layer can feed InflationLayer.
+          raytrace_min_range: 0.25
+          # The scan has already been projected into base_footprint by
+          # pointcloud_to_laserscan. Keep a bounded observation height window.
           min_obstacle_height: 0.05
           max_obstacle_height: 0.50
-          inf_is_valid: false
+          inf_is_valid: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true
@@ -218,22 +219,24 @@ global_costmap:
       obstacle_layer:
         plugin: "nav2_costmap_2d::ObstacleLayer"
         enabled: true
-        observation_sources: scan
-        scan:
-          topic: /scan
+        observation_sources: depth_scan
+        depth_scan:
+          # Keep the physical and simulation Nav2 observation contract aligned.
+          topic: /smartcar/depth/scan
           data_type: LaserScan
           observation_persistence: 0.0
           clearing: true
           marking: true
-          obstacle_max_range: 2.5
+          expected_update_rate: 1.0
+          obstacle_max_range: 3.0
           obstacle_min_range: 0.25
           raytrace_max_range: 3.0
-          raytrace_min_range: 0.0
-          # Keep the production and simulation observation height contracts
-          # identical so the physical laser returns are marked consistently.
+          raytrace_min_range: 0.25
+          # The depth scan is projected at the camera height and transformed
+          # into base_footprint before Nav2 consumes it.
           min_obstacle_height: 0.05
           max_obstacle_height: 0.50
-          inf_is_valid: false
+          inf_is_valid: true
       inflation_layer:
         plugin: "nav2_costmap_2d::InflationLayer"
         enabled: true

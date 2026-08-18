@@ -80,9 +80,6 @@ VENDOR_EXCLUDES = [
     "**/.git", "build/", "install/", "log/",
     "__pycache__/", "*.pyc",
     "*.deb",  # 预编译二进制包，不纳入源码 VCS
-    # ydlidar_ros2_driver 经 find_package(ydlidar_sdk) 链接系统已装库，不需 src 内 SDK 源码；
-    # 该 C SDK 约 20M、上游可得，不纳入 VCS（spec §7 已记录此偏离）
-    "YDLidar-SDK-master/",
 ]
 
 def build_excludes(excludes=None):

@@ -72,7 +72,6 @@ class RouteVisualizationContracts(unittest.TestCase):
     def test_navigation_depth_displays_show_only_the_newest_frame(self):
         navigation = yaml.safe_load(NAVIGATION_RVIZ.read_text(encoding="utf-8"))
         scan_topics = (
-            "/scan",
             "/smartcar/depth/scan",
             "/smartcar/depth/points",
         )

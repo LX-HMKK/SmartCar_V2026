@@ -139,15 +139,15 @@ if [[ "$C_ZONE_DIRECTION" == clockwise ]]; then
   BANNER_MSG="$BANNER_MSG + C 区顺时针镜像"
 fi
 if $GO; then
-  EXTRA_ARGS="$EXTRA_ARGS supervised_full_route:=true waypoints_calibrated:=true extrinsics_calibrated:=true steering_calibrated:=true emergency_stop_ready:=true operator_approved:=true"
+  EXTRA_ARGS="$EXTRA_ARGS supervised_full_route:=true steering_calibrated:=true emergency_stop_ready:=true operator_approved:=true"
 fi
 banner "[1/2] 启动系统 ($BANNER_MSG)"
 mkdir -p "$LOG_DIR"
 : > "$LOG"
 mkdir -p "$STATE_DIR"
 nohup ros2 launch smartcar_bringup smartcar_system.launch.py \
-  use_base:=true use_lidar:=false \
-  use_laser_odometry:=false use_safety:=true use_nav:=true \
+  use_base:=true \
+  use_safety:=true use_nav:=true \
   nav_autostart:=true use_camera:=false use_vision:=false \
   camera_driver:=aurora use_depth_camera:=true aurora_ir_fps:=10 aurora_rgb_fps:=10 \
   use_task:=true \

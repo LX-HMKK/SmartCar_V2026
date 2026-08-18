@@ -6,13 +6,11 @@ frames:
   odom_frame: odom_combined
   base_frame: base_footprint
   chassis_frame: base_link
-  laser_frame: laser
 
 topics:
   raw_odom: /odom
   filtered_odom: /odom_combined
   imu: /imu/data_raw
-  scan: /scan
   cmd_vel: /cmd_vel
   cmd_vel_safe: /cmd_vel_safe
   ackermann_cmd: /ackermann_cmd
@@ -21,8 +19,6 @@ topics:
 
 toggles:
   use_base: true
-  use_lidar: false
-  use_laser_odometry: false
   use_imu_filter: false
   use_robot_description: false
   use_safety: true
@@ -33,7 +29,6 @@ toggles:
   use_depth_camera: true
   use_task: true
   use_visualization: false
-  use_speech: false
   nav_autostart: true
   autostart_mission: false
   use_sim_time: false
@@ -45,12 +40,6 @@ extrinsics:
     child: base_link
     xyz: [0.0841, 0.0, 0.03]
     rpy: [0.0, 0.0, 0.0]
-  link_to_laser:
-    measured: true
-    parent: base_link
-    child: laser
-    xyz: [-0.05, 0.0, 0.23]
-    rpy: [0.0, 0.0, 1.5708]
   link_to_camera:
     measured: true
     parent: base_link
@@ -87,14 +76,10 @@ calibration:
   max_steering_angle: 0.70
 
 motion_gates:
-  waypoints_calibrated: false
-  extrinsics_calibrated: false
   steering_calibrated: false
   emergency_stop_ready: false
   operator_approved: false
-  laser_odometry_calibrated: false
 
 hardware:
   chassis_serial: /dev/ttyACM0
-  lidar_serial: /dev/ttyUSB0
   camera_driver: aurora

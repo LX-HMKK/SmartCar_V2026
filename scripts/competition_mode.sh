@@ -5,7 +5,7 @@ set -uo pipefail
 WORKSPACE=/home/sunrise/ros2_ws
 SOURCE_ENV="$WORKSPACE/scripts/source_env.sh"
 WAYPOINTS_FILE="$WORKSPACE/src/smartcar_nav2/config/waypoints/default_waypoints.yaml"
-VISION_CONFIG="$WORKSPACE/src/smartcar_vision/config/vision_volcengine.yaml"
+VISION_CONFIG="$WORKSPACE/src/smartcar_vision/config/vision.yaml"
 VLM_CREDENTIALS_FILE="$WORKSPACE/config/volcengine_ark.local.yaml"
 STATUS_TOOL="$WORKSPACE/scripts/nav_status.py"
 COMPETITION_LAUNCHER="$WORKSPACE/scripts/competition_launch.py"
@@ -49,10 +49,10 @@ startup_mark() {
 }
 
 require_vlm_credentials() {
-  if [[ ! -s "$VLM_CREDENTIALS_FILE" ]]; then
-    echo "missing nonempty $VLM_CREDENTIALS_FILE; configure the RDK-local VLM credential" >&2
-    exit 2
-  fi
+  [[ -n "${ARK_API_KEY:-}" ]] && return
+  [[ -s "$VLM_CREDENTIALS_FILE" ]] && return
+  echo "missing ARK_API_KEY and nonempty $VLM_CREDENTIALS_FILE" >&2
+  exit 2
 }
 
 configure_display() {
@@ -340,19 +340,18 @@ prepare() {
   release_start_lock
 
   nohup python3 "$COMPETITION_LAUNCHER" \
-    use_base:=true use_lidar:=false use_laser_odometry:=false \
+    use_base:=true \
     localization_profile:=wheel_imu \
     use_imu_filter:=false use_robot_description:=false \
     use_safety:=true use_nav:=true nav_autostart:=true \
     nav2_lifecycle_manager_delay_sec:=0.0 \
     use_camera:=true use_vision:=true camera_driver:=aurora \
     use_depth_camera:=true aurora_rgb_fps:=10 aurora_ir_fps:=10 \
-    use_task:=true use_visualization:=false use_speech:=false \
+    use_task:=true use_visualization:=false \
     autostart_mission:=false safety_emergency_stop_on_start:=true \
-    supervised_competition_mode:=true continue_after_qr_failure:=true \
+    supervised_competition_mode:=true \
     c_zone_direction:=counterclockwise \
     preload_qr_reader:="$preload_qr" \
-    waypoints_calibrated:=true extrinsics_calibrated:=true \
     steering_calibrated:=true emergency_stop_ready:=true operator_approved:=true \
     vision_config_file:="$VISION_CONFIG" waypoints_file:="$WAYPOINTS_FILE" \
     >> "$LAUNCH_LOG" 2>&1 &

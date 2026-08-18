@@ -16,7 +16,6 @@ VOLCENGINE_CLI = (
 PACKAGE_XML = PACKAGE / "package.xml"
 SETUP_FILE = PACKAGE / "setup.py"
 DEFAULT_CONFIG = PACKAGE / "config" / "vision.yaml"
-VOLCENGINE_CONFIG = PACKAGE / "config" / "vision_volcengine.yaml"
 
 
 def launch_default(source, name):
@@ -70,11 +69,10 @@ class VisionLaunchContractTests(unittest.TestCase):
         self.assertIn("mipi_cam_640x480_bgr8.launch.py", source)
         self.assertIn("aurora_point_cloud_enable requires aurora_depth_enable", source)
 
-        for config_file in (DEFAULT_CONFIG, VOLCENGINE_CONFIG):
-            parameters = yaml.safe_load(
-                config_file.read_text(encoding="utf-8")
-            )["vision_node"]["ros__parameters"]
-            self.assertEqual(parameters["image_topic"], "/image")
+        parameters = yaml.safe_load(
+            DEFAULT_CONFIG.read_text(encoding="utf-8")
+        )["vision_node"]["ros__parameters"]
+        self.assertEqual(parameters["image_topic"], "/image")
 
         node_source = NODE_FILE.read_text(encoding="utf-8")
         self.assertIn('self.declare_parameter("image_topic", "/image")', node_source)
@@ -117,36 +115,22 @@ class VisionLaunchContractTests(unittest.TestCase):
             self.assertIn(f"<exec_depend>{dependency}</exec_depend>", source)
         self.assertIn("depth_pointcloud_relay", SETUP_FILE.read_text(encoding="utf-8"))
 
-    def test_volcengine_vlm_is_explicit_opt_in_without_stored_credentials(self):
-        default = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
-        default_params = default["vision_node"]["ros__parameters"]
-        self.assertEqual(default_params["vlm_backend_mode"], "disabled")
-
-        volcengine = yaml.safe_load(
-            VOLCENGINE_CONFIG.read_text(encoding="utf-8"))
-        params = volcengine["vision_node"]["ros__parameters"]
-        self.assertEqual(params["vlm_backend_mode"], "command")
-        argv = params["vlm_command_argv"]
-        self.assertEqual(
-            argv[:5],
-            [
-                "python3",
-                "-X",
-                "utf8",
-                "-m",
-                "smartcar_vision.volcengine_vlm_cli",
-            ],
-        )
-        self.assertIn("{image}", argv)
-        self.assertIn("{prompt}", argv)
-        config_source = VOLCENGINE_CONFIG.read_text(encoding="utf-8")
+    def test_vlm_is_explicit_and_uses_one_prompt_config(self):
+        config = yaml.safe_load(DEFAULT_CONFIG.read_text(encoding="utf-8"))
+        params = config["vision_node"]["ros__parameters"]
+        self.assertEqual(params["vlm_model"], "doubao-seed-2-0-lite-260428")
+        self.assertIn("default_prompt", params)
+        config_source = DEFAULT_CONFIG.read_text(encoding="utf-8")
         self.assertNotIn("Authorization", config_source)
         self.assertNotIn("api_key", config_source.lower())
+        self.assertFalse((PACKAGE / "config" / "vision_volcengine.yaml").exists())
 
         cli_source = VOLCENGINE_CLI.read_text(encoding="utf-8")
         self.assertIn("volcengine_ark.local.yaml", cli_source)
         self.assertIn("credentials_file_missing", cli_source)
         self.assertIn("https://ark.cn-beijing.volces.com/api/v3", cli_source)
+        self.assertIn('parser.add_argument("--config-file", required=True)', cli_source)
+        self.assertNotIn('parser.add_argument("--prompt"', cli_source)
         setup_source = SETUP_FILE.read_text(encoding="utf-8")
         self.assertIn("volcengine_vlm_cli", setup_source)
 

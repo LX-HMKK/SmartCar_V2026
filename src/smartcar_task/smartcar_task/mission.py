@@ -14,16 +14,9 @@ from smartcar_task.competition import (
 from smartcar_task.c_zone_direction import CLOCKWISE, COUNTERCLOCKWISE
 
 
-VLM_HARD_TIMEOUT_SEC = 8.0
-VLM_FALLBACK_TEXT = "画面中可能是一名穿着浅色上衣的人物，正面站立并挥手。"
-QR_UNRECOGNIZED_TEXT = "未识别"
+VLM_HARD_TIMEOUT_SEC = 30.0
 TERMINAL_STATES = frozenset({"COMPLETED", "STOPPED", "FAILED"})
 RESETTABLE_STATES = TERMINAL_STATES | frozenset({"IDLE"})
-QR_HANDOFF_TEST_CONTENT = "模拟赛题数据：任务类型为诊疗区人物描述。"
-QR_HANDOFF_TEST_ANNOUNCEMENT = (
-    "下一导航：前向经由 via_2 前往 c_corner_1 诊疗区，执行人物描述。"
-    "测试到此停止，未执行下一导航段。"
-)
 
 
 class MissionState(str, Enum):
@@ -42,7 +35,6 @@ class OperationResult:
     success: bool
     status: str
     text: str = ""
-    fallback_used: bool = False
 
 
 def _finite(name, value, positive=False, nonnegative=False):
@@ -65,37 +57,18 @@ def _count(name, value):
 @dataclass(frozen=True)
 class MissionConfig:
     server_wait_timeout_sec: float = 30.0
-    # A failed Nav2 action must remain terminal. Reissuing the same goal from
-    # an unknown near-goal pose can turn a nonconvergent endpoint into a loop.
-    navigation_retries: int = 0
-    navigation_retry_delay_sec: float = 0.25
     qr_settle_sec: float = 2.0
     qr_timeout_sec: float = 3.0
     qr_retries: int = 1
     qr_retry_delay_sec: float = 0.25
-    continue_after_qr_failure: bool = False
-    qr_handoff_test_mode: bool = False
-    vlm_timeout_sec: float = 8.0
-    vlm_prompt: str = (
-        "请描述当前画面中实际可见的场景、物体、标志或人物。"
-        "若目标人物立牌未出现、画面模糊或无法确认，请结合当前画面"
-        "和任务场景给出一条简洁、通用的猜测描述，不要报告失败或要求"
-        "重新拍摄。"
-    )
+    vlm_timeout_sec: float = 30.0
     sleep_quantum_sec: float = 0.05
-    vlm_fallback_text: str = VLM_FALLBACK_TEXT
 
     def __post_init__(self):
         _finite(
             "server_wait_timeout_sec",
             self.server_wait_timeout_sec,
             positive=True,
-        )
-        _count("navigation_retries", self.navigation_retries)
-        _finite(
-            "navigation_retry_delay_sec",
-            self.navigation_retry_delay_sec,
-            nonnegative=True,
         )
         _finite("qr_settle_sec", self.qr_settle_sec, nonnegative=True)
         _finite("qr_timeout_sec", self.qr_timeout_sec, positive=True)
@@ -105,19 +78,11 @@ class MissionConfig:
             self.qr_retry_delay_sec,
             nonnegative=True,
         )
-        if not isinstance(self.continue_after_qr_failure, bool):
-            raise ValueError("continue_after_qr_failure must be a boolean")
-        if not isinstance(self.qr_handoff_test_mode, bool):
-            raise ValueError("qr_handoff_test_mode must be a boolean")
         vlm_timeout = _finite(
             "vlm_timeout_sec", self.vlm_timeout_sec, positive=True)
         if vlm_timeout > VLM_HARD_TIMEOUT_SEC:
-            raise ValueError("vlm_timeout_sec cannot exceed 8 seconds")
+            raise ValueError("vlm_timeout_sec cannot exceed 30 seconds")
         _finite("sleep_quantum_sec", self.sleep_quantum_sec, positive=True)
-        if not str(self.vlm_prompt).strip():
-            raise ValueError("vlm_prompt must be nonempty")
-        if str(self.vlm_fallback_text) != VLM_FALLBACK_TEXT:
-            raise ValueError("vlm_fallback_text is fixed by the competition contract")
 
 
 class Mission:
@@ -292,14 +257,10 @@ class Mission:
             segments,
             c_zone_navigation_variants,
         )
-        require_qr = False
-        require_vlm = False
-        for segment in segments:
-            endpoint_task = segment[-1].task
-            require_qr = require_qr or endpoint_task == "qr"
-            require_vlm = require_vlm or endpoint_task == "vlm"
-            if endpoint_task == "qr" and self._config.qr_handoff_test_mode:
-                break
+        require_qr = any(
+            segment[-1].task == "qr" for segment in segments)
+        require_vlm = any(
+            segment[-1].task == "vlm" for segment in segments)
         if (require_qr or require_vlm) and not self._vision.wait_ready(
             require_qr,
             require_vlm,
@@ -327,15 +288,6 @@ class Mission:
                 task_result = OperationResult(True, "ok")
             if not task_result.success:
                 return task_result
-            if endpoint_task == "qr" and self._config.qr_handoff_test_mode:
-                self._publish_value(QR_HANDOFF_TEST_ANNOUNCEMENT)
-                self._set_state(MissionState.COMPLETED, generation)
-                return OperationResult(
-                    True,
-                    "qr_handoff_test_completed",
-                    task_result.text,
-                    task_result.fallback_used,
-                )
             if endpoint_task == "qr" and variants is not None:
                 direction = c_zone_direction_for_qr(task_result.text)
                 selected_segments = variants[direction]
@@ -455,36 +407,28 @@ class Mission:
 
     def _navigate(self, generation, segment):
         self._set_state(MissionState.NAVIGATING, generation)
-        attempts = self._config.navigation_retries + 1
-        last_status = "navigation_failed"
-        for attempt in range(attempts):
-            if self._stop_requested.is_set():
-                return self._finish_stopped(generation)
-            if len(segment) == 1:
-                result = self._navigator.navigate(segment[0])
-            else:
-                try:
-                    result = self._navigator.navigate_through(segment)
-                except AttributeError:
-                    return self._fail(
-                        generation,
-                        "navigation_through_unavailable",
-                    )
-            if self._stop_requested.is_set():
-                return self._finish_stopped(generation)
-            if result.success:
-                return OperationResult(True, "ok")
-            last_status = result.status
-            if self._navigator.is_active():
+        if self._stop_requested.is_set():
+            return self._finish_stopped(generation)
+        if len(segment) == 1:
+            result = self._navigator.navigate(segment[0])
+        else:
+            try:
+                result = self._navigator.navigate_through(segment)
+            except AttributeError:
                 return self._fail(
                     generation,
-                    f"navigation_not_terminal:{last_status}",
+                    "navigation_through_unavailable",
                 )
-            if attempt + 1 < attempts and not self._interruptible_sleep(
-                self._config.navigation_retry_delay_sec
-            ):
-                return self._finish_stopped(generation)
-        return self._fail(generation, f"navigation_failed:{last_status}")
+        if self._stop_requested.is_set():
+            return self._finish_stopped(generation)
+        if result.success:
+            return OperationResult(True, "ok")
+        if self._navigator.is_active():
+            return self._fail(
+                generation,
+                f"navigation_not_terminal:{result.status}",
+            )
+        return self._fail(generation, f"navigation_failed:{result.status}")
 
     def _run_qr(self, generation):
         self._set_state(MissionState.RUNNING_QR, generation)
@@ -510,22 +454,6 @@ class Mission:
                 self._config.qr_retry_delay_sec
             ):
                 return self._finish_stopped(generation)
-        if self._config.qr_handoff_test_mode:
-            self._publish_qr_value(QR_HANDOFF_TEST_CONTENT)
-            return OperationResult(
-                True,
-                "qr_handoff_test_simulated",
-                QR_HANDOFF_TEST_CONTENT,
-                True,
-            )
-        if self._config.continue_after_qr_failure:
-            self._publish_qr_value(QR_UNRECOGNIZED_TEXT)
-            return OperationResult(
-                True,
-                f"qr_fallback:{last_status}",
-                QR_UNRECOGNIZED_TEXT,
-                True,
-            )
         return self._fail(generation, f"qr_failed:{last_status}")
 
     def _run_vlm(self, generation):
@@ -533,19 +461,12 @@ class Mission:
         result = self._vision.describe_scene(
             self._clock.now_ns(),
             self._config.vlm_timeout_sec,
-            self._config.vlm_prompt,
         )
         if self._stop_requested.is_set():
             return self._finish_stopped(generation)
         description = str(result.text).strip()
         if not result.success or not description:
-            description = self._config.vlm_fallback_text
-            result = OperationResult(
-                True,
-                result.status or "vlm_failed",
-                description,
-                True,
-            )
+            return self._fail(generation, f"vlm_failed:{result.status or 'empty'}")
         self._publish_vlm_value(description)
         return result
 
@@ -573,7 +494,6 @@ class Mission:
 
     def _publish_value(self, value):
         self._output.publish_text(value)
-        self._output.publish_speech(value)
 
     def _publish_qr_value(self, value):
         publish_qr = getattr(self._output, "publish_qr", None)

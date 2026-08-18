@@ -7,13 +7,12 @@ namespace {
 
 SafetyGuard make_guard(double minimum_voltage = 10.0,
                        double voltage_timeout = 1.0) {
-  return SafetyGuard(5.0, 5.0, 5.0, 5.0, minimum_voltage, voltage_timeout,
-                     0.30, true, true, true);
+  return SafetyGuard(5.0, 5.0, 5.0, minimum_voltage, voltage_timeout,
+                     0.30, true, true);
 }
 
 void mark_healthy(SafetyGuard &guard, double now_sec) {
   ASSERT_TRUE(guard.mark_command(now_sec, 0.0));
-  guard.mark_scan(now_sec);
   guard.mark_odom(now_sec);
   guard.mark_raw_odom(now_sec);
   guard.mark_voltage(12.0F, now_sec);
@@ -26,7 +25,6 @@ TEST(SafetyGuardTest, RejectsStaleVoltageWhenThresholdEnabled) {
   mark_healthy(guard, 10.0);
 
   ASSERT_TRUE(guard.mark_command(10.60, 0.0));
-  guard.mark_scan(10.60);
   guard.mark_odom(10.60);
   guard.mark_raw_odom(10.60);
   const auto verdict = guard.evaluate(10.60);
@@ -55,10 +53,8 @@ TEST(SafetyGuardTest, RejectsBothSpeedDirectionsUntilExplicitlyCleared) {
 }
 
 TEST(SafetyGuardTest, RequiresFreshDepthPointsWhenConfigured) {
-  SafetyGuard guard(1.0, 1.0, 1.0, 1.0, 0.0, 1.0, 0.30, true, true,
-                    true, 1.0, true);
+  SafetyGuard guard(1.0, 1.0, 1.0, 0.0, 1.0, 0.30, true, true, 1.0, true);
   ASSERT_TRUE(guard.mark_command(10.0, 0.0));
-  guard.mark_scan(10.0);
   guard.mark_odom(10.0);
   guard.mark_raw_odom(10.0);
   EXPECT_EQ(guard.evaluate(10.10).reason, "depth_points_missing");
@@ -67,7 +63,6 @@ TEST(SafetyGuardTest, RequiresFreshDepthPointsWhenConfigured) {
   EXPECT_TRUE(guard.evaluate(10.20).allowed);
 
   ASSERT_TRUE(guard.mark_command(11.10, 0.0));
-  guard.mark_scan(11.10);
   guard.mark_odom(11.10);
   guard.mark_raw_odom(11.10);
   EXPECT_EQ(guard.evaluate(11.10).reason, "depth_points_stale");

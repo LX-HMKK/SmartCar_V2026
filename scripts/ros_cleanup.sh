@@ -94,7 +94,7 @@ TARGET_PIDS=$( {
     pointcloud_to_laserscan_node
   collect_by_command \
     '/nav2_lifecycle_manager/lifecycle_manager' \
-    '/tf2_ros/static_transform_publisher.*__node:=(base_to_link|base_to_gyro|link_to_laser|link_to_depth_camera_sensor)' \
+    '/tf2_ros/static_transform_publisher.*__node:=(base_to_link|base_to_gyro|link_to_depth_camera_sensor)' \
     '/smartcar_tools/(field_reference_node|waypoint_viz)' \
     'ros2 run smartcar_tools (rgb_imshow|competition_output_display|vlm_display|qr_probe|image_replay_node)' \
     '/smartcar_tools/(rgb_imshow|competition_output_display|vlm_display|qr_probe|image_replay_node)' \

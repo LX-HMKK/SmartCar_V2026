@@ -3,7 +3,7 @@
 <package format="3">
   <name>smartcar_nav2</name>
   <version>0.1.0</version>
-  <description>smartcar Nav2 航点导航配置包：纯惯导、LiDAR-only 避障、阿克曼底盘适配</description>
+  <description>smartcar Nav2 航点导航配置包：IMU+轮式定位、Aurora 深度避障、阿克曼底盘适配</description>
   <maintainer email="lx_hmkk@qq.com">LX-HMKK</maintainer>
   <license>MIT</license>
 

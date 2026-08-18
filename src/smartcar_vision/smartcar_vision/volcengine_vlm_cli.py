@@ -3,6 +3,7 @@ import argparse
 import base64
 import json
 import math
+import os
 from pathlib import Path
 import socket
 import sys
@@ -14,7 +15,7 @@ import yaml
 
 
 DEFAULT_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3"
-DEFAULT_MODEL = "doubao-seed-2-0-lite-260428"
+DEFAULT_TIMEOUT_SEC = 30.0
 LOCAL_CREDENTIALS_RELATIVE_PATH = (
     Path("config") / "volcengine_ark.local.yaml"
 )
@@ -65,7 +66,7 @@ def _responses_url(base_url):
     return value + "/responses"
 
 
-def build_payload(image_bytes, prompt, model, max_tokens):
+def build_payload(image_bytes, prompt, model):
     """Build an Ark Responses request without exposing credentials."""
     if not isinstance(image_bytes, bytes) or not image_bytes:
         raise VolcengineVlmError("image_empty")
@@ -77,13 +78,6 @@ def build_payload(image_bytes, prompt, model, max_tokens):
         raise VolcengineVlmError("prompt_empty")
     if not model:
         raise VolcengineVlmError("model_empty")
-    try:
-        token_limit = int(max_tokens)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise VolcengineVlmError("invalid_max_tokens") from error
-    if not 1 <= token_limit <= 2048:
-        raise VolcengineVlmError("invalid_max_tokens")
-
     encoded = base64.b64encode(image_bytes).decode("ascii")
     return {
         "model": model,
@@ -97,7 +91,6 @@ def build_payload(image_bytes, prompt, model, max_tokens):
                 {"type": "input_text", "text": prompt},
             ],
         }],
-        "max_output_tokens": token_limit,
     }
 
 
@@ -105,6 +98,12 @@ def extract_description(response):
     """Extract text from an Ark Responses result."""
     description = ""
     if isinstance(response, dict):
+        status = str(response.get("status", "")).strip()
+        if status and status != "completed":
+            details = response.get("incomplete_details")
+            reason = details.get("reason") if isinstance(details, dict) else ""
+            suffix = f":{reason}" if reason else ""
+            raise VolcengineVlmError(f"response_{status}{suffix}")
         output_text = response.get("output_text")
         if isinstance(output_text, str):
             description = output_text.strip()
@@ -136,6 +135,10 @@ def _credentials_file():
 
 
 def _load_api_key():
+    api_key = os.environ.get("ARK_API_KEY", "").strip()
+    if api_key:
+        return api_key
+
     credentials_file = _credentials_file()
     if credentials_file is None:
         raise VolcengineVlmError("credentials_file_missing")
@@ -156,27 +159,67 @@ def _load_api_key():
     return api_key
 
 
+def _load_vlm_config(path):
+    """Read the canonical model and prompt from the vision parameter YAML."""
+    try:
+        document = yaml.safe_load(
+            Path(path).expanduser().read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, yaml.YAMLError) as error:
+        raise VolcengineVlmError("vision_config_invalid") from error
+    if not isinstance(document, dict):
+        raise VolcengineVlmError("vision_config_invalid")
+    node = document.get("vision_node")
+    parameters = node.get("ros__parameters") if isinstance(node, dict) else None
+    if not isinstance(parameters, dict):
+        raise VolcengineVlmError("vision_config_invalid")
+    model = str(parameters.get("vlm_model", "")).strip()
+    prompt = str(parameters.get("default_prompt", "")).strip()
+    if not model or not prompt:
+        raise VolcengineVlmError("vision_config_invalid")
+    return model, prompt
+
+
 def request_description(
     image_path,
     prompt,
     model,
     api_key,
     base_url=DEFAULT_BASE_URL,
-    timeout_sec=7.0,
-    max_tokens=256,
+    timeout_sec=DEFAULT_TIMEOUT_SEC,
     opener=None,
 ):
-    """Send one bounded Ark request and return only the description text."""
-    api_key = str(api_key).strip()
-    if not api_key:
-        raise VolcengineVlmError("missing_api_key")
-    timeout = _positive_timeout(timeout_sec)
+    """Read a local image and send it to Ark."""
     try:
         image_bytes = Path(image_path).read_bytes()
     except OSError as error:
         raise VolcengineVlmError(
             f"image_read_error:{type(error).__name__}") from error
-    payload = build_payload(image_bytes, prompt, model, max_tokens)
+    return request_description_bytes(
+        image_bytes=image_bytes,
+        prompt=prompt,
+        model=model,
+        api_key=api_key,
+        base_url=base_url,
+        timeout_sec=timeout_sec,
+        opener=opener,
+    )
+
+
+def request_description_bytes(
+    image_bytes,
+    prompt,
+    model,
+    api_key,
+    base_url=DEFAULT_BASE_URL,
+    timeout_sec=DEFAULT_TIMEOUT_SEC,
+    opener=None,
+):
+    """Send one in-memory JPEG to Ark and return only its final text."""
+    api_key = str(api_key).strip()
+    if not api_key:
+        raise VolcengineVlmError("missing_api_key")
+    timeout = _positive_timeout(timeout_sec)
+    payload = build_payload(image_bytes, prompt, model)
     encoded_payload = json.dumps(
         payload, ensure_ascii=False, separators=(",", ":")
     ).encode("utf-8")
@@ -227,11 +270,10 @@ def _parser():
     parser = argparse.ArgumentParser(
         description="Describe a JPEG with Volcengine Ark")
     parser.add_argument("--image", required=True)
-    parser.add_argument("--prompt", required=True)
-    parser.add_argument("--model")
+    parser.add_argument("--config-file", required=True)
     parser.add_argument("--base-url")
-    parser.add_argument("--timeout-sec", type=float, default=7.0)
-    parser.add_argument("--max-tokens", type=int, default=256)
+    parser.add_argument(
+        "--timeout-sec", type=float, default=DEFAULT_TIMEOUT_SEC)
     return parser
 
 
@@ -246,17 +288,20 @@ def main(argv=None, stdout=None, stderr=None, opener=None):
         print(str(error), file=stderr)
         return 2
 
-    model = arguments.model or DEFAULT_MODEL
+    try:
+        model, prompt = _load_vlm_config(arguments.config_file)
+    except VolcengineVlmError as error:
+        print(str(error), file=stderr)
+        return 2
     base_url = arguments.base_url or DEFAULT_BASE_URL
     try:
         description = request_description(
             image_path=arguments.image,
-            prompt=arguments.prompt,
+            prompt=prompt,
             model=model,
             api_key=api_key,
             base_url=base_url,
             timeout_sec=arguments.timeout_sec,
-            max_tokens=arguments.max_tokens,
             opener=opener,
         )
     except VolcengineVlmError as error:

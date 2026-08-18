@@ -51,11 +51,9 @@ class VisionServiceInterfaceContractTests(unittest.TestCase):
                 [
                     "builtin_interfaces/Time not_before",
                     "float32 timeout_sec",
-                    "string prompt",
                 ],
                 [
                     "bool success",
-                    "bool fallback_used",
                     "string description",
                     "string status",
                 ],

@@ -202,11 +202,12 @@ class SafetyLaunchContractTests(unittest.TestCase):
 
     def test_safety_launch_always_starts_one_direction_guard(self):
         tree = source_tree(SMARTCAR_SAFETY_LAUNCH)
-        self.assertIn("direction_guard_config_file", string_values(tree))
+        self.assertNotIn("direction_guard_config_file", string_values(tree))
         source = SMARTCAR_SAFETY_LAUNCH.read_text(encoding="utf-8")
         self.assertEqual(source.count('executable="direction_guard_node"'), 1)
         self.assertIn('name="direction_guard"', source)
-        self.assertIn('"direction_guard.yaml"', source)
+        self.assertIn('"safety.yaml"', source)
+        self.assertIn("parameters=[config_file]", source)
         direction_block = source.split(
             'executable="direction_guard_node"', 1)[0].rsplit("Node(", 1)[1]
         self.assertNotIn("condition=", direction_block)
@@ -271,19 +272,19 @@ class SafetyLaunchContractTests(unittest.TestCase):
             source,
         )
 
-    def test_safety_and_laser_odometry_receive_distinct_config_files(self):
+    def test_safety_uses_its_single_config_file(self):
         source = SMARTCAR_BRINGUP.read_text(encoding="utf-8")
-        self.assertIn("'laser_odometry_config_file'", source)
         self.assertIn("'safety_config_file'", source)
-        self.assertIn("'config_file': LaunchConfiguration(\n                'laser_odometry_config_file')", source)
         self.assertIn(
             "'config_file': LaunchConfiguration('safety_config_file')",
             source,
         )
+        self.assertNotIn("laser_odometry", source)
 
         system_source = SMARTCAR_SYSTEM.read_text(encoding="utf-8")
         self.assertIn('"safety_config_file": LaunchConfiguration(', system_source)
         self.assertIn('DeclareLaunchArgument(\n            "safety_config_file"', system_source)
+        self.assertNotIn("laser_odometry", system_source)
 
     def test_vendor_bringup_forwards_topic_into_base_serial(self):
         tree = source_tree(ORIGINCAR_BRINGUP)

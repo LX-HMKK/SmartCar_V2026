@@ -45,7 +45,7 @@ rosdep install --from-paths \
     "${workspace}/src/smartcar_tools" \
     "${workspace}/src/smartcar_sim" \
     --ignore-src --rosdistro humble -y \
-    --skip-keys "smartcar_vision smartcar_speech ament_python"
+    --skip-keys "smartcar_vision ament_python"
 
 cd "${workspace}"
 colcon build --symlink-install --packages-up-to smartcar_sim \

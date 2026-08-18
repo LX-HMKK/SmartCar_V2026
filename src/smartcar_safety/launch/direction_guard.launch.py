@@ -14,8 +14,8 @@ def generate_launch_description():
         DeclareLaunchArgument(
             "config_file",
             default_value=os.path.join(
-                package_dir, "config", "direction_guard.yaml"),
-            description="Direction guard parameter file",
+                package_dir, "config", "safety.yaml"),
+            description="Unified safety parameter file",
         ),
         Node(
             package="smartcar_safety",

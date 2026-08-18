@@ -32,7 +32,7 @@ ament_target_dependencies(competition_stack_probe
   rclcpp
 )
 # Nav2 1.1.20 (TROS Humble): RewrittenYaml chain silently drops controller
-# params in favour of YDLIDAR defaults, causing "No critics defined for
+# params, causing "No critics defined for
 # FollowPath".  Work around by configuring a pre-resolved copy with the active
 # install-prefix BT-XML paths that navigation_launch.py loads directly.
 set(SMARTCAR_NAV2_SHARE_DIR

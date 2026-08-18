@@ -34,11 +34,10 @@ setup(
     zip_safe=True,
     maintainer="LX-HMKK",
     maintainer_email="lx_hmkk@qq.com",
-    description="Field reference, waypoint editing, diagnostics, vision, and speech tools.",
+    description="Field reference, waypoint editing, diagnostics, and vision tools.",
     license="MIT",
     entry_points={
         "console_scripts": [
-            "speech_probe = smartcar_tools.speech_probe:main",
             "qr_probe = smartcar_tools.qr_probe:main",
             "image_replay_node = smartcar_tools.image_replay_node:main",
             "rgb_imshow = smartcar_tools.rgb_imshow:main",

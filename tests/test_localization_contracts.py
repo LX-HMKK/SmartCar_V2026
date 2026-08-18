@@ -49,13 +49,6 @@ EXPECTED_IMU_CONFIG = [
     False, False, True,
     False, False, False,
 ]
-EXPECTED_LASER_ODOM_CONFIG = [
-    True, True, False,
-    False, False, True,
-    False, False, False,
-    False, False, False,
-    False, False, False,
-]
 CALIBRATION_PARAMETERS = (
     "longitudinal_velocity_scale",
     "lateral_velocity_scale",
@@ -112,20 +105,13 @@ class EkfContractTests(unittest.TestCase):
         self.assertIs(params["imu0_differential"], False)
         self.assertIs(params["imu0_relative"], False)
 
-        self.assertEqual(params["odom1"], "/odom_laser")
-        self.assertEqual(
-            params["odom1_config"], EXPECTED_LASER_ODOM_CONFIG)
-        self.assertIs(params["odom1_differential"], True)
-        self.assertIs(params["odom1_relative"], False)
-        self.assertGreater(float(params["odom1_pose_rejection_threshold"]), 0.0)
-
     def test_only_declared_sensor_sources_are_configured(self):
         params = ekf_parameters()
         source_keys = {
             key for key in params
             if re.fullmatch(r"(?:odom|imu|pose|twist)\d+", key)
         }
-        self.assertEqual(source_keys, {"odom0", "odom1", "imu0"})
+        self.assertEqual(source_keys, {"odom0", "imu0"})
 
     def test_initial_covariance_is_finite_and_not_overconfident(self):
         covariance = ekf_parameters()["initial_estimate_covariance"]

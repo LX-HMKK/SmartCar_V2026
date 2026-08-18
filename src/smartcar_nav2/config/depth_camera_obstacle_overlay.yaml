@@ -1,8 +1,8 @@
 # Aurora 930 depth obstacle source for the physical Nav2 stack.
 #
-# This overlay is selected with use_lidar:=false. The relay corrects Aurora's
-# firmware timestamp scale, then preserves the camera acquisition stamp after
-# validating the frame and PointCloud2 layout.
+# The physical baseline already uses this source. The simulation depth fixture
+# also applies this overlay after its local Gazebo tuning so it observes the
+# same forward Aurora-style scan.
 local_costmap:
   local_costmap:
     ros__parameters:
