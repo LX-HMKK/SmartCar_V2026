@@ -8,12 +8,13 @@ the editor's local preflight and the simulation Nav2 overlay can represent.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import math
 import os
 from pathlib import Path
 from typing import Any, Mapping
 
 import yaml
+
+from ._validators import finite_number, nonnegative_number, positive_number
 
 
 SCHEMA_VERSION = 9
@@ -133,29 +134,15 @@ def _exact_fields(raw: Mapping[str, Any], fields: set[str], label: str) -> None:
 
 
 def _finite_number(value: Any, label: str) -> float:
-    if isinstance(value, bool):
-        raise RoutePlanningConfigError(f"{label} must be a finite number")
-    try:
-        result = float(value)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise RoutePlanningConfigError(f"{label} must be a finite number") from error
-    if not math.isfinite(result):
-        raise RoutePlanningConfigError(f"{label} must be a finite number")
-    return result
+    return finite_number(value, label, RoutePlanningConfigError)
 
 
 def _positive_number(value: Any, label: str) -> float:
-    result = _finite_number(value, label)
-    if result <= 0.0:
-        raise RoutePlanningConfigError(f"{label} must be positive")
-    return result
+    return positive_number(value, label, RoutePlanningConfigError)
 
 
 def _nonnegative_number(value: Any, label: str) -> float:
-    result = _finite_number(value, label)
-    if result < 0.0:
-        raise RoutePlanningConfigError(f"{label} must be nonnegative")
-    return result
+    return nonnegative_number(value, label, RoutePlanningConfigError)
 
 
 def _positive_integer(value: Any, label: str, minimum: int = 1) -> int:

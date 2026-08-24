@@ -10,6 +10,7 @@
 - [RDK 部署与现场流程](deployment/rdk-environment-setup.md)：同步、构建、急停和实体设备检查。
 - [`scripts/` 使用手册](deployment/scripts.md)：本机仿真、RDK 同步、构建、启动与清理脚本。
 - [场地与诊断工具](reference/field-tools.md)：场地参考、航点编辑和独立诊断入口。
+- [测试与验证约束](reference/testing-policy.md)：验证优先级（运行链优先）与何时允许新增测试。
 
 当前路线始终为全正向 P→A→`via_1`→`via_2`→`via_3`→`via_6`→C1→`via_4`→`via_5`→`via_7`→P。
 实车 `default_waypoints.yaml` 与仿真 `nav_only.yaml` 共享全部几何和分段，仅 A/C1 的任务类型不同。

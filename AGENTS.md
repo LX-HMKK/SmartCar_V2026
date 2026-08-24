@@ -36,12 +36,19 @@
 - `nav2_params_fixed.yaml` 是构建产物，不得手工编辑；修改 `nav2_params.yaml` 后通过构建生成。
 - 未经明确授权，不启动仿真路线。即使启动仿真，`run_route:=true` 才能产生非零模型运动。
 
+## 测试与验证
+
+- 验证以运行链为先（现有入口/脚本/launch/仿真/实车），自动化测试兜底；不因“规范/覆盖率/完整性”新增测试。
+- 新增独立测试仅限纯算法、防回归、运行链无法稳定验证、CI 要求、用户要求之一，且须能说清“防止什么错误、失败提供什么信息”。
+- `tests/` 仅放可自动执行测试；人工运行内容进 `scripts/`。全文见 [测试与验证约束](docs/reference/testing-policy.md)。
+
 ## 文档索引
 
 - [航点编辑与授权规则](docs/deployment/waypoint-editor.md)
 - [本机 Gazebo 仿真](docs/deployment/local-simulation.md)
 - [RDK 部署、门禁与现场流程](docs/deployment/rdk-environment-setup.md)
 - [工具与当前操作索引](docs/README.md)
+- [测试与验证约束](docs/reference/testing-policy.md)
 
 ## 提交
 

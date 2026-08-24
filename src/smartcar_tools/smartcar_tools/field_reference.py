@@ -8,6 +8,8 @@ from typing import Any, Mapping
 
 import yaml
 
+from ._validators import finite_number
+
 
 REFERENCE_FRAME = "odom_combined"
 DEFAULT_ARC_SAMPLES = 24
@@ -140,15 +142,7 @@ def _mapping(value: Any, label: str) -> Mapping[str, Any]:
 
 
 def _finite_number(value: Any, label: str) -> float:
-    if isinstance(value, bool):
-        raise FieldReferenceError(f"{label} must be a finite number")
-    try:
-        result = float(value)
-    except (TypeError, ValueError, OverflowError) as error:
-        raise FieldReferenceError(f"{label} must be a finite number") from error
-    if not math.isfinite(result):
-        raise FieldReferenceError(f"{label} must be a finite number")
-    return result
+    return finite_number(value, label, FieldReferenceError)
 
 
 def _within(value: float, lower: float, upper: float, label: str) -> None:
