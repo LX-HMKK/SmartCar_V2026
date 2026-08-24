@@ -75,7 +75,7 @@ The system is layered as "Perception → Processing → Execution": sensor data 
 | :--- | :--- | :--- | :--- |
 | 🖥️ Compute platform | Horizon RDK X5 8G | Main controller, runs TROS ROS 2 Humble | — |
 | 🚗 Chassis | OriginCar Ackermann | Steering & drive execution | Serial `/dev/ttyACM0` |
-| 📷 Depth camera | Aurora 930 | **RGB module** for QR/image-to-text vision, **depth module** for dynamic obstacle perception | USB |
+| 📷 Depth camera | Aurora 930 (bundled with the OriginCar chassis) | **RGB module** for QR/image-to-text vision, **depth module** for dynamic obstacle perception | USB |
 | 🧭 Inertial / odometry | IMU + wheel encoders | Inputs to EKF fusion localization | Onboard |
 
 > **Mounting constraint**: the depth camera is fixed above the front wheels, `0.15 m` off the ground, facing forward; extrinsics are a confirmed structural constraint.
@@ -149,6 +149,20 @@ EKF is the sole TF owner of `odom_combined -> base_footprint`; the EKF yaw outpu
 
 - ✅ Local Gazebo completed full-route pure-navigation software validation.
 - ⏳ Depth-camera dynamic obstacle perception (costmap marking / clearing and real-time replanning), QR / image-to-text semantic tasks, and supervised on-site runs are still to be validated item by item.
+
+## 6. Runtime Constraints & Optimization Direction
+
+### Known runtime constraints
+
+- **Full task time** — a complete `P → A → C1 → P` run is around `60 s`; the mission is designed around this budget rather than a speed record.
+- **Depth point cloud is 10 Hz** — the Aurora depth cloud is the responsiveness ceiling. The Nav2 obstacle-avoidance chain cannot keep up any faster, so top speed is capped at `0.5 m/s`.
+- **Obstacle avoidance is tight on turns** — after a turn the point-cloud frame refreshes, and a cone that emerges behind the turn only appears once the vehicle is already beside/upon it, so avoidance repeatedly re-triggers `BackUp` + replanning instead of an early clean maneuver.
+
+### Optimization direction (planned — not in this build)
+
+1. **Cone perception via YOLO + PnP instead of the depth point cloud** — recognize traffic cones with YOLO and project them into the costmap as obstacle distance via PnP, replacing the depth module's obstacle input.
+2. **Keep moving on light tasks** — the QR job can keep recognizing continuously in area A (with re-optimized waypoints) and only decide the C-zone direction when it reaches the B-area channel, so no stop is needed. The VLM job also needs no stop: grab the frame, process it in the background, since the judge only inspects the UI after the car returns to **P**.
+3. **Retire the depth point cloud** — the Aurora **RGB** module is good (high frame rate, wide FOV); the point cloud keeps catching the outer barrier and fools avoidance into activating, which prevents an accurate return to **P**. Drop the point cloud, keep RGB.
 
 ---
 
