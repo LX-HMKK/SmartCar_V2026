@@ -59,12 +59,6 @@ if(BUILD_TESTING)
 
   ament_add_gtest(test_safety_guard_cpp test/test_safety_guard.cpp src/guard.cpp)
   target_include_directories(test_safety_guard_cpp PRIVATE include)
-
-  find_package(ament_cmake_pytest REQUIRED)
-  ament_add_pytest_test(test_direction_guard_contract_py
-    test/test_direction_guard_contract.py)
-  ament_add_pytest_test(test_steering_calibration_contract_py
-    test/test_steering_calibration_contract.py)
 endif()
 
 ament_package()

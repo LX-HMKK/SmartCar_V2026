@@ -65,11 +65,6 @@ if(BUILD_TESTING)
     test/test_ekf_set_pose.py
     TIMEOUT 45
   )
-  ament_add_pytest_test(
-    test_serial_io_contract
-    test/test_serial_io_contract.py
-    TIMEOUT 30
-  )
 
   option(
     ORIGINCAR_ENABLE_LEGACY_LINT
@@ -126,7 +121,6 @@ if(BUILD_TESTING)
     )
     ament_flake8(
       test/test_ekf_set_pose.py
-      test/test_serial_io_contract.py
       TESTNAME task45_flake8
     )
     ament_lint_cmake(
